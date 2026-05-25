@@ -1,2 +1,8 @@
 .DS_Store
 .claude/
+node_modules/
+dist/
+.env
+data/
+apps/web/.svelte-kit/
+apps/web/build/
