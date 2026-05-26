@@ -4,8 +4,8 @@
 
 ## Pages
 
-- [Agent Dashboard (Mission Control)](Pages/Agent%20Dashboard%20(Mission%20Control)/TODO.md)
+- [Agent Dashboard (Mission Control)](pages/agent-dashboard/TODO.md)
 
 ## Widgets
 
-- [Music Tracker](Widgets/Music%20Tracker/TODO.md)
+- [Music Tracker](widgets/music-tracker/TODO.md)
