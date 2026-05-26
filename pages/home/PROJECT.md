@@ -4,6 +4,16 @@ The default landing page of the dashboard. Shows a grid of all active widget til
 
 Morning Dashboard section at top which contains Music Picker Widget and Morning Routine Widget
 
+A small Quick Links section, which for now is just links to web apps I frequently use.
+
+- Workflowy
+- Google Cal
+- Personal Gmail
+- NAS
+- GMaps Widget
+
+A Simple daily todo list that shows a fresh empty list each day. Each list is saved to the db.
+
 See also: [TODO.md](TODO.md)
 
 ---

@@ -16,19 +16,21 @@
 ## Additional widgets (in roughly the order I want them)
 
 - Acute Strategies Generator
+- Agent Dashboard / Mission Control (in pages/agent-dashboard)
+- Pomodoro timer
+- Music Picker (in widgets/music-picker)
+- Music Tracker
 - Habit log
 - Morning routine todo-list
-- Pomodoro timer
-- Agent Dashboard / Mission Control (in pages/agent-dashboard)
-- Workout log
-- Diary
-- Music Picker (in widgets/music-picker)
-- Reminders (in widgets/reminders)
+- Concert Diary (in widgets/concert-diary)
 - Concert Discovery (in widgets/concert-discovery)
-- Chat (in widgets/chat)
 - Vision Board (in widgets/vision-board)
 - Festival Follower (in widgets/festival-follower)
-- Concert Diary (in widgets/concert-diary)
+- Reminders (in widgets/reminders)
+- ---Below this line, not sure if i will build:----
+- Diary
+- Workout log
+- Chat (in widgets/chat)
 
 ## UI improvements
 - Widgets should be able to be re-sized and re-arranged in the page on an invisible grid system, similar to how Datadog works. When dragging, the gridlines become visible. Widget position should be remembered on page refresh.

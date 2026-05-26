@@ -24,7 +24,7 @@ Newest decisions at the top.
 
 ## D-013: Symphony as standalone project; Claude Code as the agent runner
 
-**Decision:** Symphony (the autonomous agent loop service) lives in the existing `Multi-Agent Linear Workflow/` project directory as a standalone Node.js service. It uses Claude Code CLI (`claude --print`) as its coding agent subprocess rather than OpenAI Codex app-server.
+**Decision:** Symphony (the autonomous agent loop service) lives in the existing `multi-agent-linear-workflow/` project directory as a standalone Node.js service. It uses Claude Code CLI (`claude --print`) as its coding agent subprocess rather than OpenAI Codex app-server.
 
 **Reasoning:**
 - CORE is plain-text identity/config — build artifacts and a running daemon don't belong there. Same reasoning that put Mission Control outside CORE.
