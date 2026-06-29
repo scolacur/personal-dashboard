@@ -3,25 +3,14 @@
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 1rem;
 }
-.tile {
-  padding: 1.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  display: block;
-  transition: border-color 0.15s;
+
+.tile-open {
+  display: inline-block;
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  color: var(--accent);
 
   &:hover {
-    border-color: var(--accent);
-  }
-
-  h2 {
-    margin: 0 0 0.5rem;
-    font-size: 1.1rem;
-  }
-  p {
-    margin: 0;
-    font-size: 0.875rem;
-    color: var(--muted);
+    text-decoration: underline;
   }
 }

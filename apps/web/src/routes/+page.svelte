@@ -1,5 +1,6 @@
 <script lang="ts">
   import { widgets } from '$lib/widgets';
+  import Widget from '$lib/Widget.svelte';
 </script>
 
 {#if widgets.length === 0}
@@ -9,10 +10,11 @@
 {:else}
   <div class="grid">
     {#each widgets as widget (widget.route)}
-      <a href={widget.route} class="tile">
+      <Widget name={widget.title}>
         <h2>{widget.title}</h2>
         <p>{widget.description}</p>
-      </a>
+        <a href={widget.route} class="tile-open">Open →</a>
+      </Widget>
     {/each}
   </div>
 {/if}
