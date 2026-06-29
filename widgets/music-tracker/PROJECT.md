@@ -24,7 +24,7 @@ See also: [TODO.md](TODO.md)
 - Lidarr API integration (auto-push detected tracks to Lidarr)
 - Additional sources: YouTube, SoundCloud, Bandcamp, reddit threads.
 - Chromaprint/AcoustID fingerprint matching -- (spike to determine how this would actually work, might need to happen after the download since it might be difficult to obtain the audio file of previews from spotify etc)
-- Download manager UI so user can view, enable & disable methods for attempting to actually download the files (these will need code changes to add) 
+- Download manager UI so user can view, enable & disable methods for attempting to actually download the files (these will need code changes to add)
 - Redundant Auto-download flows (multiple paths for downloading the track eg. queries to specific mp3 download websites, soulseek)
 - "Better quality version found" workflow
 - Continuous monitoring for higher-quality versions of existing library tracks
@@ -121,12 +121,13 @@ export interface DetectedTrack {
 }
 
 export interface MusicSource {
-  name: string;                                  // 'spotify' | 'manual' | ...
+  name: string; // 'spotify' | 'manual' | ...
   fetchNew(since: number): Promise<DetectedTrack[]>;
 }
 ```
 
 MVP implementations:
+
 - `spotify.ts` — uses the Spotify Web API SDK with refresh-token auth; polls one playlist (configured via env var) and returns tracks added since the last successful run.
 - `manual.ts` — not a poller; exposes a function called from the manual-entry route to create a track row directly. Implements the interface for uniformity but `fetchNew` is a no-op.
 
@@ -137,10 +138,11 @@ MVP implementations:
 `normalize.ts` exports `normalize(input: { artist, title }): { normArtist, normTitle, normRemixer }`.
 
 Rules:
+
 1. Lowercase, strip diacritics (`fold-to-ascii` style)
 2. Extract parentheticals matching `(... remix)`, `(... mix)`, `(... edit)`, `(... version)` from title → put remixer/mix-name into `normRemixer`, remove from title
 3. Extract `feat./featuring/ft.` segments from title → fold into artist
-4. Replace collaboration separators (`&`, `,`, ` x `, `vs.`, `with`) with a canonical separator
+4. Replace collaboration separators (`&`, `,`, `x`, `vs.`, `with`) with a canonical separator
 5. Sort multi-artist lists alphabetically
 6. Strip filename-only noise from library files: leading track numbers (`01 - `), trailing catalog tags (`[LABEL001]`), file extensions
 7. Collapse whitespace, trim
@@ -152,6 +154,7 @@ Rules:
 `matcher.ts` exports `findMatches(track: TrackRow, library: LibraryFileRow[]): MatchCandidate[]`.
 
 Algorithm:
+
 1. **Per-field fuzzy scoring** using Fuse.js. Each field is scored independently (separate Fuse instance per field, queried against the matching track field):
    - `normTitle`: weight 0.50
    - `normArtist`: weight 0.35
@@ -164,6 +167,7 @@ Algorithm:
 **No duration gate.** Duration is not used in matching. Rationale: if we're looking for a radio edit and only an extended mix is in the library, we still want to surface it — missing a match entirely is worse than a false positive that the user dismisses. If false positives become a problem in practice, duration can be added as a weighted score component rather than a hard filter.
 
 Tuning notes:
+
 - Thresholds (`0.65`, `0.85`) and weights live in `MATCH_CONFIG` at the top of `matcher.ts` — expect to adjust after observing real data.
 
 ---
@@ -198,11 +202,13 @@ All routes under `/api/widgets/music-tracker`:
 ## 8. Frontend Views
 
 Routes:
+
 - `/widgets/music-tracker` — main view, tabs: **Review**, **All Tracks**, **Manual Entry**, **Logs**
 
 **Review tab** — default view, shows tracks with `status='new'` that have at least one match candidate, plus tracks with `status='new'` and no match candidates (the "wanted" candidates).
 
 Each row shows two columns side-by-side:
+
 - **Left (detected):** raw artist, raw title, raw remixer, duration, source + context
 - **Right (matches):** for each candidate above threshold, file path + parsed metadata + duration + score; "Confirm" button per candidate
 
@@ -211,6 +217,7 @@ Actions per row: **Confirm match** (set to in_library), **Mark wanted** (no matc
 **All Tracks tab** — filterable by status, same row layout.
 
 **Manual Entry tab** — 2-step flow: first pick the entry type (Track / Mix / Artist / Label / Album), then fill in the type-appropriate fields:
+
 - Track / Mix: Artist, Title, Notes
 - Artist: Name
 - Label: Name

@@ -25,7 +25,16 @@
     display: block;
     transition: border-color 0.15s;
   }
-  .tile:hover { border-color: #4a6fa5; }
-  .tile h2 { margin: 0 0 0.5rem; font-size: 1.1rem; }
-  .tile p { margin: 0; font-size: 0.875rem; color: #94a3b8; }
+  .tile:hover {
+    border-color: #4a6fa5;
+  }
+  .tile h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.1rem;
+  }
+  .tile p {
+    margin: 0;
+    font-size: 0.875rem;
+    color: #94a3b8;
+  }
 </style>

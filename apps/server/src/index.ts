@@ -21,8 +21,7 @@ for (const widget of widgets) {
 
 app.get('/api/health', async () => ({ ok: true }));
 
-const webBuildDir =
-  process.env.WEB_BUILD_DIR ?? path.join(__dirname, '../../../apps/web/build');
+const webBuildDir = process.env.WEB_BUILD_DIR ?? path.join(__dirname, '../../../apps/web/build');
 
 if (existsSync(webBuildDir)) {
   app.register(staticPlugin, {

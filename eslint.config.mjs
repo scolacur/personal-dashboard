@@ -10,12 +10,7 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: [
-      '**/dist/**',
-      '**/build/**',
-      '**/.svelte-kit/**',
-      '**/node_modules/**',
-    ],
+    ignores: ['**/dist/**', '**/build/**', '**/.svelte-kit/**', '**/node_modules/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

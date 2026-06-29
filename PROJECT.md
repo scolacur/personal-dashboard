@@ -2,7 +2,7 @@
 
 A locally-hosted personal dashboard running on a Synology NAS in Docker, composed of widgets (mini-apps). Widgets are customized tools to help me accomplish various tasks. Some interact with external APIs, some speak to a database we will create. Accessible via web browser.
 
-Example widgets: 
+Example widgets:
 
 - A todo checklist, just for morning tasks, that refreshes every day.
 - A simple Pomodoro timer that floats persistently in the bottom corner of the screeen.
@@ -10,7 +10,7 @@ Example widgets:
 - A workout log
 - Acute strategies generator - a simple app that fetches random ideas from a list of musical ideas and techniques that i maintain. it also allows me to add/remove/edit items in that list.
 - A music tracker that detects new additions to external playlists and tracks whether I already have them in my DJ library.
-- 
+-
 
 Each widget should exist in a movable and resizable card, like in a datadog dashboard.
 
@@ -121,9 +121,15 @@ Adding a new widget is a 3-step process:
    ```ts
    export const widget: BackendWidget = {
      name: '<name>',
-     registerRoutes(app: FastifyInstance) { /* ... */ },
-     registerCron(cron: CronRegistry) { /* optional */ },
-     bootstrapSchema(db: Database) { /* optional, idempotent */ },
+     registerRoutes(app: FastifyInstance) {
+       /* ... */
+     },
+     registerCron(cron: CronRegistry) {
+       /* optional */
+     },
+     bootstrapSchema(db: Database) {
+       /* optional, idempotent */
+     },
    };
    ```
 2. Add it to the widget list in `apps/server/src/index.ts`.
@@ -155,6 +161,7 @@ Single image, multi-stage build:
 2. **Runtime stage:** Node 20-slim, copy server `dist/`, copy web build into `apps/web/build`, install production deps only. Fastify serves the web static assets at `/` and the API at `/api/*`.
 
 `docker-compose.yml` mounts:
+
 - `./data:/data` — SQLite file, logs
 - `/volume1/music/dj-library-mirror:/library:ro` — DJ library (read-only from container's perspective; rsync from PC populates this via a separate scheduled task on the NAS)
 

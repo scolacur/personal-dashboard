@@ -1,4 +1,4 @@
-You are an agent helping me build this project. 
+You are an agent helping me build this project.
 
 At the start of EVERY session, do the following:
 

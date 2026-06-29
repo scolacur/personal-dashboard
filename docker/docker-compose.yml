@@ -4,7 +4,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "8080:8080"
+      - '8080:8080'
     volumes:
       - ../data:/data
       - /volume1/music/dj-library-mirror:/library:ro

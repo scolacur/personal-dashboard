@@ -38,6 +38,7 @@ See also: [TODO.md](TODO.md)
 - Radio station favorite grouping / categories
 - NTS or Rinse.fm dedicated embeds (Radio Browser API covers them as stream URLs)
 - Easy UI for adding / removing sources
+
 ---
 
 ## 2. Data Model

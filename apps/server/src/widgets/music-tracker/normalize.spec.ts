@@ -76,7 +76,9 @@ describe('normalize', () => {
     });
 
     it('sorts the artist list alphabetically so order is canonical', () => {
-      expect(normalize({ artist: 'Zomby, Burial', title: 'Test' }).normArtist).toBe('burial & zomby');
+      expect(normalize({ artist: 'Zomby, Burial', title: 'Test' }).normArtist).toBe(
+        'burial & zomby',
+      );
     });
   });
 

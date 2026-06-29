@@ -19,6 +19,7 @@
 Each new source implements the `MusicSource` interface defined in MVP.
 
 **Playlist / library sources (straightforward polling):**
+
 - YouTube playlists (yt-dlp + YouTube Data API) — e.g. "DJ Songs to download", "Great Mixes 2025" (mix-typed)
 - SoundCloud specific playlists / likes
 - Bandcamp wishlist / collection + followed artists & labels
@@ -29,6 +30,7 @@ Each new source implements the `MusicSource` interface defined in MVP.
 - Each implements the `MusicSource` interface defined in the MVP (double-check whether this approach makes sense)
 
 **Complex / scraping sources:**
+
 - Reddit saved posts from r/theoverload — parse saved post links, visit each linked page, extract track/mix metadata (artist + title), add to tracker. Requires: Reddit API auth, link-following logic, metadata extraction heuristic (or LLM assist).
 
 ## Auto-download workflow
@@ -36,6 +38,7 @@ Each new source implements the `MusicSource` interface defined in MVP.
 Nightly: attempt downloads for all `wanted` tracks via a configurable set of methods (mp3 download sites, yt-dlp). Downloads land in a staging/temp folder.
 
 **Staging review inbox:**
+
 - As long as any files sit in the staging folder, surface a notification ("New tracks downloaded — please review") in the dashboard notification center.
 - Per file, show the track it came from + its detected quality. User actions:
   - **Delete & keep tracking** — this version is bad; ignore this specific file in future downloads but keep looking

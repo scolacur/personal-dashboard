@@ -8,11 +8,11 @@ See also: [TODO.md](TODO.md)
 
 ## 1. Widgets on this page
 
-| Widget | Folder |
-|---|---|
-| Music Picker | [widgets/music-picker](../../widgets/music-picker/PROJECT.md) |
+| Widget            | Folder                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
+| Music Picker      | [widgets/music-picker](../../widgets/music-picker/PROJECT.md)           |
 | Concert Discovery | [widgets/concert-discovery](../../widgets/concert-discovery/PROJECT.md) |
-| Music Tracker | [widgets/music-tracker](../../widgets/music-tracker/PROJECT.md) |
+| Music Tracker     | [widgets/music-tracker](../../widgets/music-tracker/PROJECT.md)         |
 
 Music Picker handles daily listening (what to put on right now). Music Tracker handles long-term acquisition (what's new and do I have it in the library). Both belong here.
 

@@ -12,9 +12,9 @@ export function normalize(input: { artist: string; title: string }): NormResult 
 
   // Strip filename noise (safe no-op on clean metadata tags)
   title = title
-    .replace(/\.[a-z0-9]{2,4}$/i, '')         // file extension
-    .replace(/^\d{1,3}[\s\-_.]+(?=\D)/, '')    // leading "01 - " (not "1999")
-    .replace(/\s*\[[A-Z0-9]{3,}\]\s*$/i, '');  // trailing catalog "[CAT001]"
+    .replace(/\.[a-z0-9]{2,4}$/i, '') // file extension
+    .replace(/^\d{1,3}[\s\-_.]+(?=\D)/, '') // leading "01 - " (not "1999")
+    .replace(/\s*\[[A-Z0-9]{3,}\]\s*$/i, ''); // trailing catalog "[CAT001]"
 
   // Lowercase + fold diacritics
   artist = fold(artist.toLowerCase());
@@ -29,7 +29,9 @@ export function normalize(input: { artist: string; title: string }): NormResult 
 
   // Extract remix/mix/edit/version/dub/vip/bootleg → normRemixer
   let normRemixer: string | null = null;
-  const remixMatch = title.match(/\(([^)]*(?:remix|mix|edit|version|dub|vip|bootleg|rework)[^)]*)\)/i);
+  const remixMatch = title.match(
+    /\(([^)]*(?:remix|mix|edit|version|dub|vip|bootleg|rework)[^)]*)\)/i,
+  );
   if (remixMatch) {
     normRemixer = squeeze(remixMatch[1]);
     title = title.replace(remixMatch[0], '');
@@ -44,12 +46,7 @@ export function normalize(input: { artist: string; title: string }): NormResult 
     .replace(/\s*&\s*/g, SEP);
 
   // Sort artist list alphabetically
-  const normArtist = artist
-    .split(SEP)
-    .map(squeeze)
-    .filter(Boolean)
-    .sort()
-    .join(SEP);
+  const normArtist = artist.split(SEP).map(squeeze).filter(Boolean).sort().join(SEP);
 
   return {
     normArtist: squeeze(normArtist),

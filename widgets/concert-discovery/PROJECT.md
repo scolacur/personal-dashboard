@@ -32,6 +32,7 @@ See also: [TODO.md](TODO.md)
 Resident Advisor exposes an unofficial GraphQL API at `https://ra.co/graphql` — this is what the RA website itself uses, not a documented public API. It has no API key requirement for public artist/event queries, but it is subject to change without notice.
 
 Key queries needed:
+
 - Look up artist by slug → get internal RA artist ID
 - Fetch upcoming events for an artist ID, filtered by area/date
 
@@ -117,6 +118,7 @@ CONCERT_DISCOVERY_LOOKAHEAD_DAYS=60 # how far ahead to fetch events
 ```
 
 Artist management (via wrench settings panel):
+
 - List of tracked slugs with remove buttons
 - Input field + Add button: user types the RA slug (visible in the RA artist URL: `ra.co/dj/<slug>`)
 

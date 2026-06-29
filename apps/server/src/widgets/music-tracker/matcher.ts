@@ -6,12 +6,12 @@ export const MATCH_CONFIG = {
   minConfidence: 0.65,
   autoConfirmConfidence: 0.85,
   weights: {
-    normTitle: 0.50,
+    normTitle: 0.5,
     normArtist: 0.35,
     normRemixer: 0.15,
   },
   fuseOptions: {
-    threshold: 1.0,      // no internal cutoff — we apply minConfidence ourselves
+    threshold: 1.0, // no internal cutoff — we apply minConfidence ourselves
     ignoreLocation: true,
     distance: 200,
     minMatchCharLength: 2,

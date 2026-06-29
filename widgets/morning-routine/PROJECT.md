@@ -1,6 +1,6 @@
 # Morning Routine — PROJECT.md
 
-A daily checklist widget specifically for morning tasks. The list resets automatically each day so it's always a fresh slate. Designed to be the first thing checked when sitting down in the morning. It should encourage me to complete tasks with positive feedback. 
+A daily checklist widget specifically for morning tasks. The list resets automatically each day so it's always a fresh slate. Designed to be the first thing checked when sitting down in the morning. It should encourage me to complete tasks with positive feedback.
 
 See also: [TODO.md](TODO.md)
 
@@ -13,10 +13,10 @@ See also: [TODO.md](TODO.md)
 - Completion state stored per day so there's a record
 - Minimal UI: large checkboxes, clean layout
 - SQLite tables namespaced `morning_routine_*` in the shared DB
-- Each day's progress is saved in the database and there is 
-- a link to view historical data so i can see how I do over time on each morning task, as well as total percent completion of morning tasks. 
+- Each day's progress is saved in the database and there is
+- a link to view historical data so i can see how I do over time on each morning task, as well as total percent completion of morning tasks.
 
-- Morning tasks would be things like: Chug water, stretch/move around/go outside, take meds, brush teeth/shower, clean facemask, tidy up. 
+- Morning tasks would be things like: Chug water, stretch/move around/go outside, take meds, brush teeth/shower, clean facemask, tidy up.
 - There should be an easy way to add, remove, and rename tasks
 
 ### Explicitly NOT in MVP

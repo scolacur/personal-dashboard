@@ -17,5 +17,3 @@
 ## Sleep Log
 
 - Basic sleep duration tracking (bedtime / wake time)
-
-
