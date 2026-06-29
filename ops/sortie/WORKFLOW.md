@@ -12,8 +12,14 @@
 
 tracker:
   kind: github
-  api_key: $SORTIE_GITHUB_TOKEN          # bot account's fine-grained PAT
+  api_key: $SORTIE_GITHUB_TOKEN          # bot account's classic PAT (public_repo)
   project: $SORTIE_GITHUB_PROJECT         # scolacur/personal-dashboard
+  # AUTHORIZATION GATE: only fetch issues already in an active state. The repo is PUBLIC
+  # (anyone can open an issue) but only write+ collaborators can apply labels — so an
+  # unlabeled stranger issue never matches and never runs. Must include BOTH active labels
+  # (comma = OR in GitHub search), or the reconciler drops the issue the moment the agent
+  # flips it to in-progress.
+  query_filter: 'label:"sortie:queued","sortie:in-progress"'
   # Labels MUST be pre-created in the repo — the adapter does not auto-create them.
   # active_states = states a worker should be running for. in_progress_state MUST be
   # included here, or the reconciler cancels the worker the moment the agent flips the
