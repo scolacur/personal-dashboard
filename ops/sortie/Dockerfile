@@ -30,7 +30,9 @@ RUN apt-get update \
 # Coding agent. Pin @latest -> a fixed version after the pilot.
 RUN npm install -g @anthropic-ai/claude-code@latest
 
-RUN useradd --create-home --uid 1000 sortie
+# uid 1001 — the node base image already uses uid 1000 (its `node` user), so 1000 collides.
+# Whatever uid this is MUST match the chown of the host data/ and workspaces/ dirs.
+RUN useradd --create-home --uid 1001 sortie
 
 COPY --from=sortie /usr/bin/sortie /usr/bin/sortie
 

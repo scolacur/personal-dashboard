@@ -26,7 +26,7 @@ Deploy + configuration runbook. Files in this dir:
 
 ---
 
-## Step 1 — Bot identity 🧑
+## Step 1 — Bot identity 🧑 ✅ DONE (`sortie-bot-55`, Write collaborator, classic `public_repo` PAT, email baked into WORKFLOW.md)
 
 1. Create a new GitHub account for the bot (e.g. `sortie-bot` or `scolacur-sortie`).
    Needs its own email. GitHub ToS allows one free machine account per person.
@@ -46,7 +46,7 @@ Deploy + configuration runbook. Files in this dir:
    (`git config user.email …`) — find it at the bot's GitHub → Settings → Emails
    (`<id>+<user>@users.noreply.github.com`).
 
-## Step 2 — Branch-protection cutover 🤖 (Tank runs once the bot is a collaborator)
+## Step 2 — Branch-protection cutover 🤖 ✅ DONE (verified `{"admins":false,"approvals":1}`)
 
 Switch from the current `enforce_admins:true` / `approvals:0` workaround to the real
 review gate. Pass a **typed JSON body** via `--input -` (so `required_approving_review_count`
@@ -79,28 +79,59 @@ gh api repos/scolacur/personal-dashboard/branches/main/protection \
 > Do this **after** the bot is added (Step 1) so the gate is meaningful. Until then the
 > current protection stays.
 
-## Step 3 — Pre-create the issue labels 🤖 (Tank runs)
-
-The adapter does not create labels. Needed: `sortie:queued`, `sortie:in-progress`,
-`sortie:done`, `sortie:wontfix`. Tank will run `gh label create …` for each.
+## Step 3 — Pre-create the issue labels 🤖 ✅ DONE (`sortie:queued` / `:in-progress` / `:done` / `:wontfix`)
 
 ## Step 4 — Build + deploy on the NAS 🧑
 
-1. Get `ops/sortie/Dockerfile` + `ops/sortie/WORKFLOW.md` onto the NAS (clone the repo
-   or copy the dir). Edit the bot noreply email in `WORKFLOW.md` if not already done.
-2. Build the image (Container Manager or SSH):
-   `docker build -f ops/sortie/Dockerfile -t sortie-dashboard .`
-3. Create the container with:
-   - **Env:** `ANTHROPIC_API_KEY`, `SORTIE_GITHUB_TOKEN` (bot PAT),
-     `SORTIE_GITHUB_PROJECT=scolacur/personal-dashboard`.
-   - **Volumes:** `sortie-data:/home/sortie` (SQLite persistence),
-     `./workspaces:/home/sortie/workspaces`,
-     `./WORKFLOW.md:/home/sortie/WORKFLOW.md:ro`.
-   - **Port:** `7678:7678`.
-   - DSM note: the `--init` flag may be unavailable in Container Manager — omit it; not
-     required. No privileged mode / caps needed.
-4. Decide **which Synology user** runs the container (open deploy decision).
-5. Health check: `curl http://<nas>:7678/readyz` → ready.
+**NAS layout** — base dir holds secrets + runtime state OUTSIDE the repo clone, so
+`git pull` / rebuilds never touch them and they never land in git:
+
+```
+/volume1/docker/personal-dashboard/
+  sortie.env            secrets (chmod 600) — NOT in git
+  data/                 uid 1001 — SQLite db (.sortie.db) + agent state
+  workspaces/           uid 1001 — Sortie's per-issue clones
+  personal-dashboard/   the repo clone (source of truth)
+```
+
+1. **Git on DSM** — not installed by default. DSM → Package Center → install **Git
+   Server** (provides `/usr/bin/git`), then open a fresh SSH session. *(No-install
+   alternative: `curl -L https://github.com/scolacur/personal-dashboard/archive/refs/heads/main.tar.gz | tar xz`
+   into the base dir — extracts to `personal-dashboard-main/`; adjust paths below.)*
+2. **Clone + prep dirs** (the container runs as **uid 1001** — `node:24-slim` already
+   uses 1000 — so its writable dirs must be owned by 1001):
+   ```sh
+   cd /volume1/docker/personal-dashboard
+   git clone https://github.com/scolacur/personal-dashboard.git
+   mkdir -p data workspaces
+   sudo chown -R 1001:1001 data workspaces
+   ```
+3. **`sortie.env`** in the base dir (`chmod 600`), containing:
+   ```sh
+   CLAUDE_CODE_OAUTH_TOKEN=...   # Pro plan via `claude setup-token` (or ANTHROPIC_API_KEY for metered API)
+   SORTIE_GITHUB_TOKEN=...       # bot classic PAT, public_repo scope
+   SORTIE_GITHUB_PROJECT=scolacur/personal-dashboard
+   ```
+4. **Build:**
+   ```sh
+   cd /volume1/docker/personal-dashboard/personal-dashboard
+   sudo docker build -f ops/sortie/Dockerfile -t sortie-dashboard .
+   ```
+5. **Run:**
+   ```sh
+   sudo docker run -d --name sortie --restart unless-stopped \
+     --env-file /volume1/docker/personal-dashboard/sortie.env \
+     -v /volume1/docker/personal-dashboard/data:/home/sortie \
+     -v /volume1/docker/personal-dashboard/workspaces:/home/sortie/workspaces \
+     -v /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/WORKFLOW.md:/home/sortie/WORKFLOW.md:ro \
+     -p 7678:7678 \
+     sortie-dashboard
+   ```
+   DSM note: omit any `--init` flag (may be unavailable in Container Manager); not
+   required. No privileged mode / caps needed.
+6. **Health check:** `curl http://localhost:7678/readyz` → ready; `sudo docker logs -f sortie`.
+7. **Update later:** `git -C /volume1/docker/personal-dashboard/personal-dashboard pull`
+   → rebuild (step 4) → `sudo docker restart sortie`.
 
 ## Step 5 — First pilot ticket 🧑/🤖
 
@@ -115,10 +146,19 @@ The pilot issue already exists: **#2 "Home: empty-state when no widgets register
 
 ## Open decisions (yours)
 
-- Bot account name + email (Step 1).
-- Which Synology user runs Sortie; persistent volume layout / env-file location (Step 4).
+- ~~Bot account name + email~~ → `sortie-bot-55` (done).
+- ~~Volume layout / env-file location~~ → base dir `/volume1/docker/personal-dashboard/` (done, Step 4).
+- Which Synology user runs the container (currently via `sudo`/admin — fine for the pilot).
 - Per-ticket cost/duration budget (soft-block) — tune after the first real run.
 - Concurrency stays at **1** for the pilot (set in `WORKFLOW.md`).
+
+## GUI alternative — Container Manager Project (docker-compose)
+
+Prefer the DSM GUI to the CLI? Use `ops/sortie/docker-compose.yml` instead of the
+`docker build`/`docker run` in Step 4 — same build + env + volumes + port, GUI-managed.
+Container Manager → **Project** → Create → point at the compose file → it builds + runs;
+start/stop/logs/rebuild are all in the UI. Steps 1–3 + the `sortie.env`/dir prep
+(Step 4.1–4.3) are still prerequisites.
 
 ## Flagged / confirm against your Sortie version
 
