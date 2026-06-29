@@ -21,7 +21,7 @@ export function normalize(input: { artist: string; title: string }): NormResult 
   title = fold(title.toLowerCase());
 
   // Extract feat. from title → append to artist
-  const featMatch = title.match(/\s*[\[(]?(?:feat\.?|featuring|ft\.?)\s+([^\])[]+)[\])]?/i);
+  const featMatch = title.match(/\s*[[(]?(?:feat\.?|featuring|ft\.?)\s+([^\])[]+)[\])]?/i);
   if (featMatch) {
     artist = artist + SEP + featMatch[1].replace(/[[\]()]/g, '').trim();
     title = title.replace(featMatch[0], '');

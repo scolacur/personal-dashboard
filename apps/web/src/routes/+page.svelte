@@ -3,7 +3,7 @@
 </script>
 
 <div class="grid">
-  {#each widgets as widget}
+  {#each widgets as widget (widget.route)}
     <a href={widget.route} class="tile">
       <h2>{widget.title}</h2>
       <p>{widget.description}</p>

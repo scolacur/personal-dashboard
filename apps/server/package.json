@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test:matcher": "tsx src/widgets/music-tracker/matcher.fixture.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@dashboard/shared": "*",
@@ -21,6 +21,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.6"
   }
 }

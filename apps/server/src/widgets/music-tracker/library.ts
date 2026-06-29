@@ -111,7 +111,11 @@ export async function scanLibrary(db: Database.Database, libraryPath: string): P
         indexed_at: Date.now(),
       });
 
-      existing ? result.updated++ : result.added++;
+      if (existing) {
+        result.updated++;
+      } else {
+        result.added++;
+      }
     }
   }
 
