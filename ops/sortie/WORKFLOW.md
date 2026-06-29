@@ -15,7 +15,10 @@ tracker:
   api_key: $SORTIE_GITHUB_TOKEN          # bot account's fine-grained PAT
   project: $SORTIE_GITHUB_PROJECT         # scolacur/personal-dashboard
   # Labels MUST be pre-created in the repo — the adapter does not auto-create them.
-  active_states: ["sortie:queued"]          # an open issue with this label is picked up
+  # active_states = states a worker should be running for. in_progress_state MUST be
+  # included here, or the reconciler cancels the worker the moment the agent flips the
+  # issue to in-progress.
+  active_states: ["sortie:queued", "sortie:in-progress"]
   in_progress_state: "sortie:in-progress"   # set when the agent starts
   terminal_states: ["sortie:done", "sortie:wontfix"]
 
