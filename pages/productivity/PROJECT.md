@@ -8,14 +8,14 @@ See also: [TODO.md](TODO.md)
 
 ## 1. Widgets on this page
 
-| Widget | Folder |
-|---|---|
+| Widget          | Folder                                                              |
+| --------------- | ------------------------------------------------------------------- |
 | Morning Routine | [widgets/morning-routine](../../widgets/morning-routine/PROJECT.md) |
-| Reminders | [widgets/reminders](../../widgets/reminders/PROJECT.md) |
-| Habit Log | [widgets/habit-log](../../widgets/habit-log/PROJECT.md) |
-| Pomodoro Timer | [widgets/pomodoro-timer](../../widgets/pomodoro-timer/PROJECT.md) |
-| Diary | [widgets/diary](../../widgets/diary/PROJECT.md) |
-| Vision Board | [widgets/vision-board](../../widgets/vision-board/PROJECT.md) |
+| Reminders       | [widgets/reminders](../../widgets/reminders/PROJECT.md)             |
+| Habit Log       | [widgets/habit-log](../../widgets/habit-log/PROJECT.md)             |
+| Pomodoro Timer  | [widgets/pomodoro-timer](../../widgets/pomodoro-timer/PROJECT.md)   |
+| Diary           | [widgets/diary](../../widgets/diary/PROJECT.md)                     |
+| Vision Board    | [widgets/vision-board](../../widgets/vision-board/PROJECT.md)       |
 
 ---
 
@@ -26,6 +26,7 @@ See also: [TODO.md](TODO.md)
 - No page-level configuration or logic — each widget is self-contained
 
 ## 3. Not in MVP
+
 - Trello board or Linear integration (either direct embed or use API)
 
 ---

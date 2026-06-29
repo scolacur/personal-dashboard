@@ -106,7 +106,7 @@ SQLite is the right choice now. If concurrent agent writes become a bottleneck (
 
 ## Agent job write protocol
 
-For the dashboard to be useful from day one, agent jobs need to write state into SQLite as they run. The lightweight approach: a small helper script or shell function that agents call to update their job row. The agent dashboard doesn't care *how* jobs are orchestrated — only that they write to the table.
+For the dashboard to be useful from day one, agent jobs need to write state into SQLite as they run. The lightweight approach: a small helper script or shell function that agents call to update their job row. The agent dashboard doesn't care _how_ jobs are orchestrated — only that they write to the table.
 
 When n8n or a similar orchestrator is added to the stack, it can be wired to write to these tables instead. The dashboard stays the same.
 
@@ -114,7 +114,7 @@ When n8n or a similar orchestrator is added to the stack, it can be wired to wri
 
 ## Future: Automated maintenance features
 
-These don't depend on the agent UI being built first — they're standalone jobs that would surface *results* in the dashboard.
+These don't depend on the agent UI being built first — they're standalone jobs that would surface _results_ in the dashboard.
 
 **Weekly Privacy Checkup** — Automated job that scans apps, dependencies, npm packages, Chrome extensions, and Docker images for known security issues. Results surface as `agent_errors` entries or inbox notifications.
 

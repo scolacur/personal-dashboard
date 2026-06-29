@@ -35,7 +35,7 @@ export async function scanLibrary(db: Database.Database, libraryPath: string): P
   `);
 
   const getExisting = db.prepare<[string], { mtime: number; size: number }>(
-    'SELECT mtime, size FROM music_tracker_library_files WHERE path = ?'
+    'SELECT mtime, size FROM music_tracker_library_files WHERE path = ?',
   );
 
   const result: ScanResult = { added: 0, updated: 0, skipped: 0 };
@@ -83,9 +83,7 @@ export async function scanLibrary(db: Database.Database, libraryPath: string): P
         rawArtist = meta.common.artist ?? null;
         rawTitle = meta.common.title ?? null;
         rawAlbum = meta.common.album ?? null;
-        durationMs = meta.format.duration != null
-          ? Math.round(meta.format.duration * 1000)
-          : null;
+        durationMs = meta.format.duration != null ? Math.round(meta.format.duration * 1000) : null;
       } catch {
         // Fall back to filename if tags are unreadable
         rawTitle = path.basename(entry, path.extname(entry));
@@ -111,7 +109,11 @@ export async function scanLibrary(db: Database.Database, libraryPath: string): P
         indexed_at: Date.now(),
       });
 
-      existing ? result.updated++ : result.added++;
+      if (existing) {
+        result.updated++;
+      } else {
+        result.added++;
+      }
     }
   }
 

@@ -9,7 +9,7 @@ See also: [TODO.md](TODO.md)
 ## 1. MVP Scope
 
 - Start / pause / reset controls
-- Set to a certain interval length, set # intervals, set break length, and add a label. 
+- Set to a certain interval length, set # intervals, set break length, and add a label.
 - Visual countdown display
 - Audible alert when interval ends (browser `AudioContext` beep or a sound file)
 - State lives entirely in the frontend — no backend or DB needed for MVP

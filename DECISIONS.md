@@ -1,6 +1,6 @@
 # Decision Log
 
-Captures the *why* behind key choices made during planning. Useful when revisiting a decision later — if a choice no longer fits, the original reasoning makes it easier to see what changed and whether to revisit.
+Captures the _why_ behind key choices made during planning. Useful when revisiting a decision later — if a choice no longer fits, the original reasoning makes it easier to see what changed and whether to revisit.
 
 Newest decisions at the top.
 
@@ -11,6 +11,7 @@ Newest decisions at the top.
 **Decision:** The Mission Control / Agent Dashboard UI is a page inside the Personal Dashboard, consuming Symphony's HTTP API (`/api/v1/state` etc.). It owns no data of its own — all agent state, job history, inbox, and errors live in Symphony.
 
 **Reasoning:**
+
 - The primary use case is "one of several views on my daily dashboard." Keeping it in the Dashboard satisfies that without extra deployment overhead.
 - Mission Control is a consumer of Symphony's API, not a part of Symphony. The UI and the service it observes are separate concerns — same as Datadog's dashboard not living inside the services it monitors.
 - A standalone `mission-control` project (the earlier plan in CORE's META-TODOS) is overkill for what is one page calling one API. That decision predated the Dashboard existing as a project.
@@ -27,6 +28,7 @@ Newest decisions at the top.
 **Decision:** Symphony (the autonomous agent loop service) lives in the existing `multi-agent-linear-workflow/` project directory as a standalone Node.js service. It uses Claude Code CLI (`claude --print`) as its coding agent subprocess rather than OpenAI Codex app-server.
 
 **Reasoning:**
+
 - CORE is plain-text identity/config — build artifacts and a running daemon don't belong there. Same reasoning that put Mission Control outside CORE.
 - Symphony can be deployed independently to the NAS without touching CORE's config.
 - Staying on Claude Code keeps the entire stack consistent and avoids maintaining two agent runtimes.
@@ -43,6 +45,7 @@ Newest decisions at the top.
 **Decision:** Not implementing the parallel multi-agent coding workflow yet. For now, agent tasks are triggered manually one at a time via Claude Code CLI.
 
 **What was deferred:** An earlier planning document described a complete autonomous multi-agent architecture for building this codebase:
+
 - A `tasks/` folder of markdown files with YAML frontmatter (`id`, `title`, `status`, `assigned_to`, `priority`) that agents parse to claim work
 - A `git worktree` per agent task, so multiple agents work on isolated branches simultaneously without stepping on each other
 - A Postgres-backed semaphore (integer counter) to cap the number of parallel agents
@@ -51,6 +54,7 @@ Newest decisions at the top.
 - A human-in-the-loop review gate between agent completion and merge
 
 **Why deferred:**
+
 - All of this infrastructure is only worth the complexity once there are enough queued tasks that manual triggering becomes the bottleneck. Right now, manually kicking off one agent at a time is fine.
 - Git worktrees are a real win for concurrent work but add operational overhead (stale worktrees, branch management) that isn't justified yet.
 - The Ntfy + webhook approve/reject loop requires a publicly reachable webhook endpoint, which we don't have on the Synology NAS without Tailscale Funnel or a reverse proxy.
@@ -64,11 +68,13 @@ Newest decisions at the top.
 **Decision:** Not adding n8n to the stack. Agent workflows and cron jobs are triggered by scripts, Claude Code CLI, or the NAS task scheduler. The agent dashboard is orchestrator-agnostic — it reads from `agent_jobs` SQLite tables regardless of what writes to them.
 
 **Why not now:**
+
 - n8n adds a new container, a credential store, and workflow JSON files that need to be maintained alongside the codebase. That's real overhead for a one-person project where most triggers are manual.
 - The agent dashboard data model (D-010-adjacent) was deliberately designed to be agnostic: any process that writes to `agent_jobs` / `agent_errors` / `agent_inbox` works. n8n can be plugged in later without changing the frontend.
 - Webhook-triggered workflows (Spotify/YouTube polling, external event hooks) do need something like n8n. But those aren't being built yet.
 
 **What n8n specifically solves that nothing else does:**
+
 - Visual workflow editor — easier to inspect/modify automation logic without reading code
 - Built-in retry/backoff on external API calls
 - Reliable webhook ingestion with a persistent queue
@@ -85,6 +91,7 @@ Newest decisions at the top.
 **The tension:** Every other widget in this project writes from a single server process — SQLite's serialized writes are fine. The agent dashboard is different: if multiple agents run in parallel (see D-012), they all write job state simultaneously. SQLite's write lock becomes a real bottleneck at that point.
 
 **Why SQLite now anyway:**
+
 - Current usage is one agent at a time, manually triggered. No concurrency issue exists yet.
 - Adding PostgreSQL now means a new Docker service, a new connection layer, and diverging from the rest of the project's data conventions — all for a problem that doesn't exist yet.
 - SQLite to Postgres migration is well-defined: `pg_dump`-style tooling exists, schema is the same, only the driver changes.
@@ -92,6 +99,7 @@ Newest decisions at the top.
 **Migration trigger:** When D-012's parallel agent fan-out is implemented (more than one agent writing `agent_jobs` rows concurrently), migrate the `agent_*` tables to Postgres. Other widget tables can stay in SQLite until there's a reason to move them.
 
 **Migration path when ready:**
+
 1. Add Postgres service to Docker Compose with persistent volume and `.env` credentials
 2. Swap `better-sqlite3` for `pg` (or Drizzle ORM) in the agent-dashboard widget only
 3. Move `agent_jobs`, `agent_errors`, `agent_inbox`, `agent_schedule` tables to Postgres
@@ -104,6 +112,7 @@ Newest decisions at the top.
 **Decision:** Every widget stores data in the shared SQLite DB (`data/dashboard.db`). Tables are prefixed with the widget name (e.g., `habit_log_*`, `morning_routine_*`). No per-widget DB files.
 
 **Reasoning:**
+
 - A single DB file is trivially backed up and mounted in Docker.
 - SQLite supports concurrent reads and serialized writes without any extra service — a separate DB per widget would add filesystem complexity with no benefit at this scale.
 - Table namespacing is enough isolation; cross-widget queries are unlikely and can be discouraged by convention. If it ever matters, SQLite's `ATTACH DATABASE` handles it without breaking the single-file model.
@@ -137,6 +146,7 @@ Newest decisions at the top.
 **Decision:** Two-stage matching. Stage 1: filter library files to those within ±3s of the incoming track's duration. Stage 2: Fuse.js weighted fuzzy score on title (0.50), artist (0.35), remixer (0.15). Threshold 0.65 for "candidate," 0.85 for auto-confirm.
 
 **Reasoning:**
+
 - Duration is gating, not weighted, because a 3-min radio edit and a 7-min extended mix of the same song have identical metadata but are different tracks for a DJ. No amount of title similarity should override a duration mismatch.
 - ±3s rather than ±1s because `music-metadata` reads file duration which can be slightly off for VBR MP3s.
 - Two thresholds (0.65 / 0.85) let strong matches auto-resolve while medium-confidence matches go to manual review. Starts loose; tighten with observed data.
@@ -173,6 +183,7 @@ Better sequencing: see what the metadata matcher actually gets wrong over 2-3 we
 **Decision:** rsync pushes from PC → NAS on a schedule (configured separately on the NAS). The app reads only the NAS copy.
 
 **Reasoning:**
+
 - The app already runs on the NAS — local filesystem reads are fast, no SMB auth in the container.
 - No dependency on the PC being on when the app wants to scan.
 - A stale mirror is acceptable: worst case is a false "not in library," which becomes a manual review.
@@ -187,6 +198,7 @@ Better sequencing: see what the metadata matcher actually gets wrong over 2-3 we
 **Decision:** Detected tracks land in a local SQLite database with a review/approval step. Lidarr API integration is deferred entirely; for MVP there's just a link out to the Lidarr UI.
 
 **Reasoning:**
+
 - Lidarr is album/artist-oriented and uses MusicBrainz for metadata. Mixes, bootlegs, white labels, and a lot of the rare electronic music I track are not in MusicBrainz, so Lidarr can't find them.
 - "Point Lidarr at a custom DB as a source" isn't actually a thing Lidarr supports — its sources are MusicBrainz (metadata) and indexers (downloads). So the originally-considered "Option B" wasn't real.
 - A local queue with manual review fits the actual content type better, and matches my stated preference for confirming replacements anyway.
@@ -203,7 +215,8 @@ Better sequencing: see what the metadata matcher actually gets wrong over 2-3 we
 **Decision:** Backend is Node.js + TypeScript with Fastify. Go is parked for a future widget.
 
 **Reasoning:**
-- I'm learning the language *and* gluing together many external APIs (Spotify, eventually Lidarr, YouTube, SoundCloud, Bandcamp). The Node ecosystem for this domain is dramatically better: `@spotify/web-api-ts-sdk`, `music-metadata`, `node-cron`, and SDKs for everything else.
+
+- I'm learning the language _and_ gluing together many external APIs (Spotify, eventually Lidarr, YouTube, SoundCloud, Bandcamp). The Node ecosystem for this domain is dramatically better: `@spotify/web-api-ts-sdk`, `music-metadata`, `node-cron`, and SDKs for everything else.
 - I already know TypeScript — shared types and tooling with the Svelte frontend is a real win, especially for a dashboard hosting many small apps.
 - Go's strengths (CPU-bound work, concurrency, deployment as a single binary) don't apply here. The workload is I/O-bound API glue.
 

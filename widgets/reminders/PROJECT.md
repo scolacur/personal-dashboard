@@ -76,6 +76,7 @@ No cron jobs needed — delivery is handled by frontend polling.
 ```
 
 Upcoming toggle expands a list below the form:
+
 ```
   → Thu May 28, 9:00 AM — Call dentist      [✕]
   → Fri May 29, 2:00 PM — Check laundry     [✕]

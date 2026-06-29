@@ -1,17 +1,17 @@
 # TODO — Dashboard Shell
 
 ## Scaffold Overall UI Layout
+
 - Nav with Links to All Pages
 - Pages:
-    - Home
-    - Productivity
-    - Health / Fitness
-    - Music Production
-    - DJing
-    - Music Discovery
-    - Event Tracker
-    - Inboxes
-
+  - Home
+  - Productivity
+  - Health / Fitness
+  - Music Production
+  - DJing
+  - Music Discovery
+  - Event Tracker
+  - Inboxes
 
 ## Additional widgets (in roughly the order I want them)
 
@@ -33,6 +33,7 @@
 - Chat (in widgets/chat)
 
 ## UI improvements
+
 - Widgets should be able to be re-sized and re-arranged in the page on an invisible grid system, similar to how Datadog works. When dragging, the gridlines become visible. Widget position should be remembered on page refresh.
 - Widgets should all have a wrench icon in the bottom right corner that, when clicked, opens up that widget's settings view. There should be an animation that makes it look like the widget is a card flipping over, and the settings appear on the back of the card. Settings will be widget-specific.
 

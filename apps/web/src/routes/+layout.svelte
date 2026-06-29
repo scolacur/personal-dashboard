@@ -11,14 +11,22 @@
 </main>
 
 <style>
-  :global(*, *::before, *::after) { box-sizing: border-box; }
+  :global(*, *::before, *::after) {
+    box-sizing: border-box;
+  }
   :global(body) {
     margin: 0;
-    font-family: system-ui, -apple-system, sans-serif;
+    font-family:
+      system-ui,
+      -apple-system,
+      sans-serif;
     background: #0f1117;
     color: #e2e8f0;
   }
-  :global(a) { color: inherit; text-decoration: none; }
+  :global(a) {
+    color: inherit;
+    text-decoration: none;
+  }
 
   .top-nav {
     padding: 1rem 1.5rem;

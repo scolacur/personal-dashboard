@@ -83,6 +83,7 @@ CHAT_MAX_TOKENS=4096
 The longer-term vision: a "Report a bug" mode where the user describes an issue in the chat, and the system packages it up as a task file (see `pages/agent-dashboard/PROJECT.md` task schema) that agents can pick up and work on.
 
 Flow:
+
 1. User selects "Report a bug" mode (or types `/bug`)
 2. The system prompt shifts to a structured bug-capture mode
 3. On completion, the LLM produces a structured task description

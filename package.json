@@ -8,12 +8,24 @@
   "scripts": {
     "build": "npm run build -w packages/shared && npm run build -w apps/web && npm run build -w apps/server",
     "typecheck": "npm run typecheck -w packages/shared && npm run check -w apps/web && npm run typecheck -w apps/server",
-    "verify": "npm run build && npm run typecheck && npm run test:matcher -w apps/server",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test -w apps/server",
+    "verify": "npm run build && npm run typecheck && npm run lint && npm run test",
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "npm run dev -w apps/server",
     "dev:web": "npm run dev -w apps/web"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "@eslint/js": "^9.39.4",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.20.0",
+    "globals": "^15.15.0",
+    "prettier": "^3.9.1",
+    "prettier-plugin-svelte": "^3.5.2",
+    "typescript-eslint": "^8.62.0"
   }
 }

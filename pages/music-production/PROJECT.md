@@ -8,8 +8,8 @@ See also: [TODO.md](TODO.md)
 
 ## 1. Widgets on this page
 
-| Widget | Folder |
-|---|---|
+| Widget                     | Folder                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------- |
 | Acute Strategies Generator | [widgets/acute-strategies-generator](../../widgets/acute-strategies-generator/PROJECT.md) |
 
 ---
@@ -21,6 +21,7 @@ See also: [TODO.md](TODO.md)
 - Stub only; Acute Strategies Generator is the first widget here
 
 ## 3. Follow up items
+
 - Oblique strategies generator
 - Delay time calculator
 - Session Timer
@@ -29,6 +30,7 @@ See also: [TODO.md](TODO.md)
 - Library of jam vids with custom tags i can filter by (instrument, style, rating) (requires local file access)
 - list of in progress songs with todo items
 - Promotion section: For now, just links to my various linktrees for ease in promoting tracks when finished
+
 ---
 
 ## 3. Open Questions

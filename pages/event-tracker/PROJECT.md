@@ -8,11 +8,11 @@ See also: [TODO.md](TODO.md)
 
 ## 1. Widgets on this page
 
-| Widget | Folder |
-|---|---|
+| Widget            | Folder                                                                  |
+| ----------------- | ----------------------------------------------------------------------- |
 | Concert Discovery | [widgets/concert-discovery](../../widgets/concert-discovery/PROJECT.md) |
 | Festival Follower | [widgets/festival-follower](../../widgets/festival-follower/PROJECT.md) |
-| Concert Diary | [widgets/concert-diary](../../widgets/concert-diary/PROJECT.md) |
+| Concert Diary     | [widgets/concert-diary](../../widgets/concert-diary/PROJECT.md)         |
 
 Concert Discovery and Festival Follower are forward-looking (what's coming up). Concert Diary is backward-looking (shows I've attended, with photos and notes).
 
