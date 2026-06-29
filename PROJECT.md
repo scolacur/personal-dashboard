@@ -173,6 +173,7 @@ Exposes one port (default 8080). No external auth — relies on LAN-only access.
 
 - TypeScript `strict: true` everywhere. No `any` without an inline comment justifying it.
 - Shared types between server and web live in `packages/shared` and are imported by both. Don't redeclare.
+- **Styles are SCSS and live in their own files — never inline in a component.** Each `.svelte` component references a sibling SCSS file via `<style lang="scss" src="./Component.scss"></style>`; Svelte still scopes those rules to the component. App-wide tokens/resets stay as `:global(...)` rules (currently in `+layout.scss`). This requires `svelte-preprocess` in `svelte.config.js` (alongside `vitePreprocess`, which silently ignores the `src` attribute), plus `sass`.
 - Database access wrapped in small typed functions (no raw SQL in route handlers). Use `better-sqlite3` prepared statements.
 - Each widget's backend code is self-contained in its folder; no cross-widget imports. If two widgets need to share something, it goes in `packages/shared` or a future `apps/server/src/lib/`.
 - Time stored as unix ms (`number`) in SQLite, never as strings.
