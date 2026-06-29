@@ -1,0 +1,83 @@
+/* ---- design tokens: palette + type ---- */
+:global(:root) {
+  --bg: #dbdbdb;
+  --surface: #f0f0f0;
+  --surface-2: #e6e6e6;
+  --border: #c6c6c6;
+  --text: #2e2e2e;
+  --muted: #585656;
+  --accent: #3f1051; /* primary */
+  --accent-2: #a3a300; /* accent */
+  --on-accent: #f0f0f0;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Sora', system-ui, sans-serif;
+  --radius: 0.5rem;
+}
+:global([data-theme='dark']) {
+  --bg: #242424;
+  --surface: #2e2e2e;
+  --surface-2: #353535;
+  --border: #3d3d3d;
+  --text: #d1d1d1;
+  --muted: #a9a7a7;
+  --accent: #ddaeef; /* primary */
+  --accent-2: #ffff5c; /* accent */
+  --on-accent: #242424;
+}
+
+:global(*, *::before, *::after) {
+  box-sizing: border-box;
+}
+:global(body) {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+:global(a) {
+  color: inherit;
+  text-decoration: none;
+}
+:global(h1, h2, h3) {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.top-nav {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.nav-brand {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.1rem;
+  letter-spacing: -0.01em;
+}
+.theme-toggle {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+}
+.content {
+  padding: 2rem 1.5rem;
+  max-width: 1200px;
+}

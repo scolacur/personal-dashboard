@@ -1,46 +1,35 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { onMount } from 'svelte';
+
   let { children }: { children: Snippet } = $props();
+
+  let theme = $state<'light' | 'dark'>('dark');
+
+  onMount(() => {
+    const t = document.documentElement.getAttribute('data-theme');
+    theme = t === 'light' ? 'light' : 'dark';
+  });
+
+  function toggleTheme() {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', theme);
+    try {
+      localStorage.setItem('theme', theme);
+    } catch {
+      // ignore — storage may be unavailable
+    }
+  }
 </script>
 
 <nav class="top-nav">
   <a href="/" class="nav-brand">Dashboard</a>
+  <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
+    {theme === 'dark' ? '☀' : '☾'}
+  </button>
 </nav>
 <main class="content">
   {@render children()}
 </main>
 
-<style>
-  :global(*, *::before, *::after) {
-    box-sizing: border-box;
-  }
-  :global(body) {
-    margin: 0;
-    font-family:
-      system-ui,
-      -apple-system,
-      sans-serif;
-    background: #0f1117;
-    color: #e2e8f0;
-  }
-  :global(a) {
-    color: inherit;
-    text-decoration: none;
-  }
-
-  .top-nav {
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid #1e2433;
-    display: flex;
-    align-items: center;
-  }
-  .nav-brand {
-    font-weight: 600;
-    font-size: 1.1rem;
-    letter-spacing: -0.01em;
-  }
-  .content {
-    padding: 2rem 1.5rem;
-    max-width: 1200px;
-  }
-</style>
+<style lang="scss" src="./+layout.scss"></style>
