@@ -15,9 +15,9 @@ tracker:
   api_key: $SORTIE_GITHUB_TOKEN          # bot account's fine-grained PAT
   project: $SORTIE_GITHUB_PROJECT         # scolacur/personal-dashboard
   # Labels MUST be pre-created in the repo — the adapter does not auto-create them.
-  active_states: [sortie:queued]          # an open issue with this label is picked up
-  in_progress_state: sortie:in-progress   # set when the agent starts
-  terminal_states: [sortie:done, sortie:wontfix]
+  active_states: ["sortie:queued"]          # an open issue with this label is picked up
+  in_progress_state: "sortie:in-progress"   # set when the agent starts
+  terminal_states: ["sortie:done", "sortie:wontfix"]
 
 polling:
   interval_ms: 30000                       # poll every 30s
@@ -77,14 +77,13 @@ hooks:
     if [ -n "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ] && [ -f "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ]; then
       REVIEW_NOTE="$(cat "$SORTIE_SELF_REVIEW_SUMMARY_PATH")"
     fi
+    PR_BODY=$(printf 'Automated by Sortie for #%s. Self-review: %s.\n\n%s' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_SELF_REVIEW_STATUS" "$REVIEW_NOTE")
     gh pr create \
       --repo scolacur/personal-dashboard \
       --base main \
       --head "sortie/${SORTIE_ISSUE_IDENTIFIER}" \
       --title "sortie: resolve #${SORTIE_ISSUE_IDENTIFIER}" \
-      --body "Automated by Sortie for #${SORTIE_ISSUE_IDENTIFIER}. Self-review: ${SORTIE_SELF_REVIEW_STATUS}.
-
-${REVIEW_NOTE}"
+      --body "$PR_BODY"
 
 db_path: /home/sortie/.sortie.db
 ---
