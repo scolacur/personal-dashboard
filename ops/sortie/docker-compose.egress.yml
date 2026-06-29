@@ -1,0 +1,51 @@
+# Egress-HARDENED Sortie deployment.
+#
+# Sortie runs on an INTERNAL Docker network with no route to the internet. The only way
+# out is the squid sidecar, which permits just the domains in squid.conf. This contains
+# token exfiltration: the agent can read its env tokens but can't send them anywhere
+# off-allowlist. Supersedes docker-compose.yml once verified.
+#
+# claude / git / gh / npm AND Sortie itself (Go, honors ProxyFromEnvironment) all reach
+# the internet via the HTTPS_PROXY below; nothing has a direct route out.
+#
+# Apply: Container Manager Project pointed at this file, or:
+#   sudo docker compose -f ops/sortie/docker-compose.egress.yml up -d
+# (run `docker rm -f sortie` first if the old single container is still around).
+
+networks:
+  egress_out:
+    driver: bridge        # has internet — only the proxy attaches here
+  egress_internal:
+    internal: true        # NO internet route — Sortie lives here
+
+services:
+  egress-proxy:
+    image: ubuntu/squid:latest
+    container_name: sortie-proxy
+    restart: unless-stopped
+    networks: [egress_out, egress_internal]
+    volumes:
+      - /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/squid.conf:/etc/squid/squid.conf:ro
+
+  sortie:
+    image: sortie-dashboard
+    container_name: sortie
+    restart: unless-stopped
+    depends_on: [egress-proxy]
+    networks: [egress_internal]          # internal ONLY — no direct egress
+    env_file:
+      - /volume1/docker/personal-dashboard/sortie.env
+    environment:
+      # upper + lower case so every client (claude, git, gh, npm, Sortie/Go) picks it up
+      - HTTP_PROXY=http://egress-proxy:3128
+      - HTTPS_PROXY=http://egress-proxy:3128
+      - http_proxy=http://egress-proxy:3128
+      - https_proxy=http://egress-proxy:3128
+      - NO_PROXY=localhost,127.0.0.1,egress-proxy
+      - no_proxy=localhost,127.0.0.1,egress-proxy
+    volumes:
+      - /volume1/docker/personal-dashboard/data:/home/sortie
+      - /volume1/docker/personal-dashboard/workspaces:/home/sortie/workspaces
+      - /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/WORKFLOW.md:/home/sortie/WORKFLOW.md:ro
+    ports:
+      - "7678:7678"
