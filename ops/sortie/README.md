@@ -169,4 +169,12 @@ start/stop/logs/rebuild are all in the UI. Steps 1–3 + the `sortie.env`/dir pr
   `SORTIE_GITHUB_PROJECT`; the environment reference also lists generic
   `SORTIE_TRACKER_API_KEY` / `SORTIE_TRACKER_PROJECT`. `WORKFLOW.md` references the
   former via `$`-expansion — confirm your version resolves them.
-- `reactions` block fields — enabled only; see `guides/pr-reactions` if you want to tune.
+- `reactions` block — removed for the pilot (its schema isn't `enabled: bool`).
+
+## Follow-ups (post-pilot)
+
+- [ ] **Re-add the `reactions` block to `WORKFLOW.md`** with the correct schema from
+  Sortie's `guides/pr-reactions` (PR-reaction → follow-up-attempt feedback loop). Removed
+  during setup because `reactions.enabled: true` failed validation (`expected map, got bool`).
+  Defer-after-first-run feature; wire it once the basic loop is proven. *(Tracked broader in
+  CORE META-TODOS → Sortie Integration → "Set up PR Reactions feedback loop".)*
