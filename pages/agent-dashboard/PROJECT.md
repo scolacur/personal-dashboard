@@ -10,9 +10,9 @@ A dedicated page within the Personal Dashboard for monitoring and controlling AI
 
 ### Phase 1 — Core (build first)
 
-**Tasks** — Kanban board: Backlog / In Progress / Review / Done. Sourced from the `agent_jobs` table. This is the primary view for knowing what agents are actually working on.
+**Tasks** — Kanban board: Backlog / In Progress / Review / Done. Sourced from the `agent_jobs` table. This is the primary view for knowing what agents are actually working on. Filterable by project, initiative, or agent.
 
-**Activity Feed** — Chronological event log of agent actions: job started, job completed, error occurred, decision made, etc. Supports filtering by job or agent.
+**Activity Feed** — Chronological event log of agent actions: job started, job completed, error occurred, decision made, artifact produced (eg. a screengrab of a feature working) etc. Supports filtering by job or agent.
 
 **Errors** — Structured error feed from the `agent_errors` table. Each entry shows source, message, timestamp, and the job it came from (if applicable). Errors persist until acknowledged.
 
@@ -23,6 +23,14 @@ A dedicated page within the Personal Dashboard for monitoring and controlling AI
 **Scheduled Jobs** — Every cron job and scheduled task the agent has set up, with last-run status and next scheduled time. Proves proactivity and catches cases where the agent said it scheduled something but didn't.
 
 **Sub-Agent Monitor** — Drill-down view per active agent job: live progress/status, output log, and token usage. Useful when running long multi-step tasks.
+
+**CI/CD Area / Deployment Log** - With each deployment, get a brief summary of what's landed.
+
+### Phase 3 - GUI for Human Levers
+
+**Ability to kill / restart agents & processes that may be stuck.**
+**Ability to update subagent config via GUI** (eg. what model they use)
+**GUI for Issue Generation** - The process won't feel complete until I can use the dashboard's GUI itself to submit issues.
 
 ### Future improvements
 
@@ -35,6 +43,8 @@ A dedicated page within the Personal Dashboard for monitoring and controlling AI
 **Team** — Agent crew: names, roles, org structure, mission statement. More useful once there are multiple distinct agents with defined responsibilities.
 
 **Visual Office** — 2D pixel-art office showing agents at their desks when working, away when idle. Fun, zero operational value, build last.
+
+**Per-widget Issue Creation** - A small button in the corner of each widget causes the widget to visually flip around, revealing a settings / config area, containing a button that allows me to create an issue via prompt. Some issue detail can be pre-populated based on the widget. Do after we have Discord set up. Possible that the easiest thing is that writing out my issue in Github actually just sends a Discord message on my behalf, after we have discord set up. That way the Dashboard itself may not need to have any knowledge of / access to agents. It just posts a message, that message gets picked up by Sortie.
 
 ---
 
