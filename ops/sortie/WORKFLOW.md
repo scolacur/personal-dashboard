@@ -47,8 +47,9 @@ self_review:
     - "npm run verify"                      # build && typecheck && lint && test (41 vitest tests)
   verification_timeout_ms: 180000
 
-reactions:
-  enabled: true                             # PR-reaction feedback loop
+# NOTE: `reactions` (PR-reaction feedback loop) intentionally omitted for the pilot —
+# its config schema isn't `enabled: bool`. Add it back from guides/pr-reactions once the
+# basic loop works; it's a defer-after-first-run feature, not a pilot requirement.
 
 hooks:
   # Clone the Dashboard ONLY into the isolated workspace. Token-in-URL because
