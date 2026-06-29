@@ -66,8 +66,8 @@ hooks:
   #    confirm gh is on PATH (it is, via the Dockerfile) and the flags match.
   after_run: |
     cd "$SORTIE_WORKSPACE"
-    git config user.name  "sortie-bot"
-    git config user.email "REPLACE-WITH-BOT-NOREPLY@users.noreply.github.com"
+    git config user.name  "sortie-bot-55"
+    git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
     git add -A
     if git diff --cached --quiet; then echo "no changes; skipping PR"; exit 0; fi
     git commit -m "sortie(${SORTIE_ISSUE_IDENTIFIER}): automated changes"
