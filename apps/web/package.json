@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "prepare": "svelte-kit sync"
+    "prepare": "svelte-kit sync || true"
   },
   "devDependencies": {
     "@dashboard/shared": "*",
