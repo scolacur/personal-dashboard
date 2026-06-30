@@ -13,7 +13,7 @@
 
 ## Sortie Integration
 
-**📌 Review-fix continuation may lack inline-comment context** (flagged 2026-06-30, not yet investigated). On the review-feedback continuation for PR #23, the agent misimplemented the request — asked to change a `+` to `&` in a comment, it added a whole new comment elsewhere instead. Sortie logged `comment_count:1` but the agent likely only received the comment *body*, not the *file/line* — i.e. the `{{ range .review_comments }}` template fields (`file`/`start_line`/`end_line`) aren't populated, or the agent isn't reading `gh pr view --comments` first to locate the change. Investigate the review-feedback context plumbing (Sortie's `review_comments` payload vs. the WORKFLOW.md continuation prompt). Overlaps "PR change-request follow-up" below.
+**📌 Give `packages/shared` its own vitest setup** (flagged 2026-06-30). Shared logic currently gets tested *indirectly* from `apps/server/src` (the #26 agent's workaround, since `packages/shared` has no test runner and the root `verify` only runs server tests). Adding vitest to `shared` needs a devDependency — out of scope for unattended bots, so it needs a human/explicit issue. Until then shared logic lives untested-in-place.
 
 **Test the egress work** Also, see if this means that the bots can't do research or read docs, and whether this is an issue. Maybe need some sort of way for it to ask permission to view a certain domain, via the ask_human command when we build that. And I can 1-time or permanently allowlist stuff. Basically re-creating the permissions check from Claude code but moving it to Discord (or wherever that communication happens) in a way that I get notified so that I don't block.
 
@@ -34,11 +34,14 @@
 
 **Brain-dump → ticket skill/template** Turn stream-of-consciousness feature requests into proper goal/acceptance-criteria/scope issues fast. Reuse `to-issues`/`to-prd`/`triage` skills or a GitHub issue template. Overlaps "GUI for Issue Generation" and "Ensure bots write tests via template".
 
-**PR change-request follow-up** Sortie should notice when I request changes on a PR and continue editing that same PR (PR-reactions / re-dispatch on review). Tried once; the bot didn't notice. Relates to re-adding the `reactions` block (removed during setup — see `ops/sortie/README.md` follow-ups).
+**PR change-request follow-up** — ✅ RESOLVED 2026-06-30 (see Shipped). The `reactions.review_comments` block dispatches a continuation, and the prompt now reliably detects the follow-up (STEP 0 / D-017) and fetches the review body. Verified on #26/PR #27 (summary review → agent edited the function + test).
 
 **File-access allowlist** (structural control) Bound what the agent may read/write beyond the container isolation already in place. Deferred CORE-harness control; also tracked in CORE META-TODOS.
 
 ### Shipped 2026-06-30
+- ✅ **Review-fix continuation fixed + VERIFIED** (`3fa4c2e`; D-017). Replaced the dead `{{ if .run.is_continuation }}` gate (false for review-reaction dispatches) with an unconditional **STEP 0** that detects an existing PR and fetches the feedback explicitly (`gh api .../reviews` for the summary body + inline comments + own prior diff), then edits rather than appends. Verified on #26/PR #27: summary review → `/reviews` fetched, agent edited the single function + its test, no duplication.
+- ✅ **Tests required for feature work** (`3fa4c2e`) — agent writes vitest tests for new/changed logic and self-checks its diff (continuations too). (`packages/shared` test-runner gap tracked above.)
+- ✅ **Descriptive PR titles + commit messages** (`d3010a4`) — conventional-commit style, no more `sortie: resolve #N`; safety-net derives its title from the commit subject.
 - ✅ **P1 hand-off fix MERGED + VERIFIED end-to-end** (PR #19; D-016). Agent does push/PR/scm.json/relabel in-turn (relabel last); `after_run`→safety-net; `before_run` regenerates scm.json; watchdog `rescue-labels` job. Proven on #22/PR #23: agent did it in-turn (item 1), clean `handoff transition succeeded` no `context canceled` (item 2), review-fix continuation works (item 3).
 - ✅ **3rd exit-128 cause fixed** (`a247b9b`) — Sortie runs `after_create` with CWD=`$SORTIE_WORKSPACE`; the `rm -rf` deleted the shell's own cwd → `git clone` failed at getcwd(). Fix: `cd /home/sortie` before the rm.
 - ✅ **Agent `npm ci` before verify** (`ed1ca4d`) — fresh clone had no node_modules so the in-turn verify hit `tsc: not found`; agents were shipping unverified. (npm registry already allowlisted.)

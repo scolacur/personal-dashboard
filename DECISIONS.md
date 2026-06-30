@@ -6,6 +6,21 @@ Newest decisions at the top.
 
 ---
 
+## D-017: Sortie follow-up detection is state-based (existing PR), not `.run.is_continuation`
+
+**Decision:** The agent prompt detects "this is a review-feedback / conflict-rework follow-up" by checking whether an **open PR already exists for the branch** (`gh pr view sortie/<id>`), NOT by Sortie's `.run.is_continuation` flag. On a follow-up the agent must fetch all feedback explicitly — `gh api .../pulls/<n>/reviews` (the top-level "Request changes" summary body), `.../pulls/<n>/comments` (inline, file+line), and `gh pr view --comments` — read its own prior diff, and **edit its existing work rather than append**. Two related conventions ride along: Sortie-authored changes must include **vitest tests for new/changed logic** (self-checked against the diff, continuations included), and PRs/commits get **descriptive conventional-commit titles**, never `sortie: resolve #N`.
+
+**Reasoning:**
+
+- **`.run.is_continuation` is false for the dispatches that matter.** Review-reaction and conflict-rework runs arrive looking like a fresh dispatch. The prior prompt gated the *entire* review-feedback section (and the nested `{{ range .review_comments }}`) behind `{{ if .run.is_continuation }}`, so it was dead code on exactly those paths. Confirmed from agent transcripts (2026-06-30, issue #22): the continuation banner rendered **0×** across all sessions, the agent never saw the feedback, and re-ran the issue from scratch — visibly "adding" instead of "fixing".
+- **A summary "Request changes" body isn't surfaced by `gh pr view --comments`** — it must be fetched via the reviews API. The fallback "read the conversation yourself" was both gated-out and insufficient.
+- **"Does my PR exist?" is the reliable, version-independent signal** — it doesn't depend on Sortie internals, and it covers conflict-rework (same false-`is_continuation` problem) for free.
+- **Tests + descriptive titles** raise the quality bar for unattended work: untested logic is treated as incomplete, and `Closes #N` carries the issue link so titles are free to describe the change.
+
+**Implications:** Builds on D-016 (the agent already owns the in-turn hand-off). **VERIFIED end-to-end 2026-06-30 on #26/PR #27**: a top-level summary review drove a continuation that fetched the review body (`/reviews` API called, feedback in context) and **edited** the single function + its existing test (no duplication) — the exact reversal of the pre-fix flail. Open follow-up: `packages/shared` has no vitest config, so shared logic is currently tested indirectly from `apps/server/src` (agent's documented workaround); giving `shared` its own test setup needs a devDep (a human/explicit issue, not unattended work).
+
+---
+
 ## D-016: Sortie hand-off is done by the agent in-turn, not by `after_run`
 
 **Decision:** The durable end-of-run hand-off for a Sortie issue — `git push`, `gh pr create`, writing `.sortie/scm.json`, and relabeling `sortie:in-progress → sortie:in-review` — is performed by the **coding agent during its own turn** (a "Finish" protocol in the `WORKFLOW.md` prompt body), not by the `after_run` workspace hook. `after_run` is demoted to an idempotent **safety-net** that only completes a hand-off the agent didn't finish. The label transition is additionally backstopped by an in-repo Action (`sortie-watchdog.yml` `rescue-labels` job).
