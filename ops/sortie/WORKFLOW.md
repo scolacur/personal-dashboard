@@ -27,6 +27,11 @@ tracker:
   active_states: ["sortie:queued", "sortie:in-progress"]
   in_progress_state: "sortie:in-progress"   # set when the agent starts
   terminal_states: ["sortie:done", "sortie:wontfix"]
+  # After a SUCCESSFUL run, Sortie moves the issue here — OUT of active_states and out of
+  # query_filter — so it is NOT re-dispatched while its PR awaits review. Without this, a
+  # merged issue stays "active" and gets re-run, opening duplicate PRs + burning quota.
+  # Must not appear in active_states or terminal_states. Re-label to sortie:queued to re-run.
+  handoff_state: "sortie:in-review"
 
 polling:
   interval_ms: 30000                       # poll every 30s
@@ -87,7 +92,9 @@ hooks:
     if [ -n "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ] && [ -f "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ]; then
       REVIEW_NOTE="$(cat "$SORTIE_SELF_REVIEW_SUMMARY_PATH")"
     fi
-    PR_BODY=$(printf 'Automated by Sortie for #%s. Self-review: %s.\n\n%s' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_SELF_REVIEW_STATUS" "$REVIEW_NOTE")
+    # "Closes #N" so merging the PR auto-closes the issue (belt-and-suspenders terminal
+    # transition alongside handoff_state — a closed issue also drops out of candidates).
+    PR_BODY=$(printf 'Closes #%s\n\nAutomated by Sortie for #%s. Self-review: %s.\n\n%s' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_SELF_REVIEW_STATUS" "$REVIEW_NOTE")
     gh pr create \
       --repo scolacur/personal-dashboard \
       --base main \

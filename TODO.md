@@ -27,8 +27,26 @@
 
 **GUI for Issue Generation** Do after we have Discord set up. The process won't feel complete until I can use the dashboard's GUI itself to submit issues. Possible that the easiest thing is that writing out my issue in Github actually just sends a Discord message on my behalf, after we have discord set up. That way the Dashboard itself may not need to have any knowledge of / access to agents. It just posts a message, that message gets picked up by Sortie.
 
+**Brain-dump → ticket skill/template** Turn stream-of-consciousness feature requests into proper goal/acceptance-criteria/scope issues fast. Reuse `to-issues`/`to-prd`/`triage` skills or a GitHub issue template. Overlaps "GUI for Issue Generation" and "Ensure bots write tests via template".
+
+**PR change-request follow-up** Sortie should notice when I request changes on a PR and continue editing that same PR (PR-reactions / re-dispatch on review). Tried once; the bot didn't notice. Relates to re-adding the `reactions` block (removed during setup — see `ops/sortie/README.md` follow-ups).
+
+**File-access allowlist** (structural control) Bound what the agent may read/write beyond the container isolation already in place. Deferred CORE-harness control; also tracked in CORE META-TODOS.
+
+### Shipped 2026-06-29
+- ✅ **Sortie deployed to the NAS** (Container Manager, egress-hardened compose) — full loop proven end-to-end (PR #4).
+- ✅ **Egress allowlist** (squid sidecar + internal Docker network) — token exfil structurally contained; verified (direct egress BLOCKED, GitHub 200, arbitrary host 403). `.datadoghq.com` allowlisted.
+- ✅ **query_filter authorization gate** — repo is public, so only issues a collaborator has labeled get run.
+- ✅ **handoff_state (`sortie:in-review`) + "Closes #N"** — fixes the infinite-re-run / duplicate-PR bug (a merged/successful issue stayed "active", got re-dispatched → dup PR #5 + burned quota). Successful run now exits the active set; merge auto-closes the issue.
+
 
 ## Infra
+
+**Retry cap / max-attempts** A persistently-failing issue retried ~43× (every 5 min), burning Pro quota. Find/set Sortie's max-attempts so failures stop looping and surface instead of grinding.
+
+**Diagnose #8 (Pomodoro) clone failure** `after_create` git clone exits 128 (looped to attempt 43) — likely a stale workspace dir not cleaned on rollback. Parked; fix before re-queueing.
+
+**Pro usage-limit handling** The retry storm exhausted the Claude Pro quota → instant `turn_failed`. Monitor usage and/or add an API-key fallback or guard (ties into RAM/CPU limits below).
 
 **CI/CD Pipeline** - Don't require me to manually pull from `main` and re-create the container each time there's a code push.
 
