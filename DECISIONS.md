@@ -6,6 +6,20 @@ Newest decisions at the top.
 
 ---
 
+## D-015: Widget.svelte is the reusable card primitive; flip state is local
+
+**Decision:** `apps/web/src/lib/Widget.svelte` is the single reusable card shell for all widgets. It owns flip state internally (`$state(false)`) and handles the CSS 3D flip animation. Consumers pass a `name` prop (used on the rear panel) and a `children` snippet for the front content.
+
+**Reasoning:**
+
+- Centralizing card chrome (border, background, border-radius, flip button) in one component prevents drift as more widgets are added.
+- Flip state is ephemeral per-card UI state — no reason to lift it to a store or prop.
+- The rear panel is a stub for now; settings will be added per-widget via a named snippet or slot in a future issue.
+
+**Implications:** The home-page tile grid wraps each `WidgetMeta` entry in a `<Widget name={widget.title}>` and passes an `<a>` link as the front content. Future widget pages (full-page views) may or may not use this component — it's designed for the dashboard grid but not restricted to it.
+
+---
+
 ## D-014: Mission Control UI lives in Personal Dashboard; data owned by Symphony
 
 **Decision:** The Mission Control / Agent Dashboard UI is a page inside the Personal Dashboard, consuming Symphony's HTTP API (`/api/v1/state` etc.). It owns no data of its own — all agent state, job history, inbox, and errors live in Symphony.

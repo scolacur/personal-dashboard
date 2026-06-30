@@ -51,6 +51,7 @@
 
 **Pro usage-limit handling** The retry storm exhausted the Claude Pro quota → instant `turn_failed`. Monitor usage and/or add an API-key fallback or guard (ties into RAM/CPU limits below).
 
+
 **CI/CD Pipeline** - Don't require me to manually pull from `main` and re-create the container each time there's a code push.
 
 **RAM & CPU Monitor / usage limits** - The NAS is not that powerful of a machine. Ensure the operation doesn't grow boundlessly and impact other processes of the machine. May need to set limits on the container or image/process itself from within Synology.

@@ -1,50 +1,71 @@
 .widget {
-  perspective: 1000px;
+  position: relative;
+  perspective: 1200px;
 }
 
 .widget-inner {
-  display: grid;
+  position: relative;
   transform-style: preserve-3d;
-  transition: transform 0.5s ease;
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &.flipped {
+    transform: rotateY(180deg);
+  }
 }
 
-.flipped .widget-inner {
-  transform: rotateY(180deg);
-}
-
-.widget-front,
-.widget-rear {
-  grid-area: 1 / 1;
+.widget-face {
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  padding: 1.5rem;
-  padding-bottom: 3.5rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  position: relative;
-  min-height: 10rem;
+  padding: 1.5rem;
+  padding-bottom: 3rem;
+  transition: border-color 0.15s;
+
+  &.back {
+    position: absolute;
+    inset: 0;
+    transform: rotateY(180deg);
+    background: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
 }
 
-.widget-rear {
-  transform: rotateY(180deg);
+.back-name {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.back-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .flip-btn {
   position: absolute;
   bottom: 0.75rem;
   right: 0.75rem;
-  width: 2rem;
-  height: 2rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  cursor: pointer;
+  z-index: 1;
   display: grid;
   place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
   font-size: 1rem;
   line-height: 1;
+  cursor: pointer;
   padding: 0;
   transition:
     border-color 0.15s,
@@ -52,20 +73,6 @@
 
   &:hover {
     border-color: var(--accent);
-    background: var(--surface);
+    background: var(--surface-2);
   }
-}
-
-.rear-name {
-  font-family: var(--font-display);
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin: 0 0 0.25rem;
-}
-
-.rear-hint {
-  margin: 0;
-  font-size: 0.875rem;
-  color: var(--muted);
 }
