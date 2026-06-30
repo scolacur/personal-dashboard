@@ -1,11 +1,11 @@
-.widget-scene {
+.widget {
+  position: relative;
   perspective: 900px;
 }
 
-.widget-card {
-  position: relative;
+.widget-inner {
   transform-style: preserve-3d;
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 
   &.flipped {
     transform: rotateY(180deg);
@@ -13,50 +13,38 @@
 }
 
 .widget-face {
-  padding: 1.5rem;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  position: relative;
-}
+  padding: 1.5rem;
+  padding-bottom: 3rem;
 
-.widget-back {
-  position: absolute;
-  inset: 0;
-  transform: rotateY(180deg);
-}
-
-.rear-content {
-  padding-bottom: 2rem;
-}
-
-.rear-title {
-  display: block;
-  font-family: var(--font-display);
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin-bottom: 0.4rem;
-}
-
-.rear-hint {
-  margin: 0;
-  font-size: 0.875rem;
-  color: var(--muted);
+  &.back {
+    position: absolute;
+    inset: 0;
+    transform: rotateY(180deg);
+    background: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
 }
 
 .flip-btn {
   position: absolute;
-  bottom: 0.625rem;
-  right: 0.625rem;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  z-index: 1;
   width: 28px;
   height: 28px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--surface);
+  color: var(--text);
   font-size: 1rem;
   line-height: 1;
   cursor: pointer;
@@ -64,10 +52,22 @@
   place-items: center;
   transition:
     border-color 0.15s,
-    color 0.15s;
+    background 0.15s;
 
   &:hover {
     border-color: var(--accent);
-    color: var(--accent);
   }
+}
+
+.back-name {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.back-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
