@@ -1,4 +1,13 @@
-# Sortie stuck-issue watchdog (LAYER 1 — escalation).
+# Sortie stuck-issue watchdog (LAYER 1 — escalation) + label-rescue (P1 hand-off backstop).
+#
+# This file runs TWO independent jobs on the same schedule:
+#   • detect-stuck   — escalates issues stalled in an active state to sortie:stuck (below).
+#   • rescue-labels  — backstops the P1 hand-off race: when Sortie cancels the worker
+#     context on a needs-human-review exit, BOTH the after_run hook AND the handoff label
+#     transition can die (`context canceled`), leaving a real, open sortie/* PR whose issue
+#     has NO sortie:* state label — invisible to review automation. The agent now sets
+#     sortie:in-review itself in-turn (WORKFLOW.md "Finish"); this job is the belt to its
+#     suspenders, catching any label-less issue that still has an open sortie/* PR.
 #
 # WHY THIS EXISTS: Sortie has several failure modes that leave an issue SILENTLY
 # PARKED in an active state with no human signal — it just stops, invisibly:
@@ -55,7 +64,8 @@ concurrency:
 
 permissions:
   contents: read
-  issues: write        # only to swap the state label + comment on Sortie's own issues
+  issues: write        # swap the state label + comment on Sortie's own issues
+  pull-requests: read  # rescue-labels reads open sortie/* PRs
 
 jobs:
   detect-stuck:
@@ -140,3 +150,50 @@ jobs:
               gh issue comment "$N" --repo "$REPO" --body "$BODY"
             done
           done
+
+  # ── LABEL-RESCUE: a real open sortie/* PR whose issue lost its state label ──────────
+  # P1 hand-off backstop. The agent self-relabels to sortie:in-review in-turn, but if both
+  # that and Sortie's handoff transition lost the race (context canceled) the issue can land
+  # with NO sortie:* state label while its PR is open and waiting — invisible to the review
+  # reactions AND to detect-stuck (which only watches in-progress/queued). This puts it back
+  # into sortie:in-review so the review loop and a human can see it. Idempotent: an issue
+  # that already carries ANY sortie:* label is left untouched (queued re-runs, in-progress is
+  # detect-stuck's job, awaiting-human is intentional, in-review is already correct).
+  rescue-labels:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Set sortie:in-review on label-less issues that have an open sortie/* PR
+        run: |
+          set -euo pipefail
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
+          [ -z "$DRY_RUN" ] && DRY_RUN="false"
+
+          # Open PRs whose head branch is sortie/<issue> — only Sortie/the bot creates these.
+          gh pr list --repo "$REPO" --state open --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("sortie/")) | .headRefName' \
+          | while read -r BRANCH; do
+              [ -z "$BRANCH" ] && continue
+              N="${BRANCH#sortie/}"
+              # Only act on a real issue number.
+              case "$N" in (*[!0-9]*|'') echo "skip non-numeric branch $BRANCH"; continue;; esac
+
+              # Does the issue already carry any sortie:* state label?
+              HAS_STATE="$(gh issue view "$N" --repo "$REPO" --json labels \
+                --jq '[.labels[].name | select(startswith("sortie:"))] | length' 2>/dev/null || echo "ERR")"
+              if [ "$HAS_STATE" = "ERR" ]; then
+                echo "#$N: could not read labels (closed/missing?) — skip"; continue
+              fi
+              if [ "$HAS_STATE" != "0" ]; then
+                echo "#$N already has a sortie:* label — leave it"; continue
+              fi
+
+              echo "#$N has open PR $BRANCH but NO sortie:* label — rescue to sortie:in-review"
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "  dry_run: would add sortie:in-review to #$N"; continue
+              fi
+              gh issue edit "$N" --repo "$REPO" --add-label "sortie:in-review"
+              gh issue comment "$N" --repo "$REPO" --body "$(printf '🔁 **Sortie label-rescue**: this issue had an open PR (\`%s\`) but no `sortie:*` state label — the hand-off transition was lost to a canceled worker context. Restored to `sortie:in-review`.' "$BRANCH")"
+            done

@@ -20,7 +20,7 @@ On the agent's `needs-human-review` exit, Sortie cancels the worker context, whi
 
 **Token exposure reduction**
 
-**ask_human functionality**
+**ask_human functionality** — ⚠️ BUILT + on `main` (2026-06-30), live-verification deferred. `sortie-ask-human.yml` (owner reply on `sortie:awaiting-human` → re-queue) + WORKFLOW.md ask/resume protocol + `sortie:awaiting-human` label all shipped. Still TODO: (a) verify the round-trip with a real Sortie run (agent can `gh` mid-turn, self-relabel survives the reconciler, re-queue resumes vs restarts); (b) Discord webhook forwarding. The max_sessions silent-park gap below is now covered by the watchdog (capped issue → `sortie:stuck` + @mention).
 - NOTE (2026-06-29): when `agent.max_sessions` is exhausted, Sortie **stops dispatching but does NOT move the issue to a failed state or notify me** — it silently parks (still labeled, just never re-dispatched). Token-burn is bounded, but a stuck issue is invisible until I happen to look. **Determine the right behavior:** likely (a) transition the issue to a `sortie:failed` terminal label so it's visibly dead and drops out of candidates, AND (b) ping me on exhaustion (Discord/`ask_human`). Sortie has no auto-transition on exhaustion, so this needs a mechanism — an `after_run`/hook check on `SORTIE_ATTEMPT` vs the cap, or Sortie's `notifications` config. Ties into Discord + retry-cap items.
 
 **Discord Integration** - both for `ask_human` but also as a way for me to submit issues
@@ -39,6 +39,13 @@ On the agent's `needs-human-review` exit, Sortie cancels the worker context, whi
 
 **File-access allowlist** (structural control) Bound what the agent may read/write beyond the container isolation already in place. Deferred CORE-harness control; also tracked in CORE META-TODOS.
 
+### Shipped 2026-06-30
+- ✅ **Exit-128 stuck-loop root-caused + fixed** — three causes: (1) `after_create` didn't wipe the persistent per-issue workspace → `git clone` into a non-empty dir = exit 128 (`669d36b`); (2) hooks ran under a stripped env where `export …_proxy` didn't reach git/gh on the egress-internal network → pass proxy inline per command (`3f07151`); (3) single-file bind-mount inode trap meant `git pull` didn't update the in-container hook until `--force-recreate` (the `sortie-refresh` alias). #6 and #8 both ran clean afterward.
+- ✅ **`verify` enforced as a required status check on `main`** (`contexts:["verify"]`, `strict:false`; Sortie Step-2 protection preserved — check ADDED, not replaced).
+- ✅ **CI/CD follow-ups** — library-mount-path runbook prep, GHA action version bumps (no more Node 20 deprecation warnings).
+- ✅ **Sortie watchdog (Layer 1)** — `sortie-watchdog.yml`: `queued`>20m / `in-progress`>120m → `sortie:stuck` + @mention; surfaces all 3 silent-park modes (prep-loop, max_sessions cap, restart-orphan).
+- 🔬 **#6 → PR #17 (merged: reusable Widget + 3D flip)**; **#8 → PR #18 (open, `sortie:in-review`: Pomodoro)** — full pipeline proven end-to-end. PR #18 awaiting Steve's review.
+
 ### Shipped 2026-06-29
 - ✅ **Sortie deployed to the NAS** (Container Manager, egress-hardened compose) — full loop proven end-to-end (PR #4).
 - ✅ **Egress allowlist** (squid sidecar + internal Docker network) — token exfil structurally contained; verified (direct egress BLOCKED, GitHub 200, arbitrary host 403). `.datadoghq.com` allowlisted.
@@ -48,13 +55,9 @@ On the agent's `needs-human-review` exit, Sortie cancels the worker context, whi
 
 ## Infra
 
-**Retry cap / max-attempts** A persistently-failing issue retried ~43× (every 5 min), burning Pro quota. Find/set Sortie's max-attempts so failures stop looping and surface instead of grinding.
-
-**Diagnose #8 (Pomodoro) clone failure** `after_create` git clone exits 128 (looped to attempt 43) — likely a stale workspace dir not cleaned on rollback. Parked; fix before re-queueing.
+**Retry cap / max-attempts** — ⚠️ PARTIALLY ADDRESSED (2026-06-30). The ~43× storm's root causes (exit-128 prep-retry loop) are fixed, and capped/parked issues are now made *visible* by `sortie-watchdog` (`sortie:stuck` + @mention) instead of silently grinding. Still open if wanted: a true per-issue max-attempts ceiling (Sortie's `max_sessions:3` caps agent sessions but not workspace-prep retries).
 
 **Pro usage-limit handling** The retry storm exhausted the Claude Pro quota → instant `turn_failed`. Monitor usage and/or add an API-key fallback or guard (ties into RAM/CPU limits below).
-
-**CI/CD Pipeline** - Don't require me to manually pull from `main` and re-create the container each time there's a code push.
 
 **RAM & CPU Monitor / usage limits** - The NAS is not that powerful of a machine. Ensure the operation doesn't grow boundlessly and impact other processes of the machine. May need to set limits on the container or image/process itself from within Synology.
 
