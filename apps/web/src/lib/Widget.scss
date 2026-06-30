@@ -1,6 +1,6 @@
 .widget {
   position: relative;
-  perspective: 900px;
+  perspective: 1200px;
 }
 
 .widget-inner {
@@ -35,31 +35,6 @@
   }
 }
 
-.flip-btn {
-  position: absolute;
-  bottom: 0.75rem;
-  right: 0.75rem;
-  z-index: 1;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-
-  &:hover {
-    border-color: var(--accent);
-  }
-}
-
 .back-name {
   font-family: var(--font-display);
   font-size: 1.25rem;
@@ -71,4 +46,30 @@
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.flip-btn {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
 }
