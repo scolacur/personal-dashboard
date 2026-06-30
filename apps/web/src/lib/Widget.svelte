@@ -1,3 +1,4 @@
+<!-- Reusable dashboard widget card with 3D flip animation. Renders a front face (title, description, nav link) and a rear face. -->
 <script lang="ts">
   let {
     title,
