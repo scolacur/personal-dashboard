@@ -1,0 +1,128 @@
+.pomodoro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  padding: 2rem 1rem;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.25rem;
+}
+
+.mode-tab {
+  padding: 0.375rem 0.875rem;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+
+  &:hover {
+    color: var(--text);
+  }
+
+  &.active {
+    background: var(--surface);
+    color: var(--accent);
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+}
+
+.timer-display {
+  font-family: var(--font-display);
+  font-size: 5rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  line-height: 1;
+  transition: color 0.3s;
+
+  &.running {
+    color: var(--accent);
+  }
+}
+
+.session-dots {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: transparent;
+  transition: background 0.2s;
+
+  &.filled {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+.session-count {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-left: 0.25rem;
+}
+
+.controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.btn {
+  padding: 0.5rem 1.25rem;
+  border-radius: var(--radius);
+  font-size: 0.9375rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  min-width: 7rem;
+
+  &:hover:not(:disabled) {
+    opacity: 0.88;
+  }
+}
+
+.btn-secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+}
