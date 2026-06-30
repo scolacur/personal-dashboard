@@ -73,12 +73,13 @@ Reuse the existing base dir from the Sortie runbook:
 ```sh
 cd /volume1/docker/personal-dashboard/personal-dashboard
 git pull                       # gets docker/docker-compose.nas.yml
-mkdir -p data                  # SQLite + logs volume (persists across recreates)
+mkdir -p data                  # repo-root data/ (gitignored): SQLite + logs, persists
 ```
 
-Create `/volume1/docker/personal-dashboard/personal-dashboard/.env` (next to the
-compose, `chmod 600`) — the app's runtime env (PORT=8080, DATA_DIR=/data, plus any
-widget secrets). See `.env.example`.
+Create the repo-root `.env` (`/volume1/docker/personal-dashboard/personal-dashboard/.env`,
+`chmod 600`) — gitignored, the app's runtime env (PORT=8080, DATA_DIR=/data, plus any
+widget secrets). The compose mounts `../data` + `../.env` relative to `docker/`, i.e.
+the repo root. See `.env.example`.
 
 ### Step 2 — Bring it up 🧑
 
