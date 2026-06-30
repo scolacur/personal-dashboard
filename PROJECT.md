@@ -163,7 +163,7 @@ Single image, multi-stage build:
 `docker-compose.yml` mounts:
 
 - `./data:/data` — SQLite file, logs
-- `/volume1/music/dj-library-mirror:/library:ro` — DJ library (read-only from container's perspective; rsync from PC populates this via a separate scheduled task on the NAS)
+- `/volume1/music/dj-library/tracks:/library:ro` — DJ library (read-only from container's perspective; rsync from PC populates this via a separate scheduled task on the NAS)
 
 Exposes one port (default 8080). No external auth — relies on LAN-only access.
 
