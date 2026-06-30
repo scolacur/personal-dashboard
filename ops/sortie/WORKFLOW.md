@@ -220,11 +220,16 @@ hooks:
     # "Closes #N" so merging the PR auto-closes the issue (a closed issue also drops out
     # of candidates, belt-and-suspenders alongside the in-review hand-off).
     PR_BODY=$(printf 'Closes #%s\n\nAutomated by Sortie for #%s (completed by the after_run safety-net — the agent turn ended before finishing hand-off).' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_ISSUE_IDENTIFIER")
+    # Derive the title from the agent's last commit subject (now a descriptive
+    # conventional-commit message, per the Finish step) so even the fallback PR is
+    # informative. Only fall back to the generic title if there's no commit subject.
+    TITLE="$(git log -1 --pretty=%s 2>/dev/null)"
+    [ -z "$TITLE" ] && TITLE="sortie: resolve #${SORTIE_ISSUE_IDENTIFIER}"
     GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr create \
       --repo scolacur/personal-dashboard \
       --base main \
       --head "$BRANCH" \
-      --title "sortie: resolve #${SORTIE_ISSUE_IDENTIFIER}" \
+      --title "$TITLE" \
       --body "$PR_BODY" || true
     PR_NUMBER="$(GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || echo "")"
     SHA="$(git rev-parse HEAD)"
@@ -420,13 +425,15 @@ cd "$SORTIE_WORKSPACE"
    cannot fix it within scope, prefer `ask_human` over shipping a red PR. (`npm` honors the
    `HTTPS_PROXY` already set in your env — no extra proxy config needed.)
 
-2. **Commit everything.** If there is nothing to commit, you made no changes — do NOT open
-   a PR or relabel; either use `ask_human` or leave the issue as-is and end your turn.
+2. **Commit everything** with a clear, descriptive message in conventional-commit style (the
+   same summary you'll use for the PR title — e.g. `feat(music-tracker): add Spotify playlist
+   poller`), NOT "automated changes". If there is nothing to commit, you made no changes — do
+   NOT open a PR or relabel; either use `ask_human` or leave the issue as-is and end your turn.
    ```sh
    git config user.name  "sortie-bot-55"
    git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
    git add -A
-   git commit -m "sortie({{ .issue.identifier }}): automated changes"
+   git commit -m "<concise conventional-commit summary of your change>"
    ```
 
 3. **Push** the branch (proxy passed inline — an exported `*_proxy` is not honored for git here):
@@ -434,15 +441,20 @@ cd "$SORTIE_WORKSPACE"
    git -c http.proxy=$PX push -u origin "$BRANCH"
    ```
 
-4. **Open the PR** (on a follow-up it already exists, so `|| true` keeps this from failing;
-   the push above already updated it). Put every assumption you made under an `## Assumptions`
-   header in the body so a human can check them.
+4. **Open the PR** with a **clear, specific, descriptive title** that says WHAT the change
+   does, in the repo's conventional-commit style — e.g. `feat(music-tracker): add Spotify
+   playlist poller` or `fix(web): persist theme toggle across reloads`. **Do NOT use a
+   generic "sortie: resolve #N"** — the issue link comes from `Closes #N` in the body, so the
+   title is free to be informative. Put every assumption under an `## Assumptions` header.
    ```sh
+   TITLE="<concise conventional-commit summary of your change, e.g. feat(scope): add X>"
    HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr create \
      --repo scolacur/personal-dashboard --base main --head "$BRANCH" \
-     --title "sortie: resolve #{{ .issue.identifier }}" \
+     --title "$TITLE" \
      --body "$(printf 'Closes #%s\n\nAutomated by Sortie for #%s.\n\n## Assumptions\n- <list yours, or "none">\n' "{{ .issue.identifier }}" "{{ .issue.identifier }}")" || true
    ```
+   (On a follow-up the PR already exists, so `gh pr create` no-ops via `|| true` and keeps the
+   original title. If the change's scope shifted, update it: `gh pr edit "$BRANCH" --repo scolacur/personal-dashboard --title "$TITLE"`.)
 
 5. **Write `.sortie/scm.json`** — the `reactions` (review-feedback / CI-failure) features
    read this to locate your PR. Resolve the PR number for the branch (works whether you just
