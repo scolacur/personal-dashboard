@@ -1,0 +1,73 @@
+# CD (cloud half) — build the app image and push it to GHCR on every merge to main.
+#
+# WHY THIS EXISTS: the NAS is a CPU-weak Synology behind a home LAN with no public
+# ingress, so (a) cloud CI cannot reach in to trigger a deploy, and (b) building the
+# multi-stage image ON the NAS each push is exactly the boundless-resource cost the
+# TODO warns about. The fix is pull-based deploy: build the image HERE (free, fast
+# cloud runners), publish it to GitHub Container Registry, and let a Watchtower
+# container on the NAS poll the registry and recreate the app when the tag moves.
+# This workflow is the cloud half. The NAS half (Watchtower + registry-based compose)
+# is in ops/deploy/README.md — a runbook to run while physically at the NAS.
+#
+# DECOUPLED FROM CI: this never runs on PR head code. It triggers only on push to
+# main (i.e. after a human approves + merges) and on manual dispatch. So an untrusted
+# fork PR can be *tested* (ci.yml) but can never cause an image to be published.
+#
+# AUTH: GITHUB_TOKEN with packages:write is enough to push to ghcr.io for this repo;
+# no PAT needed. The image inherits the repo's visibility (public repo -> public
+# package) unless changed in the repo's Packages settings.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false # let an in-flight publish finish; don't ship a half-built tag
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      # ghcr.io/<owner>/<repo>, lowercased (GHCR rejects upper-case paths).
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Two tags: :latest (what Watchtower watches) and :<short-sha> (immutable, so a
+      # bad deploy can be pinned/rolled back to a known-good sha in compose).
+      - name: Compute tags
+        id: tags
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::7}"
+          echo "tags=${IMAGE}:latest,${IMAGE}:${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          # Cache layers in GHA so unchanged deps (the npm ci layer) don't rebuild.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

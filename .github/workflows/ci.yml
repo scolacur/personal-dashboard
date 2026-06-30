@@ -1,0 +1,68 @@
+# CI — run the verify gate on every PR and every push to main.
+#
+# WHY THIS EXISTS: `npm run verify` (build → typecheck → lint → test, ~11-13s cold)
+# is the project's quality gate, but until now it only ran on developers' machines.
+# Running it in CI means a PR cannot be merged green-by-accident: the same gate that
+# guards local commits now guards the branch. This is the CI half of the CI/CD work
+# (TODO "CI/CD Pipeline"); the CD half (build image → NAS auto-pull) lives in
+# deploy.yml + ops/deploy/README.md and is intentionally decoupled.
+#
+# AUTHORIZATION / SAFETY: read-only token (contents: read). This workflow runs
+# untrusted PR code (including from forks, since the repo is public) but only ever
+# *builds and tests* it in an ephemeral runner — it has no write scope, no secrets,
+# and touches no deploy path. The deploy workflow (which DOES push an image) runs
+# only on push to main, i.e. after a human merge, never on PR head code.
+#
+# REQUIRED-CHECK WIRING (manual, Steve's go): to make a green run *block* merge,
+# add this job as a required status check on the main branch protection:
+#   gh api -X PUT repos/scolacur/personal-dashboard/branches/main/protection \
+#     -H "Accept: application/vnd.github+json" --input - <<'JSON'
+#   { "required_status_checks": { "strict": true, "contexts": ["verify"] },
+#     "enforce_admins": false,
+#     "required_pull_request_reviews": { "required_approving_review_count": 1 },
+#     "restrictions": null }
+#   JSON
+# (Mirrors the existing protection from ops/sortie/README.md Step 2 — keep
+# enforce_admins:false + approvals:1, just ADD the status check. Defer until a few
+# CI runs prove the job name "verify" is stable, or a required-but-never-reported
+# check will wedge every merge.)
+
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# One in-flight run per ref; a new push supersedes an older queued/running CI.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20 # matches docker/Dockerfile (node:20-alpine/slim)
+          cache: npm
+
+      # `npm ci` installs the exact lockfile across all workspaces (root install
+      # hoists workspace deps), so packages/shared, apps/web, apps/server are all
+      # ready before verify runs.
+      - name: Install
+        run: npm ci
+
+      # build → typecheck → lint → test, in that order (build first so svelte-check
+      # and the server tsc see packages/shared's emitted dist).
+      - name: Verify
+        run: npm run verify
