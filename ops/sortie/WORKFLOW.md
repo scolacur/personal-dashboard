@@ -229,6 +229,22 @@ The "reconcile with main" step below still applies if the branch also drifted fr
 
 ---
 
+## Before anything else: check for answers to a question you asked (ask_human)
+
+Issue comments are NOT included above, and you may have asked the human a question on a
+previous turn. **First, read the issue conversation:**
+
+```sh
+export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
+gh issue view {{ .issue.identifier }} --repo scolacur/personal-dashboard --comments
+```
+
+If you find a `### ❓ ask_human` question you posted earlier with a human reply beneath it,
+treat that reply as the decision and continue the work. **Do not ask the same question
+again.** If there is no such exchange, this is a normal run — proceed.
+
+---
+
 ## First: reconcile with `main` if this branch already has work
 
 The branch `sortie/{{ .issue.identifier }}` may already contain commits from a previous
@@ -261,6 +277,30 @@ existing commits or recreate the branch/PR. Then proceed with the issue below.
   description, so a human can check them.
 - **Do NOT touch** secrets/`.env*`, auth/session code, CI/Dockerfiles,
   `package.json` scripts, dependencies, or the DB schema. If the issue seems to
-  require any of these, stop and say so in the PR rather than doing it.
+  require any of these, prefer `ask_human` (below) over guessing or doing it anyway.
 - If a change would affect more than a few files or feels larger than the ticket,
   open the PR as a draft and flag it prominently.
+
+## ask_human — ask a question and pause instead of guessing
+
+You are unattended, but you can hand a decision back to the human and pause rather than
+guess. Use this when proceeding needs a judgement the issue doesn't answer: an ambiguous
+API contract, two valid designs that diverge, or work that would touch the forbidden areas
+above. Prefer asking over a risky assumption.
+
+To ask:
+1. Post the question as an issue comment whose **first line is exactly** `### ❓ ask_human`
+   (this marker is how it's spotted and forwarded to the human). Be specific and, where you
+   can, offer concrete options (A / B / …) so the reply can be short:
+   ```sh
+   export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
+   gh issue comment {{ .issue.identifier }} --repo scolacur/personal-dashboard --body "$(printf '### ❓ ask_human\n\n<your question + options>')"
+   ```
+2. Leave the working tree CLEAN — do not commit speculative work and do not open a PR.
+3. Hand the issue back and stop. This drops it out of Sortie's active set so you are not
+   re-dispatched while waiting; when the human replies you are re-dispatched automatically:
+   ```sh
+   gh issue edit {{ .issue.identifier }} --repo scolacur/personal-dashboard \
+     --remove-label "sortie:in-progress" --add-label "sortie:awaiting-human"
+   ```
+Then end your turn. Do not poll or wait in-process.

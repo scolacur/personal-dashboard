@@ -282,6 +282,71 @@ exists (fetch + checkout) and only creates from `main` on the first attempt.
 
 ---
 
+## Observability & comms: stuck-issue watchdog (Layer 1) + ask_human (Layer 2)
+
+Sortie can't talk to Steve, so failures **silently park** an issue in an active state with
+no signal — observed three ways: workspace-prep failure (the exit-128 clone loop),
+`max_sessions` exhaustion, and a **container-restart orphan** (the in-memory worker dies on
+restart but the issue stays `sortie:in-progress`, which is not the same as being dispatched,
+so nothing re-picks it). A fourth is Sortie simply being down (issues sit in
+`sortie:queued`). None of these reach `after_run` or `reactions`, so the fix is external.
+
+### Stuck-issue watchdog (Layer 1 — `.github/workflows/sortie-watchdog.yml`)
+
+- **Schedule:** every 30 min (`cron`), plus `workflow_dispatch` (inputs: `threshold_minutes`,
+  `dry_run`) for manual/test runs.
+- **What it does:** any issue in `sortie:in-progress` *or* `sortie:queued` longer than the
+  threshold (default **120 min**, measured from the last `labeled <state>` timeline event)
+  is flipped to **`sortie:stuck`** with an `@scolacur` comment. A healthy run finishes in
+  minutes and moves the label well before that, so a breach = genuinely stalled.
+- **`sortie:stuck` is NOT in `query_filter`** → the issue drops out of Sortie's candidate
+  set until a human re-queues (`sortie:queued`) or drops it (`sortie:wontfix`).
+- **Deliberately untouched:** `sortie:awaiting-human` (an *intentional* ask_human park) and
+  the terminal states. Distinct from `sortie:needs-human`, which stays the **native**
+  review-feedback escalation label — the two are kept separate on purpose.
+- **Notify:** the `@scolacur` mention hits GitHub notifications directly; a repo→Discord
+  webhook (Discord webhook URL + `/github`) forwards the comment to a channel — no bot.
+
+### ask_human (Layer 2 — generic free-text; allowlist deferred)
+
+Lets the agent ask a question and pause rather than guess. **Async, turn-based** (not
+real-time), reusing Sortie's continuation dispatch:
+
+- **Ask (agent side, in `WORKFLOW.md` prompt body):** the agent posts its question as an
+  issue comment whose first line is `### ❓ ask_human`, leaves the tree clean (no PR), and
+  self-relabels `sortie:in-progress → sortie:awaiting-human` (dropping out of the active
+  set), then ends its turn.
+- **Resume (inbound, `.github/workflows/sortie-ask-human.yml`):** `on: issue_comment` — when
+  **`scolacur`** replies on an **`awaiting-human`** issue, it flips the label back to
+  `sortie:queued`. Sortie re-dispatches; `before_run` reuses `sortie/<id>` (prior work
+  intact); the prompt's "check for answers" step makes the agent read the issue thread for
+  the reply. The bot's own question comment and the github-actions confirmation never
+  trigger it (author ≠ owner), so no loop.
+- **GitHub-first.** A later Discord phase only adds an *input adapter* — a Discord bot
+  (needs message-read scope, NOT a webhook) that posts Steve's Discord reply as a GitHub
+  comment, which triggers the same resume workflow. Detection stays unified on GitHub.
+- **Egress-allowlist permission prompt is explicitly deferred** — its ideal home is the
+  agent dashboard (a blocked-request log grouped by domain + a one-click "allowlist" button,
+  on the NAS network where it can actually reach `squid.conf`), not a cloud Action (which
+  can't reach the NAS), and the agent must never self-allowlist (defeats containment).
+
+### Deploy + live-verify checklist (Layers 1 & 2)
+
+- [x] Labels `sortie:stuck` + `sortie:awaiting-human` created (`gh label create`).
+- [ ] Merge the two workflow files to `main` — Actions only run from the default branch's
+  own copy. (The watchdog `cron` and the `issue_comment` trigger both need this.)
+- [ ] Recreate the NAS container (egress compose) so the updated `WORKFLOW.md` prompt mounts.
+- [ ] **Live-verify (needs a Sortie run — do when next exercising Sortie):**
+  - The agent can run `gh` during its turn — i.e. `GH_TOKEN`/`SORTIE_GITHUB_TOKEN` is in the
+    agent's env (the prompt `export`s it; confirm it resolves). If not, the ask/relabel fails.
+  - Self-relabel to `awaiting-human` mid-/end-run doesn't get fought by the reconciler in a
+    way that loses the park (issue should land + stay in `awaiting-human`).
+  - On re-queue, the agent actually reads the human reply from the thread and continues
+    rather than restarting.
+- [ ] Set up the repo→Discord webhook for `@`-mention/question forwarding (Discord side).
+
+---
+
 ## Quota-fail budget refund (janitor) — closes the quota-fail-consumes-budget gap
 
 ### The gap

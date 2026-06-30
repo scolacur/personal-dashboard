@@ -1,0 +1,142 @@
+# Sortie stuck-issue watchdog (LAYER 1 — escalation).
+#
+# WHY THIS EXISTS: Sortie has several failure modes that leave an issue SILENTLY
+# PARKED in an active state with no human signal — it just stops, invisibly:
+#   1. Workspace-prep failure (e.g. the exit-128 clone loop) — agent never starts.
+#   2. agent.max_sessions exhaustion — Sortie stops dispatching, no transition, no ping.
+#   3. Container-restart orphan — the in-memory worker dies on restart but the issue
+#      stays labelled sortie:in-progress (NOT in the dispatch/queued set), so nothing
+#      ever re-picks it.
+#   4. Sortie down / not dispatching — issues sit in sortie:queued forever.
+# None of these reach the native `after_run` hook or the `reactions` escalation (those
+# only fire for review-feedback on an existing PR), so a hook-based fix can't catch them.
+# This watchdog is STATE-BASED and EXTERNAL: it watches label age, not run outcomes, so
+# it catches all four modes. It is the sibling of sortie-conflict-rework.yml (BEHAVIOR 2).
+#
+# WHAT IT DOES: an issue that has sat in sortie:in-progress (or sortie:queued) longer than
+# the threshold (default 2h) is flipped to the terminal-ish sortie:stuck label and an
+# @-mention comment is posted. A healthy run completes in minutes and moves the label well
+# before the threshold, so a breach means genuinely stalled. sortie:stuck is NOT in
+# query_filter, so the issue drops out of Sortie's candidate set until a human re-queues it
+# (sortie:queued) or drops it (sortie:wontfix).
+#
+# DELIBERATELY NOT TOUCHED: sortie:awaiting-human (Layer 2 ask_human — an INTENTIONAL,
+# expected park waiting on a human; escalating it to stuck would be wrong), and the terminal
+# states sortie:in-review / sortie:done / sortie:wontfix.
+#
+# AUTHORIZATION MODEL (same as conflict-rework): runs with the repo-scoped GITHUB_TOKEN and
+# only ever relabels issues already in a Sortie-controlled active state. It reads no
+# attacker-controlled content; a stranger cannot put an issue into sortie:in-progress (only
+# a write+ actor / Sortie itself can apply labels).
+
+name: sortie-watchdog
+
+on:
+  schedule:
+    # Every 15 min. The queued threshold is 20m, so the run cadence must be <= that to
+    # catch it promptly; effective detection latency is (threshold + up to one interval).
+    # NOTE: GitHub cron is best-effort and can be delayed several minutes under load.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      threshold_minutes:
+        description: 'Override BOTH per-state thresholds for this run (blank = use defaults: queued 20m, in-progress 120m). Handy with dry_run.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'true = report only, make no label/comment changes.'
+        required: false
+        default: 'false'
+
+# Single-flight: never let two runs double-flip a label.
+concurrency:
+  group: sortie-watchdog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write        # only to swap the state label + comment on Sortie's own issues
+
+jobs:
+  detect-stuck:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      MENTION: scolacur          # who to @-mention (also forwarded to Discord via webhook)
+      THRESHOLD_IN_PROGRESS_MIN: '120'   # a stalled active run (prep-fail / exhaustion / restart-orphan)
+      THRESHOLD_QUEUED_MIN: '20'         # not picked up promptly -> Sortie may be down / not dispatching
+    steps:
+      - name: Escalate stale in-progress / queued issues to sortie:stuck
+        run: |
+          set -euo pipefail
+
+          OVERRIDE="${{ github.event.inputs.threshold_minutes }}"
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
+          [ -z "$DRY_RUN" ] && DRY_RUN="false"
+
+          NOW="$(date -u +%s)"
+          echo "watchdog: thresholds in-progress=${THRESHOLD_IN_PROGRESS_MIN}m queued=${THRESHOLD_QUEUED_MIN}m override='${OVERRIDE}' dry_run=${DRY_RUN}"
+
+          # Two active states get a staleness clock with its OWN threshold. The clock starts
+          # at the most recent time the issue ENTERED that state — `last` over its
+          # `labeled <state>` timeline events. So if a ticket bounces (in-progress ->
+          # awaiting-human -> in-progress), the timer RESTARTS from the latest re-entry; an
+          # earlier 90-min stint doesn't count once it leaves and comes back.
+          for STATE in in-progress queued; do
+            LABEL="sortie:${STATE}"
+
+            # Per-state threshold (a manual dispatch override, if given, wins for both).
+            if [ -n "$OVERRIDE" ]; then
+              THRESHOLD_MIN="$OVERRIDE"
+            elif [ "$STATE" = "in-progress" ]; then
+              THRESHOLD_MIN="$THRESHOLD_IN_PROGRESS_MIN"
+            else
+              THRESHOLD_MIN="$THRESHOLD_QUEUED_MIN"
+            fi
+
+            mapfile -t NUMS < <(
+              gh issue list --repo "$REPO" --state open --label "$LABEL" \
+                --json number --jq '.[].number'
+            )
+            [ "${#NUMS[@]}" -eq 0 ] && { echo "no open issues in $LABEL"; continue; }
+
+            for N in "${NUMS[@]}"; do
+              ENTERED="$(
+                gh api "repos/$REPO/issues/$N/timeline" --paginate \
+                  --jq "[.[] | select(.event==\"labeled\" and .label.name==\"$LABEL\") | .created_at] | last // empty"
+              )"
+              if [ -z "$ENTERED" ]; then
+                echo "#$N ($LABEL): no labeled event found — skip"
+                continue
+              fi
+
+              ENTERED_SEC="$(date -u -d "$ENTERED" +%s)"
+              AGE_MIN=$(( (NOW - ENTERED_SEC) / 60 ))
+
+              if [ "$AGE_MIN" -lt "$THRESHOLD_MIN" ]; then
+                echo "#$N ($LABEL) age ${AGE_MIN}m < ${THRESHOLD_MIN}m — ok"
+                continue
+              fi
+
+              if [ "$STATE" = "in-progress" ]; then
+                REASON="has been in \`$LABEL\` for **${AGE_MIN} min** with no resolution. A healthy run finishes in minutes and moves the label; this one is stalled (workspace-prep failure, max_sessions exhaustion, or a container-restart orphan)."
+              else
+                REASON="has been in \`$LABEL\` for **${AGE_MIN} min** without being picked up. Sortie may not be dispatching — check the \`sortie\` container is up and not saturated (max_concurrent_agents=1)."
+              fi
+
+              echo "#$N ($LABEL) age ${AGE_MIN}m >= ${THRESHOLD_MIN}m — STUCK"
+              if [ "$DRY_RUN" = "true" ]; then
+                echo "  dry_run: would flip #$N $LABEL -> sortie:stuck + @-mention"
+                continue
+              fi
+
+              # Clear the stale active label first (tolerant), then add sortie:stuck.
+              gh issue edit "$N" --repo "$REPO" --remove-label "$LABEL" 2>/dev/null || true
+              gh issue edit "$N" --repo "$REPO" --add-label "sortie:stuck"
+
+              BODY="$(printf '@%s ⚠️ **Sortie watchdog**: issue #%s %s\n\nMoved to `sortie:stuck` (dropped from Sortie'\''s candidate set). Re-label `sortie:queued` to retry, or `sortie:wontfix` to drop it. _(threshold: %s min)_' \
+                "$MENTION" "$N" "$REASON" "$THRESHOLD_MIN")"
+              gh issue comment "$N" --repo "$REPO" --body "$BODY"
+            done
+          done

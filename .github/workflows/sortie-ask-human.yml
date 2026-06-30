@@ -1,0 +1,56 @@
+# Sortie ask_human resume bridge (LAYER 2 — two-way, inbound direction).
+#
+# WHY THIS EXISTS: Sortie has no native way for the agent to ASK the human a question
+# mid-task and resume with the answer. The agent side (see WORKFLOW.md prompt body) parks
+# the issue in sortie:awaiting-human and posts its question as a `### ❓ ask_human` comment.
+# This workflow is the INBOUND half: when the human replies, it re-queues the issue so
+# Sortie re-dispatches; before_run reuses the existing sortie/<id> branch (prior work
+# intact) and the prompt tells the agent to read the issue thread for the answer.
+#
+# GITHUB-FIRST: the human answers by commenting directly on the issue. A later Discord
+# phase only adds an INPUT ADAPTER (a Discord bot that posts the human's Discord reply as a
+# GitHub comment) — it triggers this exact same workflow, so detection stays unified here.
+#
+# AUTHORIZATION / LOOP SAFETY: only the repo owner's comment triggers a re-queue, and only
+# when the issue is currently in sortie:awaiting-human. The agent's own `### ❓ ask_human`
+# question is authored by the bot (sortie-bot-55), so it never triggers this. The
+# confirmation comment below is authored by github-actions, also not the owner — so no loop.
+
+name: sortie-ask-human
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write        # only to swap awaiting-human -> queued + confirm
+
+# Don't let two fast replies on the same issue double-flip.
+concurrency:
+  group: sortie-ask-human-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  resume:
+    # Fire ONLY when the human owner replies on an issue Sortie parked awaiting an answer.
+    # github.event.issue.labels is present on issue_comment payloads, so we can gate cheaply
+    # here without an API call. (Owner login is hardcoded — single-maintainer repo.)
+    if: >-
+      github.event.comment.user.login == 'scolacur' &&
+      contains(github.event.issue.labels.*.name, 'sortie:awaiting-human')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - name: Re-queue so Sortie resumes with the human's answer
+        run: |
+          set -euo pipefail
+          echo "Human reply on awaiting-human issue #$ISSUE — re-queuing."
+          gh issue edit "$ISSUE" --repo "$REPO" \
+            --remove-label "sortie:awaiting-human" \
+            --add-label "sortie:queued"
+          gh issue comment "$ISSUE" --repo "$REPO" --body \
+            "Sortie: got your reply — re-queued (\`sortie:queued\`). The agent resumes on branch \`sortie/$ISSUE\` and will read this thread for your answer."
