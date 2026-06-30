@@ -83,12 +83,13 @@ the repo root. See `.env.example`.
 
 ### Step 2 — Bring it up 🧑
 
-CLI:
+CLI — this NAS has **docker-compose v1 (hyphenated)**, not the `docker compose` v2
+plugin, so use `docker-compose`:
 
 ```sh
 cd /volume1/docker/personal-dashboard/personal-dashboard
-sudo docker compose -f docker/docker-compose.nas.yml pull
-sudo docker compose -f docker/docker-compose.nas.yml up -d
+sudo docker-compose -f docker/docker-compose.nas.yml pull
+sudo docker-compose -f docker/docker-compose.nas.yml up -d
 ```
 
 Or DSM GUI: Container Manager → Project → Create → point at
@@ -96,12 +97,16 @@ Or DSM GUI: Container Manager → Project → Create → point at
 
 ### Step 3 — Verify 🧑
 
+The app is published on host port **8088** (8080 is taken by the gluetun VPN
+container on this NAS; the app still listens on 8080 inside the container):
+
 ```sh
-curl http://localhost:8080/api/health        # -> {"ok":true}
+curl http://localhost:8088/api/health        # -> {"ok":true}
+sudo docker-compose -f docker/docker-compose.nas.yml logs --tail 20 app
 sudo docker logs -f watchtower                # confirms it's watching the labelled app
 ```
 
-Open `http://<nas-lan-ip>:8080` from a LAN browser.
+Open `http://<nas-lan-ip>:8088` from a LAN browser.
 
 ### Step 4 — Prove the loop (once) 🧑
 
