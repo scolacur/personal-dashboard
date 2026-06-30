@@ -60,6 +60,7 @@ jobs:
           set -euo pipefail
           SHA="${GITHUB_SHA::7}"
           echo "tags=${IMAGE}:latest,${IMAGE}:${SHA}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -68,6 +69,8 @@ jobs:
           file: docker/Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            APP_VERSION=${{ steps.tags.outputs.sha }}
           # Cache layers in GHA so unchanged deps (the npm ci layer) don't rebuild.
           cache-from: type=gha
           cache-to: type=gha,mode=max

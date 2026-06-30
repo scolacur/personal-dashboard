@@ -50,6 +50,12 @@ COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/build ./apps/web/build
 
+# Build-time version stamp (git short SHA, passed by deploy.yml). Placed last so a
+# new SHA only invalidates this tiny final layer — and changes the image digest,
+# which is what triggers Watchtower to pull on the NAS.
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 ENV NODE_ENV=production
 EXPOSE 8080
 CMD ["node", "apps/server/dist/index.js"]

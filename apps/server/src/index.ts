@@ -19,7 +19,9 @@ for (const widget of widgets) {
   widget.registerRoutes(app);
 }
 
-app.get('/api/health', async () => ({ ok: true }));
+// APP_VERSION is baked into the image at build time (git short SHA via deploy.yml);
+// 'dev' locally. Lets you confirm which build is live and verify a deploy landed.
+app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION ?? 'dev' }));
 
 const webBuildDir = process.env.WEB_BUILD_DIR ?? path.join(__dirname, '../../../apps/web/build');
 
