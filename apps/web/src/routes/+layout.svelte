@@ -1,4 +1,5 @@
 <!-- Dashboard shell: top nav + theme toggle wrapping all pages -->
+<!-- Main layout: wraps every page route in the app -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
