@@ -7,7 +7,7 @@ services:
       - '8080:8080'
     volumes:
       - ../data:/data
-      - /volume1/music/dj-library-mirror:/library:ro
+      - /volume1/music/dj-library/tracks:/library:ro
     env_file:
       - ../.env
     restart: unless-stopped
