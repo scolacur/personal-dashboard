@@ -360,9 +360,15 @@ BRANCH="sortie/{{ .issue.identifier }}"
 cd "$SORTIE_WORKSPACE"
 ```
 
-1. **Final verify gate.** Run `npm run verify` (build + typecheck + lint + test) and make
-   it pass. Do NOT weaken or delete tests to get there. If it cannot pass and you cannot
-   fix it within scope, prefer `ask_human` over shipping a red PR.
+1. **Final verify gate.** The workspace is a fresh clone with **no `node_modules`**, so
+   install deps first, then verify:
+   ```sh
+   npm ci            # reaches registry.npmjs.org via the egress proxy (already allowlisted)
+   npm run verify    # build + typecheck + lint + test
+   ```
+   Make `verify` pass. Do NOT weaken or delete tests to get there. If it cannot pass and you
+   cannot fix it within scope, prefer `ask_human` over shipping a red PR. (`npm` honors the
+   `HTTPS_PROXY` already set in your env — no extra proxy config needed.)
 
 2. **Commit everything.** If there is nothing to commit, you made no changes — do NOT open
    a PR or relabel; either use `ask_human` or leave the issue as-is and end your turn.
