@@ -4,6 +4,16 @@
   gap: 1rem;
 }
 
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
 .tile-open {
   display: inline-block;
   margin-top: 1rem;
