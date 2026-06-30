@@ -45,7 +45,14 @@ agent:
   max_turns: 50
   max_concurrent_agents: 1                  # PILOT: one ticket at a time
   # --- TOKEN-BURN BOUNDARIES (default for both is 0 = UNLIMITED — that's how #6/#8 hit attempt 43) ---
-  max_sessions: 3                           # HARD retry cap: stop dispatching an issue after 3 sessions
+  max_sessions: 3                           # HARD retry cap: stop dispatching an issue after 3 sessions.
+                                            # NOTE: a quota-exhausted run still writes a run_history row and
+                                            # counts here, permanently capping an issue when the Anthropic Pro
+                                            # window resets. There is NO native knob to exempt it. The NAS
+                                            # host-cron janitor ops/sortie/quota-refund.sh refunds ONLY
+                                            # provably-quota-lost sessions once the window resets — it does NOT
+                                            # raise/remove this cap and leaves real failures (e.g. #8) capped.
+                                            # See README "Quota-fail budget refund".
   max_tokens: 3000000                       # per-issue cumulative token ceiling (belt across sessions; tune down once real usage is known)
 
 # Claude Code adapter pass-through. Per-SESSION USD cap — meaningful on an API key; on the

@@ -5,6 +5,8 @@ Deploy + configuration runbook. Files in this dir:
 - `Dockerfile` — Sortie + Claude Code + `git`/`gh` (hooks need the latter two).
 - `WORKFLOW.md` — Sortie config (tracker, hooks, self-review, reactions) + the agent prompt template.
 - `README.md` — this runbook.
+- `quota-refund.sh` — NAS host-cron janitor that refunds `max_sessions` budget lost to
+  Anthropic usage/session-quota exhaustion (see "Quota-fail budget refund" below).
 - `../../.github/workflows/sortie-conflict-rework.yml` — CI bridge that re-activates a
   Sortie issue when its PR conflicts with `main` (see Architecture step 5 + Follow-ups).
 
@@ -277,3 +279,185 @@ exists (fetch + checkout) and only creates from `main` on the first attempt.
   branch (GitHub runs workflows from the branch's own copy on `push`).
 - [ ] Cleaning up issue #6's dual label + re-triggering PR #7 is a separate **live** step
   (Tank). This config change does not touch live GitHub state.
+
+---
+
+## Quota-fail budget refund (janitor) — closes the quota-fail-consumes-budget gap
+
+### The gap
+
+`agent.max_sessions: 3` (in `WORKFLOW.md`) is enforced by **counting `run_history` rows
+per `issue_id`** in `.sortie.db`. The docs confirm the semantics but not the failure
+accounting — `agent.max_sessions` is *"Maximum completed sessions per issue before the
+orchestrator stops retrying"* and `agent.max_tokens` *"sums the total_tokens recorded for
+every session … stops dispatching … once the sum reaches a non-zero budget"*
+(`reference/workflow-config`, `reference/adapter-claude-code`). Observed live: a run that
+fails **solely** because the Anthropic Pro session quota was exhausted **still writes a
+`run_history` row** (`status='failed'`, `error` contains `turn_failed: success`,
+`total_tokens=0`). Three such instant-fails in ~2 minutes permanently cap an issue, and
+when the Pro window resets the issue **stays capped and never retries**. Confirmed on #6.
+
+### Native support? No — checked first (doc-grounded)
+
+Checked `reference/workflow-config`, `reference/adapter-claude-code`, `reference/cli`, and
+the repo README. Sortie has **no native knob** to (a) detect a usage/rate-limit failure or
+(b) exempt it from `max_sessions` / back off until the limit resets:
+
+- `agent.max_retry_backoff_ms` — *"Maximum delay cap for exponential backoff on retries"* —
+  is generic retry scheduling; it does **not** distinguish a quota failure or stop it
+  counting toward `max_sessions`.
+- `ci_feedback.max_retries` / `reactions.review_comments.max_retries` are reaction caps,
+  not agent-usage-limit handling.
+- The "effort budget exhausted, blocking re-dispatch … max_sessions:3" and
+  "cap_skipped:N" log lines are **internal strings**, not documented/configurable concepts
+  (no `effort_budget` field exists in the docs). Do not configure against them.
+- The HTTP API has **no write/reset endpoint** — only `POST /api/v1/refresh` (triggers a
+  poll). The only supported way to reset the counter is editing the SQLite DB directly,
+  exactly as the proven manual fix does.
+
+So the fix is a **minimal external janitor** that automates the safe equivalent of the
+manual reset, gated so it only fires after the quota window has actually reset.
+
+### What `quota-refund.sh` does
+
+A stateless, idempotent host-cron one-shot (no daemon):
+
+1. **Liveness gate (anti-re-storm).** Before touching anything, it probes the coding agent
+   with a one-word prompt **inside the running `sortie` container** (`docker exec … claude
+   -p …`), inheriting the same `CLAUDE_CODE_OAUTH_TOKEN` Sortie uses. If the probe returns
+   the usage-limit signature (`usage limit reached` / `hit your … limit` / `resets <time>`),
+   the quota is **still out** → it does **nothing** and exits. Budget is refunded **only
+   after the window has reset**, so a refund can never feed 3 fresh instant-fails. The probe
+   is one trivial turn — far cheaper than a real session — and an inconclusive probe (no
+   `ok`, no limit signature) is treated conservatively as "do nothing".
+2. **Classification (precise).** It selects issues whose `run_history` is composed
+   **entirely** of quota-fails. The SQL rule, per `issue_id`:
+   - `SUM(quota_fail) > 0` — at least one quota-fail, **and**
+   - `SUM(NOT quota_fail) = 0` — **zero** rows that are anything else,
+   where `quota_fail` ⟺ `status='failed' AND error LIKE '%turn_failed: success%' AND
+   total_tokens=0`.
+3. **Refund (safe).** Stops the container (quiesces the SQLite writer), backs the DB up to
+   `backups/.sortie.db.<UTC-stamp>.quota-refund.bak`, then in a single `BEGIN IMMEDIATE`
+   transaction `DELETE`s only those issues' `run_history` + `session_metadata` rows, and
+   restarts the container (via the `cleanup` EXIT trap, so it restarts even on error). This
+   mirrors the proven manual procedure exactly. Re-queue the issue's label afterward (a
+   re-queue alone does **not** clear counters — that's the whole point of this script).
+
+### Failure-classification rule — and why #8 stays capped
+
+| Issue | run_history rows | Refunded? |
+|-------|------------------|-----------|
+| **#6** | all `failed` / `turn_failed: success` / 0 tokens | **Yes** — pure quota loss |
+| **#8** | 31× `failed` on an `after_create` **git clone exit-128** (stale workspace) | **No** — its error is not the quota signature, so `SUM(NOT quota_fail) > 0`; the cap holds |
+| mixed | one quota-fail **plus** any real fail or any success | **No** — non-quota rows present |
+| quota-text but `total_tokens>0` | agent actually ran, then hit a limit | **No** — tokens were spent; conservative |
+
+The two classes are distinguished purely by the per-row signature: **#8's rows fail with a
+git-clone error string and are not `turn_failed: success`/0-token**, so #8 always has
+`SUM(NOT quota_fail) > 0` and is never selected. `max_sessions` storm-protection is fully
+preserved — the cap still stops every genuinely-failing issue; this script only refunds
+sessions **provably** lost to quota.
+
+This was validated against a mock DB modeling #6, #8, a mixed issue, and the tokens>0 case;
+the query returned **only #6 and the pure-quota issue**, leaving #8 and the mixed/tokens>0
+issues capped.
+
+### Why a liveness probe, not reset-time parsing
+
+The Anthropic usage-limit error includes a reset time, but in **two** forms depending on
+Claude Code version/auth: `Claude AI usage limit reached|<unix_ts>` (machine-parseable) and
+`You've hit your limit · resets 4pm (Europe/Berlin)` / `· resets 5:20am (UTC)` (12-hour
+clock + IANA tz, lossy to parse). Critically, the observed `run_history.error` column holds
+**Sortie's `turn_failed: success` wrapper, not the raw Claude reset string** — and it is
+**unconfirmed** that Sortie persists the reset timestamp anywhere in the DB. Rather than
+parse a field that may not exist, the probe answers the only question that matters — *"has
+the window reset?"* — directly and robustly, and the script's grep also recognizes both
+reset-text forms in the probe output. If a future Sortie build is confirmed to store the
+reset timestamp, gating on it would be a valid cheaper alternative.
+
+### Re-storm bounding (why this can't loop)
+
+- Refund happens **only** on a successful liveness probe (quota actually reset), so a refund
+  never immediately re-fills with quota-fails.
+- It is **idempotent**: once #6's rows are gone it's no longer "all quota-fail"; #8 is never
+  eligible; running it repeatedly is a no-op.
+- A single-instance lock (`flock`, or a `mkdir` fallback for busybox shells) prevents
+  overlapping runs. Worst case per refund: a refund restores the issue's full budget, so it
+  can re-dispatch up to **`max_sessions` (3)** times before re-capping — bounded per refund,
+  and a refund only happens once the probe confirms the window reset (never while exhausted),
+  so this can't tighten into a loop. If those retries quota-fail again, the issue re-caps and
+  is only refunded on the *next* confirmed window reset — at most `max_sessions` retries per
+  refund per window, not a perpetual storm.
+
+### Deploy 🧑 (NAS host cron — NOT a GitHub Action)
+
+Sortie runs on the egress-isolated `internal: true` network (no inbound; unreachable from
+GitHub Actions or any external host), so the janitor **must** run on the NAS host. Host cron
+is chosen over a sidecar because it runs in the host namespace where `docker stop/start` and
+`/bin/sqlite3` are available without granting a container access to the Docker socket (which
+would defeat the egress isolation).
+
+1. The script ships in the repo clone at
+   `/volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/quota-refund.sh`
+   (already present after `git pull`; no separate copy needed). Make it executable:
+   ```sh
+   chmod +x /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/quota-refund.sh
+   ```
+2. It uses these defaults (override via env in the cron line if your layout differs):
+   `SORTIE_BASE_DIR=/volume1/docker/personal-dashboard`,
+   `SORTIE_DB_PATH=$BASE/data/.sortie.db`, `SORTIE_CONTAINER=sortie`,
+   `SORTIE_BACKUP_DIR=$BASE/backups`, `SQLITE_BIN=/bin/sqlite3`,
+   `SORTIE_COMPOSE_FILE=$BASE/personal-dashboard/ops/sortie/docker-compose.egress.yml`.
+3. Add a DSM host-cron entry (DSM → **Control Panel → Task Scheduler → Create → Scheduled
+   Task → User-defined script**, run as a user that can `sudo docker`; schedule **hourly**).
+   Script body:
+   ```sh
+   /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/quota-refund.sh \
+     >> /volume1/docker/personal-dashboard/quota-refund.log 2>&1
+   ```
+   (Or a root crontab line: `0 * * * * /…/ops/sortie/quota-refund.sh >> /…/quota-refund.log 2>&1`.)
+   Hourly is fine: the Pro window resets on a multi-hour cadence, the probe is cheap, and the
+   liveness gate means off-window runs are instant no-ops.
+4. **First run, dry of cron:** run it by hand once while a quota-cap exists and confirm the
+   log shows either "quota STILL exhausted … refusing" (window not reset yet) or a refund +
+   backup. Then re-queue the refunded issue's `sortie:queued` label.
+
+### Recreate / restart implications
+
+- The script `docker stop`s then `docker start`s the **same** container — this is a plain
+  restart, **not** a recreate, so it does **not** re-read `WORKFLOW.md` or `sortie.env`
+  (those are baked at create time). That's intended: the janitor only edits the DB on the
+  host volume; it must not change Sortie's config. Config changes still follow the
+  **recreate** path in Step 4.7.
+- The DB and workspaces live on host volumes, so the stop/start preserves all other state.
+- If you `docker compose down`/recreate the project for a config change, no janitor action is
+  needed — the DB on the volume is untouched and the next hourly run still applies.
+
+### `ANTHROPIC_API_KEY` alternative
+
+If `sortie.env` is switched from the Pro `CLAUDE_CODE_OAUTH_TOKEN` to a metered
+`ANTHROPIC_API_KEY` (no session-quota wall), the `turn_failed: success` / 0-token quota
+signature should stop occurring, so this janitor becomes a harmless no-op (it never finds an
+all-quota-fail issue) — leave it installed as a safety net. That switch is the cleaner fix
+for the quota wall itself, but it trades the subscription cap for per-token billing and is
+**not assumed here**; this script makes the current Pro-token setup self-healing without it.
+
+### Deploy-time verification (flag)
+
+- **Confirm the `run_history.error` text** on the live DB matches `%turn_failed: success%`
+  for a real quota-fail before relying on the classifier (the signature is the *observed*
+  one; refine `QUOTA_ERROR_LIKE` in the script only if a live inspection gives a tighter,
+  still-safe match). `sqlite3 /…/data/.sortie.db "SELECT issue_id,status,error,total_tokens
+  FROM run_history WHERE status='failed' LIMIT 20;"`
+- **Confirm `claude -p` is the right probe invocation** for the installed Claude Code CLI
+  (the `claude` binary is on PATH in the image per the Dockerfile; adjust the probe command
+  if your CLI differs).
+- **Confirm the `session_metadata` table exists** on the installed Sortie build — the refund
+  transaction deletes from it. It's present on the current build (the manual reset used it),
+  but if a future build drops/renames it the `DELETE` would roll back fail-safe (backup intact,
+  container restarted) and refunds would silently never complete. Quick check:
+  `sqlite3 /…/data/.sortie.db "SELECT name FROM sqlite_master WHERE type='table' AND name='session_metadata';"`
+- **Confirm `bash` exists on the DSM host** at the script's shebang path; the script avoids
+  `mapfile`/guarantees a `flock`-or-`mkdir` lock fallback for older/busybox shells, but the
+  shebang is `#!/usr/bin/env bash`. If the host only has `/bin/sh`, invoke via `bash
+  /…/quota-refund.sh` in the cron line.
