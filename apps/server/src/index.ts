@@ -6,8 +6,9 @@ import { db } from './db';
 import type { BackendWidget } from './types';
 import { widget as helloWidget } from './widgets/hello/index';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
+import { widget as pomodoroWidget } from './widgets/pomodoro/index';
 
-const widgets: BackendWidget[] = [helloWidget, musicTrackerWidget];
+const widgets: BackendWidget[] = [helloWidget, musicTrackerWidget, pomodoroWidget];
 
 const app = Fastify({ logger: true });
 
