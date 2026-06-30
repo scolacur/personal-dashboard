@@ -37,7 +37,11 @@ polling:
   interval_ms: 30000                       # poll every 30s
 
 workspace:
-  root: /home/sortie/workspaces            # per-issue dir created under here; isolated, no path to /core
+  # Container-LOCAL (overlay fs), deliberately NOT a NAS bind-mount — workspaces are
+  # disposable (origin is source of truth; before_run re-fetches and regenerates scm.json).
+  # Wiped on --force-recreate, so deploys start clean and node_modules don't pile up on the
+  # NAS. The after_create `rm -rf` still handles within-run re-dispatch idempotency.
+  root: /tmp/sortie-workspaces             # per-issue dir created under here; isolated, no path to /core
 
 agent:
   kind: claude-code
@@ -140,8 +144,8 @@ hooks:
     # directory; `git clone` then calls getcwd() at startup, finds CWD gone, and dies with
     # `fatal: Unable to read current working directory: No such file or directory` (exit 128
     # in ~0.2s). This is a THIRD distinct exit-128 cause, separate from the non-empty-dir
-    # (the rm itself) and proxy fixes. /home/sortie always exists (it's the workspaces root's
-    # parent); before_run does its own `cd "$SORTIE_WORKSPACE"` afterward.
+    # (the rm itself) and proxy fixes. /home/sortie is a stable dir outside the workspace
+    # (the bind-mounted home); before_run does its own `cd "$SORTIE_WORKSPACE"` afterward.
     cd /home/sortie 2>/dev/null || cd /
     rm -rf "$SORTIE_WORKSPACE"
     git -c http.proxy=http://egress-proxy:3128 clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"

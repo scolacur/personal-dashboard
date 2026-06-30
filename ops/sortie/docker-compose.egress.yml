@@ -45,7 +45,11 @@ services:
       - no_proxy=localhost,127.0.0.1,egress-proxy
     volumes:
       - /volume1/docker/personal-dashboard/data:/home/sortie
-      - /volume1/docker/personal-dashboard/workspaces:/home/sortie/workspaces
+      # NOTE: workspaces are intentionally NOT bind-mounted — workspace.root is the
+      # container-local /tmp/sortie-workspaces (see WORKFLOW.md). They're disposable and
+      # wiped on --force-recreate so deploys start clean and the NAS doesn't accumulate
+      # stale clones/node_modules. To make them persist again, re-add a bind-mount here and
+      # point workspace.root back at it.
       - /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/WORKFLOW.md:/home/sortie/WORKFLOW.md:ro
     ports:
       - "7678:7678"
