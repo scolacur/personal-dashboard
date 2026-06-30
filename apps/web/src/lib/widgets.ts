@@ -12,4 +12,10 @@ export const widgets: WidgetMeta[] = [
     description: 'Stub widget proving the dashboard convention.',
     route: '/widgets/hello',
   },
+  {
+    id: 'pomodoro',
+    title: 'Pomodoro Timer',
+    description: 'Focus timer with work/break cycles.',
+    route: '/widgets/pomodoro',
+  },
 ];
