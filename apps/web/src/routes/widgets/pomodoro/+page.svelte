@@ -93,7 +93,7 @@
 
 <div class="pomodoro">
   <div class="mode-tabs">
-    {#each (['work', 'short-break', 'long-break'] as const) as m}
+    {#each (['work', 'short-break', 'long-break'] as const) as m (m)}
       <button
         type="button"
         class="mode-tab"
@@ -110,7 +110,7 @@
   </div>
 
   <div class="session-dots">
-    {#each { length: 4 } as _, i}
+    {#each { length: 4 } as _, i (i)}
       <span class="dot" class:filled={i < completedPomodoros % 4 || (completedPomodoros > 0 && completedPomodoros % 4 === 0)}></span>
     {/each}
     {#if completedPomodoros >= 4}
