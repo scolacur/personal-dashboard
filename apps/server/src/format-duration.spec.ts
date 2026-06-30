@@ -17,4 +17,8 @@ describe('formatDuration', () => {
   it('formats 600000ms as 10:00', () => {
     expect(formatDuration(600000)).toBe('10:00');
   });
+
+  it('formats 3661000ms as 1:01:01', () => {
+    expect(formatDuration(3661000)).toBe('1:01:01');
+  });
 });
