@@ -125,7 +125,15 @@ hooks:
   # the worker's prep-retry backoff (this stuck #6 and #8). So wipe first, then clone.
   # Safe: the workspace is disposable — source of truth is origin, and before_run
   # re-fetches `sortie/<id>` from origin on every attempt.
+  #
+  # PROXY (egress fix): hooks run in a RESTRICTED env (only system + SORTIE_* vars), so the
+  # container's HTTP(S)_PROXY is STRIPPED. Under the egress-hardened deploy Sortie sits on an
+  # internal network with NO direct internet — the only route out is the squid sidecar. So
+  # git/gh in every network hook must set the proxy explicitly or they hang and exit 128
+  # (this re-broke #6/#8 after the container was recreated onto egress_internal). Hostname
+  # matches docker-compose.egress.yml's egress-proxy:3128.
   after_create: |
+    export http_proxy=http://egress-proxy:3128 https_proxy=http://egress-proxy:3128
     rm -rf "$SORTIE_WORKSPACE"
     git clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"
 
@@ -138,6 +146,7 @@ hooks:
   # The conflict-resolution merge of origin/main is left to the agent (see prompt
   # body) so the worker can actually resolve conflicts rather than the hook failing.
   before_run: |
+    export http_proxy=http://egress-proxy:3128 https_proxy=http://egress-proxy:3128
     cd "$SORTIE_WORKSPACE"
     git fetch origin main
     BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
@@ -155,6 +164,7 @@ hooks:
   # ⚠ The docs don't show a PR-creation hook; this is the standard gh pattern —
   #    confirm gh is on PATH (it is, via the Dockerfile) and the flags match.
   after_run: |
+    export http_proxy=http://egress-proxy:3128 https_proxy=http://egress-proxy:3128
     cd "$SORTIE_WORKSPACE"
     git config user.name  "sortie-bot-55"
     git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
