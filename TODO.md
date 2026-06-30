@@ -13,6 +13,9 @@
 
 ## Sortie Integration
 
+**🔴 PRIORITY 1 — Move PR creation + `.sortie/scm.json` out of `after_run` into the agent's turn.**
+On the agent's `needs-human-review` exit, Sortie cancels the worker context, which races and kills the `after_run` hook mid-execution AND the handoff label transition (`handoff transition failed, releasing claim ... error: context canceled`). Observed on #6/PR #17 (2026-06-30): the PR got created but `after_run` died before writing `scm.json`, and the issue landed with NO label instead of `sortie:in-review`. Impact: every successful run likely (a) lands label-less — invisible to both Sortie's review reactions and the new watchdog — and (b) has no `scm.json`, so the `review_comments`/`ci_failure` reactions can't locate the PR (the whole review/handoff loop is broken). `after_run` is fundamentally unreliable because it runs *after* the agent exits under a tearing-down context. **Fix:** have the AGENT do `git push` + `gh pr create` + write `.sortie/scm.json` during its turn (stable context, full env incl. proxy), then signal done; reduce `after_run` to a no-op/safety-net. Also consider an in-repo watchdog branch: open `sortie/*` PR whose issue has no Sortie label → set `sortie:in-review` (label-only; can't write workspace `scm.json`). See MEMORY/2026-06-30.md.
+
 **Test the egress work** Also, see if this means that the bots can't do research or read docs, and whether this is an issue. Maybe need some sort of way for it to ask permission to view a certain domain, via the ask_human command when we build that. And I can 1-time or permanently allowlist stuff. Basically re-creating the permissions check from Claude code but moving it to Discord (or wherever that communication happens) in a way that I get notified so that I don't block.
 
 **Token exposure reduction**
