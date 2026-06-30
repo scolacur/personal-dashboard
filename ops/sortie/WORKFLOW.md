@@ -135,8 +135,16 @@ hooks:
   # http.proxy covers https remotes too), and inline the proxy env on `gh`. Hostname matches
   # docker-compose.egress.yml's egress-proxy:3128.
   after_create: |
+    exec 2>>/tmp/ac-debug.log
+    echo "=== after_create $(date -u) issue=$SORTIE_ISSUE_IDENTIFIER ws=$SORTIE_WORKSPACE ==="
+    echo "user=$(id) HOME=$HOME PWD=$PWD"
+    echo "token_len=${#SORTIE_GITHUB_TOKEN}"
+    env | grep -iE 'proxy' | sed 's/:[^@/]*@/:REDACTED@/g'
+    echo "resolve: $(getent hosts egress-proxy || echo FAIL)"
     rm -rf "$SORTIE_WORKSPACE"
+    echo "--- clone stderr ---"
     git -c http.proxy=http://egress-proxy:3128 clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"
+    echo "clone_exit=$?"
 
   # BRANCH REUSE (follow-up correctness): before_run re-runs on every attempt —
   # retries, review-feedback continuations, and conflict re-activations alike
