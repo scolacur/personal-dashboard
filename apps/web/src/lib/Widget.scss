@@ -18,7 +18,7 @@
 .face {
   position: absolute;
   inset: 0;
-  padding: 1.5rem;
+  padding: var(--space-lg);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -36,13 +36,13 @@
   }
 
   h2 {
-    margin: 0 0 0.5rem;
-    font-size: 1.1rem;
+    margin: 0 0 var(--space-sm);
+    font-size: var(--font-size-lg);
   }
 
   p {
     margin: 0;
-    font-size: 0.875rem;
+    font-size: var(--font-size-sm);
     color: var(--muted);
   }
 }
@@ -53,12 +53,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--space-sm);
   background: var(--surface-2);
 
   .back-name {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: var(--font-size-lg);
     font-family: var(--font-display);
     font-weight: 600;
     letter-spacing: -0.01em;
@@ -66,7 +66,7 @@
 
   .back-label {
     margin: 0;
-    font-size: 0.75rem;
+    font-size: var(--font-size-xs);
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
@@ -83,7 +83,7 @@
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text);
-  font-size: 1rem;
+  font-size: var(--font-size-base);
   line-height: 1;
   cursor: pointer;
   display: grid;

@@ -1,0 +1,43 @@
+:global(:root) {
+  /* Colors — light theme */
+  --bg: #dbdbdb;
+  --surface: #f0f0f0;
+  --surface-2: #e6e6e6;
+  --border: #c6c6c6;
+  --text: #2e2e2e;
+  --muted: #585656;
+  --accent: #3f1051; /* primary */
+  --accent-2: #a3a300; /* accent */
+  --on-accent: #f0f0f0;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Sora', system-ui, sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.1rem;
+
+  /* Spacing */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  /* Shape */
+  --radius: 0.5rem;
+}
+
+:global([data-theme='dark']) {
+  /* Colors — dark theme overrides */
+  --bg: #242424;
+  --surface: #2e2e2e;
+  --surface-2: #353535;
+  --border: #3d3d3d;
+  --text: #d1d1d1;
+  --muted: #a9a7a7;
+  --accent: #ddaeef; /* primary */
+  --accent-2: #ffff5c; /* accent */
+  --on-accent: #242424;
+}
