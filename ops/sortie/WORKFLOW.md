@@ -126,16 +126,17 @@ hooks:
   # Safe: the workspace is disposable — source of truth is origin, and before_run
   # re-fetches `sortie/<id>` from origin on every attempt.
   #
-  # PROXY (egress fix): hooks run in a RESTRICTED env (only system + SORTIE_* vars), so the
-  # container's HTTP(S)_PROXY is STRIPPED. Under the egress-hardened deploy Sortie sits on an
-  # internal network with NO direct internet — the only route out is the squid sidecar. So
-  # git/gh in every network hook must set the proxy explicitly or they hang and exit 128
-  # (this re-broke #6/#8 after the container was recreated onto egress_internal). Hostname
-  # matches docker-compose.egress.yml's egress-proxy:3128.
+  # PROXY (egress fix): under the egress-hardened deploy Sortie sits on an internal network
+  # with NO direct internet — the only route out is the squid sidecar. Hooks run in an env
+  # where an `export http(s)_proxy=...` does NOT take effect for git (an inherited uppercase
+  # HTTPS_PROXY wins, or the export isn't applied), so git hangs and exits 128 — this re-broke
+  # #6/#8 after the container was recreated onto egress_internal. FIX: pass the proxy directly
+  # on each network git command via `-c http.proxy=` (git config overrides all proxy env vars;
+  # http.proxy covers https remotes too), and inline the proxy env on `gh`. Hostname matches
+  # docker-compose.egress.yml's egress-proxy:3128.
   after_create: |
-    export http_proxy=http://egress-proxy:3128 https_proxy=http://egress-proxy:3128
     rm -rf "$SORTIE_WORKSPACE"
-    git clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"
+    git -c http.proxy=http://egress-proxy:3128 clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"
 
   # BRANCH REUSE (follow-up correctness): before_run re-runs on every attempt —
   # retries, review-feedback continuations, and conflict re-activations alike
@@ -146,13 +147,13 @@ hooks:
   # The conflict-resolution merge of origin/main is left to the agent (see prompt
   # body) so the worker can actually resolve conflicts rather than the hook failing.
   before_run: |
-    export http_proxy=http://egress-proxy:3128 https_proxy=http://egress-proxy:3128
     cd "$SORTIE_WORKSPACE"
-    git fetch origin main
+    PX=http://egress-proxy:3128
+    git -c http.proxy=$PX fetch origin main
     BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
-    if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+    if git -c http.proxy=$PX ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
       echo "follow-up: reusing existing remote branch $BRANCH"
-      git fetch origin "$BRANCH"
+      git -c http.proxy=$PX fetch origin "$BRANCH"
       git checkout -B "$BRANCH" "origin/$BRANCH"
     else
       echo "first attempt: creating $BRANCH from origin/main"
@@ -164,15 +165,14 @@ hooks:
   # ⚠ The docs don't show a PR-creation hook; this is the standard gh pattern —
   #    confirm gh is on PATH (it is, via the Dockerfile) and the flags match.
   after_run: |
-    export http_proxy=http://egress-proxy:3128 https_proxy=http://egress-proxy:3128
     cd "$SORTIE_WORKSPACE"
+    PX=http://egress-proxy:3128
     git config user.name  "sortie-bot-55"
     git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
     git add -A
     if git diff --cached --quiet; then echo "no changes; skipping PR"; exit 0; fi
     git commit -m "sortie(${SORTIE_ISSUE_IDENTIFIER}): automated changes"
-    git push -u origin "sortie/${SORTIE_ISSUE_IDENTIFIER}"
-    export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
+    git -c http.proxy=$PX push -u origin "sortie/${SORTIE_ISSUE_IDENTIFIER}"
     REVIEW_NOTE=""
     if [ -n "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ] && [ -f "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ]; then
       REVIEW_NOTE="$(cat "$SORTIE_SELF_REVIEW_SUMMARY_PATH")"
@@ -184,7 +184,7 @@ hooks:
     # On a FOLLOW-UP the PR already exists, so `gh pr create` errors — that's fine,
     # the push above already updated it. `|| true` keeps the hook from failing, and
     # we resolve the PR number afterward either way.
-    gh pr create \
+    GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr create \
       --repo scolacur/personal-dashboard \
       --base main \
       --head "$BRANCH" \
@@ -197,7 +197,7 @@ hooks:
     # ci_failure/auto_merge use. Without this file NO reaction can find the PR, so
     # the change-requested follow-up loop never fires. Resolve the PR number for the
     # head branch (works for both freshly-created and pre-existing follow-up PRs).
-    PR_NUMBER="$(gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || echo "")"
+    PR_NUMBER="$(GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || echo "")"
     SHA="$(git rev-parse HEAD)"
     mkdir -p "$SORTIE_WORKSPACE/.sortie"
     if [ -n "$PR_NUMBER" ]; then
