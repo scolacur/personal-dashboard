@@ -243,27 +243,55 @@ db_path: /home/sortie/.sortie.db
 
 {{ .issue.description }}
 
-{{ if .run.is_continuation }}
 ---
 
-## ⚠ THIS IS A REVIEW-FEEDBACK FOLLOW-UP — not a first attempt
+## STEP 0 — Are you continuing existing work? Check for an open PR on your branch.
 
-A human reviewed your PR and **requested changes**. You are continuing on the
-**existing branch** `sortie/{{ .issue.identifier }}` with your prior commits intact —
-do NOT start over and do NOT recreate the PR. Address the review, then commit and push;
-the existing PR updates automatically.
+**Do NOT trust any "continuation" banner or assume this is a first attempt.** Review-feedback
+and conflict-rework dispatches arrive looking exactly like a fresh run (Sortie's
+`is_continuation` is false for them), so the reliable signal is whether a PR already exists
+for your branch. Run this FIRST, before any work:
 
-Review comments to resolve:
+```sh
+export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
+BRANCH="sortie/{{ .issue.identifier }}"
+PR=$(gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || true)
+echo "existing PR: ${PR:-none}"
+```
+
+**If `$PR` is set, this is a FOLLOW-UP — not a first attempt.** Your prior commits are on the
+branch. Do NOT start over, do NOT recreate the PR, do NOT duplicate prior work.
+
+1. **Read ALL the feedback.** A top-level "Request changes" *summary* is NOT shown by
+   `gh pr view --comments`, so fetch reviews explicitly:
+   ```sh
+   # summary review bodies (the "Request changes" text itself):
+   gh api "repos/scolacur/personal-dashboard/pulls/$PR/reviews" \
+     --jq '.[] | select(.state=="CHANGES_REQUESTED" or .state=="COMMENTED") | "[\(.state)] \(.user.login): \(.body)"'
+   # inline review comments, with file + line:
+   gh api "repos/scolacur/personal-dashboard/pulls/$PR/comments" \
+     --jq '.[] | "\(.path):\(.line // .original_line): \(.body)"'
+   # full conversation:
+   gh pr view "$PR" --repo scolacur/personal-dashboard --comments
+   ```
+2. **See what you already changed**, so you EDIT it rather than pile on more:
+   ```sh
+   git fetch origin main
+   git log --oneline origin/main..HEAD
+   git diff origin/main
+   ```
+3. **Address every requested change by editing your existing work.** If the reviewer says
+   "there should be only one X" or "change A to B", make the diff end in exactly that state —
+   modify or remove what you added before; do NOT append yet another change. Then re-run
+   `npm ci && npm run verify`. Do NOT weaken or delete tests to make feedback pass.
+
+**If `$PR` is empty, this is a first attempt** — proceed normally with the issue below.
+
+{{ if .review_comments }}
+Structured review comments Sortie passed for this run (treat as authoritative locations):
 {{ range .review_comments }}
-- **{{ .reviewer }}** on `{{ .file }}` (lines {{ .start_line }}–{{ .end_line }}):
-  {{ .body }}
-{{ else }}
-- (No structured review comments were passed; read the PR conversation directly with
-  `gh pr view {{ .issue.identifier }} --comments` and address every "Request changes" point.)
+- **{{ .reviewer }}** on `{{ .file }}` (lines {{ .start_line }}–{{ .end_line }}): {{ .body }}
 {{ end }}
-
-Re-run `npm run verify` after your fixes. Do not weaken tests to make review feedback pass.
-The "reconcile with main" step below still applies if the branch also drifted from `main`.
 {{ end }}
 
 ---
@@ -286,10 +314,9 @@ again.** If there is no such exchange, this is a normal run — proceed.
 
 ## First: reconcile with `main` if this branch already has work
 
-The branch `sortie/{{ .issue.identifier }}` may already contain commits from a previous
-PR for this issue (a re-activated conflict re-work arrives as a normal dispatch, so the
-`is_continuation`/retry banners above may NOT show even though the branch is non-empty).
-Before doing anything else, make the branch mergeable into `main`:
+The branch `sortie/{{ .issue.identifier }}` may already contain commits from a previous PR
+for this issue (if STEP 0 found an existing PR, it definitely does). Before doing anything
+else, make the branch mergeable into `main`:
 
 ```sh
 git fetch origin main
@@ -308,6 +335,25 @@ existing commits or recreate the branch/PR. Then proceed with the issue below.
   `PROJECT.md`, and `DECISIONS.md` before making structural choices.
 - **Verify your work** with `npm run verify` (build + typecheck + lint + test).
   Do not weaken or delete tests to make it pass.
+
+## Tests — REQUIRED for feature/logic work (applies to follow-ups too)
+
+The repo uses **vitest** (`npm run test`, part of `npm run verify`). Sortie-authored changes
+must ship with tests.
+
+- **Any new or changed business logic** — functions, route handlers, matchers, parsers,
+  utilities, anything in `packages/shared` or `apps/server` with non-trivial behavior — MUST
+  have unit tests covering it (happy path + the edge cases you can foresee). Co-locate them
+  the way existing tests are (`*.test.ts` / `*.spec.ts`, matching the nearest example).
+- **Self-check before you open OR update the PR:** walk your `git diff origin/main` and, for
+  every new/changed unit of logic, confirm a corresponding test exists. If testable logic
+  has no test, add it — treat untested logic as **incomplete**, not done.
+- **This applies to continuation commits too:** if review feedback makes you add or change
+  logic, add or adjust its tests in the same push.
+- **Allowed to skip a test only when there's genuinely nothing to unit-test** — pure
+  config, docs, type-only changes, or a presentational Svelte component with no logic. When
+  you skip, say which change and why in the PR body.
+- Never weaken, skip (`.skip`/`.only`), or delete existing tests to get `verify` green.
 
 ## Scope discipline (you are running unattended)
 
