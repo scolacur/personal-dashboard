@@ -6,6 +6,22 @@ Newest decisions at the top.
 
 ---
 
+## D-016: Sortie hand-off is done by the agent in-turn, not by `after_run`
+
+**Decision:** The durable end-of-run hand-off for a Sortie issue — `git push`, `gh pr create`, writing `.sortie/scm.json`, and relabeling `sortie:in-progress → sortie:in-review` — is performed by the **coding agent during its own turn** (a "Finish" protocol in the `WORKFLOW.md` prompt body), not by the `after_run` workspace hook. `after_run` is demoted to an idempotent **safety-net** that only completes a hand-off the agent didn't finish. The label transition is additionally backstopped by an in-repo Action (`sortie-watchdog.yml` `rescue-labels` job).
+
+**Reasoning:**
+
+- On a `needs-human-review` exit, Sortie cancels the worker context. That cancellation **races with and kills `after_run` mid-execution** *and* Sortie's own `handoff_state` label transition (`error: context canceled`). Observed on #6/PR #17 and #8/PR #18 (2026-06-30): PR created but `scm.json` never written, and the issue left with **no** `sortie:*` label — invisible to both the review `reactions` and the watchdog.
+- The agent's turn runs under a **stable context with the full environment** (egress proxy + token), so push/PR/scm.json done there are reliable. This mirrors the existing `ask_human` pattern, which already self-relabels from inside the turn.
+- **Ordering is load-bearing:** the relabel to `sortie:in-review` must be the agent's **last** action. `in-review` is not in `active_states`, so applying it earlier can make the reconciler cancel the worker mid-turn — the very failure being fixed. Everything durable is completed first; the relabel + turn-end come last.
+- **Belt-and-suspenders on the label** (Steve's call): the agent self-relabels AND `rescue-labels` sets `sortie:in-review` on any label-less issue that still has an open `sortie/*` PR — so a lost race is recovered regardless of cause, with no dependence on Sortie internals.
+- **`scm.json` robustness:** `after_create` does `rm -rf` the (persistent, per-issue) workspace on each dispatch, and `scm.json` is not committed to the branch. To survive that regardless of *when* Sortie reads the file, `before_run` now **regenerates** `.sortie/scm.json` on the follow-up (existing-branch) path. (Whether Sortie reads it pre-wipe from the persistent workspace or post-clone from the fresh one is unconfirmed against this Sortie version — regenerating covers both.)
+
+**Implications:** `self_review` stays enabled as a belt, but correctness no longer depends on which side of the context-cancel it runs — the agent runs `npm run verify` as its own final gate. A few semantics remain **confirm-on-first-live-run** (flagged in `WORKFLOW.md`): that the agent turn's env carries the proxy + `SORTIE_GITHUB_TOKEN` for `git`/`gh`; that an agent self-relabel isn't fought by the reconciler / `handoff_state`; and the actual `scm.json` read timing. Deploy is `sortie-refresh` (force-recreate — single-file bind-mount inode trap).
+
+---
+
 ## D-015: Widget tile as a flippable card component (`lib/Widget.svelte`)
 
 **Decision:** The dashboard home extracts widget tiles into a reusable `Widget.svelte` component. Each widget card has a front face (title + description + link to route) and a rear face (widget name + "Rear panel" stub), flipped by a button in the bottom-right corner using a CSS 3D `rotateY` transition.

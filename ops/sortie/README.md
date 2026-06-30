@@ -18,8 +18,11 @@ Deploy + configuration runbook. Files in this dir:
 
 1. Sortie polls **GitHub Issues** on `scolacur/personal-dashboard` every 30s.
 2. An open issue labeled `sortie:queued` is picked up; Sortie creates an isolated
-   workspace and runs the hooks: **clone → branch off main → Claude Code works →
-   self-review (`npm run verify`) → commit → push → open PR.**
+   workspace and runs: **clone → branch off main → Claude Code works → self-review
+   (`npm run verify`) → the agent, in its own turn, commits → pushes → opens the PR →
+   writes `.sortie/scm.json` → relabels `sortie:in-review`** (see D-016 / WORKFLOW.md
+   "Finish"). The `after_run` hook is only an idempotent safety-net that finishes a
+   hand-off a crashed turn left incomplete — it is no longer the primary path.
 3. The PR is authored by the **bot account** (non-admin). Branch protection requires
    **1 approval**, so the bot **cannot self-merge**. You review, approve, merge.
 4. You (admin) can still **push directly to main** because protection is set with
@@ -34,10 +37,12 @@ Deploy + configuration runbook. Files in this dir:
 
 > The GitHub *adapter* only reads issues + manages labels (it **replaces** the state
 > label on a transition — removes the old state label, adds the new one — so Sortie
-> itself never leaves an issue with two state labels). Branch/PR creation is done by the
-> *workspace hooks* in `WORKFLOW.md` — that's where the bot token is used. The `after_run`
-> hook also writes `.sortie/scm.json` (`pr_number`/`owner`/`repo`/`branch`/`sha`), which
-> the reactions feature requires to locate the PR.
+> itself never leaves an issue with two state labels). Branch/PR creation and the
+> `.sortie/scm.json` write (`pr_number`/`owner`/`repo`/`branch`/`sha`, which the reactions
+> feature needs to locate the PR) are done **by the agent during its turn** (D-016), with
+> the `after_run` hook as a safety-net. The agent also self-relabels to `sortie:in-review`
+> as its final action — backstopped by the `rescue-labels` job in `sortie-watchdog.yml`,
+> because the context-cancel on a successful exit can otherwise kill the label transition.
 
 ---
 
@@ -293,8 +298,14 @@ so nothing re-picks it). A fourth is Sortie simply being down (issues sit in
 
 ### Stuck-issue watchdog (Layer 1 — `.github/workflows/sortie-watchdog.yml`)
 
-- **Schedule:** every 30 min (`cron`), plus `workflow_dispatch` (inputs: `threshold_minutes`,
-  `dry_run`) for manual/test runs.
+This file runs **two** jobs on the same schedule: `detect-stuck` (below) and `rescue-labels`
+(the D-016 hand-off backstop — any open `sortie/*` PR whose issue has **no** `sortie:*` state
+label is restored to `sortie:in-review`, recovering a hand-off whose label transition was lost
+to a canceled worker context; idempotent — an issue that already has any `sortie:*` label is
+left alone).
+
+- **Schedule:** every 15 min (`cron: */15`), plus `workflow_dispatch` (inputs:
+  `threshold_minutes`, `dry_run`) for manual/test runs.
 - **What it does:** any issue in `sortie:in-progress` *or* `sortie:queued` longer than the
   threshold (default **120 min**, measured from the last `labeled <state>` timeline event)
   is flipped to **`sortie:stuck`** with an `@scolacur` comment. A healthy run finishes in

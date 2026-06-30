@@ -155,48 +155,65 @@ hooks:
       echo "follow-up: reusing existing remote branch $BRANCH"
       git -c http.proxy=$PX fetch origin "$BRANCH"
       git checkout -B "$BRANCH" "origin/$BRANCH"
+      # Regenerate .sortie/scm.json in the freshly-cloned workspace. after_create did
+      # `rm -rf`, so any scm.json the prior run wrote is gone from THIS workspace; it is
+      # NOT committed to the branch. This covers the case where Sortie reads scm.json from
+      # the cloned workspace at/after dispatch (vs. from the persistent pre-wipe workspace).
+      # Only on the follow-up path — a first attempt has no PR yet. Harmless if redundant.
+      PR_NUMBER="$(GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || echo "")"
+      if [ -n "$PR_NUMBER" ]; then
+        mkdir -p "$SORTIE_WORKSPACE/.sortie"
+        printf '{"pr_number":%s,"owner":"scolacur","repo":"personal-dashboard","branch":"%s","sha":"%s"}\n' \
+          "$PR_NUMBER" "$BRANCH" "$(git rev-parse HEAD)" > "$SORTIE_WORKSPACE/.sortie/scm.json"
+        echo "regenerated .sortie/scm.json for PR #$PR_NUMBER"
+      fi
     else
       echo "first attempt: creating $BRANCH from origin/main"
       git checkout -B "$BRANCH" origin/main
     fi
 
-  # Commit, push, open a PR AS THE BOT. The bot PAT has Contents+PRs write but is
-  # non-admin and branch protection requires 1 approval -> it cannot self-merge.
-  # ⚠ The docs don't show a PR-creation hook; this is the standard gh pattern —
-  #    confirm gh is on PATH (it is, via the Dockerfile) and the flags match.
+  # ─── SAFETY-NET ONLY (P1 fix, 2026-06-30) ───────────────────────────────────────
+  # The AGENT now does the durable hand-off (commit → push → gh pr create → write
+  # .sortie/scm.json → relabel sortie:in-review) DURING its turn — see the prompt body
+  # "Finish" section. Reason: on a needs-human-review exit Sortie cancels the worker
+  # context, which races and kills BOTH this hook mid-run AND the handoff label
+  # transition (`context canceled`), so a hook-authored PR landed with no scm.json and
+  # the issue with no label. Doing it in-turn runs under a stable context + full env.
+  #
+  # This hook is now a BACKSTOP for a turn that died after committing but before
+  # finishing push/PR/scm.json. It MUST be fully idempotent and MUST NOT fail the run:
+  # on the normal path (agent already pushed + wrote scm.json) it detects that and
+  # exits 0 without doing anything. It does NOT relabel — the agent self-relabels and
+  # the in-repo sortie-watchdog "label-rescue" job backstops the label specifically.
   after_run: |
     cd "$SORTIE_WORKSPACE"
     PX=http://egress-proxy:3128
+    BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
     git config user.name  "sortie-bot-55"
     git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
+    # Commit any stragglers the agent left uncommitted (no-op if the tree is clean).
     git add -A
-    if git diff --cached --quiet; then echo "no changes; skipping PR"; exit 0; fi
-    git commit -m "sortie(${SORTIE_ISSUE_IDENTIFIER}): automated changes"
-    git -c http.proxy=$PX push -u origin "sortie/${SORTIE_ISSUE_IDENTIFIER}"
-    REVIEW_NOTE=""
-    if [ -n "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ] && [ -f "$SORTIE_SELF_REVIEW_SUMMARY_PATH" ]; then
-      REVIEW_NOTE="$(cat "$SORTIE_SELF_REVIEW_SUMMARY_PATH")"
+    git commit -m "sortie(${SORTIE_ISSUE_IDENTIFIER}): automated changes" 2>/dev/null || echo "nothing new to commit"
+    # If there is no commit at all on this branch beyond main, there is nothing to hand off.
+    if ! git rev-parse HEAD >/dev/null 2>&1; then echo "no HEAD; nothing to do"; exit 0; fi
+    LOCAL="$(git rev-parse HEAD)"
+    REMOTE="$(git -c http.proxy=$PX ls-remote origin "$BRANCH" 2>/dev/null | awk '{print $1}')"
+    # NORMAL PATH: agent already pushed this exact commit AND wrote scm.json -> no-op.
+    if [ "$LOCAL" = "$REMOTE" ] && [ -f "$SORTIE_WORKSPACE/.sortie/scm.json" ]; then
+      echo "agent completed hand-off in-turn (remote up to date + scm.json present); safety-net no-op"
+      exit 0
     fi
-    # "Closes #N" so merging the PR auto-closes the issue (belt-and-suspenders terminal
-    # transition alongside handoff_state — a closed issue also drops out of candidates).
-    PR_BODY=$(printf 'Closes #%s\n\nAutomated by Sortie for #%s. Self-review: %s.\n\n%s' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_SELF_REVIEW_STATUS" "$REVIEW_NOTE")
-    BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
-    # On a FOLLOW-UP the PR already exists, so `gh pr create` errors — that's fine,
-    # the push above already updated it. `|| true` keeps the hook from failing, and
-    # we resolve the PR number afterward either way.
+    echo "safety-net: agent did not finish hand-off (remote=$REMOTE local=$LOCAL); completing it"
+    git -c http.proxy=$PX push -u origin "$BRANCH" || true
+    # "Closes #N" so merging the PR auto-closes the issue (a closed issue also drops out
+    # of candidates, belt-and-suspenders alongside the in-review hand-off).
+    PR_BODY=$(printf 'Closes #%s\n\nAutomated by Sortie for #%s (completed by the after_run safety-net — the agent turn ended before finishing hand-off).' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_ISSUE_IDENTIFIER")
     GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr create \
       --repo scolacur/personal-dashboard \
       --base main \
       --head "$BRANCH" \
       --title "sortie: resolve #${SORTIE_ISSUE_IDENTIFIER}" \
       --body "$PR_BODY" || true
-    # ─── .sortie/scm.json (REQUIRED by reactions) ────────────────────────────────
-    # guides/configure-review-feedback + reference/reactions: review_comments &
-    # ci_failure reactions read .sortie/scm.json to locate the PR; the after_run
-    # hook (or agent) must write pr_number(int)/owner/repo, plus branch+sha which
-    # ci_failure/auto_merge use. Without this file NO reaction can find the PR, so
-    # the change-requested follow-up loop never fires. Resolve the PR number for the
-    # head branch (works for both freshly-created and pre-existing follow-up PRs).
     PR_NUMBER="$(GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || echo "")"
     SHA="$(git rev-parse HEAD)"
     mkdir -p "$SORTIE_WORKSPACE/.sortie"
@@ -314,3 +331,73 @@ To ask:
      --remove-label "sortie:in-progress" --add-label "sortie:awaiting-human"
    ```
 Then end your turn. Do not poll or wait in-process.
+
+---
+
+## Finish: verify, push, open your PR, and hand off — DO THIS YOURSELF, in this turn
+
+**Why this is your job, not a hook's.** When you finish, Sortie tears down the worker
+context, which races with and can kill the post-run hook mid-execution (`context
+canceled`) — leaving a PR with no `.sortie/scm.json` and an issue with no label, invisible
+to review automation. So the durable steps below run **inside your turn**, while the
+context and full environment (proxy, token) are alive. The hook is now only a backstop.
+
+Once the work is complete and you are ready to hand off for human review, run these steps
+**in order**. Do not skip the ordering — the relabel MUST be last (see step 6).
+
+```sh
+export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
+PX=http://egress-proxy:3128                      # egress proxy; git/gh have no direct internet
+BRANCH="sortie/{{ .issue.identifier }}"
+cd "$SORTIE_WORKSPACE"
+```
+
+1. **Final verify gate.** Run `npm run verify` (build + typecheck + lint + test) and make
+   it pass. Do NOT weaken or delete tests to get there. If it cannot pass and you cannot
+   fix it within scope, prefer `ask_human` over shipping a red PR.
+
+2. **Commit everything.** If there is nothing to commit, you made no changes — do NOT open
+   a PR or relabel; either use `ask_human` or leave the issue as-is and end your turn.
+   ```sh
+   git config user.name  "sortie-bot-55"
+   git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
+   git add -A
+   git commit -m "sortie({{ .issue.identifier }}): automated changes"
+   ```
+
+3. **Push** the branch (proxy passed inline — an exported `*_proxy` is not honored for git here):
+   ```sh
+   git -c http.proxy=$PX push -u origin "$BRANCH"
+   ```
+
+4. **Open the PR** (on a follow-up it already exists, so `|| true` keeps this from failing;
+   the push above already updated it). Put every assumption you made under an `## Assumptions`
+   header in the body so a human can check them.
+   ```sh
+   HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr create \
+     --repo scolacur/personal-dashboard --base main --head "$BRANCH" \
+     --title "sortie: resolve #{{ .issue.identifier }}" \
+     --body "$(printf 'Closes #%s\n\nAutomated by Sortie for #%s.\n\n## Assumptions\n- <list yours, or "none">\n' "{{ .issue.identifier }}" "{{ .issue.identifier }}")" || true
+   ```
+
+5. **Write `.sortie/scm.json`** — the `reactions` (review-feedback / CI-failure) features
+   read this to locate your PR. Resolve the PR number for the branch (works whether you just
+   created it or it pre-existed):
+   ```sh
+   PR_NUMBER="$(HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number)"
+   SHA="$(git rev-parse HEAD)"
+   mkdir -p "$SORTIE_WORKSPACE/.sortie"
+   printf '{"pr_number":%s,"owner":"scolacur","repo":"personal-dashboard","branch":"%s","sha":"%s"}\n' \
+     "$PR_NUMBER" "$BRANCH" "$SHA" > "$SORTIE_WORKSPACE/.sortie/scm.json"
+   ```
+
+6. **Relabel to `sortie:in-review` — LAST, only after steps 1–5 succeeded.** `sortie:in-review`
+   is NOT an active state, so Sortie's reconciler may cancel your worker the instant you
+   apply it. That is fine *because everything durable is already done* — but only if this is
+   genuinely your final action. Apply it, then end your turn immediately. Do nothing after.
+   ```sh
+   gh issue edit {{ .issue.identifier }} --repo scolacur/personal-dashboard \
+     --remove-label "sortie:in-progress" --add-label "sortie:in-review"
+   ```
+
+Then signal completion (`needs-human-review`) and end your turn.
