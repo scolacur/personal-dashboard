@@ -44,6 +44,14 @@ agent:
   command: claude
   max_turns: 50
   max_concurrent_agents: 1                  # PILOT: one ticket at a time
+  # --- TOKEN-BURN BOUNDARIES (default for both is 0 = UNLIMITED — that's how #6/#8 hit attempt 43) ---
+  max_sessions: 3                           # HARD retry cap: stop dispatching an issue after 3 sessions
+  max_tokens: 3000000                       # per-issue cumulative token ceiling (belt across sessions; tune down once real usage is known)
+
+# Claude Code adapter pass-through. Per-SESSION USD cap — meaningful on an API key; on the
+# Pro OAuth token cost is subscription-quota (not $), so max_sessions/max_tokens are what bind.
+claude-code:
+  max_budget_usd: 5
 
 # Self-Review (floor #6): runs inside the worker BEFORE push/PR. Reviewer "same"
 # (the coding session itself, only supported value). It corrects locally up to
