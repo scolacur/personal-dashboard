@@ -1,3 +1,4 @@
+<!-- Dashboard shell: top nav + theme toggle wrapping all pages -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
