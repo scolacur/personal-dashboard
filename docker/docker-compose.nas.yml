@@ -16,10 +16,12 @@ services:
     ports:
       - '8080:8080'
     volumes:
-      - ./data:/data
+      # Repo-root data/ + .env (both gitignored), matching docker-compose.yml.
+      # Run compose from the docker/ dir so ../ resolves to the repo root.
+      - ../data:/data
       - /volume1/music/dj-library-mirror:/library:ro
     env_file:
-      - ./.env
+      - ../.env
     restart: unless-stopped
     labels:
       # Opt THIS container into Watchtower (with WATCHTOWER_LABEL_ENABLE below,
