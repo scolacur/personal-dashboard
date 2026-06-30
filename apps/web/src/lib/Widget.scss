@@ -1,0 +1,71 @@
+.widget {
+  perspective: 1000px;
+}
+
+.widget-inner {
+  display: grid;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease;
+}
+
+.flipped .widget-inner {
+  transform: rotateY(180deg);
+}
+
+.widget-front,
+.widget-rear {
+  grid-area: 1 / 1;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  padding: 1.5rem;
+  padding-bottom: 3.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  position: relative;
+  min-height: 10rem;
+}
+
+.widget-rear {
+  transform: rotateY(180deg);
+}
+
+.flip-btn {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+}
+
+.rear-name {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 0.25rem;
+}
+
+.rear-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
