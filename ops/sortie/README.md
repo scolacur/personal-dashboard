@@ -330,6 +330,30 @@ A stateless, idempotent host-cron one-shot (no daemon):
    after the window has reset**, so a refund can never feed 3 fresh instant-fails. The probe
    is one trivial turn — far cheaper than a real session — and an inconclusive probe (no
    `ok`, no limit signature) is treated conservatively as "do nothing".
+1a. **Idle guard (don't interrupt healthy work).** Step 3's refund `docker stop`s the
+   container to quiesce the SQLite writer. Before any probe or stop, the script queries
+   Sortie's **read-only** state API (`docker exec sortie sh -lc 'curl -s
+   localhost:7678/api/v1/state'` — port 7678 is unpublished under the egress-isolated
+   network, so it's reached from *inside* the container, same as the probe) and reads
+   `counts.running`. If **any** run is in progress (`counts.running > 0`) it logs "agents
+   active — deferring refund to next run" and exits **0 without stopping or refunding**.
+   It defers on `running` only, not `retrying`: a retrying issue is in Sortie's backoff
+   scheduler between attempts and isn't holding the single agent slot, so a stop doesn't
+   interrupt live work for it. The count is parsed with `grep`/`tr` (no `jq` — not
+   guaranteed on the DSM host), anchored on the `"counts":{…}` object so a `running` key
+   elsewhere in the JSON can't be misread. **Fail-safe:** if the count can't be determined
+   (exec/curl fails, empty or unparseable body) the script treats it as "possibly busy"
+   and defers — it never stops on an ambiguous check. With `max_concurrent_agents: 1` this
+   removes the narrow window where a refund (quota-cap exists AND quota just reset AND
+   Sortie happens to be running *another* issue) would kill a healthy in-flight run and
+   waste the session + tokens this janitor exists to protect.
+   > **Residual caveat (best-effort, not airtight).** A few-second TOCTOU window remains:
+   > Sortie could dispatch a new run between the idle check and the `docker stop`, because
+   > its API is **read-only with no pause/maintenance mode** — there is no way to atomically
+   > "hold runs, then stop". The guard shrinks the blast radius to negligible (it has to
+   > coincide with the exact second a quota window reset *and* a new dispatch fires); it does
+   > **not** eliminate it. If it ever does hit, the killed run is retried on restart exactly
+   > as before this guard existed — so the guard is a strict improvement with no downside.
 2. **Classification (precise).** It selects issues whose `run_history` is composed
    **entirely** of quota-fails. The SQL rule, per `issue_id`:
    - `SUM(quota_fail) > 0` — at least one quota-fail, **and**

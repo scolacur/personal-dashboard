@@ -159,6 +159,55 @@ if ! "$DOCKER" inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -
   exit 0
 fi
 
+# ─── Step 1a: idle guard — never interrupt an in-flight agent run ───────────────────
+# Step 2 stops the container to quiesce the SQLite writer. With max_concurrent_agents:1
+# the worst case is one healthy run killed mid-task (Sortie retries it on restart, but
+# that burns a session + tokens — the very budget this janitor protects). So before any
+# probe/stop, ask Sortie's read-only state API how many runs are in progress and DEFER if
+# any are. The API is on :7678 inside the egress-isolated network (not host-published), so
+# query it from inside the container the same way the probe runs in-container. No jq: the
+# response shape is {"…","counts":{"running":N,"retrying":M},…}; we anchor on the
+# "running" key *inside* the "counts" object and read its integer, so an arbitrary digit
+# elsewhere in the JSON can't be mistaken for the count.
+#
+# We defer on `counts.running > 0` only — NOT on `retrying`. A retrying issue is in
+# Sortie's backoff scheduler between attempts; it is not actively holding the single agent
+# slot, so stopping the container does not interrupt live work for it (and on restart it
+# simply resumes its backoff). Gating on retrying would needlessly block refunds during
+# normal transient backoff. Running is the state that actually holds the agent.
+#
+# Fail-safe: if the count can't be determined (exec/curl fails, empty or unparseable body)
+# we treat it as "possibly busy" and DEFER (exit 0 without stopping) — we never proceed to
+# stop on an ambiguous check.
+STATE_JSON="$(
+  "$DOCKER" exec "$CONTAINER" sh -lc 'curl -s localhost:7678/api/v1/state' 2>/dev/null \
+  || true
+)"
+# Extract counts.running: isolate the "counts":{...} object, then read the integer that
+# follows "running" within it. tr strips whitespace so spacing variants still match.
+# `|| true`: a no-match grep in this pipeline exits non-zero, which under
+# `set -euo pipefail` would abort the script AT THIS ASSIGNMENT rather than fall
+# through to the explicit fail-safe DEFER branch below. Neutralize it so an empty/
+# unparseable result becomes "" and reaches the `! grep -qE` check (logs + exit 0).
+RUNNING_COUNT="$(
+  printf '%s' "$STATE_JSON" \
+    | tr -d ' \n\t' \
+    | grep -oE '"counts":\{[^}]*\}' \
+    | grep -oE '"running":[0-9]+' \
+    | grep -oE '[0-9]+' \
+    | head -n1 \
+  || true
+)"
+if ! printf '%s' "$RUNNING_COUNT" | grep -qE '^[0-9]+$'; then
+  log "could not determine in-progress run count from state API (got: $(printf '%s' "$STATE_JSON" | tr '\n' ' ' | cut -c1-160)); deferring refund to next run"
+  exit 0
+fi
+if [ "$RUNNING_COUNT" -gt 0 ]; then
+  log "$RUNNING_COUNT agent run(s) active — deferring refund to next run (won't interrupt healthy work)"
+  exit 0
+fi
+log "idle guard: no agent runs in progress; safe to proceed"
+
 PROBE_OUT="$(
   "$DOCKER" exec "$CONTAINER" sh -lc \
     "timeout ${PROBE_TIMEOUT_S} claude -p 'Reply with the single word: ok' 2>&1" \
