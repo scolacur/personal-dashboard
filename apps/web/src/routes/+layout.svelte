@@ -23,6 +23,7 @@
   }
 </script>
 
+<!-- Top navigation bar with brand link and theme toggle -->
 <nav class="top-nav">
   <a href="/" class="nav-brand">Dashboard</a>
   <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
