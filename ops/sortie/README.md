@@ -3,8 +3,10 @@
 Deploy + configuration runbook. Files in this dir:
 
 - `Dockerfile` — Sortie + Claude Code + `git`/`gh` (hooks need the latter two).
-- `WORKFLOW.md` — Sortie config (tracker, hooks, self-review) + the agent prompt template.
+- `WORKFLOW.md` — Sortie config (tracker, hooks, self-review, reactions) + the agent prompt template.
 - `README.md` — this runbook.
+- `../../.github/workflows/sortie-conflict-rework.yml` — CI bridge that re-activates a
+  Sortie issue when its PR conflicts with `main` (see Architecture step 5 + Follow-ups).
 
 **Status legend:** 🧑 = Steve (needs your hands/accounts/NAS) · 🤖 = Tank can run it.
 
@@ -20,9 +22,20 @@ Deploy + configuration runbook. Files in this dir:
    **1 approval**, so the bot **cannot self-merge**. You review, approve, merge.
 4. You (admin) can still **push directly to main** because protection is set with
    `enforce_admins: false`.
+5. **Follow-up loops** keep an in-review PR moving (see "Follow-ups" below):
+   - **Changes requested** → Sortie's native `reactions.review_comments` dispatches a
+     continuation turn on the *existing* branch/PR (no relabel — the issue stays in
+     `sortie:in-review`).
+   - **Merge conflict** → the `sortie-conflict-rework.yml` Actions workflow flips the
+     issue back to `sortie:queued`; Sortie re-dispatches a normal run that reuses the
+     existing branch and merges `origin/main` to resolve the conflict.
 
-> The GitHub *adapter* only reads issues + manages labels. Branch/PR creation is done
-> by the *workspace hooks* in `WORKFLOW.md` — that's where the bot token is used.
+> The GitHub *adapter* only reads issues + manages labels (it **replaces** the state
+> label on a transition — removes the old state label, adds the new one — so Sortie
+> itself never leaves an issue with two state labels). Branch/PR creation is done by the
+> *workspace hooks* in `WORKFLOW.md` — that's where the bot token is used. The `after_run`
+> hook also writes `.sortie/scm.json` (`pr_number`/`owner`/`repo`/`branch`/`sha`), which
+> the reactions feature requires to locate the PR.
 
 ---
 
@@ -81,6 +94,14 @@ gh api repos/scolacur/personal-dashboard/branches/main/protection \
 
 ## Step 3 — Pre-create the issue labels 🤖 ✅ DONE (`sortie:queued` / `:in-progress` / `:done` / `:wontfix`)
 
+> ⚠ **NEW label required by the follow-up loop:** `sortie:needs-human` (the
+> `reactions.review_comments.escalation_label`). The adapter does **not** auto-create
+> labels, so create it before deploying the reactions config:
+> ```sh
+> gh label create "sortie:needs-human" --repo scolacur/personal-dashboard \
+>   --color B60205 --description "Sortie escalated; a human must take over" || true
+> ```
+
 ## Step 4 — Build + deploy on the NAS 🧑
 
 **NAS layout** — base dir holds secrets + runtime state OUTSIDE the repo clone, so
@@ -131,7 +152,20 @@ gh api repos/scolacur/personal-dashboard/branches/main/protection \
    required. No privileged mode / caps needed.
 6. **Health check:** `curl http://localhost:7678/readyz` → ready; `sudo docker logs -f sortie`.
 7. **Update later:** `git -C /volume1/docker/personal-dashboard/personal-dashboard pull`
-   → rebuild (step 4) → `sudo docker restart sortie`.
+   → rebuild (step 4) → **recreate** the container.
+
+   > ⚠ **Recreate, don't restart, for config/env changes.** `WORKFLOW.md` is bind-mounted
+   > read-only and `sortie.env` is passed via `--env-file` *at `docker run` time*. A
+   > `docker restart` reuses the old container's mounts/env snapshot and will **not** pick
+   > up edits to `WORKFLOW.md` (e.g. the new `reactions` block / hooks) or `sortie.env`.
+   > Recreate:
+   > ```sh
+   > sudo docker rm -f sortie
+   > # then re-run the `docker run …` from step 5 (or, GUI: Container Manager →
+   > # Project → Stop → Build → Run, which recreates the container)
+   > ```
+   > The SQLite DB + workspaces live on host volumes, so per-issue state survives the
+   > recreate.
 
 ## Step 5 — First pilot ticket 🧑/🤖
 
@@ -169,12 +203,77 @@ start/stop/logs/rebuild are all in the UI. Steps 1–3 + the `sortie.env`/dir pr
   `SORTIE_GITHUB_PROJECT`; the environment reference also lists generic
   `SORTIE_TRACKER_API_KEY` / `SORTIE_TRACKER_PROJECT`. `WORKFLOW.md` references the
   former via `$`-expansion — confirm your version resolves them.
-- `reactions` block — removed for the pilot (its schema isn't `enabled: bool`).
+- `reactions.review_comments` sub-field names (`poll_interval_ms`, `debounce_ms`,
+  `max_continuation_turns`) are from the current public `reference/reactions`. Confirm
+  they validate on your installed build; older builds may name them differently. The
+  block being a **map** of reaction kinds (not `enabled: bool`) is confirmed by docs.
+- `.sortie/scm.json` field set — docs confirm `pr_number`/`owner`/`repo` (review_comments)
+  and `branch`/`sha` (ci_failure); we write all five. Confirm the JSON keys match your
+  build at first follow-up.
 
-## Follow-ups (post-pilot)
+## Follow-ups — the in-review PR re-work loop
 
-- [ ] **Re-add the `reactions` block to `WORKFLOW.md`** with the correct schema from
-  Sortie's `guides/pr-reactions` (PR-reaction → follow-up-attempt feedback loop). Removed
-  during setup because `reactions.enabled: true` failed validation (`expected map, got bool`).
-  Defer-after-first-run feature; wire it once the basic loop is proven. *(Tracked broader in
-  CORE META-TODOS → Sortie Integration → "Set up PR Reactions feedback loop".)*
+Once a PR is open the issue sits in `sortie:in-review` (out of the active set, so it is
+not re-dispatched as a *new* attempt). Two mechanisms pick it back up:
+
+### 1. Changes requested → re-work (NATIVE — `reactions.review_comments`)
+
+Source: `reference/reactions`, `guides/configure-review-feedback`.
+
+- **Trigger:** a human "Request changes" review (`reviewDecision: CHANGES_REQUESTED`) on
+  the issue's PR. Bot/automated comments are filtered out by the adapter.
+- **What runs:** a **continuation turn in the same existing workspace + branch** — it
+  pushes fixes onto the existing PR. The prompt body (`{{ if .run.is_continuation }}`)
+  tells the agent it's a follow-up, lists the `{{ .review_comments }}`, and says not to
+  recreate the branch/PR.
+- **No relabel.** Reactions fire *while the issue stays in `handoff_state`
+  (`sortie:in-review`)*; if the issue moves to any other state the reaction's claim is
+  released. So — unlike the conflict path — we deliberately do **NOT** flip the label to
+  `sortie:in-progress`. (Steve's original intent was a label flip; the native mechanism
+  is strictly better and a flip would actually *stop* reactions by moving the issue out of
+  `handoff_state`. The single-label invariant is preserved because no relabel happens.)
+- **Bounded:** comment-ID fingerprint skips unchanged reviews (no re-storm on the same
+  feedback), `debounce_ms` batches edits, `max_continuation_turns: 3` is the hard ceiling,
+  and per-issue `max_sessions`/`max_tokens` bind across everything. On exhaustion the
+  issue is labeled `sortie:needs-human`.
+- **Requires** `.sortie/scm.json` (written by `after_run`) to locate the PR.
+
+### 2. Merge conflict → re-work (IN-REPO BRIDGE — NOT native)
+
+Sortie has **no** reaction for a conflicting PR (`mergeable: CONFLICTING` /
+`mergeStateStatus: DIRTY`); `auto_merge` only acts on clean/unstable PRs. So conflict
+re-work is handled by `.github/workflows/sortie-conflict-rework.yml`:
+
+- On every push to `main` (and via `workflow_dispatch`), it lists open `sortie/*` PRs,
+  finds any now `CONFLICTING`, and for those whose issue is in `sortie:in-review` it
+  **flips the label** `in-review → queued` (also stripping any stale `in-progress`, which
+  keeps the single-label invariant). Sortie then re-dispatches a normal run; `before_run`
+  **reuses the existing branch**, and the prompt body's retry branch merges `origin/main`
+  and resolves the conflict.
+- **Authorization preserved:** the label is the trigger token. The workflow uses the
+  repo-scoped `GITHUB_TOKEN` (write-equivalent) and only ever labels Sortie's *own*
+  (`sortie/*` head) PRs. A stranger can't push to `main`, can't create a `sortie/*` head
+  branch, and the workflow reads no attacker-controlled content — so "only a write+ actor's
+  label activates an issue" still holds.
+- **Bounded:** it only flips from `sortie:in-review`; once flipped to `queued` the issue
+  leaves that state, so re-runs are no-ops until Sortie hands back to `in-review`. Plus the
+  per-issue `max_sessions`/`max_tokens` ceiling.
+
+### Branch-reuse correctness (both paths)
+
+`before_run` previously did `git checkout -B sortie/<id> origin/main` — which on any
+follow-up would **discard the PR's commits**. It now reuses `origin/sortie/<id>` if it
+exists (fetch + checkout) and only creates from `main` on the first attempt.
+
+### Deploy-time checklist for this loop
+
+- [ ] Create the `sortie:needs-human` label (see Step 3 note).
+- [ ] **Recreate** (not restart) the NAS container so the new `WORKFLOW.md` is mounted
+  (see Step 4.7).
+- [ ] Confirm `reactions` validates on the installed Sortie build (see Flagged section).
+- [ ] After the first PR, confirm `.sortie/scm.json` is written in the workspace and that
+  a "Request changes" review actually dispatches a continuation (check logs / dashboard).
+- [ ] The `.github/workflows/` file only takes effect once merged to the repo's default
+  branch (GitHub runs workflows from the branch's own copy on `push`).
+- [ ] Cleaning up issue #6's dual label + re-triggering PR #7 is a separate **live** step
+  (Tank). This config change does not touch live GitHub state.

@@ -66,9 +66,43 @@ self_review:
     - "npm run verify"                      # build && typecheck && lint && test (41 vitest tests)
   verification_timeout_ms: 180000
 
-# NOTE: `reactions` (PR-reaction feedback loop) intentionally omitted for the pilot —
-# its config schema isn't `enabled: bool`. Add it back from guides/pr-reactions once the
-# basic loop works; it's a defer-after-first-run feature, not a pilot requirement.
+# ─── PR REACTIONS: change-requested → re-work (BEHAVIOR 1, NATIVE) ──────────────
+# Source: reference/reactions + guides/configure-review-feedback + reference/workflow-config.
+# `reactions` is a MAP of named reaction kinds (NOT `enabled: bool` — that's why the
+# earlier `enabled: true` failed with "expected map, got bool"). We enable ONLY
+# review_comments. How it works:
+#   • Trigger: a human "Request changes" (reviewDecision CHANGES_REQUESTED) review on
+#     the issue's PR. Bot/automated comments are filtered out by the adapter.
+#   • Dispatch: a CONTINUATION turn in the SAME existing workspace + branch (it pushes
+#     fixes onto the existing PR). It does NOT relabel the issue — reactions fire while
+#     the issue sits in handoff_state (sortie:in-review). See README "Follow-ups" for why
+#     we deliberately do NOT flip the label back to in-progress for the review path.
+#   • PR lookup: requires .sortie/scm.json (written by the after_run hook above).
+# Loop bounding (so we can't re-storm like attempt 43):
+#   • fingerprint = sorted set of non-outdated comment IDs; an unchanged review is
+#     skipped (deduplicated) — it only re-dispatches when the comment set CHANGES.
+#   • debounce_ms waits after the newest comment before dispatching (batches edits).
+#   • max_continuation_turns is the hard ceiling on review-triggered continuations.
+#   • per-issue agent.max_sessions / max_tokens still bind across everything.
+# NOTE: `reactions` values are NOT env-expanded (per reference/workflow-config), so
+# `provider` is the literal "github".
+# ⚠ CONFIRM at deploy against your installed version's reference/reactions: the
+#   sub-field names below (poll_interval_ms / debounce_ms / max_continuation_turns)
+#   are from the current public docs; older builds may differ.
+reactions:
+  review_comments:
+    provider: github
+    poll_interval_ms: 120000        # min 30000; poll PR review state every 2m
+    debounce_ms: 60000              # wait 60s after newest comment before dispatch
+    max_continuation_turns: 3       # hard cap on review-triggered re-works
+    max_retries: 2
+    escalation: label               # on cap-exhaustion, label for a human
+    escalation_label: "sortie:needs-human"   # MUST be pre-created in the repo
+  # NOTE: merge-conflict (CONFLICTING/DIRTY) is NOT a native reaction kind — Sortie's
+  # auto_merge only acts on clean/unstable PRs and no reaction detects DIRTY. Behavior 2
+  # is therefore handled by an in-repo bridge: .github/workflows/sortie-conflict-rework.yml
+  # flips the issue label back into the active set so Sortie re-dispatches a normal run
+  # (which then merges origin/main per the prompt body). See README "Follow-ups".
 
 hooks:
   # Clone the Dashboard ONLY into the isolated workspace. Token-in-URL because
@@ -77,11 +111,26 @@ hooks:
   after_create: |
     git clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"
 
-  # Fresh branch off main for each attempt.
+  # BRANCH REUSE (follow-up correctness): before_run re-runs on every attempt —
+  # retries, review-feedback continuations, and conflict re-activations alike
+  # (reference/workflow-config: "before_run — runs before each agent attempt").
+  # A blind `checkout -B sortie/<id> origin/main` would DISCARD the PR's existing
+  # commits on any follow-up. So: if the remote branch already exists, fetch and
+  # check it OUT (preserving its history); only create from main on first attempt.
+  # The conflict-resolution merge of origin/main is left to the agent (see prompt
+  # body) so the worker can actually resolve conflicts rather than the hook failing.
   before_run: |
     cd "$SORTIE_WORKSPACE"
     git fetch origin main
-    git checkout -B "sortie/${SORTIE_ISSUE_IDENTIFIER}" origin/main
+    BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
+    if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+      echo "follow-up: reusing existing remote branch $BRANCH"
+      git fetch origin "$BRANCH"
+      git checkout -B "$BRANCH" "origin/$BRANCH"
+    else
+      echo "first attempt: creating $BRANCH from origin/main"
+      git checkout -B "$BRANCH" origin/main
+    fi
 
   # Commit, push, open a PR AS THE BOT. The bot PAT has Contents+PRs write but is
   # non-admin and branch protection requires 1 approval -> it cannot self-merge.
@@ -103,12 +152,32 @@ hooks:
     # "Closes #N" so merging the PR auto-closes the issue (belt-and-suspenders terminal
     # transition alongside handoff_state — a closed issue also drops out of candidates).
     PR_BODY=$(printf 'Closes #%s\n\nAutomated by Sortie for #%s. Self-review: %s.\n\n%s' "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_ISSUE_IDENTIFIER" "$SORTIE_SELF_REVIEW_STATUS" "$REVIEW_NOTE")
+    BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
+    # On a FOLLOW-UP the PR already exists, so `gh pr create` errors — that's fine,
+    # the push above already updated it. `|| true` keeps the hook from failing, and
+    # we resolve the PR number afterward either way.
     gh pr create \
       --repo scolacur/personal-dashboard \
       --base main \
-      --head "sortie/${SORTIE_ISSUE_IDENTIFIER}" \
+      --head "$BRANCH" \
       --title "sortie: resolve #${SORTIE_ISSUE_IDENTIFIER}" \
-      --body "$PR_BODY"
+      --body "$PR_BODY" || true
+    # ─── .sortie/scm.json (REQUIRED by reactions) ────────────────────────────────
+    # guides/configure-review-feedback + reference/reactions: review_comments &
+    # ci_failure reactions read .sortie/scm.json to locate the PR; the after_run
+    # hook (or agent) must write pr_number(int)/owner/repo, plus branch+sha which
+    # ci_failure/auto_merge use. Without this file NO reaction can find the PR, so
+    # the change-requested follow-up loop never fires. Resolve the PR number for the
+    # head branch (works for both freshly-created and pre-existing follow-up PRs).
+    PR_NUMBER="$(gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || echo "")"
+    SHA="$(git rev-parse HEAD)"
+    mkdir -p "$SORTIE_WORKSPACE/.sortie"
+    if [ -n "$PR_NUMBER" ]; then
+      printf '{"pr_number":%s,"owner":"scolacur","repo":"personal-dashboard","branch":"%s","sha":"%s"}\n' \
+        "$PR_NUMBER" "$BRANCH" "$SHA" > "$SORTIE_WORKSPACE/.sortie/scm.json"
+    else
+      echo "WARN: could not resolve PR number for $BRANCH; reactions will not activate" >&2
+    fi
 
 db_path: /home/sortie/.sortie.db
 ---
@@ -117,7 +186,45 @@ db_path: /home/sortie/.sortie.db
 
 {{ .issue.description }}
 
+{{ if .run.is_continuation }}
 ---
+
+## ⚠ THIS IS A REVIEW-FEEDBACK FOLLOW-UP — not a first attempt
+
+A human reviewed your PR and **requested changes**. You are continuing on the
+**existing branch** `sortie/{{ .issue.identifier }}` with your prior commits intact —
+do NOT start over and do NOT recreate the PR. Address the review, then commit and push;
+the existing PR updates automatically.
+
+Review comments to resolve:
+{{ range .review_comments }}
+- **{{ .reviewer }}** on `{{ .file }}` (lines {{ .start_line }}–{{ .end_line }}):
+  {{ .body }}
+{{ else }}
+- (No structured review comments were passed; read the PR conversation directly with
+  `gh pr view {{ .issue.identifier }} --comments` and address every "Request changes" point.)
+{{ end }}
+
+Re-run `npm run verify` after your fixes. Do not weaken tests to make review feedback pass.
+The "reconcile with main" step below still applies if the branch also drifted from `main`.
+{{ end }}
+
+---
+
+## First: reconcile with `main` if this branch already has work
+
+The branch `sortie/{{ .issue.identifier }}` may already contain commits from a previous
+PR for this issue (a re-activated conflict re-work arrives as a normal dispatch, so the
+`is_continuation`/retry banners above may NOT show even though the branch is non-empty).
+Before doing anything else, make the branch mergeable into `main`:
+
+```sh
+git fetch origin main
+git merge origin/main   # if this reports conflicts, resolve them, git add, git commit
+```
+
+Keep BOTH the PR's intent and `main`'s changes when resolving. Never discard the branch's
+existing commits or recreate the branch/PR. Then proceed with the issue below.
 
 ## How to work in this repo
 

@@ -1,0 +1,115 @@
+# Sortie merge-conflict → re-work bridge (BEHAVIOR 2).
+#
+# WHY THIS EXISTS: Sortie's native `reactions` do NOT react to a merge-conflict
+# (CONFLICTING / mergeStateStatus DIRTY) PR — review_comments only reacts to a
+# human "Request changes" review, and auto_merge only acts on clean/unstable PRs
+# (docs.sortie-ai.com/reference/reactions). So conflict re-work needs an in-repo
+# bridge. Sortie's GitHub adapter authorizes work by ISSUE LABEL (the query_filter
+# gate), so the bridge simply flips a conflicting Sortie PR's issue back into the
+# active label set; Sortie then re-dispatches a normal run, before_run reuses the
+# existing sortie/<id> branch, and the prompt body merges origin/main + resolves
+# the conflict.
+#
+# AUTHORIZATION MODEL (unchanged): the label is the trigger token. This workflow
+# runs with the repo-scoped GITHUB_TOKEN (equivalent to a write actor) and ONLY
+# ever labels issues whose PR head branch is `sortie/*` — i.e. PRs Sortie itself
+# opened. A stranger cannot cause a label flip: they cannot push to main, cannot
+# open a sortie/* head branch (needs write to push the branch), and this workflow
+# never reads attacker-controlled PR content. So "only a write+ actor's label
+# activates an issue" stays true.
+#
+# LOOP BOUNDING: a flip only happens when the PR is CONFLICTING *and* its issue is
+# currently in sortie:in-review (i.e. not already active and not escalated). Once
+# flipped to sortie:queued the issue leaves in-review, so re-runs of this workflow
+# are no-ops until Sortie pushes a fresh resolution and hands back to in-review.
+# Per-issue agent.max_sessions / max_tokens in WORKFLOW.md remain the hard ceiling.
+
+name: sortie-conflict-rework
+
+on:
+  # main advancing is what turns existing PRs CONFLICTING; recheck on every push.
+  push:
+    branches: [main]
+  # manual recheck (e.g. after deploy) without waiting for a push to main.
+  workflow_dispatch: {}
+
+# Single-flight: don't let overlapping runs double-flip a label.
+concurrency:
+  group: sortie-conflict-rework
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write        # only to swap the state label on Sortie's own issues
+
+jobs:
+  reactivate-conflicting:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-activate Sortie issues whose PR is now CONFLICTING
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Give GitHub a moment to recompute mergeability after the push.
+          sleep 20
+
+          # All open PRs from a sortie/* head branch. mergeable is UNKNOWN until
+          # GitHub computes it, so we re-query per-PR below until it settles.
+          mapfile -t PRS < <(
+            gh pr list --repo "$REPO" --state open --json number,headRefName \
+              --jq '.[] | select(.headRefName | startswith("sortie/")) | .number'
+          )
+
+          if [ "${#PRS[@]}" -eq 0 ]; then
+            echo "No open sortie/* PRs; nothing to do."
+            exit 0
+          fi
+
+          for PR in "${PRS[@]}"; do
+            # Poll mergeable up to ~5x; GitHub returns UNKNOWN while computing.
+            MERGEABLE="UNKNOWN"
+            for _ in 1 2 3 4 5; do
+              MERGEABLE="$(gh pr view "$PR" --repo "$REPO" --json mergeable --jq .mergeable)"
+              [ "$MERGEABLE" != "UNKNOWN" ] && break
+              sleep 5
+            done
+
+            if [ "$MERGEABLE" != "CONFLICTING" ]; then
+              echo "PR #$PR mergeable=$MERGEABLE — skip."
+              continue
+            fi
+
+            HEAD="$(gh pr view "$PR" --repo "$REPO" --json headRefName --jq .headRefName)"
+            ISSUE="${HEAD#sortie/}"   # head is sortie/<issue-number>
+
+            # Read the issue's current Sortie state labels.
+            LABELS="$(gh issue view "$ISSUE" --repo "$REPO" --json labels \
+              --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")"
+
+            case ",$LABELS," in
+              *",sortie:in-review,"*)
+                # The only state we re-activate from. (Skip if already active,
+                # done/wontfix, or escalated to needs-human — prevents a loop.)
+                echo "PR #$PR (issue #$ISSUE) CONFLICTING and in-review -> re-activating."
+                # Single-label invariant: clear any stale in-progress FIRST, in its
+                # own tolerant call — an in-review issue normally has no in-progress
+                # label, and `--remove-label` on an absent label can 422; under
+                # `set -euo pipefail` that would abort the flip before the add below.
+                gh issue edit "$ISSUE" --repo "$REPO" \
+                  --remove-label "sortie:in-progress" 2>/dev/null || true
+                # in-review is guaranteed present (we matched on it) -> remove + queue.
+                gh issue edit "$ISSUE" --repo "$REPO" \
+                  --remove-label "sortie:in-review" \
+                  --add-label "sortie:queued"
+                gh issue comment "$ISSUE" --repo "$REPO" --body \
+                  "Sortie: PR #$PR is conflicting with \`main\`. Re-activated (\`sortie:queued\`) so Sortie merges \`origin/main\` into \`sortie/$ISSUE\` and resolves the conflict on the existing branch."
+                ;;
+              *)
+                echo "PR #$PR (issue #$ISSUE) CONFLICTING but issue labels=[$LABELS] (not in-review) — skip to avoid re-trigger."
+                ;;
+            esac
+          done
