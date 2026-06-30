@@ -18,8 +18,11 @@
 **Token exposure reduction**
 
 **ask_human functionality**
+- NOTE (2026-06-29): when `agent.max_sessions` is exhausted, Sortie **stops dispatching but does NOT move the issue to a failed state or notify me** — it silently parks (still labeled, just never re-dispatched). Token-burn is bounded, but a stuck issue is invisible until I happen to look. **Determine the right behavior:** likely (a) transition the issue to a `sortie:failed` terminal label so it's visibly dead and drops out of candidates, AND (b) ping me on exhaustion (Discord/`ask_human`). Sortie has no auto-transition on exhaustion, so this needs a mechanism — an `after_run`/hook check on `SORTIE_ATTEMPT` vs the cap, or Sortie's `notifications` config. Ties into Discord + retry-cap items.
 
 **Discord Integration** - both for `ask_human` but also as a way for me to submit issues
+
+**Mission Control / host access to the Sortie API (:7678)** Under the egress-hardened setup Sortie is on an `internal: true` network, so its port can't be published to the host (confirmed: no host route for internal networks). For now use `docker exec sortie curl localhost:7678/...`. When building Mission Control, run it as a container on the `egress_internal` network so it reaches `sortie:7678` container-to-container (no host port, isolation intact). Only add a forwarder sidecar (socat/nginx on both networks) if something off-NAS genuinely needs the API.
 
 **Ensure bots write tests** Most likely needs to be done via the Issue Generation Template
 
