@@ -1,0 +1,42 @@
+# NAS production compose — pull a prebuilt image from GHCR; let Watchtower auto-update.
+#
+# DIFFERENCE FROM docker/docker-compose.yml: that one has `build:` and is for local
+# dev / first manual bring-up. THIS one has `image:` (no build) — the image is built
+# in the cloud by .github/workflows/deploy.yml and pulled here. The NAS never compiles.
+#
+# Watchtower polls GHCR for a new :latest digest and recreates `app` in place when it
+# changes — that's the "don't manually pull + rebuild on every push" automation.
+#
+# Pin to a sha tag (ghcr.io/scolacur/personal-dashboard:<sha>) instead of :latest to
+# freeze/rollback; Watchtower only auto-updates the floating :latest tag.
+
+services:
+  app:
+    image: ghcr.io/scolacur/personal-dashboard:latest
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./data:/data
+      - /volume1/music/dj-library-mirror:/library:ro
+    env_file:
+      - ./.env
+    restart: unless-stopped
+    labels:
+      # Opt THIS container into Watchtower (with WATCHTOWER_LABEL_ENABLE below,
+      # only labelled containers are watched — so Watchtower never touches Sortie).
+      - 'com.centurylinklabs.watchtower.enable=true'
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      # Watchtower talks to the host Docker daemon to recreate containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # If the GHCR package is PRIVATE, mount a docker config.json with a GHCR
+      # login so Watchtower can pull. Public package -> omit this line.
+      # - /volume1/docker/personal-dashboard/.docker/config.json:/config.json:ro
+    environment:
+      - WATCHTOWER_LABEL_ENABLE=true # only update containers labelled above
+      - WATCHTOWER_CLEANUP=true # delete the old image after a successful update
+      - WATCHTOWER_POLL_INTERVAL=300 # check GHCR every 5 min
+      - WATCHTOWER_INCLUDE_RESTARTING=true
