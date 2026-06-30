@@ -335,9 +335,21 @@ existing commits or recreate the branch/PR. Then proceed with the issue below.
 
 - This is the **Personal Dashboard** — a TypeScript npm-workspaces monorepo
   (`apps/web` SvelteKit, `apps/server` Fastify + better-sqlite3, `packages/shared`).
+- **Orient before you code.** Read these first — they are the source of truth and
+  override your own defaults:
+  - `PROJECT.md` — scope, architecture, the stack, and the widget convention.
+  - `CLAUDE.md` — the repo working agreement.
+  - `DECISIONS.md` — *why* the codebase is the way it is. If an approach surprises
+    you, the reasoning is probably here; check it before fighting a convention.
+  - The nearest existing code to what you're touching — match its patterns.
 - **Prefer the codebase's existing conventions** over introducing new ones. When a
-  decision isn't obvious, match the nearest existing pattern. Read `CLAUDE.md`,
-  `PROJECT.md`, and `DECISIONS.md` before making structural choices.
+  decision isn't obvious, match the nearest existing pattern rather than inventing one.
+- **Log architectural decisions.** If you make a non-obvious design choice — picking
+  between two valid approaches, introducing a pattern, adding a dependency, or shaping a
+  schema/API contract — append a short entry to `DECISIONS.md` (what you decided, the
+  alternatives, and why) **in this same PR**. This is how the next agent or human
+  understands your reasoning without re-deriving it. One or two lines is fine; skip it
+  only for mechanical changes with no judgement involved.
 - **Verify your work** with `npm run verify` (build + typecheck + lint + test).
   Do not weaken or delete tests to make it pass.
 
