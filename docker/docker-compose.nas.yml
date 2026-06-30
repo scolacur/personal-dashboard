@@ -14,7 +14,9 @@ services:
   app:
     image: ghcr.io/scolacur/personal-dashboard:latest
     ports:
-      - '8080:8080'
+      # Host 8088 (8080 is taken by the gluetun VPN container on this NAS); the
+      # app still listens on 8080 inside the container. LAN URL: http://<nas>:8088
+      - '8088:8080'
     volumes:
       # Repo-root data/ + .env (both gitignored), matching docker-compose.yml.
       # Run compose from the docker/ dir so ../ resolves to the repo root.
