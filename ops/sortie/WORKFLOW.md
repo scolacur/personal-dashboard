@@ -147,6 +147,52 @@ hooks:
     cd "$SORTIE_WORKSPACE"
     git config user.name  "sortie-bot-55"
     git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
+    # ─── DEPENDENCY-MANIFEST GUARD (default-safe; runs BEFORE staging) ────────────
+    # The agent sandbox mutates dependency manifests out of scope: `npm ci` writes an
+    # install-script allowlist (`allowScripts`) into the root package.json every run,
+    # and self-review has let an unintended script edit slip through (PR #7's `prepare`
+    # regression). The prompt rule ("do NOT touch package.json deps") alone didn't hold,
+    # so this is a STRUCTURAL control: restore every dependency manifest to the
+    # origin/main baseline before anything is staged, UNLESS the run explicitly opted in
+    # via the sentinel. Restoring to origin/main (not HEAD) cleans BOTH fresh uncommitted
+    # edits AND manifest drift already committed on a reused follow-up branch (e.g. #7's
+    # committed `allowScripts`). It also correctly KEEPS any legitimate dep change that
+    # has landed on main, since main is the baseline. Manifests-only, idempotent, and a
+    # no-op (no empty commit) when nothing drifted. Committing a manifest change therefore
+    # requires the deliberate sentinel — it never happens silently.
+    if [ -f "$SORTIE_WORKSPACE/.sortie/allow-dep-changes" ]; then
+      echo "dep-guard: sentinel .sortie/allow-dep-changes present — SKIPPING manifest revert (run opted in)"
+    else
+      git fetch origin main    # cheap; before_run already fetched — this just guarantees the ref is here
+      # Build the in-scope manifest list NEWLINE-delimited and iterate with `read`, so
+      # the loop never depends on the host shell's $IFS / field-splitting behavior.
+      # In scope: root + every workspace package.json (apps/*, packages/*), all lockfile flavors.
+      {
+        printf '%s\n' package.json package-lock.json pnpm-lock.yaml yarn.lock
+        for d in apps packages; do
+          for sub in "$d"/*/; do
+            [ -d "$sub" ] || continue
+            printf '%s\n' "${sub}package.json" "${sub}package-lock.json" "${sub}pnpm-lock.yaml" "${sub}yarn.lock"
+          done
+        done
+      } | {
+        REVERTED=""
+        while IFS= read -r p; do
+          [ -n "$p" ] || continue
+          # Only act on paths that exist on main AND differ in the worktree — keeps this
+          # manifests-only, idempotent, and a clean no-op (no empty commit) when nothing drifted.
+          if git cat-file -e "origin/main:$p" 2>/dev/null && ! git diff --quiet "origin/main" -- "$p" 2>/dev/null; then
+            git checkout origin/main -- "$p" && REVERTED="$REVERTED $p"
+          fi
+        done
+        if [ -n "$REVERTED" ]; then
+          echo "dep-guard: reverted out-of-scope manifest changes to origin/main baseline:$REVERTED"
+        else
+          echo "dep-guard: no manifest drift; nothing to revert"
+        fi
+      }
+    fi
+    # ─── end dependency-manifest guard ───────────────────────────────────────────
     git add -A
     if git diff --cached --quiet; then echo "no changes; skipping PR"; exit 0; fi
     git commit -m "sortie(${SORTIE_ISSUE_IDENTIFIER}): automated changes"
@@ -251,5 +297,12 @@ existing commits or recreate the branch/PR. Then proceed with the issue below.
 - **Do NOT touch** secrets/`.env*`, auth/session code, CI/Dockerfiles,
   `package.json` scripts, dependencies, or the DB schema. If the issue seems to
   require any of these, stop and say so in the PR rather than doing it.
+- **Dependency manifests are guarded.** Any edit you (or `npm ci`) make to
+  `package.json` or a lockfile (root or any workspace) is automatically reverted to
+  the `main` baseline before commit — so do not rely on touching them. If this one
+  ticket *genuinely* requires a dependency/manifest change, you must explicitly
+  opt in: create the sentinel file `.sortie/allow-dep-changes` in the workspace
+  (`mkdir -p .sortie && touch .sortie/allow-dep-changes`) AND call out the manifest
+  change prominently in the PR description so a human reviews it.
 - If a change would affect more than a few files or feels larger than the ticket,
   open the PR as a draft and flag it prominently.
