@@ -38,6 +38,43 @@
 
 **File-access allowlist** (structural control) Bound what the agent may read/write beyond the container isolation already in place. Deferred CORE-harness control; also tracked in CORE META-TODOS.
 
+**Preview branches — test a PR without checking it out locally.** Spin up the app from a
+given PR's code on the NAS so it can be opened in a browser on the LAN. LOE ~half day for
+the single-slot manual approach below; the GUI is a follow-on.
+
+*Constraint that shapes the design:* the NAS has no public ingress (home LAN/NAT), so cloud
+CI can't reach in to deploy — same reason prod is pull-based (Watchtower polls GHCR). A
+preview therefore runs **on the NAS, LAN-only** (fine — that's where I test). Cloud preview
+(Fly/Railway) is rejected: it loses the `/library` mount and breaks the egress-hardened posture.
+
+*Approach — single slot, manual (start here):*
+- **Build half (~1–2 hrs):** today `deploy.yml` builds the image only on push to `main`. Add a
+  PR-triggered build that pushes `ghcr.io/scolacur/personal-dashboard:pr-<n>`. **Gate to
+  same-repo branches** (`if: github.event.pull_request.head.repo.full_name == github.repository`)
+  so untrusted fork code never builds an image — preserves deploy.yml's existing safety rule.
+  Sortie branches are same-repo, so this covers the real workflow.
+- **Run half (~2 hrs):** one `preview` container, modeled on `docker/docker-compose.nas.yml`.
+  Parametrize the image tag (`PR_TAG=pr-17`) + a host port (e.g. **8089**, since 8080=gluetun,
+  8088=prod app). Mount its **own** `/data` (a throwaway preview SQLite dir — NOT the prod
+  volume) and share the DJ library `:ro` (`/volume1/music/dj-library/tracks`). An empty library
+  is fine for everything except music-tracker's real-library matching. `up -d` to swap which PR
+  occupies the slot.
+
+*GUI (follow-on) — agent-dashboard "Sortie observability" section:*
+- A control to **build/launch a preview from a given PR #** (button or PR picker) — sets the tag,
+  recreates the preview container, surfaces the LAN URL (`http://<nas>:8089`).
+- A **"currently previewing" panel**: which PR / branch / short-SHA occupies the slot right now,
+  when it was launched, health, and a link to open it. Empty state when the slot is free.
+- *Wiring note:* the dashboard backend (Fastify) would need to drive Docker to start/stop the
+  preview container — i.e. host Docker socket access or a small NAS-side control endpoint. This
+  is the same "dashboard reaches NAS infra" question as Mission Control reaching `sortie:7678`
+  (see the Mission Control TODO item) and should reuse whatever mechanism that lands on. Keep the
+  control on the NAS — never give a cloud surface Docker access.
+
+*Graduate to an auto-reconciling controller (N concurrent previews, per-PR ports, optional
+`pr-17.dash.lan` routing via Caddy/nginx) only if one-slot-at-a-time becomes the bottleneck —
+that's ~1 day + ongoing weak-NAS RAM cost.* GUI lives in [agent-dashboard](pages/agent-dashboard/TODO.md).
+
 ### Shipped 2026-06-30
 - ✅ **Review-fix continuation fixed + VERIFIED** (`3fa4c2e`; D-017). Replaced the dead `{{ if .run.is_continuation }}` gate (false for review-reaction dispatches) with an unconditional **STEP 0** that detects an existing PR and fetches the feedback explicitly (`gh api .../reviews` for the summary body + inline comments + own prior diff), then edits rather than appends. Verified on #26/PR #27: summary review → `/reviews` fetched, agent edited the single function + its test, no duplication.
 - ✅ **Tests required for feature work** (`3fa4c2e`) — agent writes vitest tests for new/changed logic and self-checks its diff (continuations too). (`packages/shared` test-runner gap tracked above.)

@@ -2,6 +2,10 @@
 
 ## ability to view the progress / status / output / token usage of sub agents and for maintaining the various scheduled jobs
 
+## Sortie observability — PR preview control
+
+GUI half of the "Preview branches" item (full details + NAS infra in the root [TODO.md](../../TODO.md) Sortie Integration section). In this page's Sortie observability area: a control to **build/launch a preview from a given PR #** (surfaces the LAN URL), plus a **"currently previewing" panel** showing which PR / branch / short-SHA occupies the single preview slot, when it launched, health, and an open link. Backend needs NAS-side Docker control — reuse whatever the Mission Control → `sortie:7678` access mechanism lands on.
+
 ## scheduled jobs:
 
 - first one: a token audit
