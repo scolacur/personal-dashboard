@@ -10,6 +10,8 @@ A dedicated page within the Personal Dashboard for monitoring and controlling AI
 
 ### Phase 1 — Core (build first)
 
+**Sortie & Sortie Proxy Status** - Simple color-coded way to see at a glance that Sortie is operational.
+
 **Tasks** — Kanban board: Backlog / In Progress / Review / Done. Sourced from the `agent_jobs` table. This is the primary view for knowing what agents are actually working on. Filterable by project, initiative, or agent.
 
 **Activity Feed** — Chronological event log of agent actions: job started, job completed, error occurred, decision made, artifact produced (eg. a screengrab of a feature working) etc. Supports filtering by job or agent.

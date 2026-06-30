@@ -81,6 +81,11 @@ Create the repo-root `.env` (`/volume1/docker/personal-dashboard/personal-dashbo
 widget secrets). The compose mounts `../data` + `../.env` relative to `docker/`, i.e.
 the repo root. See `.env.example`.
 
+**Ensure the DJ library mount path exists.** The compose mounts
+`/volume1/music/dj-library/tracks` (the rsync target) read-only as `/library`. A
+read-only bind to a missing host path fails ("Bind mount failed: ... does not exist"),
+so confirm it's there (it's populated by the rsync task): `ls -d /volume1/music/dj-library/tracks`.
+
 ### Step 2 — Bring it up 🧑
 
 CLI — this NAS has **docker-compose v1 (hyphenated)**, not the `docker compose` v2
