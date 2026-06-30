@@ -115,7 +115,18 @@ hooks:
   # Clone the Dashboard ONLY into the isolated workspace. Token-in-URL because
   # hooks run in a restricted env (only system + SORTIE_* vars; SORTIE_GITHUB_TOKEN
   # is available). No SSH keys, no path to /core.
+  #
+  # IDEMPOTENCY (the exit-128 fix): the workspaces volume is PERSISTENT
+  # (docker-compose: /volume1/.../workspaces:/home/sortie/workspaces) and the dir is
+  # named by issue id. On any re-dispatch (conflict re-work, re-queue, retry) the dir
+  # `workspaces/<id>` already exists and is non-empty from the prior run; Sortie's
+  # rollback does NOT rm it. A bare `git clone` into a non-empty dir is
+  # `fatal: destination path already exists` → exit 128, which then loops forever on
+  # the worker's prep-retry backoff (this stuck #6 and #8). So wipe first, then clone.
+  # Safe: the workspace is disposable — source of truth is origin, and before_run
+  # re-fetches `sortie/<id>` from origin on every attempt.
   after_create: |
+    rm -rf "$SORTIE_WORKSPACE"
     git clone "https://x-access-token:${SORTIE_GITHUB_TOKEN}@github.com/scolacur/personal-dashboard.git" "$SORTIE_WORKSPACE"
 
   # BRANCH REUSE (follow-up correctness): before_run re-runs on every attempt —
