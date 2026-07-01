@@ -32,6 +32,22 @@
   font-size: var(--font-size-lg);
   letter-spacing: -0.01em;
 }
+.nav-links {
+  display: flex;
+  gap: var(--space-md);
+  margin-right: auto;
+  margin-left: var(--space-lg);
+  font-size: var(--font-size-sm);
+
+  a {
+    color: var(--muted);
+    transition: color 0.15s;
+
+    &:hover {
+      color: var(--accent);
+    }
+  }
+}
 .theme-toggle {
   display: grid;
   place-items: center;

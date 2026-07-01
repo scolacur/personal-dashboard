@@ -27,7 +27,7 @@ This document is the source of truth for project scope, architecture, and conven
 - Runs in Docker on Synology NAS
 - Accessed via browser on LAN only (no auth)
 
-### Explicitly NOT in MVP (lives in TODO.md)
+### Explicitly NOT in MVP (tracked as tickets in the Agent Dashboard board)
 
 - Additional widgets (habit tracker, workout log, pomodoro, diary, etc.)
 - Authentication
@@ -95,9 +95,11 @@ dashboard/
 ├── data/                          # Persistent (mounted volume): SQLite, logs
 ├── .env.example
 ├── package.json                   # Workspaces root
-├── TODO.md
 └── PROJECT.md
 ```
+
+*(Backlog note: TODOs are no longer tracked in `TODO.md` files — they live as tickets in the
+Agent Dashboard board (`agent_tickets`); the originals were seeded in and archived to `Dev/archive/`.)*
 
 ### Stack
 

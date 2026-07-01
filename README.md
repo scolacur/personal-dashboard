@@ -4,7 +4,9 @@ A self-hosted dashboard running on a Synology NAS in Docker, accessible via brow
 
 **Stack:** SvelteKit frontend, Fastify backend, SQLite via `better-sqlite3`, TypeScript throughout, SCSS for styles, Docker for deployment.
 
-See [PROJECT.md](PROJECT.md) for architecture details and [TODO.md](TODO.md) for the full backlog.
+See [PROJECT.md](PROJECT.md) for architecture details. The backlog lives as tickets in the
+Agent Dashboard ("Mission Control", `/agent-dashboard`) — the old `TODO.md` files were seeded into
+that board and archived to `Dev/archive/`.
 
 ---
 
