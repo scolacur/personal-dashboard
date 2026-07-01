@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { AgentProject, AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import { TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import * as api from './api';
 
@@ -12,7 +13,13 @@
     { status: 'in_review', label: 'In review' },
     { status: 'completed', label: 'Completed' },
   ];
-  const PRIORITIES: TicketPriority[] = ['low', 'medium', 'high'];
+
+  // Once a ticket is picked up by an agent, its status is controlled externally,
+  // so manual editing (field + drag) is locked for these statuses when assigned.
+  const AGENT_CONTROLLED: TicketStatus[] = ['queued', 'in_progress', 'in_review', 'completed'];
+  function isStatusLocked(t: AgentTicket): boolean {
+    return t.assignee !== null && AGENT_CONTROLLED.includes(t.status);
+  }
 
   let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
@@ -22,22 +29,37 @@
   // null = "All projects"
   let filterProjectId = $state<number | null>(null);
 
+  // Priority filter: 'all' (no filter), 'none' (unset), or a specific P-level.
+  let filterPriority = $state<'all' | 'none' | TicketPriority>('all');
+
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
   // Condensed view hides card descriptions to fit more tickets on screen. On by default.
   let condensed = $state(true);
 
-  // Lanes are grouped by priority: high band on top, then medium, then low. A card can
+  // Lanes group by priority (P0 on top … P5, then unset at the bottom). A card can
   // only be reordered within its own band and never dragged into another band.
-  const PRIORITY_RANK: Record<TicketPriority, number> = { high: 0, medium: 1, low: 2 };
+  const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4, P5: 5, none: 6 };
+  function rankOf(p: TicketPriority | null): number {
+    return PRIORITY_RANK[p ?? 'none'];
+  }
+  // Key used for the card's data-priority attribute + band comparisons.
+  function bandKey(p: TicketPriority | null): string {
+    return p ?? 'none';
+  }
+
+  // Priority legend modal.
+  let legendOpen = $state(false);
 
   // Add / edit form state. `editingId === null` while adding.
   let formOpen = $state(false);
   let editingId = $state<number | null>(null);
+  let editingLocked = $state(false);
   let formTitle = $state('');
   let formBody = $state('');
-  let formPriority = $state<TicketPriority>('medium');
+  let formStatus = $state<TicketStatus>('backlog');
+  let formPriority = $state<TicketPriority | null>(null);
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
@@ -46,6 +68,7 @@
     const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
+      if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
       if (q && !`${t.title} ${t.body ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -54,9 +77,7 @@
   function byStatus(status: TicketStatus): AgentTicket[] {
     return visibleTickets()
       .filter((t) => t.status === status)
-      .sort(
-        (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.sortOrder - b.sortOrder,
-      );
+      .sort((a, b) => rankOf(a.priority) - rankOf(b.priority) || a.sortOrder - b.sortOrder);
   }
 
   async function load() {
@@ -75,9 +96,11 @@
 
   function openAdd() {
     editingId = null;
+    editingLocked = false;
     formTitle = '';
     formBody = '';
-    formPriority = 'medium';
+    formStatus = 'backlog'; // new tickets start in the backlog
+    formPriority = null; // unset by default — assigned deliberately
     // Default to the active filter, else the first project.
     formProjectId = filterProjectId ?? projects[0]?.id ?? null;
     formOpen = true;
@@ -85,8 +108,10 @@
 
   function openEdit(ticket: AgentTicket) {
     editingId = ticket.id;
+    editingLocked = isStatusLocked(ticket);
     formTitle = ticket.title;
     formBody = ticket.body ?? '';
+    formStatus = ticket.status;
     formPriority = ticket.priority;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
@@ -107,6 +132,7 @@
           projectId: formProjectId,
           body: formBody.trim() || null,
           priority: formPriority,
+          status: formStatus,
         });
       } else {
         await api.updateTicket(editingId, {
@@ -114,9 +140,29 @@
           body: formBody.trim() || null,
           priority: formPriority,
           projectId: formProjectId,
+          // Don't send status for agent-locked tickets (it's externally controlled).
+          ...(editingLocked ? {} : { status: formStatus }),
         });
       }
       formOpen = false;
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Duplicate a ticket into the backlog with a "[Duplicate]" title prefix.
+  async function duplicate(ticket: AgentTicket) {
+    if (ticket.projectId === null) return;
+    error = null;
+    try {
+      await api.createTicket({
+        title: `[Duplicate] ${ticket.title}`,
+        projectId: ticket.projectId,
+        body: ticket.body,
+        priority: ticket.priority,
+        status: 'backlog',
+      });
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -150,14 +196,14 @@
     if (!dragged) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const rank = PRIORITY_RANK[dragged.priority];
+    const rank = rankOf(dragged.priority);
     const cards = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.card')].filter(
       (el) => Number(el.dataset.id) !== draggingId,
     );
     // Find the insertion point among same-priority cards only — the drop is clamped to the band.
     let beforeId: number | null = null;
     for (const el of cards) {
-      if (PRIORITY_RANK[el.dataset.priority as TicketPriority] !== rank) continue;
+      if (PRIORITY_RANK[el.dataset.priority ?? 'none'] !== rank) continue;
       const rect = el.getBoundingClientRect();
       if (e.clientY < rect.top + rect.height / 2) {
         beforeId = Number(el.dataset.id);
@@ -167,7 +213,7 @@
     // Past the last same-priority card → land at the end of the band, i.e. just before the
     // first lower-priority card (or the lane end if this band is last).
     if (beforeId === null) {
-      const nextBand = cards.find((el) => PRIORITY_RANK[el.dataset.priority as TicketPriority] > rank);
+      const nextBand = cards.find((el) => PRIORITY_RANK[el.dataset.priority ?? 'none'] > rank);
       beforeId = nextBand ? Number(nextBand.dataset.id) : null;
     }
     dropTarget = { status, beforeId };
@@ -178,7 +224,7 @@
   // the new order keeps it inside that band.
   function computeSortOrder(
     status: TicketStatus,
-    priority: TicketPriority,
+    priority: TicketPriority | null,
     beforeId: number | null,
     draggedId: number,
   ): number {
@@ -215,13 +261,12 @@
     }
   }
 
-  // Click the priority chip to cycle low → medium → high → low.
-  async function cyclePriority(ticket: AgentTicket) {
-    const idx = PRIORITIES.indexOf(ticket.priority);
-    const next = PRIORITIES[(idx + 1) % PRIORITIES.length];
+  // Set a ticket's priority (null = unset) from the in-place dropdown.
+  async function setPriority(ticket: AgentTicket, priority: TicketPriority | null) {
+    if (ticket.priority === priority) return;
     error = null;
     try {
-      await api.updateTicket(ticket.id, { priority: next });
+      await api.updateTicket(ticket.id, { priority });
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -252,9 +297,26 @@
         <span class="sr-label">Search tickets</span>
         <input type="search" bind:value={search} placeholder="Search tickets…" />
       </label>
+      <button
+        class="info-btn"
+        type="button"
+        title="Priority levels"
+        aria-label="Priority levels"
+        onclick={() => (legendOpen = true)}>i</button
+      >
       <label class="condensed-toggle" title="Hide descriptions">
         <input type="checkbox" bind:checked={condensed} />
         <span>Condensed</span>
+      </label>
+      <label class="priority-filter">
+        <span class="sr-label">Priority</span>
+        <select bind:value={filterPriority}>
+          <option value="all">All priorities</option>
+          {#each TICKET_PRIORITIES as p (p)}
+            <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+          {/each}
+          <option value="none">— None</option>
+        </select>
       </label>
       <label class="project-filter">
         <span class="sr-label">Project</span>
@@ -301,10 +363,22 @@
       ></textarea>
     </label>
     <label>
+      <span>Status</span>
+      <select bind:value={formStatus} disabled={editingLocked}>
+        {#each COLUMNS as c (c.status)}
+          <option value={c.status}>{c.label}</option>
+        {/each}
+      </select>
+      {#if editingLocked}
+        <small class="field-note">Locked — this ticket is controlled by its agent.</small>
+      {/if}
+    </label>
+    <label>
       <span>Priority</span>
       <select bind:value={formPriority}>
-        {#each PRIORITIES as p (p)}
-          <option value={p}>{p}</option>
+        <option value={null}>— None</option>
+        {#each TICKET_PRIORITIES as p (p)}
+          <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
         {/each}
       </select>
     </label>
@@ -320,6 +394,23 @@
       </button>
     </div>
   </div>
+</Modal>
+
+<Modal open={legendOpen} title="Priority levels" onClose={() => (legendOpen = false)}>
+  <ul class="priority-legend">
+    {#each TICKET_PRIORITIES as p (p)}
+      <li>
+        <span class="priority priority-{p}">{p}</span>
+        <span class="legend-label">{PRIORITY_LABELS[p]}</span>
+        <span class="legend-desc">{PRIORITY_DESCRIPTIONS[p]}</span>
+      </li>
+    {/each}
+    <li>
+      <span class="priority priority-none">—</span>
+      <span class="legend-label">None</span>
+      <span class="legend-desc">Priority not set.</span>
+    </li>
+  </ul>
 </Modal>
 
 {#if loading}
@@ -346,18 +437,24 @@
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               data-id={ticket.id}
-              data-priority={ticket.priority}
-              draggable="true"
+              data-priority={bandKey(ticket.priority)}
+              draggable={!isStatusLocked(ticket)}
               ondragstart={(e) => onDragStart(e, ticket)}
               ondragend={onDragEnd}
             >
               <div class="card-top">
-                <button
-                  type="button"
-                  class="priority priority-{ticket.priority}"
-                  title="Click to change priority"
-                  onclick={() => cyclePriority(ticket)}>{ticket.priority}</button
+                <select
+                  class="priority priority-{bandKey(ticket.priority)}"
+                  title="Set priority"
+                  value={ticket.priority ?? ''}
+                  onchange={(e) =>
+                    setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
                 >
+                  <option value="">—</option>
+                  {#each TICKET_PRIORITIES as p (p)}
+                    <option value={p}>{p}</option>
+                  {/each}
+                </select>
                 <span class="card-top-right">
                   {#if ticket.githubIssueUrl}
                     <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
@@ -389,6 +486,12 @@
                 <span class="spacer"></span>
                 <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
                   >✎</button
+                >
+                <button
+                  type="button"
+                  title="Duplicate"
+                  aria-label="Duplicate"
+                  onclick={() => duplicate(ticket)}>⧉</button
                 >
                 <button
                   type="button"

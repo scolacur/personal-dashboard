@@ -99,13 +99,51 @@ describe('soft delete', () => {
   });
 });
 
+describe('createTicket with a forced display-id (seed restore)', () => {
+  it('preserves the id and advances seq so later auto-ids do not collide', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const restored = createTicket(db, { title: 'restored', projectId: pd, displayId: 'PD-42' });
+    expect(restored.displayId).toBe('PD-42');
+    // The next auto-allocated id continues past the forced number, not from PD-1.
+    const next = createTicket(db, { title: 'fresh', projectId: pd });
+    expect(next.displayId).toBe('PD-43');
+  });
+});
+
+describe('priority migration (legacy low/medium/high → P-levels)', () => {
+  it('remaps by status, unsets backlog mediums, and is idempotent', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const now = Date.now();
+    const ins = db.prepare(
+      `INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'manual', ?, ?)`,
+    );
+    ins.run('h', 'backlog', 'high', pd, now, now);
+    ins.run('mc', 'completed', 'medium', pd, now, now);
+    ins.run('mb', 'backlog', 'medium', pd, now, now);
+    ins.run('lo', 'ready', 'low', pd, now, now);
+
+    // Re-run the migration (it already ran once on the empty DB) against the legacy rows.
+    db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_priority_to_p_levels'").run();
+    bootstrapSchema(db);
+
+    const byTitle = Object.fromEntries(listTickets(db).map((t) => [t.title, t.priority]));
+    expect(byTitle['h']).toBe('P1'); // high → P1
+    expect(byTitle['mc']).toBe('P3'); // medium + completed → P3
+    expect(byTitle['mb']).toBe(null); // medium + backlog → unset
+    expect(byTitle['lo']).toBe('P4'); // low → P4
+  });
+});
+
 describe('activity log', () => {
   it('records created and status_changed events', () => {
     const db = freshDb();
     const pd = projectId(db, 'personal-dashboard');
     const t = createTicket(db, { title: 'x', projectId: pd });
     updateTicket(db, t.id, { status: 'ready' });
-    updateTicket(db, t.id, { priority: 'high' }); // no status change → no event
+    updateTicket(db, t.id, { priority: 'P1' }); // no status change → no event
 
     const events = db
       .prepare('SELECT type, detail FROM agent_ticket_events WHERE ticket_id = ? ORDER BY id')

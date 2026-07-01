@@ -43,6 +43,16 @@ interface ProjectRow {
   updated_at: number;
 }
 
+// Priority is nullable in the domain (unset), but the DB column is NOT NULL, so
+// "unset" is stored as the sentinel 'none'. Map across that boundary here.
+const PRIORITY_UNSET = 'none';
+function toDbPriority(p: TicketPriority | null | undefined): string {
+  return p ?? PRIORITY_UNSET;
+}
+function fromDbPriority(s: string): TicketPriority | null {
+  return s === PRIORITY_UNSET ? null : (s as TicketPriority);
+}
+
 function rowToTicket(row: TicketRow): AgentTicket {
   return {
     id: row.id,
@@ -50,7 +60,7 @@ function rowToTicket(row: TicketRow): AgentTicket {
     title: row.title,
     body: row.body,
     status: row.status as AgentTicket['status'],
-    priority: row.priority as TicketPriority,
+    priority: fromDbPriority(row.priority),
     projectId: row.project_id,
     assignee: row.assignee,
     recurInterval: row.recur_interval,
@@ -175,10 +185,26 @@ function nextDisplayId(db: Database.Database, projectId: number): string {
 export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
   const insert = db.transaction((): number => {
     const now = Date.now();
-    const priority: TicketPriority = input.priority ?? 'medium';
+    // New tickets default to unset priority (the user assigns it deliberately).
+    const priority = toDbPriority(input.priority ?? null);
     const status: TicketStatus = input.status ?? 'backlog';
     const source = input.source ?? 'manual';
-    const displayId = nextDisplayId(db, input.projectId);
+    // Seed restores can force an id; otherwise allocate the next per-project id.
+    // When forced, advance the project's seq past it so future auto-ids don't collide.
+    let displayId: string;
+    if (input.displayId) {
+      displayId = input.displayId;
+      const n = Number(/(\d+)$/.exec(input.displayId)?.[1]);
+      if (Number.isFinite(n)) {
+        db.prepare('UPDATE agent_projects SET seq = MAX(seq, ?), updated_at = ? WHERE id = ?').run(
+          n,
+          now,
+          input.projectId,
+        );
+      }
+    } else {
+      displayId = nextDisplayId(db, input.projectId);
+    }
     const result = db
       .prepare(
         `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, source, sort_order, created_at, updated_at)
@@ -215,7 +241,8 @@ export function updateTicket(
     title: patch.title ?? existing.title,
     body: patch.body === undefined ? existing.body : patch.body,
     status: patch.status ?? existing.status,
-    priority: patch.priority ?? existing.priority,
+    // `null` is a meaningful value (unset), so distinguish it from "not provided".
+    priority: patch.priority === undefined ? existing.priority : patch.priority,
     sortOrder: patch.sortOrder ?? existing.sortOrder,
     projectId: patch.projectId ?? existing.projectId,
     updatedAt: Date.now(),
@@ -230,7 +257,7 @@ export function updateTicket(
       next.title,
       next.body,
       next.status,
-      next.priority,
+      toDbPriority(next.priority),
       next.sortOrder,
       next.projectId,
       next.updatedAt,

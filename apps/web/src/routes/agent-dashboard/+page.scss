@@ -70,6 +70,7 @@
   }
 }
 
+.priority-filter,
 .project-filter {
   .sr-label {
     position: absolute;
@@ -301,11 +302,15 @@
   margin-bottom: var(--space-xs);
 }
 
+// Priority pill. Used as a <select> on cards and a <span> in the legend/detail view.
 .priority {
+  appearance: none;
+  -webkit-appearance: none;
   font-family: var(--font-sans);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  text-align: center;
   border-radius: 999px;
   padding: 0 var(--space-sm);
   border: 1px solid var(--border);
@@ -317,13 +322,93 @@
     filter: brightness(1.15);
   }
 
-  &.priority-high {
-    color: #c0392b;
-    border-color: #c0392b;
+  // P0 is filled (urgent); the rest are outlined; unset is dashed + muted.
+  &.priority-P0 {
+    color: #fff;
+    background: #dc2626;
+    border-color: #dc2626;
   }
-  &.priority-medium {
+  &.priority-P1 {
+    color: #ea580c;
+    border-color: #ea580c;
+  }
+  &.priority-P2 {
+    color: #d97706;
+    border-color: #d97706;
+  }
+  &.priority-P3 {
     color: var(--accent-2);
     border-color: var(--accent-2);
+  }
+  &.priority-P4 {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  &.priority-P5 {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  &.priority-none {
+    color: var(--muted);
+    border-style: dashed;
+  }
+}
+
+.info-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.field-note {
+  display: block;
+  margin-top: var(--space-xs);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.priority-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  li {
+    display: grid;
+    grid-template-columns: 3ch max-content;
+    align-items: center;
+    gap: var(--space-xs) var(--space-md);
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid var(--border);
+
+    &:last-child {
+      border-bottom: 0;
+    }
+  }
+
+  .legend-label {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .legend-desc {
+    grid-column: 2;
+    color: var(--muted);
+    font-size: var(--font-size-sm);
   }
 }
 

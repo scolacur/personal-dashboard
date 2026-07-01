@@ -72,7 +72,8 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     if (!projectExists(db, body.projectId)) {
       return reply.status(400).send({ error: 'unknown projectId', code: 'UNKNOWN_PROJECT' });
     }
-    if (body.priority !== undefined && !isPriority(body.priority)) {
+    // priority may be null (explicitly unset) or a valid P-level; anything else is invalid.
+    if (body.priority !== undefined && body.priority !== null && !isPriority(body.priority)) {
       return reply.status(400).send({ error: 'invalid priority', code: 'INVALID_PRIORITY' });
     }
     if (body.body !== undefined && body.body !== null && typeof body.body !== 'string') {
@@ -83,7 +84,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       title: body.title.trim(),
       projectId: body.projectId,
       body: (body.body as string | null | undefined) ?? null,
-      priority: isPriority(body.priority) ? body.priority : undefined,
+      priority: body.priority === null ? null : isPriority(body.priority) ? body.priority : undefined,
     };
     return reply.status(201).send(createTicket(db, input));
   });
@@ -116,10 +117,11 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       patch.status = body.status;
     }
     if (body.priority !== undefined) {
-      if (!isPriority(body.priority)) {
+      // null = unset; otherwise must be a valid P-level.
+      if (body.priority !== null && !isPriority(body.priority)) {
         return reply.status(400).send({ error: 'invalid priority', code: 'INVALID_PRIORITY' });
       }
-      patch.priority = body.priority;
+      patch.priority = body.priority as TicketPriority | null;
     }
     if (body.projectId !== undefined) {
       if (typeof body.projectId !== 'number' || !projectExists(db, body.projectId)) {
