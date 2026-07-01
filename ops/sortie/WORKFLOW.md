@@ -472,6 +472,9 @@ cd "$SORTIE_WORKSPACE"
    - **Acceptance:** echo each "Done When" / acceptance item from the issue with `[x]`/`[ ]` +
      a one-line evidence pointer (if the issue had no explicit checklist, list what you verified)
    - **Files changed:** each path + one line
+   - **Testing:** how a human can verify this change — exact steps (commands to run, URLs/routes to
+     open, what to click, what to expect). Include automated coverage (which tests you added/ran) AND
+     any manual check. Never leave this blank; if it can't be tested, say why.
    - **Assumptions / Flags:** anything you assumed, did not do, or are unsure about (or "none")
    ```sh
    TITLE="<concise conventional-commit summary of your change, e.g. feat(scope): add X>"
@@ -490,6 +493,9 @@ Closes #{{ .issue.identifier }}
 
 **Files changed:**
 - <path> — <one line>
+
+**Testing:**
+- <exact steps to verify: commands, routes/URLs, what to click, expected result — plus which tests you added/ran>
 
 **Assumptions / Flags:**
 - <list yours, or "none">
