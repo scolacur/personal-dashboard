@@ -2,6 +2,8 @@
 
 - [Dashboard Shell](Shell/TODO.md)
 
+**widgets as a generic display component** - widgets will contain vastly different functionality but they should all share the base widget style, expect to live in a grid, be resizeable (think datadog) - maybe not pomodoro because that should actually be ever-accessible via a button in the bottom right corner of each page.
+
 ## Pages
 
 - [Agent Dashboard (Mission Control)](pages/agent-dashboard/TODO.md)
@@ -97,6 +99,10 @@ that's ~1 day + ongoing weak-NAS RAM cost.* GUI lives in [agent-dashboard](pages
 
 
 ## Infra
+
+**🔴 HIGH — SQLite backup: consistent snapshots feeding Hyper Backup.** The NAS is backed up off-box (Synology Hyper Backup → Backblaze, versioned), which covers both `dashboard.db` and Sortie's `.sortie.db` (both live under `/volume1/docker/personal-dashboard/`). Gap: Hyper Backup does a file-level copy and is **not SQLite-aware** — with WAL on, a hot copy of `dashboard.db` + its `-wal`/`-shm` sidecars at slightly different instants can restore stale/inconsistent. Fix: a small cron using SQLite's online backup — `sqlite3 data/dashboard.db ".backup 'data/backups/dashboard.<UTC-stamp>.db'"` — which is **guaranteed-consistent even while the app runs**, then let Hyper Backup ship the snapshot. Reuse the pattern already in `ops/sortie/quota-refund.sh` (`.backup` + timestamped file + prune old copies by retention days). Also: (a) confirm the Hyper Backup source set actually includes `/volume1/docker/`, and (b) do one **test restore** to verify. (RAID = disk-failure tolerance, a separate axis; backup is the thing that matters and is largely handled.)
+
+**🔴 HIGH — Reverse proxy for off-LAN access.** Set up a reverse proxy so the personal dashboard is reachable from outside the local network (e.g. on the phone off-wifi), per PROJECT.md §1's post-MVP goal. Options to weigh: Synology's built-in reverse proxy + DDNS + Let's Encrypt (simplest on this box), or Tailscale/Cloudflare Tunnel (no inbound port-forward, better security posture — aligns with the egress-hardening mindset). Must add **authentication** before exposing (the app is currently LAN-only, no auth — PROJECT.md §1). Mind the existing port map (8080=gluetun, 8088=prod app).
 
 **Retry cap / max-attempts** — ⚠️ PARTIALLY ADDRESSED (2026-06-30). The ~43× storm's root causes (exit-128 prep-retry loop) are fixed, and capped/parked issues are now made *visible* by `sortie-watchdog` (`sortie:stuck` + @mention) instead of silently grinding. Still open if wanted: a true per-issue max-attempts ceiling (Sortie's `max_sessions:3` caps agent sessions but not workspace-prep retries).
 

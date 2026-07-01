@@ -24,6 +24,9 @@
 
 <nav class="top-nav">
   <a href="/" class="nav-brand">Dashboard</a>
+  <div class="nav-links">
+    <a href="/agent-dashboard">Mission Control</a>
+  </div>
   <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
     {theme === 'dark' ? '☀' : '☾'}
   </button>
