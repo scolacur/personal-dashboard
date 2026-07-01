@@ -399,7 +399,7 @@
     </label>
     <label>
       <span>Details</span>
-      <textarea bind:value={formBody} rows="4" placeholder="Plain-English description (optional)"
+      <textarea bind:value={formBody} rows="12" placeholder="Plain-English description (optional)"
       ></textarea>
     </label>
     <label>
