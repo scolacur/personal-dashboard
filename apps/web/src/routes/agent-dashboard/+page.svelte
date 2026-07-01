@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { AgentProject, AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
-  import { TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
+  import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import * as api from './api';
 
@@ -18,7 +18,7 @@
   // so manual editing (field + drag) is locked for these statuses when assigned.
   const AGENT_CONTROLLED: TicketStatus[] = ['queued', 'in_progress', 'in_review', 'completed'];
   function isStatusLocked(t: AgentTicket): boolean {
-    return t.assignee !== null && AGENT_CONTROLLED.includes(t.status);
+    return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
   }
 
   let tickets = $state<AgentTicket[]>([]);
@@ -60,6 +60,7 @@
   let formBody = $state('');
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
+  let formAssignee = $state<TicketAssignee | null>('steve');
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
@@ -101,6 +102,7 @@
     formBody = '';
     formStatus = 'backlog'; // new tickets start in the backlog
     formPriority = null; // unset by default — assigned deliberately
+    formAssignee = 'steve'; // default assignee
     // Default to the active filter, else the first project.
     formProjectId = filterProjectId ?? projects[0]?.id ?? null;
     formOpen = true;
@@ -113,6 +115,7 @@
     formBody = ticket.body ?? '';
     formStatus = ticket.status;
     formPriority = ticket.priority;
+    formAssignee = ticket.assignee;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
   }
@@ -133,6 +136,7 @@
           body: formBody.trim() || null,
           priority: formPriority,
           status: formStatus,
+          assignee: formAssignee,
         });
       } else {
         await api.updateTicket(editingId, {
@@ -140,6 +144,7 @@
           body: formBody.trim() || null,
           priority: formPriority,
           projectId: formProjectId,
+          assignee: formAssignee,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: formStatus }),
         });
@@ -379,6 +384,15 @@
         <option value={null}>— None</option>
         {#each TICKET_PRIORITIES as p (p)}
           <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+        {/each}
+      </select>
+    </label>
+    <label>
+      <span>Assignee</span>
+      <select bind:value={formAssignee}>
+        <option value={null}>— None</option>
+        {#each TICKET_ASSIGNEES as a (a)}
+          <option value={a}>{ASSIGNEE_LABELS[a]}</option>
         {/each}
       </select>
     </label>

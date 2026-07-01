@@ -137,6 +137,47 @@ describe('priority migration (legacy low/medium/high → P-levels)', () => {
   });
 });
 
+describe('assignee', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('defaults to steve when omitted on create', () => {
+    const t = createTicket(db, { title: 'test', projectId: pd });
+    expect(t.assignee).toBe('steve');
+  });
+
+  it('persists explicit assignee on create', () => {
+    const t = createTicket(db, { title: 'bot task', projectId: pd, assignee: 'robot' });
+    expect(t.assignee).toBe('robot');
+  });
+
+  it('persists null assignee on create', () => {
+    const t = createTicket(db, { title: 'unowned', projectId: pd, assignee: null });
+    expect(t.assignee).toBeNull();
+  });
+
+  it('can patch assignee steve → robot → null', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(t.assignee).toBe('steve');
+
+    const toRobot = updateTicket(db, t.id, { assignee: 'robot' });
+    expect(toRobot?.assignee).toBe('robot');
+
+    const toNull = updateTicket(db, t.id, { assignee: null });
+    expect(toNull?.assignee).toBeNull();
+  });
+
+  it('leaves assignee unchanged when patch omits it', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd, assignee: 'robot' });
+    const patched = updateTicket(db, t.id, { title: 'renamed' });
+    expect(patched?.assignee).toBe('robot');
+  });
+});
+
 describe('activity log', () => {
   it('records created and status_changed events', () => {
     const db = freshDb();

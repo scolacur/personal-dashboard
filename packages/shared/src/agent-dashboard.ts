@@ -1,6 +1,18 @@
 // Types for the Agent Dashboard "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
+// Who the ticket is assigned to. 'steve' = human owner; 'robot' = agent/Sortie.
+// null = unassigned.
+export type TicketAssignee = 'steve' | 'robot';
+
+export const TICKET_ASSIGNEES: readonly TicketAssignee[] = ['steve', 'robot'] as const;
+
+/** Short label for each assignee value (shown in the create/edit modal). */
+export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
+  steve: 'Steve',
+  robot: 'Robot',
+};
+
 // The Kanban columns. Backlog/ready/queued are set by hand; the agent statuses
 // (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
 // converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
@@ -91,8 +103,8 @@ export interface AgentTicket {
   priority: TicketPriority | null;
   /** The project this Ticket belongs to. */
   projectId: number | null;
-  /** Human or agent (e.g. 'sortie') that owns the ticket. */
-  assignee: string | null;
+  /** Human or agent that owns the ticket. */
+  assignee: TicketAssignee | null;
   /** Recurrence hint for maintenance tickets, e.g. 'weekly'. */
   recurInterval: string | null;
   /** 'manual', or 'seed:<path>' for tickets imported from a TODO.md/META-TODOS.md file. */
@@ -126,6 +138,8 @@ export interface CreateTicketInput {
    * is advanced past the forced number so later auto-allocations don't collide.
    */
   displayId?: string | null;
+  /** Who the ticket is assigned to. Defaults to 'steve' when omitted. */
+  assignee?: TicketAssignee | null;
 }
 
 /** Partial update — any subset of these fields. */
@@ -137,4 +151,6 @@ export interface UpdateTicketInput {
   priority?: TicketPriority | null;
   sortOrder?: number;
   projectId?: number;
+  /** 'steve' | 'robot', or `null` to unassign. Omit to leave unchanged. */
+  assignee?: TicketAssignee | null;
 }
