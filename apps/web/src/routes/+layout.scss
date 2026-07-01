@@ -87,3 +87,31 @@
 .content {
   padding: var(--space-xl) var(--space-lg);
 }
+
+/* ── Mobile responsive (≤640px) ─────────────────── */
+@media (max-width: 640px) {
+  /* Nav wraps: brand + toggle on row 1, links on row 2 */
+  .top-nav {
+    flex-wrap: wrap;
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  /* Push theme toggle to the right of the brand on the first row */
+  .theme-toggle {
+    margin-left: auto;
+  }
+
+  /* Nav links drop to their own full-width row */
+  .nav-links {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    padding: var(--space-xs) 0;
+    flex-wrap: wrap;
+  }
+
+  .content {
+    padding: var(--space-md);
+  }
+}
