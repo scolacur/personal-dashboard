@@ -25,6 +25,23 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+
+  // Unmistakable dev signal: amber top stripe + badge. Never rendered in the
+  // production build (import.meta.env.DEV is false there).
+  &.is-dev {
+    border-top: 3px solid #f59e0b;
+  }
+}
+.env-badge {
+  margin-left: var(--space-md);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #1a1a1a;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 .nav-brand {
   font-family: var(--font-display);
