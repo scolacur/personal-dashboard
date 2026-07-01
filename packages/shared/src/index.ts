@@ -9,4 +9,9 @@ export type {
   AgentProject,
   CreateProjectInput,
 } from './agent-dashboard';
-export { TICKET_STATUSES, TICKET_PRIORITIES } from './agent-dashboard';
+export {
+  TICKET_STATUSES,
+  TICKET_PRIORITIES,
+  PRIORITY_LABELS,
+  PRIORITY_DESCRIPTIONS,
+} from './agent-dashboard';

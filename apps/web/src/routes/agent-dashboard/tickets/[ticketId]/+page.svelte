@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from '$app/state';
   import type { AgentProject, AgentTicket, TicketStatus } from '@dashboard/shared';
+  import { PRIORITY_LABELS } from '@dashboard/shared';
   import * as api from '../../api';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
@@ -72,7 +73,10 @@
   <article class="ticket-detail">
     <header class="detail-head">
       <span class="detail-id">{ticket.displayId}</span>
-      <span class="priority priority-{ticket.priority}">{ticket.priority}</span>
+      <span class="priority priority-{ticket.priority ?? 'none'}">{ticket.priority ?? '—'}</span>
+      {#if ticket.priority}
+        <span class="priority-name">{PRIORITY_LABELS[ticket.priority]}</span>
+      {/if}
       <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
       {#if project}
         <span class="project-chip" style="--chip: {project.color ?? 'var(--muted)'}"

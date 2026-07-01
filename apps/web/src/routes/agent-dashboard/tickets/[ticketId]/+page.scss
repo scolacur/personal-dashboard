@@ -54,14 +54,37 @@
   border: 1px solid var(--border);
   color: var(--muted);
 
-  &.priority-high {
-    color: #c0392b;
-    border-color: #c0392b;
+  &.priority-P0 {
+    color: #fff;
+    background: #dc2626;
+    border-color: #dc2626;
   }
-  &.priority-medium {
+  &.priority-P1 {
+    color: #ea580c;
+    border-color: #ea580c;
+  }
+  &.priority-P2 {
+    color: #d97706;
+    border-color: #d97706;
+  }
+  &.priority-P3 {
     color: var(--accent-2);
     border-color: var(--accent-2);
   }
+  &.priority-P4,
+  &.priority-P5 {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  &.priority-none {
+    color: var(--muted);
+    border-style: dashed;
+  }
+}
+
+.priority-name {
+  font-size: var(--font-size-sm);
+  color: var(--muted);
 }
 
 .status-badge {

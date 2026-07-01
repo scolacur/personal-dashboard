@@ -6,9 +6,12 @@ export interface SeedTicket {
   project: string;
   title: string;
   body: string | null;
-  priority: TicketPriority;
+  /** P0–P5, or null for unset. */
+  priority: TicketPriority | null;
   status: TicketStatus;
   source: string;
+  /** Preserve the original display-id (e.g. 'PD-42') on restore; null → auto-allocate. */
+  displayId: string | null;
 }
 
 export interface SeedResult {
@@ -21,6 +24,19 @@ export interface SeedResult {
  * Idempotent: creates each seed ticket unless one with the same source+title
  * already exists. Shared by the CLI importer (seed/import.ts) and the
  * seed-if-empty-on-boot guard (seed/seed-if-empty.ts).
+ *
+ * ⚠️  tickets.seed.json is a POINT-IN-TIME SNAPSHOT of the board, and this
+ * importer is a RESTORE-ONTO-AN-EMPTY-DB tool — NOT a sync/merge. Do not treat
+ * the seed file as a source of truth to "apply" over a live board:
+ *   - It reflects the board only as of when it was last regenerated; anything
+ *     created/edited on the DB since is absent and would be lost on a rebuild.
+ *   - It now carries display-ids, so replaying it against a populated DB will
+ *     re-insert already-present tickets under fresh rows and can collide on the
+ *     unique display-id index. The source+title skip below prevents dupes only
+ *     for rows that match exactly.
+ * Safe use: seed a genuinely empty/fresh DB (that's what seed-if-empty enforces).
+ * To capture the current board, REGENERATE the file from the live DB — never
+ * hand-edit it and re-import expecting a merge.
  */
 export function seedTickets(db: Database.Database, seeds: SeedTicket[]): SeedResult {
   let created = 0;
@@ -44,6 +60,7 @@ export function seedTickets(db: Database.Database, seeds: SeedTicket[]): SeedRes
       priority: s.priority,
       status: s.status,
       source: s.source,
+      displayId: s.displayId,
     });
     created++;
   }

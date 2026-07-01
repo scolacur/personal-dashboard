@@ -28,7 +28,7 @@ export function bootstrapSchema(db: Database.Database): void {
       title               TEXT    NOT NULL,
       body                TEXT,
       status              TEXT    NOT NULL DEFAULT 'backlog',
-      priority            TEXT    NOT NULL DEFAULT 'medium',
+      priority            TEXT    NOT NULL DEFAULT 'none',   -- P0–P5, or 'none' (unset)
       project_id          INTEGER,
       assignee            TEXT,
       recur_interval      TEXT,                     -- e.g. 'weekly' for maintenance tickets
@@ -108,6 +108,23 @@ export function bootstrapSchema(db: Database.Database): void {
     addColumn(d, 'agent_tickets', 'assignee', 'TEXT');
     addColumn(d, 'agent_tickets', 'recur_interval', 'TEXT');
     addColumn(d, 'agent_tickets', 'archived_at', 'INTEGER');
+  });
+
+  // Remap legacy low/medium/high priorities to the P0–P5 scale ('none' = unset).
+  // Data-only, non-destructive (updates values in place). No-op on a fresh/empty DB.
+  migrate(db, 'agent_tickets_priority_to_p_levels', (d) => {
+    d.prepare("UPDATE agent_tickets SET priority = 'P1' WHERE priority = 'high'").run();
+    d.prepare(
+      "UPDATE agent_tickets SET priority = 'P3' WHERE priority = 'medium' AND status IN ('in_progress', 'completed')",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET priority = 'none' WHERE priority = 'medium' AND status = 'backlog'",
+    ).run();
+    d.prepare("UPDATE agent_tickets SET priority = 'P4' WHERE priority = 'low'").run();
+    // Safety net: any leftover legacy/invalid value (e.g. medium in ready/queued/in_review) → P3.
+    d.prepare(
+      "UPDATE agent_tickets SET priority = 'P3' WHERE priority NOT IN ('P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'none')",
+    ).run();
   });
 
   // Seed the known projects once (with display-id keys). Idempotent, and backfills

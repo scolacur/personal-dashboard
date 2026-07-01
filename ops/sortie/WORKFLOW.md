@@ -276,8 +276,11 @@ branch. Do NOT start over, do NOT recreate the PR, do NOT duplicate prior work.
    # inline review comments, with file + line:
    gh api "repos/scolacur/personal-dashboard/pulls/$PR/comments" \
      --jq '.[] | "\(.path):\(.line // .original_line): \(.body)"'
-   # full conversation:
-   gh pr view "$PR" --repo scolacur/personal-dashboard --comments
+   # full conversation (REST — public_repo-safe; `gh pr view --comments` uses a GraphQL
+   # query with team/org fields (Team.slug etc.) that need read:org/read:discussion, which
+   # the bot's public_repo-only token lacks → it errors. PR conversation = issue comments):
+   gh api "repos/scolacur/personal-dashboard/issues/$PR/comments" \
+     --jq '.[] | "\(.user.login): \(.body)"'
    ```
 2. **See what you already changed**, so you EDIT it rather than pile on more:
    ```sh
@@ -308,7 +311,9 @@ previous turn. **First, read the issue conversation:**
 
 ```sh
 export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
-gh issue view {{ .issue.identifier }} --repo scolacur/personal-dashboard --comments
+# REST (public_repo-safe) — `gh issue view --comments` uses GraphQL org/discussion fields the token lacks:
+gh api "repos/scolacur/personal-dashboard/issues/{{ .issue.identifier }}/comments" \
+  --jq '.[] | "\(.user.login): \(.body)"'
 ```
 
 If you find a `### ❓ ask_human` question you posted earlier with a human reply beneath it,
