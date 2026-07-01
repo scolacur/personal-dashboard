@@ -23,7 +23,9 @@ string `'none'` and mapped at the store boundary: `fromDbPriority('none') → nu
 remaps in-place on boot — `high→P1`; `medium` in `in_progress`/`completed`→`P3`; `medium` in
 `backlog`→`'none'` (unset); `low→P4`; plus a catch-all (`NOT IN (P0..P5,'none') → P3`) so no legacy
 value can survive. Runs once (ledger-guarded), atomic with the deploy, and applies to dev + prod
-alike. The committed `tickets.seed.json` was remapped to match so a fresh re-seed is already correct.
+alike. The committed `tickets.seed.json` was **regenerated from prod** (all 260 live tickets, project
+id→slug, priorities remapped by the same rules) so a fresh re-seed restores the *current* board
+rather than the stale TODO-derived baseline. (Re-seed assigns fresh display-ids, as it always has.)
 
 **Status lock is assignee-gated:** a ticket's status is editable (field + drag) unless it is
 **assigned to an agent AND** in `queued/in_progress/in_review/completed` (`isStatusLocked`). Chosen

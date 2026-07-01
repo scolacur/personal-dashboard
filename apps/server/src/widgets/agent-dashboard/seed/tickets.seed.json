@@ -2,7 +2,7 @@
   {
     "project": "personal-dashboard",
     "title": "[Dashboard] widgets as a generic display component",
-    "body": "- widgets will contain vastly different functionality but they should all share the base widget style, expect to live in a grid, be resizeable (think datadog) - maybe not pomodoro because that should actually be ever-accessible via a button in the bottom right corner of each page.",
+    "body": "I would expect every widget component to use <Widget></Widget> internally and put children inside of it. \n\nThis would allow all widgets to share a base widget style.\n\nPomodoro is an exception, because it should actually be ever-accessible via a floating button in the bottom right corner of each page. Opening it reveals the timer, still floating in the bottom right corner.",
     "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
@@ -19,8 +19,8 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Test the egress work",
     "body": "Also, see if this means that the bots can't do research or read docs, and whether this is an issue. Maybe need some sort of way for it to ask permission to view a certain domain, via the ask_human command when we build that. And I can 1-time or permanently allowlist stuff. Basically re-creating the permissions check from Claude code but moving it to Discord (or wherever that communication happens) in a way that I get notified so that I don't block.",
-    "priority": null,
-    "status": "backlog",
+    "priority": "P3",
+    "status": "completed",
     "source": "seed:TODO.md"
   },
   {
@@ -51,7 +51,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Mission Control / host access to the Sortie API (:7678)",
     "body": "Under the egress-hardened setup Sortie is on an `internal: true` network, so its port can't be published to the host (confirmed: no host route for internal networks). For now use `docker exec sortie curl localhost:7678/...`. When building Mission Control, run it as a container on the `egress_internal` network so it reaches `sortie:7678` container-to-container (no host port, isolation intact). Only add a forwarder sidecar (socat/nginx on both networks) if something off-NAS genuinely needs the API.",
-    "priority": null,
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -107,7 +107,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Preview branches — test a PR without checking it out locally.",
     "body": "Spin up the app from a\ngiven PR's code on the NAS so it can be opened in a browser on the LAN. LOE ~half day for\nthe single-slot manual approach below; the GUI is a follow-on.\n\n*Constraint that shapes the design:* the NAS has no public ingress (home LAN/NAT), so cloud\nCI can't reach in to deploy — same reason prod is pull-based (Watchtower polls GHCR). A\npreview therefore runs **on the NAS, LAN-only** (fine — that's where I test). Cloud preview\n(Fly/Railway) is rejected: it loses the `/library` mount and breaks the egress-hardened posture.\n\n*Approach — single slot, manual (start here):*",
-    "priority": null,
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -260,15 +260,15 @@
     "title": "[Infra] HIGH — SQLite backup: consistent snapshots feeding Hyper Backup.",
     "body": "The NAS is backed up off-box (Synology Hyper Backup → Backblaze, versioned), which covers both `dashboard.db` and Sortie's `.sortie.db` (both live under `/volume1/docker/personal-dashboard/`). Gap: Hyper Backup does a file-level copy and is **not SQLite-aware** — with WAL on, a hot copy of `dashboard.db` + its `-wal`/`-shm` sidecars at slightly different instants can restore stale/inconsistent. Fix: a small cron using SQLite's online backup — `sqlite3 data/dashboard.db \".backup 'data/backups/dashboard.<UTC-stamp>.db'\"` — which is **guaranteed-consistent even while the app runs**, then let Hyper Backup ship the snapshot. Reuse the pattern already in `ops/sortie/quota-refund.sh` (`.backup` + timestamped file + prune old copies by retention days). Also: (a) confirm the Hyper Backup source set actually includes `/volume1/docker/`, and (b) do one **test restore** to verify. (RAID = disk-failure tolerance, a separate axis; backup is the thing that matters and is largely handled.)",
     "priority": "P1",
-    "status": "backlog",
+    "status": "ready",
     "source": "seed:TODO.md"
   },
   {
     "project": "personal-dashboard",
     "title": "[Infra] HIGH — Reverse proxy for off-LAN access.",
-    "body": "Set up a reverse proxy so the personal dashboard is reachable from outside the local network (e.g. on the phone off-wifi), per PROJECT.md §1's post-MVP goal. Options to weigh: Synology's built-in reverse proxy + DDNS + Let's Encrypt (simplest on this box), or Tailscale/Cloudflare Tunnel (no inbound port-forward, better security posture — aligns with the egress-hardening mindset). Must add **authentication** before exposing (the app is currently LAN-only, no auth — PROJECT.md §1). Mind the existing port map (8080=gluetun, 8088=prod app).",
+    "body": "Set up a reverse proxy so the personal dashboard is reachable from outside the local network (e.g. on the phone off-wifi), per PROJECT.md §1's post-MVP goal. Options to weigh: Synology's built-in reverse proxy + DDNS + Let's Encrypt (simplest on this box), or Tailscale/Cloudflare Tunnel (no inbound port-forward, better security posture — aligns with the egress-hardening mindset). Leaning tailscale as its already being used for other apps running on the NAS. Must add **authentication** before exposing (the app is currently LAN-only, no auth — PROJECT.md §1). Mind the existing port map (8080=gluetun, 8088=prod app).",
     "priority": "P1",
-    "status": "backlog",
+    "status": "ready",
     "source": "seed:TODO.md"
   },
   {
@@ -835,7 +835,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Cross-reference with Concert Discovery",
     "body": "- If an artist in a lineup announcement matches a followed artist in Concert Discovery, highlight it\n- \"Objekt is playing Dekmantel 2026\" — surfaced as a high-priority update",
-    "priority": "P1",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -1619,15 +1619,15 @@
     "project": "core",
     "title": "PR-reaction feedback loop",
     "body": "Sortie watches reactions on the PR and feeds them into a follow-up attempt.",
-    "priority": null,
-    "status": "backlog",
+    "priority": "P3",
+    "status": "in_progress",
     "source": "seed:core/META-TODOS.md"
   },
   {
     "project": "core",
-    "title": "Master config file",
+    "title": "[Infra] Master config file",
     "body": "Once the personal dashboard is up and running with a few widgets and the harness is stable, look through both `personal-dashboard` and `core` projects for references to the same file paths. Bump those paths out to a master config that is imported by both projects to prevent projects from getting out of sync with each other. Create a skill that scans **all* projects in the projects folder doing a similar check. Manual run is fine for now but add a TODO for having that skill run weekly, or at least a weekly reminder / notification for me to run the skill manually.\n---",
-    "priority": null,
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1921,14 +1921,6 @@
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Drag-and-drop reordering within a lane",
-    "body": "Reorder tickets within a column via drag-and-drop, writing a fractional sort_order between neighbours. Schema already supports it (sort_order REAL); today moves append.",
-    "priority": null,
-    "status": "backlog",
-    "source": "seed:agent-dashboard/followups"
-  },
-  {
-    "project": "personal-dashboard",
     "title": "[Agent Dashboard] Activity Feed",
     "body": "Chronological feed of ticket events (created / status_changed / archived / converted). Schema exists: agent_ticket_events (populated from day one).",
     "priority": null,
@@ -1946,7 +1938,7 @@
   {
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Phase 3 — Convert ticket to Sortie issue",
-    "body": "Per-ticket \"Convert to Sortie issue\": Claude API formats the ticket into the Sortie issue format (goal/acceptance-criteria/scope) → draft-then-approve → creates a sortie:queued GitHub issue in the project's repo → links issue back to the ticket. Needs ANTHROPIC_API_KEY + write-scoped GH token on the NAS. Only for sortie_enabled projects.",
+    "body": "Per-ticket \"Convert to Sortie issue\": Claude API formats the ticket into the Sortie issue format (goal/acceptance-criteria/scope) → draft-then-approve → creates a sortie:queued GitHub issue in the project's repo → links issue back to the ticket. Needs ANTHROPIC_API_KEY + write-scoped GH token on the NAS. Only for sortie_enabled projects.\n\n--- Added 2026-07-01 (queued-status polling automation) ---\nPoll for tickets in the Queued status; when one is found that has no associated GitHub issue, create a GitHub issue for it and tag it `sortie:queued`. Ticket cards in Queued (and any status after it) show a link to the GitHub issue — just the GitHub icon.",
     "priority": "P1",
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
@@ -1954,8 +1946,8 @@
   {
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Derived status sync from GitHub labels",
-    "body": "node-cron job polls GitHub for each converted ticket's sortie:* label + PR merge-state and writes in_progress / in_review / completed onto the row (the derived columns). Avoids coupling to Sortie's internal :7678 API.",
-    "priority": null,
+    "body": "node-cron job polls GitHub for each converted ticket's sortie:* label + PR merge-state and writes in_progress / in_review / completed onto the row (the derived columns). Avoids coupling to Sortie's internal :7678 API.\n\nWhen a ticket is being actively worked on by an agent, a subtle shimmer effect should be applied to the card.",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1966,5 +1958,125 @@
     "priority": "P1",
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "Widget dynamic grid system",
+    "body": "Widgets should live in an invisible grid system, and be resizeable, snapping to invisible grid markers, similar to how Datadog Dashboards work. Grid should be 8 units wide at large screen sizes. Each unit is a square.\n\nGrid markers become visible when re-sizing.",
+    "priority": null,
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "core",
+    "title": "[Infra] Version-control the global generic skills (wrap-up, project-maintenance)",
+    "body": "The global generic base skills live only at ~/.claude/commands/ (project-maintenance.md, wrap-up.md) and are NOT under any git repo. The memory-bloat sensor added in D-025 (index ≤200-char cap, 12KB hot day-file, 32KB load budget) therefore exists only on this machine's disk — a fresh machine would not have it, and there is no history/backup.\n\ncore-session-start is already safe: its global copy is a symlink to the canonical repo file (core/.claude/commands/core-session-start.md). The generic base skills need the same treatment.\n\nProposed fix: bring the generic base skills into the core repo (e.g. core/.claude/commands/global/) and symlink them into ~/.claude/commands/, so both the generic base and the Core delegate-then-extend copies live in git. Decide the in-repo layout first.\n\nRef: DECISIONS.md D-025.",
+    "priority": null,
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Mission Control] Condensed view for ticket board",
+    "body": "Condensed-view toggle on the Tickets board: when on, card descriptions are hidden to fit more tickets on screen.",
+    "priority": "P3",
+    "status": "completed",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Mission Control] Drag & drop for ticket board",
+    "body": "Native drag-and-drop for tickets — reorder within a lane and move between lanes. Replaced the move arrow buttons. sortOrder computed as the average of drop neighbours (REAL column, fractional slotting).",
+    "priority": "P3",
+    "status": "completed",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Mission Control] search as you type filter for ticket board",
+    "body": "Live search input at the top of the board that filters tickets by title and body as you type (case-insensitive), stacking with the project filter.",
+    "priority": "P3",
+    "status": "completed",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Tooling] Ensure new tests always get added to CI including db tests",
+    "body": "Guarantee newly added test files (including DB/better-sqlite3 tests) are always picked up by CI so coverage can't silently regress.",
+    "priority": "P3",
+    "status": "completed",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Mission Control] Mobile-friendly interface",
+    "body": "Make Mission Control usable on mobile — responsive layout for the ticket board, lanes, cards, and header controls (search / filters / add) on small screens.",
+    "priority": "P1",
+    "status": "ready",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Mission Control] \"Refine\" button on backlog tickets — agent chat modal (/grill-me → /to-issues)",
+    "body": "Backlog tickets get a \"Refine\" button that launches an agent chat in a modal, instructed to refine the work via the `/grill-me` skill, followed by a `/to-issues` skill. End result: tickets in the Ready column are formatted appropriately for Sortie agents. One backlog ticket may yield more than one Ready ticket. Involves determining the exact prompt structure — use the existing structure + the prompt structure defined for harness subagents as a template.",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Sortie] Enforce model used by sortie agents (Sonnet)",
+    "body": "Ensure Sortie agents always run on the intended model (Sonnet) — enforce/pin it rather than relying on defaults.",
+    "priority": "P1",
+    "status": "completed",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Sortie] Ensure evaluator layer is being used",
+    "body": "Verify the evaluator layer is actually engaged in the Sortie pipeline (generation ≠ evaluation) and not silently bypassed.",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Sortie] Investigate having an agent review the pull requests after they are made",
+    "body": "Investigate adding an agent PR-review step: after a Sortie PR is opened, an agent reviews the diff before human review.",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Sortie] Discord notify: PR ready to merge, or new commits on a change-requested PR",
+    "body": "Get notified via Discord when a PR is open and ready to merge, or when commits are pushed to a PR where I requested changes. Related to the broader PD-6 [Sortie] Discord Integration.",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Mission Control] Warn when a ticket moved into Queued is not properly formatted",
+    "body": "When a ticket is moved into the Queued status, issue a warning if it is not formatted properly (i.e. not in the Sortie-ready shape produced by the Refine flow, see PD-172 / PD-164).",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "personal-dashboard",
+    "title": "[Ticket Board] Icon denoting a ticket is being worked on by a sortie agent",
+    "body": "All in progress, in review, and completed tickets may have been completed by a human or an agent. Any ticket that is associated with a github issue tagged sortie:queued or sortie:in-progress should have its assignee field set to 'agent' and any ticket assigned to an agent should have a robot icon on its card.",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
+  },
+  {
+    "project": "core",
+    "title": "[Infra] Ticket Audit Cron Job",
+    "body": "Every 24 or 48 hours, run a job that launches an agent to review the backlog and ready tickets for each project, cross-referencing them with the project code, memory and decisiosn docs. Determine if any ticket has been superceded, is no longer worth doing, or if priority has changed. Produce an interactive report showing what tickets were flagged, grouped by project and then by priority, with a button to accept the recommendation, reject it, or do something else.",
+    "priority": "P1",
+    "status": "backlog",
+    "source": "manual"
   }
 ]
