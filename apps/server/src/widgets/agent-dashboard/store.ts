@@ -189,7 +189,22 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     const priority = toDbPriority(input.priority ?? null);
     const status: TicketStatus = input.status ?? 'backlog';
     const source = input.source ?? 'manual';
-    const displayId = nextDisplayId(db, input.projectId);
+    // Seed restores can force an id; otherwise allocate the next per-project id.
+    // When forced, advance the project's seq past it so future auto-ids don't collide.
+    let displayId: string;
+    if (input.displayId) {
+      displayId = input.displayId;
+      const n = Number(/(\d+)$/.exec(input.displayId)?.[1]);
+      if (Number.isFinite(n)) {
+        db.prepare('UPDATE agent_projects SET seq = MAX(seq, ?), updated_at = ? WHERE id = ?').run(
+          n,
+          now,
+          input.projectId,
+        );
+      }
+    } else {
+      displayId = nextDisplayId(db, input.projectId);
+    }
     const result = db
       .prepare(
         `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, source, sort_order, created_at, updated_at)

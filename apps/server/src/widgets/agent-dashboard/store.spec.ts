@@ -99,6 +99,18 @@ describe('soft delete', () => {
   });
 });
 
+describe('createTicket with a forced display-id (seed restore)', () => {
+  it('preserves the id and advances seq so later auto-ids do not collide', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const restored = createTicket(db, { title: 'restored', projectId: pd, displayId: 'PD-42' });
+    expect(restored.displayId).toBe('PD-42');
+    // The next auto-allocated id continues past the forced number, not from PD-1.
+    const next = createTicket(db, { title: 'fresh', projectId: pd });
+    expect(next.displayId).toBe('PD-43');
+  });
+});
+
 describe('priority migration (legacy low/medium/high → P-levels)', () => {
   it('remaps by status, unsets backlog mediums, and is idempotent', () => {
     const db = freshDb();

@@ -119,6 +119,13 @@ export interface CreateTicketInput {
   status?: TicketStatus;
   /** Provenance, e.g. 'seed:widgets/pomodoro-timer/TODO.md'. Defaults to 'manual'. */
   source?: string;
+  /**
+   * Force a specific display-id (e.g. 'PD-42') instead of allocating the next one.
+   * Used only by the seed importer to preserve ids across a restore; normal creates
+   * (API, UI) omit this and get the next per-project id. The project's `seq` counter
+   * is advanced past the forced number so later auto-allocations don't collide.
+   */
+  displayId?: string | null;
 }
 
 /** Partial update — any subset of these fields. */
