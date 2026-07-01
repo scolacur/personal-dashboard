@@ -327,10 +327,30 @@
   }
 }
 
+.card-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
 .issue-link {
   font-size: var(--font-size-xs);
   color: var(--accent);
   text-decoration: underline;
+}
+
+.ticket-id {
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
 }
 
 .card-title {
