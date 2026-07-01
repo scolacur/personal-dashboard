@@ -182,7 +182,24 @@
   // Where the dragged card would land: `beforeId === null` means append to the end.
   let dropTarget = $state<{ status: TicketStatus; beforeId: number | null } | null>(null);
 
+  // Auto-dismissing toast message.
+  let toast = $state<string | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function showToast(message: string) {
+    toast = message;
+    if (toastTimer !== null) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast = null;
+      toastTimer = null;
+    }, 3000);
+  }
+
   function onDragStart(e: DragEvent, ticket: AgentTicket) {
+    if (isStatusLocked(ticket)) {
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
+      showToast("This ticket is agent-controlled and can't be moved.");
+      return;
+    }
     draggingId = ticket.id;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -389,12 +406,15 @@
     </label>
     <label>
       <span>Assignee</span>
-      <select bind:value={formAssignee}>
+      <select bind:value={formAssignee} disabled={editingLocked}>
         <option value={null}>— None</option>
         {#each TICKET_ASSIGNEES as a (a)}
           <option value={a}>{ASSIGNEE_LABELS[a]}</option>
         {/each}
       </select>
+      {#if editingLocked}
+        <small class="field-note">Locked — controlled by its agent.</small>
+      {/if}
     </label>
     <div class="form-actions">
       <button type="button" class="ghost" onclick={closeForm}>Cancel</button>
@@ -450,9 +470,10 @@
               class:done={ticket.status === 'completed'}
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+              class:locked={isStatusLocked(ticket)}
               data-id={ticket.id}
               data-priority={bandKey(ticket.priority)}
-              draggable={!isStatusLocked(ticket)}
+              draggable={true}
               ondragstart={(e) => onDragStart(e, ticket)}
               ondragend={onDragEnd}
             >
@@ -528,5 +549,9 @@
   </div>
 {/if}
 </section>
+
+{#if toast}
+  <div class="toast" role="status">{toast}</div>
+{/if}
 
 <style lang="scss" src="./+page.scss"></style>
