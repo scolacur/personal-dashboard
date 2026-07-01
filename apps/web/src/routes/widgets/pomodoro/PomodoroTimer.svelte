@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from '@dashboard/shared';
-  import type { PomodoroPhase } from '@dashboard/shared';
+  import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from './timer-logic';
+  import type { PomodoroPhase } from './timer-logic';
 
   let workMinutes = $state(40);
   let shortBreakMinutes = $state(10);

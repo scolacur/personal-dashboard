@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from '@dashboard/shared';
+import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from './timer-logic';
 
 describe('formatTime', () => {
   it('formats zero seconds', () => {
