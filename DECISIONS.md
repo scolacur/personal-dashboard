@@ -55,6 +55,14 @@ were removed. A `queued` status/lane was added between `ready` and `in_progress`
 **Trade-off:** DnD is pointer-only — removing the arrows dropped the keyboard path for moving a
 ticket. Acceptable for a single-user personal dashboard; revisit if keyboard/a11y is needed.
 
+**Addendum (priority bands):** Lanes are grouped by priority — high band on top, then medium,
+then low (`byStatus` sorts by `PRIORITY_RANK` then `sortOrder`). A card can only be reordered
+**within its own band**: `onColumnDragOver` measures the drop point against same-priority cards
+only and clamps a past-the-end drop to just before the first lower-priority card, and
+`computeSortOrder` averages neighbours **within the band**. Consequence: raising a ticket to high
+(via the priority chip) automatically lifts it above every medium/low ticket, because priority is
+the primary sort key — no `sortOrder` change needed. Condensed view now defaults **on**.
+
 ---
 
 ## D-025: Prod self-seeds an empty board on boot (opt-in via `SEED_ON_BOOT`); dev is visually marked
