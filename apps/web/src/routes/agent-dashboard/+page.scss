@@ -325,6 +325,12 @@
   margin-bottom: var(--space-xs);
 }
 
+.card-top-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 // Priority pill. Used as a <select> on cards and a <span> in the legend/detail view.
 .priority {
   appearance: none;
@@ -372,6 +378,45 @@
     border-color: var(--border);
   }
   &.priority-none {
+    color: var(--muted);
+    border-style: dashed;
+  }
+}
+
+// Assignee pill — in-place <select> on each card. Styled similarly to .priority.
+.assignee-pill {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &.assignee-steve {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  &.assignee-robot {
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  &.assignee-none {
     color: var(--muted);
     border-style: dashed;
   }

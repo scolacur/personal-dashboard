@@ -295,6 +295,24 @@
     }
   }
 
+  // Set a ticket's assignee from the in-place dropdown.
+  async function setAssignee(ticket: AgentTicket, assignee: TicketAssignee | null) {
+    if (ticket.assignee === assignee) return;
+    error = null;
+    try {
+      await api.updateTicket(ticket.id, { assignee });
+      await load();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function assigneeLabel(assignee: TicketAssignee | null): string {
+    if (assignee === 'steve') return 'S';
+    if (assignee === 'robot') return '🤖';
+    return '—';
+  }
+
   async function remove(ticket: AgentTicket) {
     if (!confirm(`Delete "${ticket.title}"?`)) return;
     error = null;
@@ -478,18 +496,35 @@
               ondragend={onDragEnd}
             >
               <div class="card-top">
-                <select
-                  class="priority priority-{bandKey(ticket.priority)}"
-                  title="Set priority"
-                  value={ticket.priority ?? ''}
-                  onchange={(e) =>
-                    setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
-                >
-                  <option value="">—</option>
-                  {#each TICKET_PRIORITIES as p (p)}
-                    <option value={p}>{p}</option>
-                  {/each}
-                </select>
+                <div class="card-top-left">
+                  <select
+                    class="priority priority-{bandKey(ticket.priority)}"
+                    title="Set priority"
+                    value={ticket.priority ?? ''}
+                    onchange={(e) =>
+                      setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
+                  >
+                    <option value="">—</option>
+                    {#each TICKET_PRIORITIES as p (p)}
+                      <option value={p}>{p}</option>
+                    {/each}
+                  </select>
+                  <select
+                    class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
+                    title={isStatusLocked(ticket)
+                      ? 'Agent-controlled — cannot reassign'
+                      : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
+                    value={ticket.assignee ?? ''}
+                    disabled={isStatusLocked(ticket)}
+                    onchange={(e) =>
+                      setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
+                  >
+                    <option value="">—</option>
+                    {#each TICKET_ASSIGNEES as a (a)}
+                      <option value={a}>{assigneeLabel(a)}</option>
+                    {/each}
+                  </select>
+                </div>
                 <span class="card-top-right">
                   {#if ticket.githubIssueUrl}
                     <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
