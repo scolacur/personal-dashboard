@@ -25,8 +25,12 @@
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
-  // Condensed view hides card descriptions to fit more tickets on screen.
-  let condensed = $state(false);
+  // Condensed view hides card descriptions to fit more tickets on screen. On by default.
+  let condensed = $state(true);
+
+  // Lanes are grouped by priority: high band on top, then medium, then low. A card can
+  // only be reordered within its own band and never dragged into another band.
+  const PRIORITY_RANK: Record<TicketPriority, number> = { high: 0, medium: 1, low: 2 };
 
   // Add / edit form state. `editingId === null` while adding.
   let formOpen = $state(false);
@@ -48,7 +52,11 @@
   }
 
   function byStatus(status: TicketStatus): AgentTicket[] {
-    return visibleTickets().filter((t) => t.status === status);
+    return visibleTickets()
+      .filter((t) => t.status === status)
+      .sort(
+        (a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.sortOrder - b.sortOrder,
+      );
   }
 
   async function load() {
@@ -138,29 +146,48 @@
 
   function onColumnDragOver(e: DragEvent, status: TicketStatus) {
     if (draggingId === null) return;
+    const dragged = tickets.find((t) => t.id === draggingId);
+    if (!dragged) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const cards = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.card');
+    const rank = PRIORITY_RANK[dragged.priority];
+    const cards = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.card')].filter(
+      (el) => Number(el.dataset.id) !== draggingId,
+    );
+    // Find the insertion point among same-priority cards only — the drop is clamped to the band.
     let beforeId: number | null = null;
     for (const el of cards) {
-      if (Number(el.dataset.id) === draggingId) continue;
+      if (PRIORITY_RANK[el.dataset.priority as TicketPriority] !== rank) continue;
       const rect = el.getBoundingClientRect();
       if (e.clientY < rect.top + rect.height / 2) {
         beforeId = Number(el.dataset.id);
         break;
       }
     }
+    // Past the last same-priority card → land at the end of the band, i.e. just before the
+    // first lower-priority card (or the lane end if this band is last).
+    if (beforeId === null) {
+      const nextBand = cards.find((el) => PRIORITY_RANK[el.dataset.priority as TicketPriority] > rank);
+      beforeId = nextBand ? Number(nextBand.dataset.id) : null;
+    }
     dropTarget = { status, beforeId };
   }
 
-  // sort_order is a REAL column, so we can slot a card between neighbours by
-  // averaging their orders (or stepping ±1 past the ends).
-  function computeSortOrder(status: TicketStatus, beforeId: number | null, draggedId: number): number {
-    const col = byStatus(status).filter((t) => t.id !== draggedId);
-    let idx = beforeId === null ? col.length : col.findIndex((t) => t.id === beforeId);
-    if (idx === -1) idx = col.length;
-    const prev = col[idx - 1];
-    const next = col[idx];
+  // sort_order is a REAL column, so we can slot a card between neighbours by averaging their
+  // orders (or stepping ±1 past the ends). Computed within the dragged card's priority band so
+  // the new order keeps it inside that band.
+  function computeSortOrder(
+    status: TicketStatus,
+    priority: TicketPriority,
+    beforeId: number | null,
+    draggedId: number,
+  ): number {
+    const band = byStatus(status).filter((t) => t.priority === priority && t.id !== draggedId);
+    // beforeId may point at a card outside the band (the boundary) or be null → append to band end.
+    let idx = beforeId === null ? band.length : band.findIndex((t) => t.id === beforeId);
+    if (idx === -1) idx = band.length;
+    const prev = band[idx - 1];
+    const next = band[idx];
     if (!prev && !next) return 0;
     if (!prev) return next.sortOrder - 1;
     if (!next) return prev.sortOrder + 1;
@@ -176,7 +203,7 @@
     if (id === null) return;
     const ticket = tickets.find((t) => t.id === id);
     if (!ticket) return;
-    const sortOrder = computeSortOrder(status, target?.beforeId ?? null, id);
+    const sortOrder = computeSortOrder(status, ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
     error = null;
@@ -319,6 +346,7 @@
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               data-id={ticket.id}
+              data-priority={ticket.priority}
               draggable="true"
               ondragstart={(e) => onDragStart(e, ticket)}
               ondragend={onDragEnd}
