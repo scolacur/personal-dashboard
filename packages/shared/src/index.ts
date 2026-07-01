@@ -10,5 +10,3 @@ export type {
   CreateProjectInput,
 } from './agent-dashboard';
 export { TICKET_STATUSES, TICKET_PRIORITIES } from './agent-dashboard';
-export { formatTime, advancePhase, clampRoundsBeforeLongBreak } from './pomodoro';
-export type { PomodoroPhase, PomodoroConfig, PomodoroTransition } from './pomodoro';
