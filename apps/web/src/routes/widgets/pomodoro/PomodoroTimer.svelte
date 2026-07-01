@@ -2,6 +2,7 @@
   import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from '@dashboard/shared';
   import type { PomodoroPhase } from '@dashboard/shared';
 
+  let tomatoMode = $state(false);
   let workMinutes = $state(40);
   let shortBreakMinutes = $state(10);
   let longBreakMinutes = $state(20);
@@ -68,7 +69,7 @@
   }
 </script>
 
-<div class="pomodoro">
+<div class="pomodoro" class:tomato-mode={tomatoMode}>
   <div class="timer-display" class:done={phase === 'done'}>
     {phase === 'done' ? 'Done!' : formatTime(secondsRemaining)}
   </div>
@@ -160,6 +161,15 @@
       {running ? '⏸ Pause' : '▶ Start'}
     </button>
     <button type="button" class="btn btn-secondary" onclick={reset}> ↺ Reset </button>
+    <button
+      type="button"
+      class="btn btn-tomato"
+      class:active={tomatoMode}
+      onclick={() => (tomatoMode = !tomatoMode)}
+      title={tomatoMode ? 'Back to normal' : 'Make it a tomato'}
+    >
+      🍅
+    </button>
   </div>
 
   <div class="round-info">
