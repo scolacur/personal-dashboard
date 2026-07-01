@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { AgentProject, AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
-  import { TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
+  import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import * as api from './api';
 
@@ -18,7 +18,7 @@
   // so manual editing (field + drag) is locked for these statuses when assigned.
   const AGENT_CONTROLLED: TicketStatus[] = ['queued', 'in_progress', 'in_review', 'completed'];
   function isStatusLocked(t: AgentTicket): boolean {
-    return t.assignee !== null && AGENT_CONTROLLED.includes(t.status);
+    return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
   }
 
   let tickets = $state<AgentTicket[]>([]);
@@ -60,6 +60,7 @@
   let formBody = $state('');
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
+  let formAssignee = $state<TicketAssignee | null>('steve');
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
@@ -101,6 +102,7 @@
     formBody = '';
     formStatus = 'backlog'; // new tickets start in the backlog
     formPriority = null; // unset by default — assigned deliberately
+    formAssignee = 'steve'; // default assignee
     // Default to the active filter, else the first project.
     formProjectId = filterProjectId ?? projects[0]?.id ?? null;
     formOpen = true;
@@ -113,6 +115,7 @@
     formBody = ticket.body ?? '';
     formStatus = ticket.status;
     formPriority = ticket.priority;
+    formAssignee = ticket.assignee;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
   }
@@ -133,6 +136,7 @@
           body: formBody.trim() || null,
           priority: formPriority,
           status: formStatus,
+          assignee: formAssignee,
         });
       } else {
         await api.updateTicket(editingId, {
@@ -140,6 +144,7 @@
           body: formBody.trim() || null,
           priority: formPriority,
           projectId: formProjectId,
+          assignee: formAssignee,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: formStatus }),
         });
@@ -177,7 +182,24 @@
   // Where the dragged card would land: `beforeId === null` means append to the end.
   let dropTarget = $state<{ status: TicketStatus; beforeId: number | null } | null>(null);
 
+  // Auto-dismissing toast message.
+  let toast = $state<string | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function showToast(message: string) {
+    toast = message;
+    if (toastTimer !== null) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast = null;
+      toastTimer = null;
+    }, 3000);
+  }
+
   function onDragStart(e: DragEvent, ticket: AgentTicket) {
+    if (isStatusLocked(ticket)) {
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
+      showToast("This ticket is agent-controlled and can't be moved.");
+      return;
+    }
     draggingId = ticket.id;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -382,6 +404,18 @@
         {/each}
       </select>
     </label>
+    <label>
+      <span>Assignee</span>
+      <select bind:value={formAssignee} disabled={editingLocked}>
+        <option value={null}>— None</option>
+        {#each TICKET_ASSIGNEES as a (a)}
+          <option value={a}>{ASSIGNEE_LABELS[a]}</option>
+        {/each}
+      </select>
+      {#if editingLocked}
+        <small class="field-note">Locked — controlled by its agent.</small>
+      {/if}
+    </label>
     <div class="form-actions">
       <button type="button" class="ghost" onclick={closeForm}>Cancel</button>
       <button
@@ -436,9 +470,10 @@
               class:done={ticket.status === 'completed'}
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+              class:locked={isStatusLocked(ticket)}
               data-id={ticket.id}
               data-priority={bandKey(ticket.priority)}
-              draggable={!isStatusLocked(ticket)}
+              draggable={true}
               ondragstart={(e) => onDragStart(e, ticket)}
               ondragend={onDragEnd}
             >
@@ -514,5 +549,9 @@
   </div>
 {/if}
 </section>
+
+{#if toast}
+  <div class="toast" role="status">{toast}</div>
+{/if}
 
 <style lang="scss" src="./+page.scss"></style>
