@@ -292,6 +292,13 @@ const FOLLOWUPS: Omit<SeedTicket, 'source'>[] = [
     priority: 'medium',
     status: 'backlog',
   },
+  {
+    project: 'core',
+    title: 'Fetch Core TODOs from the dashboard ticket API instead of META-TODOS.md',
+    body: "META-TODOS.md stays canonical/Markdown for now (it's load-bearing — referenced across core's README/PROJECT/DECISIONS/MEMORY, and PROJECT.md §42 mandates Markdown). But core's tickets now also live in the dashboard board. Migrate core's references (session-start, /project-maintenance, /project-status) to read Core's tickets from the Agent Dashboard ticket API (GET /api/widgets/agent-dashboard/tickets filtered to project=core) so there's one source of truth. Requires the dashboard API reachable from core sessions + a sync/authoring path back. Ties into the META-TODOS 'memory-library'/'replicate Core dev tooling' items.",
+    priority: 'high',
+    status: 'backlog',
+  },
 ];
 for (const f of FOLLOWUPS) {
   tickets.push({ ...f, source: 'seed:agent-dashboard/followups' });
