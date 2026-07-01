@@ -16,16 +16,18 @@
 
   &.tomato-mode {
     max-width: 15rem;
-    margin-top: 3rem;
-    background: radial-gradient(ellipse at 38% 30%, #e74c3c, #c0392b 58%, #a93226);
+    margin-top: 6rem;
+    background:
+      radial-gradient(ellipse 22% 12% at 50% 3%, rgba(70, 0, 0, 0.5) 0%, transparent 100%),
+      radial-gradient(ellipse at 36% 28%, #ff4535, #d43025 52%, #a92820);
     border: none;
-    /* slightly flattened top, rounder bottom — more tomato than circle */
-    border-radius: 50% 50% 48% 48% / 40% 40% 56% 56%;
-    padding: 2rem 1.5rem 1.75rem;
+    /* flat top, very round bottom — oblate tomato profile */
+    border-radius: 46% 46% 52% 52% / 32% 32% 64% 64%;
+    padding: 2rem 1.5rem 2rem;
     overflow: visible;
     box-shadow:
-      0 10px 40px rgba(169, 50, 38, 0.5),
-      inset -10px -10px 20px rgba(0, 0, 0, 0.15),
-      inset 4px 4px 12px rgba(255, 255, 255, 0.12);
+      0 14px 50px rgba(140, 20, 10, 0.55),
+      inset -12px -12px 24px rgba(0, 0, 0, 0.18),
+      inset 5px 5px 14px rgba(255, 255, 255, 0.15);
   }
 }
