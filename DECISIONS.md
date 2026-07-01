@@ -6,6 +6,57 @@ Newest decisions at the top.
 
 ---
 
+## D-027: Base PRs on `main`, not on another open PR's branch — stacking silently opts out of CI + branch protection
+
+**Decision:** Open PRs against `main` by default. If the work depends on an unmerged PR, merge
+the parent first, then branch off `main` — don't stack a PR on the parent's branch.
+
+**Why (learned the hard way on PR #39):** CI and branch protection are both scoped to `main` only:
+- `.github/workflows/ci.yml` triggers on `pull_request: branches: [main]`, so the `verify` job runs
+  **only when a PR's _base_ is `main`.** A PR based on any other branch gets **no CI** — silently.
+- Branch protection (required `verify` check + 1 approval) is configured **only on `main`**. A PR
+  based on an unprotected branch has no rules to enforce, so GitHub shows **no merge gate and no
+  "bypassing branch protection" warning** — it looks mergeable when nothing has actually checked it.
+
+Stacking #39 on `refactor/shared-from-source` (an open PR's branch) hit both at once: green locally,
+but zero CI and no gate on the PR. **Fix pattern when it happens:** retarget the base to `main`
+(`gh pr edit <n> --base main`) — but retargeting fires a `pull_request: edited` event, which is
+**not** in the default trigger set (`opened`/`synchronize`/`reopened`), so CI still won't run. Force
+a `reopened` event with a close→reopen (`gh pr close <n> && gh pr reopen <n>`), or push a commit
+(`synchronize`), to actually kick CI.
+
+**Trade-off:** true stacked PRs (clean incremental diffs) are occasionally worth it, but only with
+eyes open — the child PR is unverified and ungated until it's rebased onto `main`. Default to
+flat-on-`main`.
+
+---
+
+## D-026: Kanban is drag-and-drop with fractional `sort_order`; `queued` lane added; status list is the single source of position
+
+**Decision:** The Mission Control board moves tickets by native HTML5 drag-and-drop — within a
+lane (reorder) and between lanes (status change) through one code path. The `◀ ▶` arrow buttons
+were removed. A `queued` status/lane was added between `ready` and `in_progress`.
+
+**Why / how it works:**
+- **One drop path.** A single `ondragover` per lane finds the insertion index by comparing the
+  cursor Y to each card's vertical midpoint; `onDrop` computes a new `sortOrder` by **averaging
+  the two neighbours** (or stepping ±1 past the ends). `sort_order` is a SQLite `REAL`, so cards
+  can be slotted between any two others indefinitely without renumbering.
+- **Adding a status is a 3-line change, not a migration.** `status` is a plain `TEXT` column (no
+  CHECK constraint) and API validation derives from `TICKET_STATUSES`, so `queued` needed only:
+  the shared type/array (`packages/shared/src/agent-dashboard.ts`), the server `ORDER BY` CASE
+  (`store.ts`), and the board's `COLUMNS`. `TICKET_STATUSES` order is the authoritative lane order,
+  mirrored by the `ORDER BY` CASE — keep the two in sync when adding lanes.
+- **Board UX also gained:** a live title+body search filter (`visibleTickets()`), a Condensed
+  toggle (hides card bodies), and a clickable priority chip that cycles low→medium→high. `<main>`
+  max-width was dropped so the 6-lane board uses full monitor width. "Mission Control" is now the
+  page; "Tickets" is a titled section within it (room for future sections).
+
+**Trade-off:** DnD is pointer-only — removing the arrows dropped the keyboard path for moving a
+ticket. Acceptable for a single-user personal dashboard; revisit if keyboard/a11y is needed.
+
+---
+
 ## D-025: Prod self-seeds an empty board on boot (opt-in via `SEED_ON_BOOT`); dev is visually marked
 
 **Decision:** On boot, the agent-dashboard widget runs `seedIfEmpty(db)`: if `SEED_ON_BOOT=1`

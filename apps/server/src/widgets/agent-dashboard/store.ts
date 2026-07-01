@@ -139,10 +139,11 @@ export function listTickets(db: Database.Database): AgentTicket[] {
          CASE status
            WHEN 'backlog' THEN 0
            WHEN 'ready' THEN 1
-           WHEN 'in_progress' THEN 2
-           WHEN 'in_review' THEN 3
-           WHEN 'completed' THEN 4
-           ELSE 5
+           WHEN 'queued' THEN 2
+           WHEN 'in_progress' THEN 3
+           WHEN 'in_review' THEN 4
+           WHEN 'completed' THEN 5
+           ELSE 6
          END,
          sort_order ASC,
          id ASC`,
