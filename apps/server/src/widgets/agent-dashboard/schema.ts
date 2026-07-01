@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3';
 import { migrate, addColumn } from '../../migrate';
 
-// Agent Dashboard schema: a cross-project TODO backlog (Kanban), the projects those
-// TODOs belong to, plus relations / tags / events / reminders. All evolution goes
+// Agent Dashboard schema: a cross-project Ticket backlog (Kanban), the projects those
+// Tickets belong to, plus relations / tags / events / reminders. All evolution goes
 // through the migration framework so we never drop/recreate a populated table (D-019).
 //
 // CREATE statements reflect the full current schema (fresh DBs are complete in one shot);
@@ -22,7 +22,7 @@ export function bootstrapSchema(db: Database.Database): void {
       updated_at     INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS agent_todos (
+    CREATE TABLE IF NOT EXISTS agent_tickets (
       id                  INTEGER PRIMARY KEY,
       display_id          TEXT,                     -- e.g. 'PD-7' (assigned on create)
       title               TEXT    NOT NULL,
@@ -41,20 +41,20 @@ export function bootstrapSchema(db: Database.Database): void {
       updated_at          INTEGER NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_agent_todos_status ON agent_todos (status, sort_order);
-    CREATE INDEX IF NOT EXISTS idx_agent_todos_project ON agent_todos (project_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_todos_display_id
-      ON agent_todos (display_id) WHERE display_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_agent_tickets_status ON agent_tickets (status, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_agent_tickets_project ON agent_tickets (project_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tickets_display_id
+      ON agent_tickets (display_id) WHERE display_id IS NOT NULL;
 
     -- Ticket links (blocks / relates / duplicates). "Blocking" = rows where you're
-    -- from_todo_id; "blocked by" = rows where you're to_todo_id.
-    CREATE TABLE IF NOT EXISTS agent_todo_relations (
+    -- from_ticket_id; "blocked by" = rows where you're to_ticket_id.
+    CREATE TABLE IF NOT EXISTS agent_ticket_relations (
       id            INTEGER PRIMARY KEY,
-      from_todo_id  INTEGER NOT NULL REFERENCES agent_todos(id) ON DELETE CASCADE,
-      to_todo_id    INTEGER NOT NULL REFERENCES agent_todos(id) ON DELETE CASCADE,
+      from_ticket_id  INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
+      to_ticket_id    INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
       type          TEXT    NOT NULL DEFAULT 'blocks',
       created_at    INTEGER NOT NULL,
-      UNIQUE(from_todo_id, to_todo_id, type)
+      UNIQUE(from_ticket_id, to_ticket_id, type)
     );
 
     -- Arbitrary, extensible tags.
@@ -64,34 +64,34 @@ export function bootstrapSchema(db: Database.Database): void {
       color      TEXT,
       created_at INTEGER NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS agent_todo_tags (
-      todo_id    INTEGER NOT NULL REFERENCES agent_todos(id) ON DELETE CASCADE,
+    CREATE TABLE IF NOT EXISTS agent_ticket_tags (
+      ticket_id    INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
       tag_id     INTEGER NOT NULL REFERENCES agent_tags(id) ON DELETE CASCADE,
       created_at INTEGER NOT NULL,
-      PRIMARY KEY (todo_id, tag_id)
+      PRIMARY KEY (ticket_id, tag_id)
     );
 
     -- Activity log — powers the future Activity Feed + cycle-time history.
-    CREATE TABLE IF NOT EXISTS agent_todo_events (
+    CREATE TABLE IF NOT EXISTS agent_ticket_events (
       id         INTEGER PRIMARY KEY,
-      todo_id    INTEGER NOT NULL REFERENCES agent_todos(id) ON DELETE CASCADE,
+      ticket_id    INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
       type       TEXT    NOT NULL,                  -- created | status_changed | archived | ...
       detail     TEXT,                              -- JSON blob (e.g. {"from":"backlog","to":"ready"})
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_agent_todo_events_todo ON agent_todo_events (todo_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_ticket_events_ticket ON agent_ticket_events (ticket_id, created_at);
 
     -- Reminders — many per ticket; a future job sends when remind_at passes.
-    CREATE TABLE IF NOT EXISTS agent_todo_reminders (
+    CREATE TABLE IF NOT EXISTS agent_ticket_reminders (
       id         INTEGER PRIMARY KEY,
-      todo_id    INTEGER NOT NULL REFERENCES agent_todos(id) ON DELETE CASCADE,
+      ticket_id    INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
       remind_at  INTEGER NOT NULL,
       note       TEXT,
       sent_at    INTEGER,                           -- NULL until delivered
       created_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_agent_todo_reminders_due
-      ON agent_todo_reminders (remind_at) WHERE sent_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_agent_ticket_reminders_due
+      ON agent_ticket_reminders (remind_at) WHERE sent_at IS NULL;
   `);
 
   // Bring pre-existing tables (older dev DBs) up to the current schema. Each is a
@@ -100,14 +100,14 @@ export function bootstrapSchema(db: Database.Database): void {
     addColumn(d, 'agent_projects', 'key', 'TEXT');
     addColumn(d, 'agent_projects', 'seq', 'INTEGER NOT NULL DEFAULT 0');
   });
-  migrate(db, 'agent_todos_add_project_id', (d) => {
-    addColumn(d, 'agent_todos', 'project_id', 'INTEGER');
+  migrate(db, 'agent_tickets_add_project_id', (d) => {
+    addColumn(d, 'agent_tickets', 'project_id', 'INTEGER');
   });
-  migrate(db, 'agent_todos_add_lifecycle_fields', (d) => {
-    addColumn(d, 'agent_todos', 'display_id', 'TEXT');
-    addColumn(d, 'agent_todos', 'assignee', 'TEXT');
-    addColumn(d, 'agent_todos', 'recur_interval', 'TEXT');
-    addColumn(d, 'agent_todos', 'archived_at', 'INTEGER');
+  migrate(db, 'agent_tickets_add_lifecycle_fields', (d) => {
+    addColumn(d, 'agent_tickets', 'display_id', 'TEXT');
+    addColumn(d, 'agent_tickets', 'assignee', 'TEXT');
+    addColumn(d, 'agent_tickets', 'recur_interval', 'TEXT');
+    addColumn(d, 'agent_tickets', 'archived_at', 'INTEGER');
   });
 
   // Seed the known projects once (with display-id keys). Idempotent, and backfills

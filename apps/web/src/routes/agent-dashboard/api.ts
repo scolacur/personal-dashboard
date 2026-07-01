@@ -1,6 +1,6 @@
-import type { AgentProject, AgentTodo, CreateTodoInput, UpdateTodoInput } from '@dashboard/shared';
+import type { AgentProject, AgentTicket, CreateTicketInput, UpdateTicketInput } from '@dashboard/shared';
 
-const BASE = '/api/widgets/agent-dashboard/todos';
+const BASE = '/api/widgets/agent-dashboard/tickets';
 const PROJECTS = '/api/widgets/agent-dashboard/projects';
 
 async function parseError(res: Response): Promise<never> {
@@ -20,33 +20,33 @@ export async function fetchProjects(): Promise<AgentProject[]> {
   return res.json() as Promise<AgentProject[]>;
 }
 
-export async function fetchTodos(): Promise<AgentTodo[]> {
+export async function fetchTickets(): Promise<AgentTicket[]> {
   const res = await fetch(BASE);
   if (!res.ok) return parseError(res);
-  return res.json() as Promise<AgentTodo[]>;
+  return res.json() as Promise<AgentTicket[]>;
 }
 
-export async function createTodo(input: CreateTodoInput): Promise<AgentTodo> {
+export async function createTicket(input: CreateTicketInput): Promise<AgentTicket> {
   const res = await fetch(BASE, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
   if (!res.ok) return parseError(res);
-  return res.json() as Promise<AgentTodo>;
+  return res.json() as Promise<AgentTicket>;
 }
 
-export async function updateTodo(id: number, patch: UpdateTodoInput): Promise<AgentTodo> {
+export async function updateTicket(id: number, patch: UpdateTicketInput): Promise<AgentTicket> {
   const res = await fetch(`${BASE}/${id}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   });
   if (!res.ok) return parseError(res);
-  return res.json() as Promise<AgentTodo>;
+  return res.json() as Promise<AgentTicket>;
 }
 
-export async function deleteTodo(id: number): Promise<void> {
+export async function deleteTicket(id: number): Promise<void> {
   const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }

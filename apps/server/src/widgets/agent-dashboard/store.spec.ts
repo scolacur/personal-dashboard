@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import {
-  archiveTodo,
-  createTodo,
+  archiveTicket,
+  createTicket,
   getProjectBySlug,
   listProjects,
-  listTodos,
-  updateTodo,
+  listTickets,
+  updateTicket,
 } from './store';
 
 function freshDb(): Database.Database {
@@ -54,19 +54,19 @@ describe('display ids', () => {
     const pd = projectId(db, 'personal-dashboard');
     const core = projectId(db, 'core');
 
-    expect(createTodo(db, { title: 'a', projectId: pd }).displayId).toBe('PD-1');
-    expect(createTodo(db, { title: 'b', projectId: pd }).displayId).toBe('PD-2');
-    expect(createTodo(db, { title: 'c', projectId: core }).displayId).toBe('C-1');
-    expect(createTodo(db, { title: 'd', projectId: pd }).displayId).toBe('PD-3');
+    expect(createTicket(db, { title: 'a', projectId: pd }).displayId).toBe('PD-1');
+    expect(createTicket(db, { title: 'b', projectId: pd }).displayId).toBe('PD-2');
+    expect(createTicket(db, { title: 'c', projectId: core }).displayId).toBe('C-1');
+    expect(createTicket(db, { title: 'd', projectId: pd }).displayId).toBe('PD-3');
   });
 
   it('does not reuse a number after archive', () => {
     const db = freshDb();
     const pd = projectId(db, 'personal-dashboard');
-    const first = createTodo(db, { title: 'a', projectId: pd });
+    const first = createTicket(db, { title: 'a', projectId: pd });
     expect(first.displayId).toBe('PD-1');
-    archiveTodo(db, first.id);
-    expect(createTodo(db, { title: 'b', projectId: pd }).displayId).toBe('PD-2');
+    archiveTicket(db, first.id);
+    expect(createTicket(db, { title: 'b', projectId: pd }).displayId).toBe('PD-2');
   });
 });
 
@@ -78,24 +78,24 @@ describe('soft delete', () => {
     pd = projectId(db, 'personal-dashboard');
   });
 
-  it('hides archived todos from the board but keeps the row', () => {
-    const t = createTodo(db, { title: 'archive me', projectId: pd });
-    expect(listTodos(db)).toHaveLength(1);
+  it('hides archived tickets from the board but keeps the row', () => {
+    const t = createTicket(db, { title: 'archive me', projectId: pd });
+    expect(listTickets(db)).toHaveLength(1);
 
-    expect(archiveTodo(db, t.id)).toBe(true);
-    expect(listTodos(db)).toHaveLength(0);
+    expect(archiveTicket(db, t.id)).toBe(true);
+    expect(listTickets(db)).toHaveLength(0);
 
-    const row = db.prepare('SELECT archived_at FROM agent_todos WHERE id = ?').get(t.id) as {
+    const row = db.prepare('SELECT archived_at FROM agent_tickets WHERE id = ?').get(t.id) as {
       archived_at: number | null;
     };
     expect(row.archived_at).not.toBeNull();
   });
 
-  it('returns false when archiving an already-archived or missing todo', () => {
-    const t = createTodo(db, { title: 'x', projectId: pd });
-    expect(archiveTodo(db, t.id)).toBe(true);
-    expect(archiveTodo(db, t.id)).toBe(false);
-    expect(archiveTodo(db, 9999)).toBe(false);
+  it('returns false when archiving an already-archived or missing ticket', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(archiveTicket(db, t.id)).toBe(true);
+    expect(archiveTicket(db, t.id)).toBe(false);
+    expect(archiveTicket(db, 9999)).toBe(false);
   });
 });
 
@@ -103,12 +103,12 @@ describe('activity log', () => {
   it('records created and status_changed events', () => {
     const db = freshDb();
     const pd = projectId(db, 'personal-dashboard');
-    const t = createTodo(db, { title: 'x', projectId: pd });
-    updateTodo(db, t.id, { status: 'ready' });
-    updateTodo(db, t.id, { priority: 'high' }); // no status change → no event
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    updateTicket(db, t.id, { status: 'ready' });
+    updateTicket(db, t.id, { priority: 'high' }); // no status change → no event
 
     const events = db
-      .prepare('SELECT type, detail FROM agent_todo_events WHERE todo_id = ? ORDER BY id')
+      .prepare('SELECT type, detail FROM agent_ticket_events WHERE ticket_id = ? ORDER BY id')
       .all(t.id) as { type: string; detail: string | null }[];
     expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
     expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'ready' });

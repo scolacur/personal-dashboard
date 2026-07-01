@@ -29,18 +29,18 @@ IF NOT EXISTS` statements carry the full current schema (so fresh DBs are comple
 
 **Implications:** Adding a field later is a one-line `addColumn` migration, no data risk. Proven in
 this build: `project_id`, `display_id`, `archived_at`, `assignee`, `recur_interval`, and
-`agent_projects.key`/`seq` were all added to a pre-existing `agent_todos`/`agent_projects` without
+`agent_projects.key`/`seq` were all added to a pre-existing `agent_tickets`/`agent_projects` without
 data loss.
 
 ---
 
-## D-018: Cross-project TODO backlog (`agent_todos` + `agent_projects`), distinct from D-014 agent-run tables
+## D-018: Cross-project ticket backlog (`agent_tickets` + `agent_projects`), distinct from D-014 agent-run tables
 
 **Decision:** The Agent Dashboard is a **cross-project** Kanban — it tracks TODOs for *all* Steve's
 projects (personal-dashboard, core, nervous-system-website, …), not just the dashboard. Backed by
 dashboard-owned tables: `agent_projects` (with a display-id `key` like `PD`/`C`/`NSW`, `github_repo`,
-`sortie_enabled`, `color`) and `agent_todos`, plus `agent_todo_relations` (blocks/relates/duplicates),
-`agent_tags` + `agent_todo_tags`, `agent_todo_events` (activity log), and `agent_todo_reminders`.
+`sortie_enabled`, `color`) and `agent_tickets`, plus `agent_ticket_relations` (blocks/relates/duplicates),
+`agent_tags` + `agent_ticket_tags`, `agent_ticket_events` (activity log), and `agent_ticket_reminders`.
 Five statuses map to columns: `backlog`/`ready` set **manually**; `in_progress`/`in_review`/`completed`
 **derived** from GitHub once a TODO is converted to a Sortie issue, cached on the row. This is Phase 1
 of the TODO → Sortie-issue pipeline (Kanban now; seed-import Phase 2; Claude-API "Convert to issue" Phase 3).
@@ -49,7 +49,7 @@ of the TODO → Sortie-issue pipeline (Kanban now; seed-import Phase 2; Claude-A
 
 - **Does not conflict with D-014.** D-014 put the agent *run* tables (`agent_jobs`, `agent_errors`,
   `agent_inbox`, `agent_schedule`) in the agent runner (Sortie's `.sortie.db`), dashboard as
-  read-only consumer. `agent_todos` is Steve's *backlog*, owned by the dashboard, predating any run.
+  read-only consumer. `agent_tickets` is Steve's *backlog*, owned by the dashboard, predating any run.
   The dashboard only *reads/caches* run-state for the derived statuses.
 - **Derived statuses come from GitHub labels, not the Sortie API.** The `sortie:*` labels are the
   state machine (see `ops/sortie/WORKFLOW.md`). Polling GitHub needs no new infra and avoids coupling

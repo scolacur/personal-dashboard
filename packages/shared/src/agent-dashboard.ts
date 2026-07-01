@@ -1,14 +1,14 @@
-// Types for the Agent Dashboard "Tasks" Kanban — the project's TODO backlog.
+// Types for the Agent Dashboard "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
 // The five Kanban columns. Backlog/ready are set by hand; the agent statuses
-// (in_progress/in_review/completed) are derived from GitHub once a TODO has been
+// (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
 // converted to a Sortie issue (Phase 3) — see DECISIONS.md D-018.
-export type TodoStatus = 'backlog' | 'ready' | 'in_progress' | 'in_review' | 'completed';
+export type TicketStatus = 'backlog' | 'ready' | 'in_progress' | 'in_review' | 'completed';
 
-export type TodoPriority = 'low' | 'medium' | 'high';
+export type TicketPriority = 'low' | 'medium' | 'high';
 
-export const TODO_STATUSES: readonly TodoStatus[] = [
+export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
   'ready',
   'in_progress',
@@ -16,10 +16,10 @@ export const TODO_STATUSES: readonly TodoStatus[] = [
   'completed',
 ] as const;
 
-export const TODO_PRIORITIES: readonly TodoPriority[] = ['low', 'medium', 'high'] as const;
+export const TICKET_PRIORITIES: readonly TicketPriority[] = ['low', 'medium', 'high'] as const;
 
-// A project the TODOs belong to (personal-dashboard, core, nervous-system-website, …).
-// The dashboard tracks TODOs across all projects, not just itself.
+// A project the Tickets belong to (personal-dashboard, core, nervous-system-website, …).
+// The dashboard tracks Tickets across all projects, not just itself.
 export interface AgentProject {
   id: number;
   slug: string;
@@ -44,25 +44,25 @@ export interface CreateProjectInput {
   color?: string | null;
 }
 
-export interface AgentTodo {
+export interface AgentTicket {
   id: number;
   /** Human-facing per-project id, e.g. 'PD-7'. Null only for legacy rows. */
   displayId: string | null;
   title: string;
   body: string | null;
-  status: TodoStatus;
-  priority: TodoPriority;
-  /** The project this TODO belongs to. */
+  status: TicketStatus;
+  priority: TicketPriority;
+  /** The project this Ticket belongs to. */
   projectId: number | null;
   /** Human or agent (e.g. 'sortie') that owns the ticket. */
   assignee: string | null;
   /** Recurrence hint for maintenance tickets, e.g. 'weekly'. */
   recurInterval: string | null;
-  /** 'manual' or 'todo.md:<path>' once Phase 2 seed-import lands. */
+  /** 'manual', or 'seed:<path>' for tickets imported from a TODO.md/META-TODOS.md file. */
   source: string;
   /** Ordering within a column (ascending); fractional to allow drag-reorder. */
   sortOrder: number;
-  /** Set when the TODO is converted to a GitHub issue (Phase 3). */
+  /** Set when the Ticket is converted to a GitHub issue (Phase 3). */
   githubIssueNumber: number | null;
   githubIssueUrl: string | null;
   /** Soft-delete timestamp; null = active. */
@@ -71,20 +71,24 @@ export interface AgentTodo {
   updatedAt: number;
 }
 
-/** Fields accepted when creating a TODO. New items land in `backlog`. */
-export interface CreateTodoInput {
+/** Fields accepted when creating a Ticket. New items land in `backlog` unless `status` is given. */
+export interface CreateTicketInput {
   title: string;
   projectId: number;
   body?: string | null;
-  priority?: TodoPriority;
+  priority?: TicketPriority;
+  /** Override the initial status (used by the seed importer for completed items). */
+  status?: TicketStatus;
+  /** Provenance, e.g. 'seed:widgets/pomodoro-timer/TODO.md'. Defaults to 'manual'. */
+  source?: string;
 }
 
 /** Partial update — any subset of these fields. */
-export interface UpdateTodoInput {
+export interface UpdateTicketInput {
   title?: string;
   body?: string | null;
-  status?: TodoStatus;
-  priority?: TodoPriority;
+  status?: TicketStatus;
+  priority?: TicketPriority;
   sortOrder?: number;
   projectId?: number;
 }

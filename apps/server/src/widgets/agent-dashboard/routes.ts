@@ -1,30 +1,30 @@
 import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
 import {
-  TODO_PRIORITIES,
-  TODO_STATUSES,
-  type CreateTodoInput,
-  type TodoPriority,
-  type TodoStatus,
-  type UpdateTodoInput,
+  TICKET_PRIORITIES,
+  TICKET_STATUSES,
+  type CreateTicketInput,
+  type TicketPriority,
+  type TicketStatus,
+  type UpdateTicketInput,
 } from '@dashboard/shared';
 import {
-  archiveTodo,
+  archiveTicket,
   createProject,
-  createTodo,
+  createTicket,
   getProjectBySlug,
   listProjects,
-  listTodos,
+  listTickets,
   projectExists,
-  updateTodo,
+  updateTicket,
 } from './store';
 
-function isPriority(v: unknown): v is TodoPriority {
-  return typeof v === 'string' && (TODO_PRIORITIES as readonly string[]).includes(v);
+function isPriority(v: unknown): v is TicketPriority {
+  return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
 }
 
-function isStatus(v: unknown): v is TodoStatus {
-  return typeof v === 'string' && (TODO_STATUSES as readonly string[]).includes(v);
+function isStatus(v: unknown): v is TicketStatus {
+  return typeof v === 'string' && (TICKET_STATUSES as readonly string[]).includes(v);
 }
 
 export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
@@ -56,11 +56,11 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     );
   });
 
-  /* ── Todos ────────────────────────────────── */
+  /* ── Tickets ────────────────────────────────── */
 
-  app.get(`${base}/todos`, async () => listTodos(db));
+  app.get(`${base}/tickets`, async () => listTickets(db));
 
-  app.post(`${base}/todos`, async (request, reply) => {
+  app.post(`${base}/tickets`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
 
     if (typeof body.title !== 'string' || body.title.trim() === '') {
@@ -79,23 +79,23 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       return reply.status(400).send({ error: 'body must be a string', code: 'INVALID_BODY' });
     }
 
-    const input: CreateTodoInput = {
+    const input: CreateTicketInput = {
       title: body.title.trim(),
       projectId: body.projectId,
       body: (body.body as string | null | undefined) ?? null,
       priority: isPriority(body.priority) ? body.priority : undefined,
     };
-    return reply.status(201).send(createTodo(db, input));
+    return reply.status(201).send(createTicket(db, input));
   });
 
-  app.patch(`${base}/todos/:id`, async (request, reply) => {
+  app.patch(`${base}/tickets/:id`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
 
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const patch: UpdateTodoInput = {};
+    const patch: UpdateTicketInput = {};
 
     if (body.title !== undefined) {
       if (typeof body.title !== 'string' || body.title.trim() === '') {
@@ -136,21 +136,21 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       patch.sortOrder = body.sortOrder;
     }
 
-    const updated = updateTodo(db, id, patch);
+    const updated = updateTicket(db, id, patch);
     if (!updated) {
-      return reply.status(404).send({ error: 'todo not found', code: 'NOT_FOUND' });
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return updated;
   });
 
-  // Soft-delete: archives the todo (recoverable), hidden from the board.
-  app.delete(`${base}/todos/:id`, async (request, reply) => {
+  // Soft-delete: archives the ticket (recoverable), hidden from the board.
+  app.delete(`${base}/tickets/:id`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
-    if (!archiveTodo(db, id)) {
-      return reply.status(404).send({ error: 'todo not found', code: 'NOT_FOUND' });
+    if (!archiveTicket(db, id)) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return reply.status(204).send();
   });

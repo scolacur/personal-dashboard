@@ -1,16 +1,17 @@
 import type Database from 'better-sqlite3';
 import type {
   AgentProject,
-  AgentTodo,
+  AgentTicket,
   CreateProjectInput,
-  CreateTodoInput,
-  TodoPriority,
-  UpdateTodoInput,
+  CreateTicketInput,
+  TicketPriority,
+  TicketStatus,
+  UpdateTicketInput,
 } from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
 // never see snake_case (PROJECT.md §5: typed helpers, no raw SQL in routes).
-interface TodoRow {
+interface TicketRow {
   id: number;
   display_id: string | null;
   title: string;
@@ -42,14 +43,14 @@ interface ProjectRow {
   updated_at: number;
 }
 
-function rowToTodo(row: TodoRow): AgentTodo {
+function rowToTicket(row: TicketRow): AgentTicket {
   return {
     id: row.id,
     displayId: row.display_id,
     title: row.title,
     body: row.body,
-    status: row.status as AgentTodo['status'],
-    priority: row.priority as TodoPriority,
+    status: row.status as AgentTicket['status'],
+    priority: row.priority as TicketPriority,
     projectId: row.project_id,
     assignee: row.assignee,
     recurInterval: row.recur_interval,
@@ -78,9 +79,9 @@ function rowToProject(row: ProjectRow): AgentProject {
 }
 
 /** Append an activity-log entry. `detail` is any JSON-serialisable value. */
-function logEvent(db: Database.Database, todoId: number, type: string, detail?: unknown): void {
-  db.prepare('INSERT INTO agent_todo_events (todo_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
-    todoId,
+function logEvent(db: Database.Database, ticketId: number, type: string, detail?: unknown): void {
+  db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+    ticketId,
     type,
     detail === undefined ? null : JSON.stringify(detail),
     Date.now(),
@@ -127,12 +128,12 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
   return rowToProject(row);
 }
 
-/* ── Todos ────────────────────────────────────── */
+/* ── Tickets ────────────────────────────────────── */
 
-export function listTodos(db: Database.Database): AgentTodo[] {
+export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
-      `SELECT * FROM agent_todos
+      `SELECT * FROM agent_tickets
        WHERE archived_at IS NULL
        ORDER BY
          CASE status
@@ -146,13 +147,13 @@ export function listTodos(db: Database.Database): AgentTodo[] {
          sort_order ASC,
          id ASC`,
     )
-    .all() as TodoRow[];
-  return rows.map(rowToTodo);
+    .all() as TicketRow[];
+  return rows.map(rowToTicket);
 }
 
-export function getTodo(db: Database.Database, id: number): AgentTodo | null {
-  const row = db.prepare('SELECT * FROM agent_todos WHERE id = ?').get(id) as TodoRow | undefined;
-  return row ? rowToTodo(row) : null;
+export function getTicket(db: Database.Database, id: number): AgentTicket | null {
+  const row = db.prepare('SELECT * FROM agent_tickets WHERE id = ?').get(id) as TicketRow | undefined;
+  return row ? rowToTicket(row) : null;
 }
 
 /** Allocate the next per-project display id (e.g. 'PD-7'), bumping the project's counter. */
@@ -170,35 +171,45 @@ function nextDisplayId(db: Database.Database, projectId: number): string {
   return `${prefix}-${seq}`;
 }
 
-export function createTodo(db: Database.Database, input: CreateTodoInput): AgentTodo {
+export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
   const insert = db.transaction((): number => {
     const now = Date.now();
-    const priority: TodoPriority = input.priority ?? 'medium';
+    const priority: TicketPriority = input.priority ?? 'medium';
+    const status: TicketStatus = input.status ?? 'backlog';
+    const source = input.source ?? 'manual';
     const displayId = nextDisplayId(db, input.projectId);
     const result = db
       .prepare(
-        `INSERT INTO agent_todos (display_id, title, body, status, priority, project_id, source, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, 'backlog', ?, ?, 'manual', ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, source, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, priority, input.projectId, now, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, source, now, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     return id;
   });
-  const created = getTodo(db, insert());
-  if (!created) throw new Error('Failed to read back created todo');
+  const created = getTicket(db, insert());
+  if (!created) throw new Error('Failed to read back created ticket');
   return created;
 }
 
-export function updateTodo(
+/** True if a ticket with this provenance + title already exists (import idempotency). */
+export function ticketExistsBySource(db: Database.Database, source: string, title: string): boolean {
+  return (
+    db.prepare('SELECT 1 FROM agent_tickets WHERE source = ? AND title = ?').get(source, title) !==
+    undefined
+  );
+}
+
+export function updateTicket(
   db: Database.Database,
   id: number,
-  patch: UpdateTodoInput,
-): AgentTodo | null {
-  const existing = getTodo(db, id);
+  patch: UpdateTicketInput,
+): AgentTicket | null {
+  const existing = getTicket(db, id);
   if (!existing) return null;
 
-  const next: AgentTodo = {
+  const next: AgentTicket = {
     ...existing,
     title: patch.title ?? existing.title,
     body: patch.body === undefined ? existing.body : patch.body,
@@ -211,7 +222,7 @@ export function updateTodo(
 
   const apply = db.transaction(() => {
     db.prepare(
-      `UPDATE agent_todos
+      `UPDATE agent_tickets
        SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
@@ -234,12 +245,12 @@ export function updateTodo(
 }
 
 /** Soft-delete: hide from the board but keep the row (recoverable). */
-export function archiveTodo(db: Database.Database, id: number): boolean {
-  const existing = getTodo(db, id);
+export function archiveTicket(db: Database.Database, id: number): boolean {
+  const existing = getTicket(db, id);
   if (!existing || existing.archivedAt !== null) return false;
   const now = Date.now();
   const apply = db.transaction(() => {
-    db.prepare('UPDATE agent_todos SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+    db.prepare('UPDATE agent_tickets SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
     logEvent(db, id, 'archived');
   });
   apply();

@@ -1,20 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { AgentProject, AgentTodo, TodoPriority, TodoStatus } from '@dashboard/shared';
-  import { TODO_STATUSES } from '@dashboard/shared';
+  import type { AgentProject, AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import { TICKET_STATUSES } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import * as api from './api';
 
-  const COLUMNS: { status: TodoStatus; label: string }[] = [
+  const COLUMNS: { status: TicketStatus; label: string }[] = [
     { status: 'backlog', label: 'Backlog' },
     { status: 'ready', label: 'Ready' },
     { status: 'in_progress', label: 'In progress' },
     { status: 'in_review', label: 'In review' },
     { status: 'completed', label: 'Completed' },
   ];
-  const PRIORITIES: TodoPriority[] = ['low', 'medium', 'high'];
+  const PRIORITIES: TicketPriority[] = ['low', 'medium', 'high'];
 
-  let todos = $state<AgentTodo[]>([]);
+  let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -27,24 +27,24 @@
   let editingId = $state<number | null>(null);
   let formTitle = $state('');
   let formBody = $state('');
-  let formPriority = $state<TodoPriority>('medium');
+  let formPriority = $state<TicketPriority>('medium');
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
-  function visibleTodos(): AgentTodo[] {
-    return filterProjectId === null ? todos : todos.filter((t) => t.projectId === filterProjectId);
+  function visibleTickets(): AgentTicket[] {
+    return filterProjectId === null ? tickets : tickets.filter((t) => t.projectId === filterProjectId);
   }
 
-  function byStatus(status: TodoStatus): AgentTodo[] {
-    return visibleTodos().filter((t) => t.status === status);
+  function byStatus(status: TicketStatus): AgentTicket[] {
+    return visibleTickets().filter((t) => t.status === status);
   }
 
   async function load() {
     loading = true;
     error = null;
     try {
-      [projects, todos] = await Promise.all([api.fetchProjects(), api.fetchTodos()]);
+      [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -64,12 +64,12 @@
     formOpen = true;
   }
 
-  function openEdit(todo: AgentTodo) {
-    editingId = todo.id;
-    formTitle = todo.title;
-    formBody = todo.body ?? '';
-    formPriority = todo.priority;
-    formProjectId = todo.projectId ?? projects[0]?.id ?? null;
+  function openEdit(ticket: AgentTicket) {
+    editingId = ticket.id;
+    formTitle = ticket.title;
+    formBody = ticket.body ?? '';
+    formPriority = ticket.priority;
+    formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
   }
 
@@ -83,14 +83,14 @@
     error = null;
     try {
       if (editingId === null) {
-        await api.createTodo({
+        await api.createTicket({
           title,
           projectId: formProjectId,
           body: formBody.trim() || null,
           priority: formPriority,
         });
       } else {
-        await api.updateTodo(editingId, {
+        await api.updateTicket(editingId, {
           title,
           body: formBody.trim() || null,
           priority: formPriority,
@@ -104,36 +104,36 @@
     }
   }
 
-  async function move(todo: AgentTodo, delta: number) {
-    const idx = TODO_STATUSES.indexOf(todo.status);
-    const next = TODO_STATUSES[idx + delta];
+  async function move(ticket: AgentTicket, delta: number) {
+    const idx = TICKET_STATUSES.indexOf(ticket.status);
+    const next = TICKET_STATUSES[idx + delta];
     if (!next) return;
     error = null;
     try {
       // Append to the end of the destination column.
-      await api.updateTodo(todo.id, { status: next, sortOrder: Date.now() });
+      await api.updateTicket(ticket.id, { status: next, sortOrder: Date.now() });
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
   }
 
-  async function remove(todo: AgentTodo) {
-    if (!confirm(`Delete "${todo.title}"?`)) return;
+  async function remove(ticket: AgentTicket) {
+    if (!confirm(`Delete "${ticket.title}"?`)) return;
     error = null;
     try {
-      await api.deleteTodo(todo.id);
+      await api.deleteTicket(ticket.id);
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
   }
 
-  function canMoveLeft(todo: AgentTodo): boolean {
-    return TODO_STATUSES.indexOf(todo.status) > 0;
+  function canMoveLeft(ticket: AgentTicket): boolean {
+    return TICKET_STATUSES.indexOf(ticket.status) > 0;
   }
-  function canMoveRight(todo: AgentTodo): boolean {
-    return TODO_STATUSES.indexOf(todo.status) < TODO_STATUSES.length - 1;
+  function canMoveRight(ticket: AgentTicket): boolean {
+    return TICKET_STATUSES.indexOf(ticket.status) < TICKET_STATUSES.length - 1;
   }
 </script>
 
@@ -156,7 +156,7 @@
       </select>
     </label>
     <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
-      + Add TODO
+      + Add Ticket
     </button>
   </div>
 </header>
@@ -165,8 +165,8 @@
   <p class="error" role="alert">{error}</p>
 {/if}
 
-<Modal open={formOpen} title={editingId === null ? 'New TODO' : 'Edit TODO'} onClose={closeForm}>
-  <div class="todo-form">
+<Modal open={formOpen} title={editingId === null ? 'New Ticket' : 'Edit Ticket'} onClose={closeForm}>
+  <div class="ticket-form">
     <label>
       <span>Project</span>
       <select bind:value={formProjectId}>
@@ -217,20 +217,20 @@
           {col.label}<span class="count">{items.length}</span>
         </h2>
         <div class="column-body">
-          {#each items as todo (todo.id)}
-            {@const project = todo.projectId !== null ? projectsById.get(todo.projectId) : undefined}
-            <article class="card" class:done={todo.status === 'completed'}>
+          {#each items as ticket (ticket.id)}
+            {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
+            <article class="card" class:done={ticket.status === 'completed'}>
               <div class="card-top">
-                <span class="priority priority-{todo.priority}">{todo.priority}</span>
-                {#if todo.githubIssueUrl}
-                  <a class="issue-link" href={todo.githubIssueUrl} target="_blank" rel="noreferrer">
-                    #{todo.githubIssueNumber}
+                <span class="priority priority-{ticket.priority}">{ticket.priority}</span>
+                {#if ticket.githubIssueUrl}
+                  <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
+                    #{ticket.githubIssueNumber}
                   </a>
                 {/if}
               </div>
-              <p class="card-title">{todo.title}</p>
-              {#if todo.body}
-                <p class="card-body">{todo.body}</p>
+              <p class="card-title">{ticket.title}</p>
+              {#if ticket.body}
+                <p class="card-body">{ticket.body}</p>
               {/if}
               {#if project}
                 <span
@@ -244,25 +244,25 @@
                   type="button"
                   title="Move left"
                   aria-label="Move left"
-                  disabled={!canMoveLeft(todo)}
-                  onclick={() => move(todo, -1)}>◀</button
+                  disabled={!canMoveLeft(ticket)}
+                  onclick={() => move(ticket, -1)}>◀</button
                 >
                 <button
                   type="button"
                   title="Move right"
                   aria-label="Move right"
-                  disabled={!canMoveRight(todo)}
-                  onclick={() => move(todo, 1)}>▶</button
+                  disabled={!canMoveRight(ticket)}
+                  onclick={() => move(ticket, 1)}>▶</button
                 >
                 <span class="spacer"></span>
-                <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(todo)}
+                <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
                   >✎</button
                 >
                 <button
                   type="button"
                   title="Delete"
                   aria-label="Delete"
-                  onclick={() => remove(todo)}>🗑</button
+                  onclick={() => remove(ticket)}>🗑</button
                 >
               </div>
             </article>
