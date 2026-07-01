@@ -168,49 +168,91 @@
 }
 
 .pomodoro.tomato-mode {
+  position: relative;
+
+  .tomato-calyx {
+    position: absolute;
+    top: -5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 9rem;
+    height: 4.5rem;
+    pointer-events: none;
+    overflow: visible;
+    z-index: 1;
+  }
+
+  .rows {
+    display: none;
+  }
+
   .timer-display {
-    position: relative;
-    width: 8rem;
-    height: 8rem;
-    border-radius: 50%;
-    background: #c0392b;
+    position: static;
+    width: auto;
+    height: auto;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    align-self: auto;
+    margin: 0;
+    display: block;
+    font-size: 3rem;
     color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    align-self: center;
-    font-size: 1.75rem;
-    margin: 1.25rem auto 0;
-    box-shadow: 0 4px 16px color-mix(in srgb, #c0392b 35%, transparent);
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    text-align: center;
 
-    &::before {
-      content: '';
-      position: absolute;
-      top: -1.1rem;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 0.375rem;
-      height: 1rem;
-      background: #27ae60;
-      border-radius: 0.2rem 0.2rem 0 0;
-    }
-
+    &::before,
     &::after {
-      content: '';
-      position: absolute;
-      top: -0.75rem;
-      left: calc(50% + 0.15rem);
-      width: 0.7rem;
-      height: 0.45rem;
-      background: #2ecc71;
-      border-radius: 50% 0 50% 50%;
-      transform: rotate(20deg);
+      display: none;
     }
 
     &.done {
-      background: var(--muted);
+      background: none;
       box-shadow: none;
-      font-size: 1.25rem;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 2rem;
+    }
+  }
+
+  .round-info {
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .btn {
+    &.btn-primary {
+      background: #27ae60;
+      border-color: #219150;
+      color: white;
+
+      &:hover:not(:disabled) {
+        filter: brightness(1.1);
+      }
+    }
+
+    &.btn-secondary {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.35);
+      color: white;
+
+      &:hover:not(:disabled) {
+        border-color: white;
+        background: rgba(255, 255, 255, 0.28);
+      }
+    }
+
+    &.btn-tomato {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.35);
+
+      &.active {
+        background: rgba(0, 0, 0, 0.2);
+        border-color: rgba(0, 0, 0, 0.25);
+      }
+
+      &:hover:not(:disabled) {
+        border-color: white;
+        background: rgba(255, 255, 255, 0.28);
+      }
     }
   }
 }

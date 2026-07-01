@@ -6,6 +6,22 @@ Newest decisions at the top.
 
 ---
 
+## D-028: Tomato mode hides settings rows and reshapes the card
+
+**Decision:** In tomato mode the settings rows (work/break durations, rounds) are hidden and the
+card itself takes on the tomato shape. The timer display and controls remain visible.
+
+**Why:** A tomato shape requires the container to be roughly square. Keeping all settings rows
+makes the widget too tall for any border-radius trick to look like a tomato. Hiding them also makes
+UX sense — tomato mode is focus mode; users toggle it off to adjust settings. The `tomatoMode`
+state is lifted to `+page.svelte` via `$bindable` so the outer card can receive the tomato
+border-radius / gradient without a `:has()` selector across component scope boundaries.
+
+**Alternative considered:** keeping all rows visible and applying a very tall oval shape — rejected
+because the resulting shape looks like a capsule, not a tomato.
+
+---
+
 ## D-027: Base PRs on `main`, not on another open PR's branch — stacking silently opts out of CI + branch protection
 
 **Decision:** Open PRs against `main` by default. If the work depends on an unmerged PR, merge

@@ -13,4 +13,19 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.75rem;
+
+  &.tomato-mode {
+    max-width: 15rem;
+    margin-top: 3rem;
+    background: radial-gradient(ellipse at 38% 30%, #e74c3c, #c0392b 58%, #a93226);
+    border: none;
+    /* slightly flattened top, rounder bottom — more tomato than circle */
+    border-radius: 50% 50% 48% 48% / 40% 40% 56% 56%;
+    padding: 2rem 1.5rem 1.75rem;
+    overflow: visible;
+    box-shadow:
+      0 10px 40px rgba(169, 50, 38, 0.5),
+      inset -10px -10px 20px rgba(0, 0, 0, 0.15),
+      inset 4px 4px 12px rgba(255, 255, 255, 0.12);
+  }
 }

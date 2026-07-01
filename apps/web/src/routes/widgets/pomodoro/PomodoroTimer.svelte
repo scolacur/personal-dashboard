@@ -2,7 +2,7 @@
   import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from './timer-logic';
   import type { PomodoroPhase } from './timer-logic';
 
-  let tomatoMode = $state(false);
+  let { tomatoMode = $bindable(false) } = $props();
   let workMinutes = $state(40);
   let shortBreakMinutes = $state(10);
   let longBreakMinutes = $state(20);
@@ -70,6 +70,40 @@
 </script>
 
 <div class="pomodoro" class:tomato-mode={tomatoMode}>
+  {#if tomatoMode}
+    <svg
+      class="tomato-calyx"
+      viewBox="0 0 150 80"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <rect x="71" y="2" width="8" height="32" rx="4" fill="#27ae60" />
+      <g transform="translate(75, 56)">
+        <path d="M0 0 C-13 -13 -15 -34 0 -48 C15 -34 13 -13 0 0Z" fill="#2ecc71" />
+        <path
+          d="M0 0 C-13 -13 -15 -34 0 -48 C15 -34 13 -13 0 0Z"
+          fill="#27ae60"
+          transform="rotate(72)"
+        />
+        <path
+          d="M0 0 C-13 -13 -15 -34 0 -48 C15 -34 13 -13 0 0Z"
+          fill="#2ecc71"
+          transform="rotate(144)"
+        />
+        <path
+          d="M0 0 C-13 -13 -15 -34 0 -48 C15 -34 13 -13 0 0Z"
+          fill="#27ae60"
+          transform="rotate(216)"
+        />
+        <path
+          d="M0 0 C-13 -13 -15 -34 0 -48 C15 -34 13 -13 0 0Z"
+          fill="#2ecc71"
+          transform="rotate(288)"
+        />
+      </g>
+    </svg>
+  {/if}
+
   <div class="timer-display" class:done={phase === 'done'}>
     {phase === 'done' ? 'Done!' : formatTime(secondsRemaining)}
   </div>
