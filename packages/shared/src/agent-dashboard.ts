@@ -3,7 +3,7 @@
 
 // The five Kanban columns. Backlog/ready are set by hand; the agent statuses
 // (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
-// converted to a Sortie issue (Phase 3) — see DECISIONS.md D-018.
+// converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
 export type TicketStatus = 'backlog' | 'ready' | 'in_progress' | 'in_review' | 'completed';
 
 export type TicketPriority = 'low' | 'medium' | 'high';

@@ -10,7 +10,7 @@ Let me know when you've completed reading it.
 Agent Dashboard** ("Mission Control", `/agent-dashboard`), backed by the `agent_tickets` table.
 The board is the single source of truth for project tasks across all projects. Query them via the
 API (`GET /api/widgets/agent-dashboard/tickets`). The old `TODO.md`/`META-TODOS.md` files were
-seeded into the board and archived to `/Users/steve/Documents/Dev/archive/` (see DECISIONS.md D-018).
+seeded into the board and archived to `/Users/steve/Documents/Dev/archive/` (see DECISIONS.md D-020).
 
 If you are ever uncertain about why we are taking a certain design approach, read `DECISIONS.md` to see if the reasoning is there.
 

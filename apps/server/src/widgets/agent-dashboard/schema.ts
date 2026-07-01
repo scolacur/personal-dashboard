@@ -3,7 +3,7 @@ import { migrate, addColumn } from '../../migrate';
 
 // Agent Dashboard schema: a cross-project Ticket backlog (Kanban), the projects those
 // Tickets belong to, plus relations / tags / events / reminders. All evolution goes
-// through the migration framework so we never drop/recreate a populated table (D-019).
+// through the migration framework so we never drop/recreate a populated table (D-021).
 //
 // CREATE statements reflect the full current schema (fresh DBs are complete in one shot);
 // the addColumn migrations bring pre-existing tables up to date (no-ops on a fresh DB).
