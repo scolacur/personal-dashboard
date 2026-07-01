@@ -4,6 +4,10 @@
 
   let { children }: { children: Snippet } = $props();
 
+  // True only under `vite dev`; false in the production build the NAS serves.
+  // Makes local dev visually unmistakable so it's never confused with prod.
+  const isDev = import.meta.env.DEV;
+
   let theme = $state<'light' | 'dark'>('dark');
 
   onMount(() => {
@@ -22,8 +26,14 @@
   }
 </script>
 
-<nav class="top-nav">
+<nav class="top-nav" class:is-dev={isDev}>
   <a href="/" class="nav-brand">Dashboard</a>
+  {#if isDev}
+    <span class="env-badge" title="Local development — not production">DEV</span>
+  {/if}
+  <div class="nav-links">
+    <a href="/agent-dashboard">Mission Control</a>
+  </div>
   <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
     {theme === 'dark' ? '☀' : '☾'}
   </button>

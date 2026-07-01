@@ -25,12 +25,45 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+
+  // Unmistakable dev signal: amber top stripe + badge. Never rendered in the
+  // production build (import.meta.env.DEV is false there).
+  &.is-dev {
+    border-top: 3px solid #f59e0b;
+  }
+}
+.env-badge {
+  margin-left: var(--space-md);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #1a1a1a;
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 .nav-brand {
   font-family: var(--font-display);
   font-weight: 600;
   font-size: var(--font-size-lg);
   letter-spacing: -0.01em;
+}
+.nav-links {
+  display: flex;
+  gap: var(--space-md);
+  margin-right: auto;
+  margin-left: var(--space-lg);
+  font-size: var(--font-size-sm);
+
+  a {
+    color: var(--muted);
+    transition: color 0.15s;
+
+    &:hover {
+      color: var(--accent);
+    }
+  }
 }
 .theme-toggle {
   display: grid;
@@ -53,5 +86,4 @@
 }
 .content {
   padding: var(--space-xl) var(--space-lg);
-  max-width: 1200px;
 }

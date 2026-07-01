@@ -1,0 +1,116 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { bootstrapSchema } from './schema';
+import {
+  archiveTicket,
+  createTicket,
+  getProjectBySlug,
+  listProjects,
+  listTickets,
+  updateTicket,
+} from './store';
+
+function freshDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
+  bootstrapSchema(db);
+  return db;
+}
+
+function projectId(db: Database.Database, slug: string): number {
+  const p = getProjectBySlug(db, slug);
+  if (!p) throw new Error(`no project ${slug}`);
+  return p.id;
+}
+
+describe('bootstrapSchema', () => {
+  it('seeds the three known projects with display-id keys', () => {
+    const db = freshDb();
+    const projects = listProjects(db);
+    expect(projects.map((p) => p.slug).sort()).toEqual([
+      'core',
+      'nervous-system-website',
+      'personal-dashboard',
+    ]);
+    expect(getProjectBySlug(db, 'personal-dashboard')?.key).toBe('PD');
+    expect(getProjectBySlug(db, 'core')?.key).toBe('C');
+    expect(getProjectBySlug(db, 'personal-dashboard')?.sortieEnabled).toBe(true);
+    expect(getProjectBySlug(db, 'core')?.sortieEnabled).toBe(false);
+  });
+
+  it('is idempotent — re-running does not duplicate projects or tags', () => {
+    const db = freshDb();
+    bootstrapSchema(db);
+    bootstrapSchema(db);
+    expect(listProjects(db)).toHaveLength(3);
+    const tags = db.prepare('SELECT name FROM agent_tags').all() as { name: string }[];
+    expect(tags.map((t) => t.name).sort()).toEqual(['Infra', 'UI']);
+  });
+});
+
+describe('display ids', () => {
+  it('are sequential per project and never collide across projects', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const core = projectId(db, 'core');
+
+    expect(createTicket(db, { title: 'a', projectId: pd }).displayId).toBe('PD-1');
+    expect(createTicket(db, { title: 'b', projectId: pd }).displayId).toBe('PD-2');
+    expect(createTicket(db, { title: 'c', projectId: core }).displayId).toBe('C-1');
+    expect(createTicket(db, { title: 'd', projectId: pd }).displayId).toBe('PD-3');
+  });
+
+  it('does not reuse a number after archive', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const first = createTicket(db, { title: 'a', projectId: pd });
+    expect(first.displayId).toBe('PD-1');
+    archiveTicket(db, first.id);
+    expect(createTicket(db, { title: 'b', projectId: pd }).displayId).toBe('PD-2');
+  });
+});
+
+describe('soft delete', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('hides archived tickets from the board but keeps the row', () => {
+    const t = createTicket(db, { title: 'archive me', projectId: pd });
+    expect(listTickets(db)).toHaveLength(1);
+
+    expect(archiveTicket(db, t.id)).toBe(true);
+    expect(listTickets(db)).toHaveLength(0);
+
+    const row = db.prepare('SELECT archived_at FROM agent_tickets WHERE id = ?').get(t.id) as {
+      archived_at: number | null;
+    };
+    expect(row.archived_at).not.toBeNull();
+  });
+
+  it('returns false when archiving an already-archived or missing ticket', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(archiveTicket(db, t.id)).toBe(true);
+    expect(archiveTicket(db, t.id)).toBe(false);
+    expect(archiveTicket(db, 9999)).toBe(false);
+  });
+});
+
+describe('activity log', () => {
+  it('records created and status_changed events', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    updateTicket(db, t.id, { status: 'ready' });
+    updateTicket(db, t.id, { priority: 'high' }); // no status change → no event
+
+    const events = db
+      .prepare('SELECT type, detail FROM agent_ticket_events WHERE ticket_id = ? ORDER BY id')
+      .all(t.id) as { type: string; detail: string | null }[];
+    expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
+    expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'ready' });
+  });
+});

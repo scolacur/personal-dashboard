@@ -25,7 +25,9 @@ COPY apps/server/ ./apps/server/
 COPY apps/web/ ./apps/web/
 
 # Build in dependency order
-RUN npm run build -w packages/shared
+# No separate `shared` build step: @dashboard/shared is consumed from source —
+# Vite bundles it into the web output, esbuild inlines it into the server
+# bundle (see DECISIONS D-024).
 RUN npm run build -w apps/web
 RUN npm run build -w apps/server
 
@@ -46,7 +48,6 @@ COPY apps/server/package.json ./apps/server/
 COPY apps/web/package.json ./apps/web/
 
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/build ./apps/web/build
 

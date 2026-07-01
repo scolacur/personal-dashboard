@@ -6,7 +6,304 @@ Newest decisions at the top.
 
 ---
 
+## D-027: Base PRs on `main`, not on another open PR's branch — stacking silently opts out of CI + branch protection
+
+**Decision:** Open PRs against `main` by default. If the work depends on an unmerged PR, merge
+the parent first, then branch off `main` — don't stack a PR on the parent's branch.
+
+**Why (learned the hard way on PR #39):** CI and branch protection are both scoped to `main` only:
+- `.github/workflows/ci.yml` triggers on `pull_request: branches: [main]`, so the `verify` job runs
+  **only when a PR's _base_ is `main`.** A PR based on any other branch gets **no CI** — silently.
+- Branch protection (required `verify` check + 1 approval) is configured **only on `main`**. A PR
+  based on an unprotected branch has no rules to enforce, so GitHub shows **no merge gate and no
+  "bypassing branch protection" warning** — it looks mergeable when nothing has actually checked it.
+
+Stacking #39 on `refactor/shared-from-source` (an open PR's branch) hit both at once: green locally,
+but zero CI and no gate on the PR. **Fix pattern when it happens:** retarget the base to `main`
+(`gh pr edit <n> --base main`) — but retargeting fires a `pull_request: edited` event, which is
+**not** in the default trigger set (`opened`/`synchronize`/`reopened`), so CI still won't run. Force
+a `reopened` event with a close→reopen (`gh pr close <n> && gh pr reopen <n>`), or push a commit
+(`synchronize`), to actually kick CI.
+
+**Trade-off:** true stacked PRs (clean incremental diffs) are occasionally worth it, but only with
+eyes open — the child PR is unverified and ungated until it's rebased onto `main`. Default to
+flat-on-`main`.
+
+---
+
+## D-026: Kanban is drag-and-drop with fractional `sort_order`; `queued` lane added; status list is the single source of position
+
+**Decision:** The Mission Control board moves tickets by native HTML5 drag-and-drop — within a
+lane (reorder) and between lanes (status change) through one code path. The `◀ ▶` arrow buttons
+were removed. A `queued` status/lane was added between `ready` and `in_progress`.
+
+**Why / how it works:**
+- **One drop path.** A single `ondragover` per lane finds the insertion index by comparing the
+  cursor Y to each card's vertical midpoint; `onDrop` computes a new `sortOrder` by **averaging
+  the two neighbours** (or stepping ±1 past the ends). `sort_order` is a SQLite `REAL`, so cards
+  can be slotted between any two others indefinitely without renumbering.
+- **Adding a status is a 3-line change, not a migration.** `status` is a plain `TEXT` column (no
+  CHECK constraint) and API validation derives from `TICKET_STATUSES`, so `queued` needed only:
+  the shared type/array (`packages/shared/src/agent-dashboard.ts`), the server `ORDER BY` CASE
+  (`store.ts`), and the board's `COLUMNS`. `TICKET_STATUSES` order is the authoritative lane order,
+  mirrored by the `ORDER BY` CASE — keep the two in sync when adding lanes.
+- **Board UX also gained:** a live title+body search filter (`visibleTickets()`), a Condensed
+  toggle (hides card bodies), and a clickable priority chip that cycles low→medium→high. `<main>`
+  max-width was dropped so the 6-lane board uses full monitor width. "Mission Control" is now the
+  page; "Tickets" is a titled section within it (room for future sections).
+
+**Trade-off:** DnD is pointer-only — removing the arrows dropped the keyboard path for moving a
+ticket. Acceptable for a single-user personal dashboard; revisit if keyboard/a11y is needed.
+
+**Addendum (priority bands):** Lanes are grouped by priority — high band on top, then medium,
+then low (`byStatus` sorts by `PRIORITY_RANK` then `sortOrder`). A card can only be reordered
+**within its own band**: `onColumnDragOver` measures the drop point against same-priority cards
+only and clamps a past-the-end drop to just before the first lower-priority card, and
+`computeSortOrder` averages neighbours **within the band**. Consequence: raising a ticket to high
+(via the priority chip) automatically lifts it above every medium/low ticket, because priority is
+the primary sort key — no `sortOrder` change needed. Condensed view now defaults **on**.
+
+---
+
+## D-025: Prod self-seeds an empty board on boot (opt-in via `SEED_ON_BOOT`); dev is visually marked
+
+**Decision:** On boot, the agent-dashboard widget runs `seedIfEmpty(db)`: if `SEED_ON_BOOT=1`
+**and** `agent_tickets` is empty, it imports the committed baseline from `tickets.seed.json`. It's
+gated (env flag) and guarded (empty-only + idempotent `seedTickets`), so it never fires in dev and can
+never clobber a populated board. `SEED_ON_BOOT=1` is set in the **prod** `.env` (documented in
+`.env.example`); dev leaves it unset. Separately, the web layout shows an amber **DEV** badge/stripe
+whenever `import.meta.env.DEV` is true (i.e. under `vite dev`, never in the production build), and the
+local dev DB was reset to obviously-labeled `[DEV]` dummy tickets.
+
+**Reasoning:**
+
+- The first prod deploy of the board came up empty because the 246 tickets only ever lived in the dev
+  DB — data never syncs (the `data/` volume is gitignored and never in the image; only *code* and
+  *schema migrations* propagate). We restored prod manually once; `seedIfEmpty` makes a fresh/wiped
+  prod volume **self-heal to the baseline** instead of repeating that scramble.
+- Opt-in + empty-only is the safety envelope: dev never auto-seeds (would fight the dummy data), and
+  prod only seeds a genuinely empty table — a populated board is untouched even if the flag is on.
+- The seed JSON is `import`ed (not read from disk) so esbuild inlines it into the server bundle — no
+  asset to ship beside the binary, consistent with [[D-024]]. `seedTickets` is shared with the CLI
+  importer (`seed/import.ts`), so there's one idempotent code path.
+- The **DEV badge** addresses the root cause of "which environment am I editing?" — dev and prod are
+  otherwise identical UIs. `import.meta.env.DEV` needs no env wiring and is compile-time guaranteed
+  off in prod. Dummy dev data reinforces it (content itself reads `[DEV] … not prod`).
+
+**Implications:**
+
+- To arm prod: `SEED_ON_BOOT=1` must be in the NAS `.env` (gitignored/manual). Without it, an empty
+  prod stays empty on boot — the deliberate tradeoff. It's dormant now (board has 246), firing only if
+  the table is ever empty.
+- Verified: empty+flag seeds 246; reboot+flag no-ops; empty without flag does nothing; full `verify`
+  green.
+
+**Revisit if:** we want prod seeding to be unconditional (drop the flag) or to re-sync from an updated
+`tickets.seed.json` (would need a smarter merge than empty-only).
+
+---
+
+## D-024: `@dashboard/shared` is consumed from source (no build, no `dist`); the server is esbuild-bundled
+
+**Decision:** `packages/shared` is no longer built to `dist/` and consumed as a compiled package.
+It's a **source-only** package (`main`/`types`/`exports` all point at `./src/index.ts`, no `build`
+script) and every consumer resolves its **source**:
+
+- **Web** (`apps/web`): `svelte.config.js` `kit.alias` maps `@dashboard/shared` → `../../packages/shared/src/index.ts`, which wires both Vite and the generated tsconfig. Vite bundles the source in dev *and* prod.
+- **Server** (`apps/server`): built with **esbuild** (`apps/server/build.mjs`) into a single CJS bundle. `packages: 'external'` keeps all npm deps out of the bundle (crucially `better-sqlite3`'s native `.node` binary), and an esbuild `alias` rewrites `@dashboard/shared` to its source so it's the one dependency inlined.
+- **Server dev/typecheck** (`tsx`, `tsc --noEmit`): resolve shared via its `package.json` `types`/`exports` → `src/index.ts`.
+
+This **supersedes [[D-019]]** (there is no `dist` to rebuild, so the rebuild-after-edit gotcha is gone)
+and **reverts [[D-023]]** (NodeNext + explicit `.js` extensions were only needed for Node to load the
+built `dist/` at runtime — which no longer happens; shared is back to extensionless imports +
+`moduleResolution: Bundler` for its own typecheck).
+
+**Reasoning:**
+
+- Modeled on Splice's `surfaces/apps/web-svelte`, which has **no `dist` for internal libs** — it resolves them from source via `tsconfig.base.json` paths wired into Vite/svelte-kit. Bundlers inline the source; nothing is handed to Node's native loader as a pre-built package. That architecture simply doesn't have the class of bug we kept hitting.
+- Both of our `dist`-era bugs came from the gap between *bundler* resolution (lenient) and *Node's native ESM loader* (strict): D-019's stale-`dist` browser crash and D-023's extensionless-import `ERR_MODULE_NOT_FOUND`. Consuming source through bundlers everywhere (Vite, esbuild, tsx) closes that gap — the strict Node loader is never in the path for shared.
+- D-019 rejected a dev-only src alias to preserve dev/prod parity. That objection is now moot: the alias is **unconditional** (dev and prod both bundle source), so there's no divergence — the exact thing D-019 wanted, achieved the other way.
+
+**Implications:**
+
+- **Verified end-to-end:** full `verify` green (shared typecheck, web `svelte-check`, server `tsc`, lint, 52 + 16 tests); the **esbuild server bundle boots** (`/api/health` ok) with `packages/shared/dist` deleted and `better-sqlite3` loading natively; `tsx` dev and `vite dev`/build both resolve source.
+- **Dockerfile simplified:** no `shared` build step, no `shared/dist` copy. The server bundle is self-contained except for external npm deps (still shipped via the pruned `node_modules`).
+- **Tradeoff / dependency:** shared is now only consumable by a **bundler-or-transpiler** (Vite, esbuild, tsx, vitest) — never by plain `node` against a bare `@dashboard/shared` import. If some future entry point needs to `node`-run code that imports shared without bundling, either bundle it too or reintroduce a build. `better-sqlite3` (and any native dep) must stay in esbuild's `external` set.
+
+**Revisit if:** we add a Node entry point that imports shared without going through esbuild/tsx (then bundle it or give shared a build again).
+
+---
+
+## D-023: `packages/shared` emits Node-resolvable ESM (NodeNext + explicit `.js` extensions + `exports` map)
+
+> **Reverted by [[D-024]]:** shared is no longer built or loaded by Node at runtime (the server is
+> esbuild-bundled and inlines shared source), so the NodeNext + `.js`-extension packaging this
+> decision added is no longer needed. Kept for the record — the root-cause analysis of *why* extensionless
+> ESM breaks Node's native loader still stands and is exactly why D-024's bundle-everything approach is safe.
+
+**Decision:** `packages/shared` is compiled with `"module": "NodeNext"` / `"moduleResolution":
+"NodeNext"` (was `ESNext` / `Bundler`), its source uses **explicit `.js` extensions** on relative
+imports (`export … from './agent-dashboard.js'`), and its `package.json` declares an `exports` map
+(`"." → { types, default }`) alongside `main`/`types`. It stays a single **ESM** package (browser
+consumption still requires ESM — see [[D-019]]). The CommonJS server (`tsc` → `node dist/index.js`)
+loads it via Node's stable `require(ESM)` (Node ≥20.19; the runtime image is `node:20-slim`).
+
+**Reasoning:**
+
+- **This is what broke prod** (MODULE_NOT_FOUND on deploy). Under `moduleResolution: Bundler`, tsc
+  emitted **extensionless** re-exports (`export … from './agent-dashboard'`). Bundlers (Vite for web,
+  vitest, esbuild) resolve those fine, so dev/CI were green — but **Node's native ESM loader requires
+  file extensions**, so the moment the server imported `@dashboard/shared` at runtime it threw
+  `ERR_MODULE_NOT_FOUND` on the internal `./agent-dashboard` import. This is exactly the dev/prod
+  divergence [[D-019]] flagged, now biting from the runtime side.
+- **Why it only broke recently:** [[D-019]] noted "the server imports `@dashboard/shared` only in a
+  `.spec.ts`, never at runtime." That stopped being true when the agent-dashboard widget shipped —
+  `routes.ts` imports the *values* `TICKET_STATUSES`/`TICKET_PRIORITIES` (not just types), which emits
+  a real `require('@dashboard/shared')`. First prod boot with that widget → crash. (`store.ts` uses
+  `import type` only, so it's erased and doesn't count.)
+- **NodeNext + `.js` extensions is the standards-compliant fix.** The emitted `./agent-dashboard.js`
+  resolves under Node's ESM loader, and every bundler consumer (Vite/vitest/svelte-check) handles
+  explicit extensions transparently — so it's correct everywhere, no divergence. The `exports` map is
+  packaging hygiene (modern resolvers use it; `main` remains for older ones).
+- **Not the web adapter.** The reported symptom looked like a "dist vs build" problem, but `apps/web`
+  already does the right thing: `@sveltejs/adapter-static` writes to `apps/web/build/` (gitignored,
+  built in the Dockerfile, served by Fastify). The break was entirely in the shared package's module
+  format, not the web output directory.
+
+**Implications:**
+
+- Verified by **booting the built server** (`node apps/server/dist/index.js`) against a temp data dir
+  and hitting `/api/health` — the real prod path, not just a bundler build. CI/`verify` builds but
+  never boots the server, which is precisely why this class of bug shipped ([[D-019]]'s open revisit
+  note). **Recommended guard:** a smoke test that boots the compiled server and curls `/api/health`,
+  wired into the Dockerfile build stage or CI, so a runtime-load regression fails the build.
+- Depends on Node ≥20.19 (`require(ESM)`); the runtime is pinned to `node:20-slim`. If that ever
+  regresses below 20.19, either dual-build `shared` (CJS+ESM via an `exports` `require`/`import` split)
+  or convert the server to ESM.
+
+**Revisit if:** the server moves to ESM (then it imports `shared` natively, no `require(ESM)`), or Node
+drops below 20.19 in the image (dual-build `shared`).
+
+---
+
+## D-022: Widget-only logic lives with its widget, not in `packages/shared`; `apps/web` has its own test runner
+
+**Decision:** `packages/shared` is reserved for code that genuinely crosses the client/server
+boundary — the request/response *types* the server serves and the web fetches (e.g. `AgentTicket`,
+`CreateTicketInput`). Pure logic used by **only one side** now lives with its consumer. Concretely,
+the Pomodoro timer logic (`formatTime`, `advancePhase`, `clampRoundsBeforeLongBreak` + its types)
+moved from `packages/shared/src/pomodoro.ts` to
+`apps/web/src/routes/widgets/pomodoro/timer-logic.ts`, next to `PomodoroTimer.svelte`, and `apps/web`
+gained its own vitest setup (`vitest` devDep + `test` script + an isolated `vitest.config.ts` with no
+SvelteKit plugin). This supersedes the pomodoro half of [[D-018]] and closes [[D-017]]'s open
+follow-up ("shared logic tested indirectly from `apps/server/src`").
+
+**Reasoning:**
+
+- `pomodoro.ts` was never actually shared. Its only runtime consumer was the web component; the only
+  other importer was a *test file* in `apps/server`. It lived in `shared` purely so the server's
+  vitest could reach it — because `apps/web` had no test runner. That is a testing-infrastructure gap
+  leaking into architecture (the tail wagging the dog): a single-purpose, web-only module was placed
+  in a cross-cutting package for test access, not because anything on the server used it.
+- The honest fix is to give `apps/web` a test runner and keep widget logic with its widget. Colocated
+  logic is easier to find, and it shrinks the "rebuild `shared` after every edit" gotcha ([[D-019]]) —
+  widget logic changes far more often than the shared wire types do, so keeping it out of `shared`
+  means fewer forced `shared` rebuilds mid-dev.
+- The rule going forward: **shared = types/values on the wire between server and web. Everything else
+  lives with its consumer.** If two *runtime* consumers ever need the same logic, promote it to
+  `shared` (or a future `apps/server/src/lib/`) then — not preemptively.
+
+**Implications:**
+
+- `apps/web` now runs `vitest run` (16 Pomodoro tests moved over); root `npm run test` runs both the
+  server and web suites, so `npm run verify` covers both.
+- **Both workspaces are pinned to the same vitest, `^4.1.9`** (was `^3.2.6`). This matters because of
+  a Vite-version skew: `vitest@3.2.6` peers on Vite ≤7, but `apps/web` is on Vite 8, so under 3.2.6
+  npm nested a second Vite (7.x) under `vitest`, and `svelte-check` errored on the two copies'
+  conflicting global `ImportMeta` augmentation. `vitest@4.1.9` peers `^6 || ^7 || ^8`, so it dedupes
+  to the single Vite 8 already installed — no nested copy, no type conflict, and specs are type-checked
+  by `svelte-check` normally (no tsconfig `exclude` workaround needed). Keep the two workspaces on the
+  same vitest major to avoid reintroducing a duplicate Vite.
+
+**Revisit if:** a piece of widget logic genuinely gains a second runtime consumer on the other side of
+the wire — promote it to `packages/shared` at that point.
+
+---
+
+## D-021: Non-destructive migration framework — schema only ever grows
+
+**Decision:** All Agent Dashboard schema evolution goes through a small migration framework
+(`apps/server/src/migrate.ts`): a `_migrations` ledger table, a `migrate(db, id, fn)` runner that
+executes each step once inside a transaction and records it, and additive helpers `columnExists` /
+`addColumn`. Migrations may **create tables or ADD columns — never drop or recreate**. `CREATE TABLE
+IF NOT EXISTS` statements carry the full current schema (so fresh DBs are complete in one shot); the
+`addColumn` migrations bring pre-existing tables up to date and are no-ops on a fresh DB.
+
+**Reasoning:**
+
+- Steve's explicit requirement: "it is inevitable that we will need to update the data model as we
+  go along… I want to be sure we can do so safely without getting rid of existing data." The prior
+  approach (`CREATE TABLE IF NOT EXISTS` only) safely adds *new tables* but silently fails to evolve
+  an *existing* table (won't add a column), and a drop/recreate would destroy data.
+- Append-only migrations + a ledger make evolution deterministic and idempotent: a step runs at most
+  once, a failed step rolls back (transaction) and retries next boot, and shipped migrations are
+  never edited — you add new ones. This is the durable complement to the off-box Backblaze backups
+  (the HIGH `SQLite backup` TODO): backups protect against loss, migrations protect against
+  destructive change.
+
+**Implications:** Adding a field later is a one-line `addColumn` migration, no data risk. Proven in
+this build: `project_id`, `display_id`, `archived_at`, `assignee`, `recur_interval`, and
+`agent_projects.key`/`seq` were all added to a pre-existing `agent_tickets`/`agent_projects` without
+data loss.
+
+---
+
+## D-020: Cross-project ticket backlog (`agent_tickets` + `agent_projects`), distinct from D-014 agent-run tables
+
+**Decision:** The Agent Dashboard is a **cross-project** Kanban — it tracks TODOs for *all* Steve's
+projects (personal-dashboard, core, nervous-system-website, …), not just the dashboard. Backed by
+dashboard-owned tables: `agent_projects` (with a display-id `key` like `PD`/`C`/`NSW`, `github_repo`,
+`sortie_enabled`, `color`) and `agent_tickets`, plus `agent_ticket_relations` (blocks/relates/duplicates),
+`agent_tags` + `agent_ticket_tags`, `agent_ticket_events` (activity log), and `agent_ticket_reminders`.
+Five statuses map to columns: `backlog`/`ready` set **manually**; `in_progress`/`in_review`/`completed`
+**derived** from GitHub once a TODO is converted to a Sortie issue, cached on the row. This is Phase 1
+of the TODO → Sortie-issue pipeline (Kanban now; seed-import Phase 2; Claude-API "Convert to issue" Phase 3).
+
+**Reasoning:**
+
+- **Does not conflict with D-014.** D-014 put the agent *run* tables (`agent_jobs`, `agent_errors`,
+  `agent_inbox`, `agent_schedule`) in the agent runner (Sortie's `.sortie.db`), dashboard as
+  read-only consumer. `agent_tickets` is Steve's *backlog*, owned by the dashboard, predating any run.
+  The dashboard only *reads/caches* run-state for the derived statuses.
+- **Derived statuses come from GitHub labels, not the Sortie API.** The `sortie:*` labels are the
+  state machine (see `ops/sortie/WORKFLOW.md`). Polling GitHub needs no new infra and avoids coupling
+  to Sortie's `:7678` API (on an `internal: true` network, no host route).
+- **Per-project display IDs** (`PD-7`, `C-3`) via integer PK + a `display_id` string (not UUID —
+  single-node SQLite gains nothing from UUID and loses readability). `agent_projects.seq` is bumped
+  per create; numbers are never reused.
+- **Relations generalized** (one table + `type`) so `relates`/`duplicates` need no new table.
+  **Soft-delete** (`archived_at`) keeps deletes recoverable (data-safety). **Tags** normalized so
+  they're addable/renamable. **Activity log** feeds the agent-dashboard spec's future Activity Feed.
+- **Seed then archive (not delete).** Phase 2 parses each repo's `TODO.md`/`META-TODOS.md` (completed
+  "Shipped" items seeded as `completed`) into a committed seed JSON + importer, then the source files
+  are **renamed `TODO-<domain>.md` and moved to `/Users/steve/Documents/Dev/archive/`** — out of the
+  repos (git history retains them) but preserved on disk (Backblaze-backed). The DB is then the single
+  source of truth.
+
+**Implications:** Only backlog/ready are hand-set; the derived three wire to GitHub polling in Phase 3.
+Frontend for relations/tags/reminders/recurring/assignee/drag-reorder/Activity-Feed is deferred to
+follow-up cards; the schema reserves all of it now. The board is a *page* (`/agent-dashboard`), not a
+home-tile widget.
+
+---
+
 ## D-019: `packages/shared` emits ESM; `dev` does not auto-build it (rebuild-after-edit is manual)
+
+> **Superseded by [[D-024]]:** `shared` is no longer built to `dist/` at all — it's consumed from
+> source by every bundler/transpiler (Vite, esbuild, tsx). There is nothing to rebuild after editing,
+> so this decision's central "rebuild-after-edit is manual" gotcha no longer exists. (Historical note:
+> the `moduleResolution: Bundler` + extensionless imports below is what [[D-023]] later had to work
+> around for Node runtime loading — a problem D-024 removes by never loading shared through Node.)
 
 **Decision:** `packages/shared` is an **ESM** package — `"type": "module"` in its `package.json` and `"module": "ESNext"` / `"moduleResolution": "Bundler"` in its `tsconfig.json` (was `"module": "CommonJS"`). Separately, we deliberately do **not** wire a shared build/watch into `npm run dev`: after editing `packages/shared/src`, you must rebuild it (`npm run build -w packages/shared`, or just `npm run verify`, which builds first) before the web dev server reflects the change.
 
