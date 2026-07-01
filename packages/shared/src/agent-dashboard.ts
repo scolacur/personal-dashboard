@@ -12,7 +12,9 @@ export type TicketStatus =
   | 'in_review'
   | 'completed';
 
-export type TicketPriority = 'low' | 'medium' | 'high';
+// Priority is a P0–P5 scale (P0 most urgent). A ticket's priority may also be
+// *unset* — represented as `null` in the domain/API (see AgentTicket.priority).
+export type TicketPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
 
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
@@ -23,7 +25,34 @@ export const TICKET_STATUSES: readonly TicketStatus[] = [
   'completed',
 ] as const;
 
-export const TICKET_PRIORITIES: readonly TicketPriority[] = ['low', 'medium', 'high'] as const;
+export const TICKET_PRIORITIES: readonly TicketPriority[] = [
+  'P0',
+  'P1',
+  'P2',
+  'P3',
+  'P4',
+  'P5',
+] as const;
+
+/** Short label for each priority level (shown in the priority legend). */
+export const PRIORITY_LABELS: Record<TicketPriority, string> = {
+  P0: 'Urgent',
+  P1: 'Top Priority',
+  P2: 'Important',
+  P3: 'Medium Importance',
+  P4: 'Low Importance',
+  P5: 'Window Dressing',
+};
+
+/** Longer descriptions for the priority-legend modal. */
+export const PRIORITY_DESCRIPTIONS: Record<TicketPriority, string> = {
+  P0: 'Reserved for time-sensitive things like open security threats, leaked credentials, etc.',
+  P1: 'Top priority.',
+  P2: 'Important.',
+  P3: 'Medium importance.',
+  P4: 'Low importance.',
+  P5: 'Window dressing.',
+};
 
 // A project the Tickets belong to (personal-dashboard, core, nervous-system-website, …).
 // The dashboard tracks Tickets across all projects, not just itself.
@@ -58,7 +87,8 @@ export interface AgentTicket {
   title: string;
   body: string | null;
   status: TicketStatus;
-  priority: TicketPriority;
+  /** P0–P5, or `null` when priority is unset. */
+  priority: TicketPriority | null;
   /** The project this Ticket belongs to. */
   projectId: number | null;
   /** Human or agent (e.g. 'sortie') that owns the ticket. */
@@ -83,7 +113,8 @@ export interface CreateTicketInput {
   title: string;
   projectId: number;
   body?: string | null;
-  priority?: TicketPriority;
+  /** P0–P5, or `null`/omitted for unset. */
+  priority?: TicketPriority | null;
   /** Override the initial status (used by the seed importer for completed items). */
   status?: TicketStatus;
   /** Provenance, e.g. 'seed:widgets/pomodoro-timer/TODO.md'. Defaults to 'manual'. */
@@ -95,7 +126,8 @@ export interface UpdateTicketInput {
   title?: string;
   body?: string | null;
   status?: TicketStatus;
-  priority?: TicketPriority;
+  /** P0–P5, or `null` to unset. Omit to leave unchanged. */
+  priority?: TicketPriority | null;
   sortOrder?: number;
   projectId?: number;
 }

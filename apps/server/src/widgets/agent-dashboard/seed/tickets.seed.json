@@ -3,7 +3,7 @@
     "project": "personal-dashboard",
     "title": "[Dashboard] widgets as a generic display component",
     "body": "- widgets will contain vastly different functionality but they should all share the base widget style, expect to live in a grid, be resizeable (think datadog) - maybe not pomodoro because that should actually be ever-accessible via a button in the bottom right corner of each page.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -11,7 +11,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Give `packages/shared` its own vitest setup",
     "body": "(flagged 2026-06-30). Shared logic currently gets tested *indirectly* from `apps/server/src` (the #26 agent's workaround, since `packages/shared` has no test runner and the root `verify` only runs server tests). Adding vitest to `shared` needs a devDependency — out of scope for unattended bots, so it needs a human/explicit issue. Until then shared logic lives untested-in-place.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -19,7 +19,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Test the egress work",
     "body": "Also, see if this means that the bots can't do research or read docs, and whether this is an issue. Maybe need some sort of way for it to ask permission to view a certain domain, via the ask_human command when we build that. And I can 1-time or permanently allowlist stuff. Basically re-creating the permissions check from Claude code but moving it to Discord (or wherever that communication happens) in a way that I get notified so that I don't block.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -27,7 +27,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Token exposure reduction",
     "body": null,
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -35,7 +35,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] ask_human functionality",
     "body": "⚠️ BUILT + on `main` (2026-06-30), live-verification deferred. `sortie-ask-human.yml` (owner reply on `sortie:awaiting-human` → re-queue) + WORKFLOW.md ask/resume protocol + `sortie:awaiting-human` label all shipped. Still TODO: (a) verify the round-trip with a real Sortie run (agent can `gh` mid-turn, self-relabel survives the reconciler, re-queue resumes vs restarts); (b) Discord webhook forwarding. The max_sessions silent-park gap below is now covered by the watchdog (capped issue → `sortie:stuck` + @mention).\n- NOTE (2026-06-29): when `agent.max_sessions` is exhausted, Sortie **stops dispatching but does NOT move the issue to a failed state or notify me** — it silently parks (still labeled, just never re-dispatched). Token-burn is bounded, but a stuck issue is invisible until I happen to look. **Determine the right behavior:** likely (a) transition the issue to a `sortie:failed` terminal label so it's visibly dead and drops out of candidates, AND (b) ping me on exhaustion (Discord/`ask_human`). Sortie has no auto-transition on exhaustion, so this needs a mechanism — an `after_run`/hook check on `SORTIE_ATTEMPT` vs the cap, or Sortie's `notifications` config. Ties into Discord + retry-cap items.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -43,7 +43,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Discord Integration",
     "body": "- both for `ask_human` but also as a way for me to submit issues",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -51,7 +51,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Mission Control / host access to the Sortie API (:7678)",
     "body": "Under the egress-hardened setup Sortie is on an `internal: true` network, so its port can't be published to the host (confirmed: no host route for internal networks). For now use `docker exec sortie curl localhost:7678/...`. When building Mission Control, run it as a container on the `egress_internal` network so it reaches `sortie:7678` container-to-container (no host port, isolation intact). Only add a forwarder sidecar (socat/nginx on both networks) if something off-NAS genuinely needs the API.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -59,7 +59,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Ensure bots write tests",
     "body": "Most likely needs to be done via the Issue Generation Template",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -67,7 +67,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Ensure bots actually use the harness",
     "body": "Instruct them to run the `/core-session-start` command on start and the `/wrap-up` command on end. If needed, create special variants of these skills that are meant to be used only by bots operating in a swarm. For example, the \"1 memory entry per day\" paradigm doesn't work great if bots are continuously merging and deploying, since only the first one of the day would get added.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -75,7 +75,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] GUI for Issue Generation",
     "body": "Do after we have Discord set up. The process won't feel complete until I can use the dashboard's GUI itself to submit issues. Possible that the easiest thing is that writing out my issue in Github actually just sends a Discord message on my behalf, after we have discord set up. That way the Dashboard itself may not need to have any knowledge of / access to agents. It just posts a message, that message gets picked up by Sortie.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -83,7 +83,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Brain-dump → ticket skill/template",
     "body": "Turn stream-of-consciousness feature requests into proper goal/acceptance-criteria/scope issues fast. Reuse `to-issues`/`to-prd`/`triage` skills or a GitHub issue template. Overlaps \"GUI for Issue Generation\" and \"Ensure bots write tests via template\".",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -91,7 +91,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] PR change-request follow-up",
     "body": "✅ RESOLVED 2026-06-30 (see Shipped). The `reactions.review_comments` block dispatches a continuation, and the prompt now reliably detects the follow-up (STEP 0 / D-017) and fetches the review body. Verified on #26/PR #27 (summary review → agent edited the function + test).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -99,7 +99,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] File-access allowlist",
     "body": "(structural control) Bound what the agent may read/write beyond the container isolation already in place. Deferred CORE-harness control; also tracked in CORE META-TODOS.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -107,7 +107,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Preview branches — test a PR without checking it out locally.",
     "body": "Spin up the app from a\ngiven PR's code on the NAS so it can be opened in a browser on the LAN. LOE ~half day for\nthe single-slot manual approach below; the GUI is a follow-on.\n\n*Constraint that shapes the design:* the NAS has no public ingress (home LAN/NAT), so cloud\nCI can't reach in to deploy — same reason prod is pull-based (Watchtower polls GHCR). A\npreview therefore runs **on the NAS, LAN-only** (fine — that's where I test). Cloud preview\n(Fly/Railway) is rejected: it loses the `/library` mount and breaks the egress-hardened posture.\n\n*Approach — single slot, manual (start here):*",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -115,7 +115,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Build half (~1–2 hrs):",
     "body": "today `deploy.yml` builds the image only on push to `main`. Add a\nPR-triggered build that pushes `ghcr.io/scolacur/personal-dashboard:pr-<n>`. **Gate to\n  same-repo branches** (`if: github.event.pull_request.head.repo.full_name == github.repository`)\n  so untrusted fork code never builds an image — preserves deploy.yml's existing safety rule.\n  Sortie branches are same-repo, so this covers the real workflow.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -123,7 +123,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Run half (~2 hrs):",
     "body": "one `preview` container, modeled on `docker/docker-compose.nas.yml`.\nParametrize the image tag (`PR_TAG=pr-17`) + a host port (e.g. **8089**, since 8080=gluetun,\n  8088=prod app). Mount its **own** `/data` (a throwaway preview SQLite dir — NOT the prod\n  volume) and share the DJ library `:ro` (`/volume1/music/dj-library/tracks`). An empty library\n  is fine for everything except music-tracker's real-library matching. `up -d` to swap which PR\n  occupies the slot.\n\n*GUI (follow-on) — agent-dashboard \"Sortie observability\" section:*\n- A control to **build/launch a preview from a given PR #** (button or PR picker) — sets the tag,\n  recreates the preview container, surfaces the LAN URL (`http://<nas>:8089`).\n- A **\"currently previewing\" panel**: which PR / branch / short-SHA occupies the slot right now,\n  when it was launched, health, and a link to open it. Empty state when the slot is free.\n- *Wiring note:* the dashboard backend (Fastify) would need to drive Docker to start/stop the\n  preview container — i.e. host Docker socket access or a small NAS-side control endpoint. This\n  is the same \"dashboard reaches NAS infra\" question as Mission Control reaching `sortie:7678`\n  (see the Mission Control TODO item) and should reuse whatever mechanism that lands on. Keep the\n  control on the NAS — never give a cloud surface Docker access.\n\n*Graduate to an auto-reconciling controller (N concurrent previews, per-PR ports, optional\n`pr-17.dash.lan` routing via Caddy/nginx) only if one-slot-at-a-time becomes the bottleneck —\nthat's ~1 day + ongoing weak-NAS RAM cost.* GUI lives in [agent-dashboard](pages/agent-dashboard/TODO.md).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -131,7 +131,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Review-fix continuation fixed + VERIFIED",
     "body": "(`3fa4c2e`; D-017). Replaced the dead `{{ if .run.is_continuation }}` gate (false for review-reaction dispatches) with an unconditional **STEP 0** that detects an existing PR and fetches the feedback explicitly (`gh api .../reviews` for the summary body + inline comments + own prior diff), then edits rather than appends. Verified on #26/PR #27: summary review → `/reviews` fetched, agent edited the single function + its test, no duplication.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -139,7 +139,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Tests required for feature work",
     "body": "(`3fa4c2e`) — agent writes vitest tests for new/changed logic and self-checks its diff (continuations too). (`packages/shared` test-runner gap tracked above.)",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -147,7 +147,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Descriptive PR titles + commit messages",
     "body": "(`d3010a4`) — conventional-commit style, no more `sortie: resolve #N`; safety-net derives its title from the commit subject.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -155,7 +155,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] P1 hand-off fix MERGED + VERIFIED end-to-end",
     "body": "(PR #19; D-016). Agent does push/PR/scm.json/relabel in-turn (relabel last); `after_run`→safety-net; `before_run` regenerates scm.json; watchdog `rescue-labels` job. Proven on #22/PR #23: agent did it in-turn (item 1), clean `handoff transition succeeded` no `context canceled` (item 2), review-fix continuation works (item 3).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -163,7 +163,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] 3rd exit-128 cause fixed",
     "body": "(`a247b9b`) — Sortie runs `after_create` with CWD=`$SORTIE_WORKSPACE`; the `rm -rf` deleted the shell's own cwd → `git clone` failed at getcwd(). Fix: `cd /home/sortie` before the rm.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -171,7 +171,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Agent `npm ci` before verify",
     "body": "(`ed1ca4d`) — fresh clone had no node_modules so the in-turn verify hit `tsc: not found`; agents were shipping unverified. (npm registry already allowlisted.)",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -179,7 +179,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Workspaces made ephemeral",
     "body": "(`e9b2102`) — `workspace.root`→container-local `/tmp/sortie-workspaces`, dropped the NAS bind-mount; deploys start clean, no stale clones on the NAS. (Resolves the \"why persist the workspace?\" design question — the `rm -rf` stays for within-run re-dispatch.)",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -187,7 +187,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Exit-128 stuck-loop root-caused + fixed",
     "body": "three causes: (1) `after_create` didn't wipe the persistent per-issue workspace → `git clone` into a non-empty dir = exit 128 (`669d36b`); (2) hooks ran under a stripped env where `export …_proxy` didn't reach git/gh on the egress-internal network → pass proxy inline per command (`3f07151`); (3) single-file bind-mount inode trap meant `git pull` didn't update the in-container hook until `--force-recreate` (the `sortie-refresh` alias). #6 and #8 both ran clean afterward.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -195,7 +195,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] `verify` enforced as a required status check on `main`",
     "body": "(`contexts:[\"verify\"]`, `strict:false`; Sortie Step-2 protection preserved — check ADDED, not replaced).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -203,7 +203,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] CI/CD follow-ups",
     "body": "library-mount-path runbook prep, GHA action version bumps (no more Node 20 deprecation warnings).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -211,7 +211,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Sortie watchdog (Layer 1)",
     "body": "`sortie-watchdog.yml`: `queued`>20m / `in-progress`>120m → `sortie:stuck` + @mention; surfaces all 3 silent-park modes (prep-loop, max_sessions cap, restart-orphan).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -219,7 +219,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] #6 → PR #17 (merged: reusable Widget + 3D flip)",
     "body": "; **#8 → PR #18 (open, `sortie:in-review`: Pomodoro)** — full pipeline proven end-to-end. PR #18 awaiting Steve's review.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -227,7 +227,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Sortie deployed to the NAS",
     "body": "(Container Manager, egress-hardened compose) — full loop proven end-to-end (PR #4).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -235,7 +235,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] Egress allowlist",
     "body": "(squid sidecar + internal Docker network) — token exfil structurally contained; verified (direct egress BLOCKED, GitHub 200, arbitrary host 403). `.datadoghq.com` allowlisted.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -243,7 +243,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] query_filter authorization gate",
     "body": "repo is public, so only issues a collaborator has labeled get run.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -251,7 +251,7 @@
     "project": "personal-dashboard",
     "title": "[Sortie] handoff_state (`sortie:in-review`) + \"Closes #N\"",
     "body": "fixes the infinite-re-run / duplicate-PR bug (a merged/successful issue stayed \"active\", got re-dispatched → dup PR #5 + burned quota). Successful run now exits the active set; merge auto-closes the issue.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:TODO.md"
   },
@@ -259,7 +259,7 @@
     "project": "personal-dashboard",
     "title": "[Infra] HIGH — SQLite backup: consistent snapshots feeding Hyper Backup.",
     "body": "The NAS is backed up off-box (Synology Hyper Backup → Backblaze, versioned), which covers both `dashboard.db` and Sortie's `.sortie.db` (both live under `/volume1/docker/personal-dashboard/`). Gap: Hyper Backup does a file-level copy and is **not SQLite-aware** — with WAL on, a hot copy of `dashboard.db` + its `-wal`/`-shm` sidecars at slightly different instants can restore stale/inconsistent. Fix: a small cron using SQLite's online backup — `sqlite3 data/dashboard.db \".backup 'data/backups/dashboard.<UTC-stamp>.db'\"` — which is **guaranteed-consistent even while the app runs**, then let Hyper Backup ship the snapshot. Reuse the pattern already in `ops/sortie/quota-refund.sh` (`.backup` + timestamped file + prune old copies by retention days). Also: (a) confirm the Hyper Backup source set actually includes `/volume1/docker/`, and (b) do one **test restore** to verify. (RAID = disk-failure tolerance, a separate axis; backup is the thing that matters and is largely handled.)",
-    "priority": "high",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -267,7 +267,7 @@
     "project": "personal-dashboard",
     "title": "[Infra] HIGH — Reverse proxy for off-LAN access.",
     "body": "Set up a reverse proxy so the personal dashboard is reachable from outside the local network (e.g. on the phone off-wifi), per PROJECT.md §1's post-MVP goal. Options to weigh: Synology's built-in reverse proxy + DDNS + Let's Encrypt (simplest on this box), or Tailscale/Cloudflare Tunnel (no inbound port-forward, better security posture — aligns with the egress-hardening mindset). Must add **authentication** before exposing (the app is currently LAN-only, no auth — PROJECT.md §1). Mind the existing port map (8080=gluetun, 8088=prod app).",
-    "priority": "high",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -275,7 +275,7 @@
     "project": "personal-dashboard",
     "title": "[Infra] Retry cap / max-attempts",
     "body": "⚠️ PARTIALLY ADDRESSED (2026-06-30). The ~43× storm's root causes (exit-128 prep-retry loop) are fixed, and capped/parked issues are now made *visible* by `sortie-watchdog` (`sortie:stuck` + @mention) instead of silently grinding. Still open if wanted: a true per-issue max-attempts ceiling (Sortie's `max_sessions:3` caps agent sessions but not workspace-prep retries).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -283,7 +283,7 @@
     "project": "personal-dashboard",
     "title": "[Infra] Pro usage-limit handling",
     "body": "The retry storm exhausted the Claude Pro quota → instant `turn_failed`. Monitor usage and/or add an API-key fallback or guard (ties into RAM/CPU limits below).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -291,7 +291,7 @@
     "project": "personal-dashboard",
     "title": "[Infra] RAM & CPU Monitor / usage limits",
     "body": "- The NAS is not that powerful of a machine. Ensure the operation doesn't grow boundlessly and impact other processes of the machine. May need to set limits on the container or image/process itself from within Synology.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -299,7 +299,7 @@
     "project": "personal-dashboard",
     "title": "[Infra] Abstract out any infra and design decisions that can be abstracted for easy integration into future projects & websites",
     "body": "This includes the Sortie integration, CI/CD pipeline, model integration, Memory System",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md"
   },
@@ -307,7 +307,7 @@
     "project": "personal-dashboard",
     "title": "[Dashboard Shell] Scaffold Overall UI Layout",
     "body": "- Nav with Links to All Pages\n- Pages:\n  - Home\n  - Productivity\n  - Health / Fitness\n  - Music Production\n  - DJing\n  - Music Discovery\n  - Event Tracker\n  - Inboxes",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:shell/TODO.md"
   },
@@ -315,7 +315,7 @@
     "project": "personal-dashboard",
     "title": "[Dashboard Shell] Additional widgets (in roughly the order I want them)",
     "body": "- Acute Strategies Generator\n- Agent Dashboard / Mission Control (in pages/agent-dashboard)\n- Pomodoro timer\n- Music Picker (in widgets/music-picker)\n- Music Tracker\n- Habit log\n- Morning routine todo-list\n- Concert Diary (in widgets/concert-diary)\n- Concert Discovery (in widgets/concert-discovery)\n- Vision Board (in widgets/vision-board)\n- Festival Follower (in widgets/festival-follower)\n- Reminders (in widgets/reminders)\n- ---Below this line, not sure if i will build:----\n- Diary\n- Workout log\n- Chat (in widgets/chat)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:shell/TODO.md"
   },
@@ -323,7 +323,7 @@
     "project": "personal-dashboard",
     "title": "[Dashboard Shell] UI improvements",
     "body": "- Widgets should be able to be re-sized and re-arranged in the page on an invisible grid system, similar to how Datadog works. When dragging, the gridlines become visible. Widget position should be remembered on page refresh.\n- Widgets should all have a wrench icon in the bottom right corner that, when clicked, opens up that widget's settings view. There should be an animation that makes it look like the widget is a card flipping over, and the settings appear on the back of the card. Settings will be widget-specific.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:shell/TODO.md"
   },
@@ -331,7 +331,7 @@
     "project": "personal-dashboard",
     "title": "[Dashboard Shell] Shell improvements (defer until at least 3 widgets exist)",
     "body": "- Per-widget configuration UI (instead of editing `.env`)\n- Dashboard customization (tile order, hide/show widgets)\n- Dark mode toggle (just pick one for MVP)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:shell/TODO.md"
   },
@@ -339,7 +339,7 @@
     "project": "personal-dashboard",
     "title": "[Dashboard Shell] Auth",
     "body": "- Only if/when the dashboard is exposed beyond LAN.\n- Simple single-user password or a reverse proxy with auth in front (Authelia, Tailscale, etc.).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:shell/TODO.md"
   },
@@ -347,7 +347,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard (Mission Control)] Sortie observability — PR preview control",
     "body": "GUI half of the \"Preview branches\" item (full details + NAS infra in the root [TODO.md](../../TODO.md) Sortie Integration section). In this page's Sortie observability area: a control to **build/launch a preview from a given PR #** (surfaces the LAN URL), plus a **\"currently previewing\" panel** showing which PR / branch / short-SHA occupies the single preview slot, when it launched, health, and an open link. Backend needs NAS-side Docker control — reuse whatever the Mission Control → `sortie:7678` access mechanism lands on.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/agent-dashboard/TODO.md"
   },
@@ -355,7 +355,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard (Mission Control)] scheduled jobs:",
     "body": "- first one: a token audit",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/agent-dashboard/TODO.md"
   },
@@ -363,7 +363,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard (Mission Control)] Kanban board",
     "body": "- Button to convert to github issue, and when in that view, there's a button to edit the issue template. if issues are sub-issues of a larger project/initiative (and decide on a name), that context should be shared with the sortie agent",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/agent-dashboard/TODO.md"
   },
@@ -371,7 +371,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard (Mission Control)] Automated Site Maintenance",
     "body": "- Weekly Privacy Checkup: A weekly automated job scan all my apps, dependencies, plugins, and chrome extensions on both pc, nas, and the ai server itself and the web to see if anything is a security risk",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/agent-dashboard/TODO.md"
   },
@@ -379,7 +379,7 @@
     "project": "personal-dashboard",
     "title": "[Event Tracker Page] Unified Event Feed",
     "body": "- Merge Concert Discovery shows and Festival Follower dates into a single chronological view\n- Filter by: shows only, festivals only, or both",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/event-tracker/TODO.md"
   },
@@ -387,7 +387,7 @@
     "project": "personal-dashboard",
     "title": "[Event Tracker Page] Calendar View",
     "body": "- Month/week calendar view of all upcoming events across both widgets\n- Export to .ics / Google Calendar",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/event-tracker/TODO.md"
   },
@@ -395,7 +395,7 @@
     "project": "personal-dashboard",
     "title": "[Health / Fitness Page] Body Metrics Widget",
     "body": "- Log body weight, measurements over time with simple trend chart",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/health-fitness/TODO.md"
   },
@@ -403,7 +403,7 @@
     "project": "personal-dashboard",
     "title": "[Health / Fitness Page] Sleep Log",
     "body": "- Basic sleep duration tracking (bedtime / wake time)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/health-fitness/TODO.md"
   },
@@ -411,7 +411,7 @@
     "project": "personal-dashboard",
     "title": "[Home Page] Live Widget Previews in Tiles",
     "body": "- Show a small amount of live data inside each tile (e.g., today's habit completion count, current pomodoro status)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/home/TODO.md"
   },
@@ -419,7 +419,7 @@
     "project": "personal-dashboard",
     "title": "[Home Page] Widget Grouping",
     "body": "- Group tiles by category (Productivity, Music, etc.) with collapsible sections",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/home/TODO.md"
   },
@@ -427,7 +427,7 @@
     "project": "personal-dashboard",
     "title": "[Home Page] Drag-and-Drop Layout",
     "body": "- See shell/TODO.md for the resizable/rearrangeable grid improvement",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/home/TODO.md"
   },
@@ -435,7 +435,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] Ableton Project Org Job",
     "body": "- Scan Ableton User Library for bounced audio files. Criteria: Any audio file inside any subfolder named \"bounces\" or \"Bounces\".\n- Surface one at a time: play audio in browser, prompt for rating & tags (when building, revisit to see what else i should be prompted for. user should use MAKID for a reference.)\n- Write to sidecar table (project name, rating, tags, notes)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -443,7 +443,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] Spotify liked song filing pipeline",
     "body": "- First, Add all liked songs not in at least one playlist to a queue i can review from most-least and decide which playlist(s) it belongs to. If agent knows my playlists, maybe it can recommend where it should go.\n\n- Then, set up this job: Whenever i like a song in Spotify, add it to the appropriate existing playlists of mine.\n\n- Build with the concept that spotify might not always be my preferred streaming app make it easy to swap out",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -451,7 +451,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] Shazam Filing Pipeline",
     "body": "- Similar to liked song filing pipeline\n- First, look at shazams playlist, mark everything initially as \"not filed\"\n- Then look at DJ ideas playlist and DJ library, mark the stuff thats in either of those (\"in dj ideas playlist\", \"downloaded\", \"in dj library\")\n- Everything else, add to a queue i can review. most recent first.\n- When i review a track, i want the ability to:\n\n1. add to appropriate spotify playlists,\n2. add to download queue\n3. Add to download queue and mark for adding to DJ library\n4. ignore\n\n- new shazams get added to the list\n\n- think about how to handle songs when i shazam songs that i didnt necessarily want to put in a dj mix\n\n- in a sense this is the same job as the liked song pipeline, just operating on a different playlist, and with the extra step of also checking for a songs presence in the dj ideas playlist Maybe options look like \"also add to dj ideas playlist?\" \"also add to download queue?\"",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -459,7 +459,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] Jam Vid Org Job",
     "body": "- Scan a configured folder of video files\n- In-browser playback (direct file URL or transcoded stream via ffmpeg)\n- Prompt for rating, tag.\n- Rename / move file into a more organized folder structure based on tags (optional, deferred)\n\n  - Surface a random track from `music_tracker_library_files` missing genre or star rating\n  - Let user assign genre and star rating in-page\n  - Write values to a sidecar table (avoid mutating files directly in MVP)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -467,7 +467,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] Shared Review Item Model",
     "body": "- If Ableton + Jam Vid + DJ Library jobs all follow the same \"surface → review → record\" pattern, consider a shared `inbox_review_items` table with a `library` discriminator\n- Would enable a single unified \"items remaining\" count across all jobs",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -475,7 +475,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] DJ Library Org Job",
     "body": "- Initially, every song is marked as \"not tagged\" in the db.\n- Surfaces a random song from my DJ library marked \"not tagged\". Lets me listen to it and add the genre, star rating, and tags right there.\n- It would need to know the genres and tags in the DJ app\n- This may not be possible given Rekordbox limitations, we will need to think through the design carefully and may need to incoroporate some manual steps.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -483,7 +483,7 @@
     "project": "personal-dashboard",
     "title": "[Inboxes Page] Progress Tracking",
     "body": "- Show per-job stats: items reviewed, items remaining (estimated)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/inboxes/TODO.md"
   },
@@ -491,7 +491,7 @@
     "project": "personal-dashboard",
     "title": "[Music Discovery Page] Artist / Label Watchlist",
     "body": "- Subscribe to artists or labels; surface new releases automatically",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/music-discovery/TODO.md"
   },
@@ -499,7 +499,7 @@
     "project": "personal-dashboard",
     "title": "[Music Discovery Page] Release Radar",
     "body": "- Aggregate new releases from watched artists/labels + Spotify recommendations",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/music-discovery/TODO.md"
   },
@@ -507,7 +507,7 @@
     "project": "personal-dashboard",
     "title": "[Music Discovery Page] Listening History Integration",
     "body": "- Pull Last.fm or Spotify listening history to see what's been played recently",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/music-discovery/TODO.md"
   },
@@ -515,7 +515,7 @@
     "project": "personal-dashboard",
     "title": "[Productivity Page] Weekly Summary Widget",
     "body": "- A read-only summary tile: habits completed this week, pomodoros logged, diary entries written",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/productivity/TODO.md"
   },
@@ -523,7 +523,7 @@
     "project": "personal-dashboard",
     "title": "[Productivity Page] Goal Tracking",
     "body": "- Simple goal-setting (weekly targets per habit) surfaced on this page",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:pages/productivity/TODO.md"
   },
@@ -531,7 +531,7 @@
     "project": "personal-dashboard",
     "title": "[Acute Strategies Generator] Deck Mode",
     "body": "- \"Don't repeat until all cards seen\" shuffle mode — cycle through all strategies before repeating any",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/acute-strategies-generator/TODO.md"
   },
@@ -539,7 +539,7 @@
     "project": "personal-dashboard",
     "title": "[Acute Strategies Generator] Categories / Tags",
     "body": "- Tag strategies (e.g., \"rhythm\", \"harmony\", \"arrangement\") and filter draws by category",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/acute-strategies-generator/TODO.md"
   },
@@ -547,7 +547,7 @@
     "project": "personal-dashboard",
     "title": "[Acute Strategies Generator] Import / Export",
     "body": "- Bulk import from a text file (one strategy per line)\n- Export current list to text file",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/acute-strategies-generator/TODO.md"
   },
@@ -555,7 +555,7 @@
     "project": "personal-dashboard",
     "title": "[Acute Strategies Generator] Draw History",
     "body": "- Log each draw with a timestamp so the user can see what came up in recent sessions",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/acute-strategies-generator/TODO.md"
   },
@@ -563,7 +563,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] Conversation Persistence",
     "body": "- Store conversation threads in SQLite (`chat_threads`, `chat_messages`)\n- Thread list sidebar: browse and resume past conversations\n- Auto-title threads from the first user message (or ask the LLM to summarize)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -571,7 +571,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] Bug Reporting Mode",
     "body": "- `/bug` command or \"Report a bug\" button switches to a structured bug-capture flow\n- LLM extracts: title, description, steps to reproduce, affected widget\n- Backend writes a task markdown file to `tasks/` for the agent workflow to pick up\n- Requires Agent Dashboard (Mission Control) to be built first",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -579,7 +579,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] System Prompt Customization",
     "body": "- Editable system prompt in widget settings\n- Pre-set \"personas\": General Assistant, Dashboard Helper (with context about widgets), Code Reviewer",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -587,7 +587,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] Multi-Model Switching",
     "body": "- Dropdown to switch between models (Claude Sonnet, Opus, Haiku, local Ollama models)\n- Model selection persisted per thread",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -595,7 +595,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] Local LLM Support (Ollama)",
     "body": "- Add `CHAT_LLM_PROVIDER=ollama` and `CHAT_OLLAMA_BASE_URL=http://localhost:11434`\n- Use Ollama's OpenAI-compatible API — same streaming mechanism as Anthropic\n- Model list fetched dynamically from Ollama's `/api/tags` endpoint",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -603,7 +603,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] File / Image Attachments",
     "body": "- Attach an image or file to a message\n- Images: passed as base64 to vision-capable models\n- Files: extract text content server-side, inject into context",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -611,7 +611,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] Voice Input",
     "body": "- Web Speech API for dictating messages (same approach as Reminders widget)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -619,7 +619,7 @@
     "project": "personal-dashboard",
     "title": "[Chat Widget] Prompt Caching",
     "body": "- For conversations with a long system prompt or large context, enable Anthropic prompt caching\n- Cache the system prompt turn to reduce latency and cost on longer threads",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md"
   },
@@ -627,7 +627,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Backfill: Workflowy Notes",
     "body": "- Parse a Workflowy OPML/JSON export for concert-related notes\n- Heuristic: nodes with a date + artist name pattern (may need LLM assist to extract structured fields)\n- Create draft entries for user review and confirmation before saving",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -635,7 +635,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Backfill: Google Calendar",
     "body": "- Query Google Calendar for events that look like concerts (venue keywords, artist name patterns)\n- Use event date + title to pre-fill entry fields\n- Cross-reference with already-existing diary entries to avoid duplicates",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -643,7 +643,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Backfill: Camera Roll (Google Photos)",
     "body": "- Run a one-time job that scans all Google Photos for \"concert-like\" clusters\n- Clusters: bursts of photos at night, taken at unfamiliar locations — likely shows\n- Surface as candidate entries for the user to confirm\n- High uncertainty; LLM or a simple heuristic (night time, high burst rate) could seed the candidates",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -651,7 +651,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Video Support",
     "body": "- Decide on approach: server-side storage vs. Google Photos link-only\n- If server-side: cap file size, generate a thumbnail via ffmpeg for the entry grid view",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -659,7 +659,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Setlist.fm Integration",
     "body": "- Look up the setlist for a given artist + venue + date\n- Attach the setlist to the entry (stored as text/JSON)\n- Setlist.fm has a free REST API",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -667,7 +667,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Cross-reference with Concert Discovery",
     "body": "- \"Mark as attended\" action on a Concert Discovery upcoming event → creates a Concert Diary entry pre-filled with artist/venue/date\n- After the show date passes, Concert Discovery could prompt: \"Did you go to this? Add it to your diary\"",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -675,7 +675,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Map View",
     "body": "- Plot all attended concerts on a map (using venue city coordinates)\n- Filter by year, artist, city",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -683,7 +683,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Diary Widget] Stats View",
     "body": "- Shows per year, top artists (most times seen), top cities, top venues\n- \"First time I saw [artist]\" for each entry",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-diary/TODO.md"
   },
@@ -691,7 +691,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] RA Account Auth — Auto-sync Follows",
     "body": "- Authenticate with the user's RA account to fetch the existing following list automatically\n- Eliminates the need to manually maintain artist slugs\n- RA auth is cookie-based (no OAuth); approach would be a one-time login flow that captures a session cookie and stores it encrypted",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -699,7 +699,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] Custom Artist List (non-RA artists)",
     "body": "- Add artists by name without an RA slug\n- Look them up on alternative sources (Songkick, Bandcamp, their own tour pages)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -707,7 +707,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] Songkick Integration",
     "body": "- Songkick has a proper public REST API with an API key\n- Stronger for mainstream / non-electronic artists\n- Could run in parallel with RA: deduplicate events by artist + venue + date",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -715,7 +715,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] Social / Tour Page Scraping",
     "body": "- For artists with no Songkick/RA presence, monitor their own tour page or Instagram for event announcements\n- High complexity, fragile — long-term only",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -723,7 +723,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] \"Interested\" / \"Going\" Tracking",
     "body": "- Mark events with interest level (interested, going, passed)\n- Filter feed by status\n- Past events automatically archived",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -731,7 +731,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] Calendar Export",
     "body": "- Export upcoming shows as an `.ics` file or push to Google Calendar\n- Makes it easy to check against personal calendar before buying tickets",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -739,7 +739,7 @@
     "project": "personal-dashboard",
     "title": "[Concert Discovery Widget] RA API Breakage Mitigation",
     "body": "- If RA changes their API, fallback to scraping RA artist pages directly (less reliable but same data)\n- Monitor for 4xx/5xx responses on the GraphQL endpoint and surface a warning in the widget",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/concert-discovery/TODO.md"
   },
@@ -747,7 +747,7 @@
     "project": "personal-dashboard",
     "title": "[Diary Widget] Full-Text Search",
     "body": "- Search across all entries by keyword",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/diary/TODO.md"
   },
@@ -755,7 +755,7 @@
     "project": "personal-dashboard",
     "title": "[Diary Widget] Mood Tracking",
     "body": "- Optional mood indicator per entry (emoji or 1–5 scale)\n- Mood history over time",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/diary/TODO.md"
   },
@@ -763,7 +763,7 @@
     "project": "personal-dashboard",
     "title": "[Diary Widget] Encryption at Rest",
     "body": "- Encrypt diary entries in the DB with a passphrase\n- Requires a password prompt on widget open — adds friction, so defer until wanted",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/diary/TODO.md"
   },
@@ -771,7 +771,7 @@
     "project": "personal-dashboard",
     "title": "[Diary Widget] Export",
     "body": "- Export all entries as a single Markdown file or folder of per-day files",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/diary/TODO.md"
   },
@@ -779,7 +779,7 @@
     "project": "personal-dashboard",
     "title": "[Diary Widget] Prompts",
     "body": "- Optional: show a random journaling prompt if the user opens with an empty entry",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/diary/TODO.md"
   },
@@ -787,7 +787,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Structured Lineup Extraction",
     "body": "- When a lineup announcement is detected (via RSS or page change), attempt to extract artist names\n- Could use a simple heuristic (look for large bold text blocks, lists of names) or an LLM to parse the page\n- Surface artists as individual items linked to Concert Discovery (cross-reference with followed artists)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -795,7 +795,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Ticket Sale Alerts",
     "body": "- Detect specific patterns on festival pages that indicate ticket links going live\n- Could monitor a known \"tickets\" URL for changes from 404/sold-out → available",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -803,7 +803,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Social Media Monitoring",
     "body": "- Scrape or monitor the festival's Twitter/Instagram for announcements\n- High complexity, API-restricted — long-term only",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -811,7 +811,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] \"What Changed\" Diff for Page Changes",
     "body": "- Instead of just \"something changed,\" show a text diff of the page content between checks\n- Needs thoughtful filtering (remove nav/footer noise, focus on content area)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -819,7 +819,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Email Newsletter Integration",
     "body": "- Some festivals only announce via newsletter\n- Inbound email parsing (e.g., forward festival emails to a local address, parse them into the feed)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -827,7 +827,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Auto-Archive Past Festivals",
     "body": "- When `end_date` has passed, automatically move to an archive section\n- Archive view: see updates from past festivals by year",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -835,7 +835,7 @@
     "project": "personal-dashboard",
     "title": "[Music Festival Follower Widget] Cross-reference with Concert Discovery",
     "body": "- If an artist in a lineup announcement matches a followed artist in Concert Discovery, highlight it\n- \"Objekt is playing Dekmantel 2026\" — surfaced as a high-priority update",
-    "priority": "high",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:widgets/festival-follower/TODO.md"
   },
@@ -843,7 +843,7 @@
     "project": "personal-dashboard",
     "title": "[Habit Log Widget] History & Visualization",
     "body": "- Calendar heatmap showing completions over the past N weeks\n- Per-habit history view (which days were completed)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/habit-log/TODO.md"
   },
@@ -851,7 +851,7 @@
     "project": "personal-dashboard",
     "title": "[Habit Log Widget] Reminders",
     "body": "- Browser notification at a configurable time if a daily habit hasn't been checked off yet",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/habit-log/TODO.md"
   },
@@ -859,7 +859,7 @@
     "project": "personal-dashboard",
     "title": "[Habit Log Widget] Habit Archiving",
     "body": "- Soft-delete: archive a habit instead of deleting it, preserve completion history",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/habit-log/TODO.md"
   },
@@ -867,7 +867,7 @@
     "project": "personal-dashboard",
     "title": "[Morning Routine Widget] Configurable Reset Time",
     "body": "- Allow setting a reset time other than midnight (e.g., 4 AM for night owls)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/morning-routine/TODO.md"
   },
@@ -875,7 +875,7 @@
     "project": "personal-dashboard",
     "title": "[Morning Routine Widget] Task Reordering",
     "body": "- Drag-and-drop reorder in the settings view",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/morning-routine/TODO.md"
   },
@@ -883,7 +883,7 @@
     "project": "personal-dashboard",
     "title": "[Morning Routine Widget] Completion History",
     "body": "- Calendar view showing which days had all tasks completed vs. partial",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/morning-routine/TODO.md"
   },
@@ -891,7 +891,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] Multiple Spotify Playlists",
     "body": "- Allow configuring more than one Spotify playlist with a switcher (e.g., Morning, Evening, Deep Work)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -899,7 +899,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] Bandcamp Collection Sync (Wishlist / Purchases)",
     "body": "- Bandcamp has no public API for collections — would require scraping the fan page\n- Worth revisiting if the manual followed-artist list becomes too tedious to maintain",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -907,7 +907,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] Radio Station Categories / Groups",
     "body": "- Group starred stations (e.g., \"Talk\", \"Electronic\", \"Jazz\") for faster navigation",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -915,7 +915,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] NTS / Rinse.fm Native Embeds",
     "body": "- NTS has an official embeddable player (`https://www.nts.live/embeds/...`)\n- Evaluate whether the native embed is preferable to stream URL playback for these specific stations\n- Could be a per-station setting (\"use embed\" vs \"use stream URL\")",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -923,7 +923,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] Stream Health Check",
     "body": "- Periodically verify that stored stream URLs are still live\n- Flag broken streams in the UI with a \"stream may be offline\" indicator",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -931,7 +931,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] \"Mark as Listened / Noted\" on Bandcamp Releases",
     "body": "- Checkbox or dismiss button per release so already-seen items collapse out of the list",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -939,7 +939,7 @@
     "project": "personal-dashboard",
     "title": "[Music Picker Widget] Audio Visualization",
     "body": "- Simple waveform or VU meter for the currently playing radio stream",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-picker/TODO.md"
   },
@@ -947,7 +947,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Lidarr API integration",
     "body": "- One-click \"send to Lidarr\" button on a track, hitting Lidarr's REST API.\n- Look up artist/album via Lidarr's MusicBrainz-backed search.\n- Handle \"not found in MusicBrainz\" case (common for mixes, bootlegs, white labels) — fall back to a Google/Bandcamp search link.\n- Decide: do this per-track on user action, or auto-push everything in `wanted` status?",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -955,7 +955,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Better matcher: Chromaprint / AcoustID fingerprinting",
     "body": "- Revisit only after observing matcher failure modes for 2–3 weeks.\n- Implement if false-negative rate from tag inconsistency is the dominant problem.\n- Requires `fpcalc` binary in Docker image and fingerprinting all library files (slow initial scan).\n- Likely also requires downloading Spotify preview clips (30s, not always available) to fingerprint the incoming side.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -963,7 +963,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Playlist / library sources (straightforward polling):",
     "body": "- YouTube playlists (yt-dlp + YouTube Data API) — e.g. \"DJ Songs to download\", \"Great Mixes 2025\" (mix-typed)\n- SoundCloud specific playlists / likes\n- Bandcamp wishlist / collection + followed artists & labels\n- NTS saved/followed list\n- Shazam list — pull directly from Shazam (not via Spotify; requires separate credential)\n- Multiple Spotify playlists — e.g. \"DJ Ideas\" in addition to the MVP playlist; `SPOTIFY_PLAYLIST_IDS` becomes a comma-separated list\n- Resident Advisor (RA) followed artists — poll for new mixes/sets\n- Each implements the `MusicSource` interface defined in the MVP (double-check whether this approach makes sense)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -971,7 +971,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Complex / scraping sources:",
     "body": "- Reddit saved posts from r/theoverload — parse saved post links, visit each linked page, extract track/mix metadata (artist + title), add to tracker. Requires: Reddit API auth, link-following logic, metadata extraction heuristic (or LLM assist).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -979,7 +979,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Staging review inbox:",
     "body": "- As long as any files sit in the staging folder, surface a notification (\"New tracks downloaded — please review\") in the dashboard notification center.\n- Per file, show the track it came from + its detected quality. User actions:",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -987,7 +987,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Delete & keep tracking",
     "body": "this version is bad; ignore this specific file in future downloads but keep looking",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -995,7 +995,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Delete & stop tracking",
     "body": "already have it or no longer want it",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1003,7 +1003,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Add to music library, keep tracking",
     "body": "promote to library, keep monitoring for better quality",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1011,7 +1011,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Add to music library & stop tracking",
     "body": "done",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1019,7 +1019,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] \"Also add to DJ library\" checkbox",
     "body": "copies the file to the DJ tracks folder in addition to the main library",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1027,7 +1027,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] \"Is mix\" checkbox",
     "body": "adds the file to the Plexamp mixes playlist\n- Auto-resolve to \"stop tracking\" when a 320 kbps MP3 or lossless file is confirmed added to the library; no need for manual confirmation in that case\n- The tracker's knowledge of whether a track is in-library must be maintained independently of the temp folder (temp folder is transient; library status is durable)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1035,7 +1035,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Metadata enrichment",
     "body": "When a track is added (from any source), enrich it with additional metadata from Discogs, Bandcamp, and/or Spotify — canonical artist name, label, release year, artwork. Useful for improving matcher accuracy and display quality. Design as an optional post-insert step so it doesn't block ingestion. Only add additional metadata if very confident it applies to the song.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1043,7 +1043,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Duplicate detection & notification center",
     "body": "- Nightly job: detect tracker entries that likely refer to the same track (added from multiple sources, or manual + auto-detected). Flag as potential duplicates.\n- Notification center surface in the dashboard for reconciling duplicates: keep one, merge, or dismiss.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1051,7 +1051,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] \"Better quality version\" workflow",
     "body": "- Track existing library entries too (not just new detections).\n- Periodically check if a higher-quality version is available.\n- UI for side-by-side accept/reject (current vs. candidate) with audio preview.\n- Requires committing to fingerprinting first.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1059,7 +1059,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] Job queue",
     "body": "- Replace `node-cron` with BullMQ (or similar) once there are 3+ sources running concurrently.\n- Adds retries, concurrency limits, persisted job state.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1067,7 +1067,7 @@
     "project": "personal-dashboard",
     "title": "[Music Tracker Widget] NAS-to-PC copy",
     "body": "- One-click action to copy a file from a NAS folder to a specific folder on the PC.\n- Needs either an agent running on the PC (small Node service) or an SMB write from the container.\n- Out of scope until the download workflow is in place.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/music-tracker/TODO.md"
   },
@@ -1075,7 +1075,7 @@
     "project": "personal-dashboard",
     "title": "[Pomodoro Timer Widget] Session Logging",
     "body": "- Persist completed pomodoros to SQLite so there's a history of focus sessions by day\n- Simple stats: pomodoros completed today, this week",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/pomodoro-timer/TODO.md"
   },
@@ -1083,7 +1083,7 @@
     "project": "personal-dashboard",
     "title": "[Pomodoro Timer Widget] Configurable Intervals",
     "body": "- Settings panel: adjust work duration, short break, long break\n- Persist settings to the DB (or localStorage as a simpler option)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/pomodoro-timer/TODO.md"
   },
@@ -1091,7 +1091,7 @@
     "project": "personal-dashboard",
     "title": "[Pomodoro Timer Widget] Desktop Notifications",
     "body": "- Browser `Notification` API alert when an interval ends (useful when in another tab)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/pomodoro-timer/TODO.md"
   },
@@ -1099,7 +1099,7 @@
     "project": "personal-dashboard",
     "title": "[Pomodoro Timer Widget] Task Label",
     "body": "- Optional: attach a label to the current session (\"what are you working on?\")\n- Shown in session history",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/pomodoro-timer/TODO.md"
   },
@@ -1107,7 +1107,7 @@
     "project": "personal-dashboard",
     "title": "[Reminders Widget] Voice Input",
     "body": "- Use the Web Speech API (`SpeechRecognition`) to capture voice input for the note field\n- Parse the spoken text for a date/time using `chrono-node` (handles \"tomorrow at 3pm\", \"next Tuesday morning\", etc.) — extract it as the `remindAt` value and the remainder as the note\n- Fallback: if no date is detected in the speech, pre-fill the note field and let the user pick a time manually\n- \"Hey remind me at 5pm to take out the trash\" should produce remindAt=today 17:00, note=\"take out the trash\"",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/reminders/TODO.md"
   },
@@ -1115,7 +1115,7 @@
     "project": "personal-dashboard",
     "title": "[Reminders Widget] Natural Language Date Input (Text)",
     "body": "- Add a free-text \"when\" field alongside or instead of the datetime picker\n- Wire to `chrono-node` on submit to parse the natural language into a unix ms timestamp\n- Show the parsed result (\"interpreted as: Thursday, May 29 at 5:00 PM\") before confirming",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/reminders/TODO.md"
   },
@@ -1123,7 +1123,7 @@
     "project": "personal-dashboard",
     "title": "[Reminders Widget] Recurring Reminders",
     "body": "- Repeat options: daily, weekly, custom interval\n- Each recurrence creates a new `pending` row when the current one is cleared",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/reminders/TODO.md"
   },
@@ -1131,7 +1131,7 @@
     "project": "personal-dashboard",
     "title": "[Reminders Widget] Web Push Notifications (Service Worker)",
     "body": "- For use when the dashboard tab is not open — full Web Push with VAPID keys\n- Required if the user wants reminders to fire on mobile while not actively viewing the dashboard",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/reminders/TODO.md"
   },
@@ -1139,7 +1139,7 @@
     "project": "personal-dashboard",
     "title": "[Reminders Widget] Notification Sound",
     "body": "- Play a short audio cue (via `AudioContext`) when an alert fires, in addition to the visual takeover\n- Configurable: on/off in widget settings",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/reminders/TODO.md"
   },
@@ -1147,7 +1147,7 @@
     "project": "personal-dashboard",
     "title": "[Reminders Widget] Reminder Templates / Quick-Add",
     "body": "- Pre-defined common reminders (\"Take medication\", \"Stand up\", etc.) accessible with one tap",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/reminders/TODO.md"
   },
@@ -1155,7 +1155,7 @@
     "project": "personal-dashboard",
     "title": "[Vision Board Widget] Goal Archiving",
     "body": "- Soft-delete: mark a goal as completed with a completion date, move to an \"Achieved\" section\n- Archive view to browse past accomplishments",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/vision-board/TODO.md"
   },
@@ -1163,7 +1163,7 @@
     "project": "personal-dashboard",
     "title": "[Vision Board Widget] Image / Mood Board",
     "body": "- Attach one or more images to a goal card (uploaded to the server's data volume)\n- Cards render the image as a background, text overlaid\n- Gives it the classic \"vision board\" feel",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/vision-board/TODO.md"
   },
@@ -1171,7 +1171,7 @@
     "project": "personal-dashboard",
     "title": "[Vision Board Widget] Progress Tracking",
     "body": "- Sub-tasks or milestones per goal (lightweight checklist)\n- Progress bar derived from milestone completion",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/vision-board/TODO.md"
   },
@@ -1179,7 +1179,7 @@
     "project": "personal-dashboard",
     "title": "[Vision Board Widget] Habit Linking",
     "body": "- Tag a habit in the Habit Log as contributing to a specific goal\n- Goal card shows the habit's streak / recent completion rate",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/vision-board/TODO.md"
   },
@@ -1187,7 +1187,7 @@
     "project": "personal-dashboard",
     "title": "[Vision Board Widget] Periodic Reflection Prompts",
     "body": "- Weekly or monthly prompt: \"How are you doing on [goal]?\" — opens a small journaling modal\n- Reflection notes stored per goal with timestamps\n- Connects naturally to the Diary widget",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/vision-board/TODO.md"
   },
@@ -1195,7 +1195,7 @@
     "project": "personal-dashboard",
     "title": "[Vision Board Widget] Goal Templates",
     "body": "- Pre-defined goal templates for common categories (financial, health, creative)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/vision-board/TODO.md"
   },
@@ -1203,7 +1203,7 @@
     "project": "personal-dashboard",
     "title": "[Workout Log Widget] Exercise Autocomplete",
     "body": "- Build an exercise name index from past sessions for quick autocomplete",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/workout-log/TODO.md"
   },
@@ -1211,7 +1211,7 @@
     "project": "personal-dashboard",
     "title": "[Workout Log Widget] Workout Templates",
     "body": "- Save a session as a template (e.g., \"Push Day\") and load it to pre-fill exercises",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/workout-log/TODO.md"
   },
@@ -1219,7 +1219,7 @@
     "project": "personal-dashboard",
     "title": "[Workout Log Widget] Progress Charts",
     "body": "- Per-exercise progress over time: max weight, total volume\n- Simple line chart using a lightweight library (Chart.js or similar)",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/workout-log/TODO.md"
   },
@@ -1227,7 +1227,7 @@
     "project": "personal-dashboard",
     "title": "[Workout Log Widget] Rest Timer",
     "body": "- Start a rest timer between sets, right inside the log session view",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/workout-log/TODO.md"
   },
@@ -1235,7 +1235,7 @@
     "project": "personal-dashboard",
     "title": "[Workout Log Widget] Body Metrics",
     "body": "- Optional: log body weight, body fat %, measurements alongside sessions",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:widgets/workout-log/TODO.md"
   },
@@ -1243,7 +1243,7 @@
     "project": "core",
     "title": "Sprint contracts",
     "body": "(the still-open extension of Handoff contracts; the return-envelope + acceptance-checklist core shipped as D-017) — before a complex dispatch, the sub-agent proposes what \"done\" looks like and Tank reviews *before* work starts. Builds on the D-017 acceptance checklist.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1251,7 +1251,7 @@
     "project": "core",
     "title": "File access whitelist",
     "body": "Sec-Ops SOUL references maintaining a whitelist of processes allowed to read/write outside `/core`, but the document doesn't exist. Create it. After we build sortie and run this harness on its own codebase, we should have stronger guardrails than just relying on an agent to obey the instructions in the .md.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1259,7 +1259,7 @@
     "project": "core",
     "title": "User visibility into agent-agent communication [Warren Rec 7]",
     "body": "an append-only, **operator-visible dispatch/handoff log** (typed actors: `user:` vs `agent:run-id`, replayable) — NOT peer chat. *Finding: \"sqlitemail\" doesn't exist in Warren; it uses Burrow's per-burrow inbox + a SQLite `events` audit log.* Direct A2A messaging (Rec 8) is declined; this keeps Tank as sole router while making the flow visible. See IMPROVEMENTS.md.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1267,7 +1267,7 @@
     "project": "core",
     "title": "Context Monitor",
     "body": "- Alert when context fills 50% of window. Explore the option of a hook that fires on PostToolUse and pings if turn count exceeds a threshold. Make sure this isn't just wasting more tokens. Maybe just use Sapling by jayminwest directly, but at least look to it for patterns.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1275,7 +1275,7 @@
     "project": "core",
     "title": "Decide whether it's time to implement a different memory system like Karpathy / wiki.",
     "body": "*Note (D-021, 2026-06-28): deferred, not chosen — the existing `MEMORY/` + index + `DECISIONS.md` design was **tightened** instead (enforcement of the one-line index cap + write-on-signal, 14-day aging into `MEMORY/archive/` with the index line rolled out too, and a static memory-bloat sensor in `/project-maintenance`). A replacement now has to beat the tightened system; revisit only if index + dailies genuinely outgrows it.*",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1283,7 +1283,7 @@
     "project": "core",
     "title": "Extract the memory system into a standalone, importable library",
     "body": "break `MEMORY/` + index + the\nwrite-on-signal/aging discipline (D-021) out of Core so it can be imported into any project (Dashboard,\n  Sortie configs, future projects) with **one source of truth**. Today the logic lives scattered across\n  `/wrap-up`, `/core-session-start` (aging pass), and `/project-maintenance` (bloat sensor); a library\n  would consolidate the format + the three operations (write, age/archive, lint). Open design questions:\n  package shape (npm package? shell scripts? a `/memory-*` skill bundle installable per project?), how\n  projects pin/update it, and whether the index/aging logic is language-agnostic enough to ship once.\n  This is the principled vehicle for \"make the Dashboard's memory work like Core's\" (below). *(Steve, 2026-06-28)*",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1291,7 +1291,7 @@
     "project": "core",
     "title": "Replicate Core's dev tooling into the active projects",
     "body": "bring the harness's project-hygiene tools\ninto Dashboard (and others) so every repo gets the same scaffolding. First instance: **Dashboard's\n  memory → Core's model** (cleanest via the memory-library item above, not a hand-port). Other candidates\n  worth bringing in: `/project-status`, `/project-maintenance` (already global/generic — just wire them in),\n  the `PROJECT.md`/`DECISIONS.md`/`MEMORY/` convention set, and the pre-commit/verify discipline. Audit\n  which Core tools are genuinely project-portable vs harness-specific before copying. *(Steve, 2026-06-28)*\n\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1299,7 +1299,7 @@
     "project": "core",
     "title": "Choose tracker",
     "body": "Sortie ships GitHub Issues and Jira adapters; no Linear adapter. Decision: start with **GitHub Issues**; defer writing a Linear adapter unless we have a strong reason to migrate back.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1307,7 +1307,7 @@
     "project": "core",
     "title": "Tune the prompt template",
     "body": "*(partial, 2026-06-29)* assumption-handling + scope discipline + \"document assumptions\" baked into the Dashboard `WORKFLOW.md` template body. Still TODO: open a **draft** PR + flag when a change touches more than N files (the agent can't set draft from the hook — needs another mechanism).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1315,7 +1315,7 @@
     "project": "core",
     "title": "Wire `after_run` workspace hook → Discord",
     "body": "Notify on every session completion with status, PR link, cost, self-review outcome.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1323,7 +1323,7 @@
     "project": "core",
     "title": "Wire `after_run` workspace hook → browser test + screen recording",
     "body": "For widgets/UI tickets, run a Playwright script against the preview build, capture a recording, attach to the GitHub Issue or PR comment. Needs the Dashboard project to have a deterministic local-build URL.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1331,7 +1331,7 @@
     "project": "core",
     "title": "Build Mission Control page in Dashboard",
     "body": "Polls Sortie `/api/v1/state` every 5–10s. Shows running sessions, retry queue, recent runs, costs. Read-only.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1339,7 +1339,7 @@
     "project": "core",
     "title": "Agent leaks `package.json` mutations into PRs — REVISIT ~2026-07-07",
     "body": "*(Steve, 2026-06-30)* — PR #7 carried out-of-scope manifest edits: a root `allowScripts` block + an `apps/web` `prepare` `|| true` regression. **Mechanism (now confirmed by elimination, in-container test):** it is **NOT** npm (plain `npm ci` in the container leaves the tree clean), **NOT** lavamoat (not installed, no postinstall hook), **NOT** repo/`.npmrc` config → it's the **Claude Code agent session's own install-script sandboxing** writing top-level `allowScripts` during the agent's work. It's **inert** in this repo (nothing reads `allowScripts`). **A structural `after_run` dep-manifest guard was built + Oracle-SHIP'd** (restore manifests to `origin/main` before staging, `.sortie/allow-dep-changes` sentinel opt-in) **then REVERTED from main** (`58bfa18`) per Steve — **preserved on branch `chore/dep-manifest-guard`** (was commit `f3d0007`), re-mergeable as-is. **Why parked, not shipped:** the clean \"commit the `allowScripts` block to main once\" fix assumed npm's idempotent `approve-scripts`, which collapsed when the test proved it's not npm; whether the *Claude Code* writer respects a pre-committed block is undocumented + untested, so committing is an unverified gamble and the guard's silent-revert was judged not worth keeping for an inert artifact while Steve still reviews every PR. **Revisit next week:** if manifest mutations keep appearing in Sortie PRs, re-investigate — options: (a) re-merge the guard from `chore/dep-manifest-guard`; (b) test the Claude Code writer's idempotency (run a `claude` session install with the block pre-committed, see if it rewrites); (c) deliberately *adopt* an install-script allowlist as repo policy (npm `approve-scripts` if container npm ≥ 11.16.0, or lavamoat) + a `git diff --exit-code` tripwire that fails loud instead of silent-reverting; (d) configure Claude Code not to gate install scripts. Real out-of-band enforcement belongs with the self-merge guardrails item above once supervision drops.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1347,7 +1347,7 @@
     "project": "core",
     "title": "Harden guardrails into real boundaries before enabling agent self-merge",
     "body": "*(Steve, 2026-06-30; gated — ~months out)* — Today the actual authorization boundary on agent changes is **Steve manually reviewing + approving every bot PR** before merge (branch protection, bot can't self-merge). The in-sandbox controls (dep-manifest guard's `.sortie/allow-dep-changes` sentinel, prompt \"don't touch X\" rules) live in the agent's own workspace → **agent-self-grantable**, so they're **noise filters / review signal aids, NOT boundaries**. When moving to less-supervised merging (auto-merge on green, higher concurrency), the human gate disappears and these must become **out-of-band** controls the agent can't reach: e.g. a **GitHub Actions PR check** (runs in GitHub infra, outside the agent's container) that FAILS any PR touching dependency manifests / secrets / CI / forbidden paths unless a label only a human can apply (`sortie:allow-deps`) is present — the label is the auth token the agent can't set. Composes with the dep-guard (guard strips incidental noise pre-PR; CI hard-blocks deliberate changes pending the human label). Ties into: File access whitelist, `ask_human` enforcement, Context Monitor. **Revisit when self-merge / unsupervised autonomy is actually on the table.**",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1355,7 +1355,7 @@
     "project": "core",
     "title": "Build `ask_human` MCP tool (priority: near-term)",
     "body": "Custom MCP server the agent calls mid-session to ask a question. Posts to Discord/Dashboard, blocks until reply, returns the reply to the agent. Build alongside the initial Sortie deployment. **Enforcement mechanism (file-edit pre-hook vs read-only mount vs `chmod`-at-session-start vs prompt-only) is TBD at build/deploy time** — picked then, not now. See the \"Guardrails — `ask_human` triggers\" section below for the catalog of conditions that should call into this tool.",
-    "priority": "high",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1363,7 +1363,7 @@
     "project": "core",
     "title": "Issue-authoring for agents — enforce structure + a \"brain-dump → ticket\" skill",
     "body": "*(Steve, 2026-06-29)* — Two parts. **(a) Audit how/whether issue structure is *enforced*** for Sortie-picked issues. Today it's **prompt-only**: `WORKFLOW.md`'s template guides the agent and self-review checks `npm run verify`, but nothing validates the *issue* itself has acceptance criteria / scope before an agent burns a run on it. Decide if a structural control is warranted — e.g. a required GitHub issue template (`.github/ISSUE_TEMPLATE/`), a Sortie `dispatch` rule, or a pre-dispatch validator that bounces malformed issues. **(b) Build a template or skill** that turns Steve's stream-of-consciousness feature requests into the proper goal/acceptance-criteria/scope format fast. Investigate reusing existing skills (`to-issues`, `to-prd`, `triage`) and/or a GitHub issue template vs a new lightweight `/to-issues`-style skill. Goal: low-friction capture → well-formed ticket Sortie can act on without drift.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1371,7 +1371,7 @@
     "project": "core",
     "title": "Verify the quota-refund janitor's DSM schedule fires unattended",
     "body": "*(Steve, 2026-06-30)* — The janitor (`ops/sortie/quota-refund.sh`, D-024 + idle-guard) works when run **manually** (full PATH), but the DSM Task Scheduler job's first run produced **no log file**, i.e. it never executed (likely the minimal-PATH gotcha — `docker`/`sqlite3` not on the scheduled task's PATH — or the schedule simply hadn't fired). Circle back: in DSM Task Scheduler hit **Run** → **View Result**; if `docker not found`, pin full paths (`/usr/local/bin/docker`) in the task or set `DOCKER_BIN`/`SQLITE_BIN` env in the command. Not \"deployed\" until an *unattended* run writes the expected log to `/volume1/docker/personal-dashboard/quota-refund.log`.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1379,7 +1379,7 @@
     "project": "core",
     "title": "Later: write a Linear adapter",
     "body": "Sortie's adapter contract is documented; this is a deliberate \"tracker-agnostic\" extension point. Only worth doing if we want Linear's UI/views over GitHub Issues.\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1387,7 +1387,7 @@
     "project": "core",
     "title": "Synchronous — block until human approves:",
     "body": "- *Scope:* modify any file outside `SORTIE_WORKSPACE` (the original case)\n- *Secrets / credentials:* touch any file matching `.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*.json`, or a configured secret-file glob\n- *Auth / authz code:* touch any path in a per-project \"sensitive paths\" list (auth middleware, permission models, session handling, CSP/CORS config)\n- *Harness self-modification:* touch any of `SOUL.md`, `SOUL_*.md`, `AGENTS.md`, `SKILLS.md`, `CLAUDE.md`, `.claude/settings.json`, or files under `.claude/commands/`\n- *Destructive git:* `git push --force`, history rewrite of pushed commits, branch delete, `reset --hard` against a remote-tracking branch\n- *Direct-to-main:* push commits to `main`/`master` without a PR, or merge a PR without the review/CI feedback loop having completed\n- *CI / deploy / infra config:* touch CI workflows, `Dockerfile`, deploy manifests, infra-as-code, or `package.json` scripts (especially `pre`/`post`-install — supply-chain vector)\n- *Dependencies:* major-version bump (semver), add a dep from a publisher not already in `package.json`, pin to a git ref instead of a registry version\n- *Database / schema:* create or modify migrations, run a migration, drop or alter a table or column\n- *External effects:* outbound HTTP to a non-allowlisted domain; sending email / Slack / Discord on behalf of Steve; creating issues or PRs in a repo other than the assigned one\n- *Bulk delete:* delete more than N files in a session (N configurable — start at 10)\n- *Skip-the-bar:* `--no-verify` on commit/push, deleting tests to get a build green, or modifying tests in a way that reduces coverage of the changed code",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1395,7 +1395,7 @@
     "project": "core",
     "title": "Soft block — ask once when threshold crossed, then proceed:",
     "body": "- Session token cost exceeds configured budget (e.g. $X per ticket)\n- Session duration exceeds configured envelope (e.g. Y minutes)\n- More than N files modified or M net lines changed in a single session (signal that scope has crept beyond the ticket)\n- Add or remove a top-level directory or package",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1403,7 +1403,7 @@
     "project": "core",
     "title": "Async notify only (Discord ping after the fact, no block):",
     "body": "- Self-Review failed and Sortie is about to retry\n- Hit retry limit (session terminating in failure)\n- New public API surface added (new exported function / route / endpoint)\n- Modified existing public API signature (worth knowing — possible breaking change)\n- Crossed a \"soft\" milestone like first commit, first push, first PR open\n\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1411,7 +1411,7 @@
     "project": "core",
     "title": "Discord",
     "body": "Set up a Discord server for communicating with agents from computer and phone. Three directions to wire up: **(a) report-back** — Sortie `after_run` workspace hook posts session status, PR link, cost, and self-review outcome to a channel; **(b) task entry** — Discord bot converts messages into GitHub Issues so Sortie picks them up on next poll cycle; **(c) ask_human routing** — the `ask_human` MCP tool (see Sortie Integration) routes agent questions to Discord and blocks for the reply.\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1419,7 +1419,7 @@
     "project": "core",
     "title": "Automatic Maintenance",
     "body": "Run `/project-maintenance` on a schedule.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1427,7 +1427,7 @@
     "project": "core",
     "title": "Sec-Ops Audit",
     "body": "- Run this audit weekly on a schedule",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1435,7 +1435,7 @@
     "project": "core",
     "title": "Periodic META-TODOS regeneration",
     "body": "Plans drift. Schedule a regular audit that compares current system state against original intent, marks stale items, and surfaces newly discovered gaps. Could be a step added to `/project-maintenance`.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1443,7 +1443,7 @@
     "project": "core",
     "title": "Memory Monitor",
     "body": "Alert when memory is bloated enough to add significant latency. ~~Static half (size/cap detection)~~ ✓ Done (D-021) — `/project-maintenance` now flags any index line > 200 chars, any hot-path day file > 12 KB, and total session-start load > 32 KB; aging into `MEMORY/archive/` keeps the always-loaded set bounded. **Still open — the dynamic/latency half:**\n1. Measure thinking latency from a sample of requests — total and per-agent — comparing peak and average against an expected benchmark.\n  2. Issue engineered test prompts with predictable memory-intensity profiles and assess performance. Alert if it's time to consolidate memory or migrate to a new system, like Obsidian.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1451,7 +1451,7 @@
     "project": "core",
     "title": "Model upgrade review",
     "body": "No process for evaluating harness complexity when a new model lands. A `/model-upgrade-review` skill or checklist: which components to strip (assumptions that are no longer true), which to add (newly unlocked capabilities). Run it when any new major model version is available.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1459,7 +1459,7 @@
     "project": "core",
     "title": "Token Monitor",
     "body": "Periodically assess tokens used by all agents in the harness. Token limit per agent (reasonable default, tunable per agent over time). Along with a nightly token usage report, include 0–3 actionable tips for conserving token usage without hurting quality. Agent should stay current on best practices.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1467,7 +1467,7 @@
     "project": "core",
     "title": "Token monitoring tools landscape research",
     "body": "What built-in tools are available for token monitoring? Regular job to see what's available. Focus only on things that have proven, measured, significant results in improving token efficiency without negatively affecting output.\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1475,7 +1475,7 @@
     "project": "core",
     "title": "Decision (2026-05-27):",
     "body": "- Mission Control UI lives in the **Personal Dashboard** project as a page, not as a standalone project. The Dashboard exists now; a separate project is overkill for one page calling one API.\n- Orchestration runs on **Sortie** (single Go binary, SQLite persistence). Dashboard polls Sortie's `GET /api/v1/state` and `GET /api/v1/{identifier}` every 5–10s (no event stream available).\n- Sortie address configured via `SORTIE_URL` env var in the Dashboard.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1483,7 +1483,7 @@
     "project": "core",
     "title": "Limit:",
     "body": "Sortie's HTTP API is read-only — no start/pause/kill actions, no human-answer endpoint. Mission Control is monitoring + drill-down only; intervention happens by editing tracker state (GitHub Issues) or by clicking through to the PR.\n- Sortie's Dashboard is one thing, but we may still want further visibility into the entire harness system - Sortie + the inner loop. Agent-agent communication etc.\n- This is also represented in a TODO inside the Personal Dashboard project, but keeping a reference here as well for now.\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1491,7 +1491,7 @@
     "project": "core",
     "title": "SOUL inheritance / mixins + prompt versioning [Warren Rec 3]",
     "body": "Warren resolves child prompts over parents and versions them. Flagged **not yet load-bearing at 7 agents** (PRINCIPLES: don't carry dead weight); revisit if the SOUL library churns. See IMPROVEMENTS.md.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1499,7 +1499,7 @@
     "project": "core",
     "title": "Seeds-style durable work queue + PR-merge gating [Warren Rec 9]",
     "body": "Warren's durable JSON work queue for serial multi-agent handoffs. Ceiling-triggered future; overlaps with Sortie. Revisit if serial handoffs become common. See IMPROVEMENTS.md.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1507,7 +1507,7 @@
     "project": "core",
     "title": "Structured task handoff for Sortie",
     "body": "Define a standard frontmatter / metadata schema for tickets that Sortie picks up. Goal: consistent issue shape across GitHub Issues so prompt templates render reliably and Mission Control can group/filter.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1515,7 +1515,7 @@
     "project": "core",
     "title": "`/sortie-status`",
     "body": "Hits Sortie's `/api/v1/state` endpoint. Shows running sessions, retry queue, token usage and costs, recent run outcomes. Precursor to / overlap with the Mission Control widget. May be redundant once we have the dashboard.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1523,7 +1523,7 @@
     "project": "core",
     "title": "Parallel test execution",
     "body": "`/run-all-tests` dispatches all three test skills concurrently. This is fine against the Anthropic API but may need to become sequential if switching to a local LLM, depending on available hardware and the model's concurrency limits.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1531,7 +1531,7 @@
     "project": "core",
     "title": "Ntfy as harness primitive",
     "body": "Once Ntfy is self-hosted on the dashboard, wire it into Core so session wrap-up and scheduled job completions push a notification to phone. Low priority until Ntfy is running.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1539,7 +1539,7 @@
     "project": "core",
     "title": "`/ntfy [message]`",
     "body": "Skill to fire an arbitrary push notification from the harness. Depends on Ntfy being set up.\n- Read recent git history at session start?",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1547,7 +1547,7 @@
     "project": "core",
     "title": "Add n8n Workflow Engineer Agent specialist",
     "body": "Specialist in building n8n workflows: node types, credential system, error handling patterns, sub-workflow design. Saves re-explaining n8n context on every dispatch.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1555,7 +1555,7 @@
     "project": "core",
     "title": "`/project-context [project]` skill",
     "body": "Loads the relevant PROJECT.md and recent memory for a specific project before dispatching a sub-agent. Solves context-switching as work moves between Dashboard, Sortie configs, and Core. Lately I've been running the `/core-session-start` skill from within the project itself, so i dont think this is necessary at the moment.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1563,7 +1563,7 @@
     "project": "core",
     "title": "Persistent loop that pulls tickets and spawns agents",
     "body": "Sortie's core poll-dispatch-reconcile loop. Originally the entire reason this orchestration layer exists.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1571,7 +1571,7 @@
     "project": "core",
     "title": "Per-ticket workspace isolation",
     "body": "Sortie creates a fresh git workspace per issue.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1579,7 +1579,7 @@
     "project": "core",
     "title": "Auto-PR creation",
     "body": "Agent commits and pushes; Sortie's `after_run` hook stages, commits, and pushes the branch.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1587,7 +1587,7 @@
     "project": "core",
     "title": "Retry with backoff",
     "body": "Sortie state machine handles retry queue, stall detection, timeout enforcement.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1595,7 +1595,7 @@
     "project": "core",
     "title": "Token / cost tracking surface",
     "body": "*(partial — was \"Token usage\" under Scheduling and informs \"Token Monitor\" under Future Agents)* — Sortie's `/api/v1/state` exposes `active_estimated_cost_usd`, token counts per session, and run history. The richer \"actionable tips\" component of Token Monitor is **not** covered; that still lives as a future agent.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1603,7 +1603,7 @@
     "project": "core",
     "title": "State snapshot HTTP API",
     "body": "*(was the foundation for Mission Control, originally planned against Symphony)* — Sortie's `/api/v1/state` + `/api/v1/{identifier}` + `/metrics` replace the Symphony-era plan.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1611,7 +1611,7 @@
     "project": "core",
     "title": "Self-Review evaluator step",
     "body": "*(partial overlap with the original \"Evaluator/QA layer\" item, now shipped as Oracle — see SHIPPED)* — Sortie's Self-Review is a coding-agent-output evaluator scoped to coding sessions. The broader harness-level Oracle/QA pattern (grading test-skill results, dispatch outputs, etc.) is **not** covered.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1619,7 +1619,7 @@
     "project": "core",
     "title": "PR-reaction feedback loop",
     "body": "Sortie watches reactions on the PR and feeds them into a follow-up attempt.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1627,7 +1627,7 @@
     "project": "core",
     "title": "Master config file",
     "body": "Once the personal dashboard is up and running with a few widgets and the harness is stable, look through both `personal-dashboard` and `core` projects for references to the same file paths. Bump those paths out to a master config that is imported by both projects to prevent projects from getting out of sync with each other. Create a skill that scans **all* projects in the projects folder doing a similar check. Manual run is fine for now but add a TODO for having that skill run weekly, or at least a weekly reminder / notification for me to run the skill manually.\n---",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1635,7 +1635,7 @@
     "project": "core",
     "title": "Deploy Sortie to NAS",
     "body": "✓ Done — Container Manager via egress-hardened docker-compose; base dir `/volume1/docker/personal-dashboard`, env-file, port 7678, runs via sudo/admin. First autonomous PR merged (#4).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1643,7 +1643,7 @@
     "project": "core",
     "title": "Give Sortie a separate bot identity (GitHub)",
     "body": "✓ Done — `sortie-bot-55`, classic `public_repo` PAT (fine-grained unavailable for a collaborator on a personal repo), non-admin **Write**. Branch protection → PR + 1 approval, `enforce_admins:false` → bot opens PRs, Steve approves+merges + keeps direct push to main. Resolved the `approvals:0`/`enforce_admins:true` workaround.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1651,7 +1651,7 @@
     "project": "core",
     "title": "Define `WORKFLOW.md`",
     "body": "(Dashboard)~~ ✓ Done — `ops/sortie/WORKFLOW.md`: tracker + `query_filter` gate, active/in-progress/**handoff**/terminal states, concurrency=1, burn caps (`max_sessions:3`, `max_tokens`, `max_budget_usd`). Per-project; other projects still need their own.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1659,7 +1659,7 @@
     "project": "core",
     "title": "Configure Self-Review",
     "body": "✓ Done — `self_review` block: `reviewer:\"same\"`, `verification_commands:[npm ci, npm run verify]`, `max_iterations:3`. Runs before push; corrects locally.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1667,7 +1667,7 @@
     "project": "core",
     "title": "Test the full loop end-to-end",
     "body": "✓ Done — issue labeled → picked up → agent works → self-review → bot PR → Steve merged (**PR #4**). (Mission Control + Discord sub-parts remain as separate open items.)",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1675,7 +1675,7 @@
     "project": "core",
     "title": "Egress allowlist (new structural control)",
     "body": "✓ Done — squid sidecar + internal Docker network; allowlist `.anthropic/.github/.githubusercontent/.npmjs/.datadoghq`. Token exfil contained; verified. `query_filter` authorization gate + `handoff_state` (no re-run/dup-PR) also shipped.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1683,7 +1683,7 @@
     "project": "core",
     "title": "Set up PR Reactions feedback loop",
     "body": "✓ Done (D-023) — **changes-requested** uses Sortie's native `reactions.review_comments` (continuation on the existing branch, no relabel); **merge conflict** (not natively detectable) uses `.github/workflows/sortie-conflict-rework.yml` flipping `in-review`→`queued`. `before_run` reuses the existing `sortie/<id>` branch; `after_run` writes `.sortie/scm.json`. Oracle SHIP.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1691,7 +1691,7 @@
     "project": "core",
     "title": "Quota-fail budget-refund janitor",
     "body": "✓ Done (D-024) — NAS host-cron `ops/sortie/quota-refund.sh`: refunds `max_sessions` budget lost to quota exhaustion (liveness-gated, all-quota-fail classification, backup + transactional delete + trap-restart, **idle guard** so it never interrupts an in-flight run). Oracle SHIP. *(Unattended DSM schedule still to be verified — see open item above.)*",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1699,7 +1699,7 @@
     "project": "core",
     "title": "Global CLAUDE.md startup bug",
     "body": "Should `~/.claude/CLAUDE.md` instruct every Claude instance to read this project's SOUL?~~ ✓ Resolved — global CLAUDE.md cleared; harness is now opt-in per session via `/core-session-start` or per project via pointer CLAUDE.md.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1707,7 +1707,7 @@
     "project": "core",
     "title": "Sessions should start from inside CORE",
     "body": "✓ Resolved — same fix.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1715,7 +1715,7 @@
     "project": "core",
     "title": "Should `core` live inside the `Projects/` directory?",
     "body": "✓ Decided — **no, `core` stays a sibling of `Projects/`**. It's the harness that operates on the projects, not one of them; keeping it outside firewalls it from upcoming per-project automation (Sortie). Rationale: D-015.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1723,7 +1723,7 @@
     "project": "core",
     "title": "SOUL changelog",
     "body": "✓ Done — expanded beyond SOUL files into a single `DECISIONS.md` (ADR-style, `D-NNN`). Captures architecture, process, and behavioral SOUL changes; SOUL-touching entries carry an `Affects` field for traceability. Wired into `SOUL_DISPATCHER.md` §3.3 (log approved amendments) and §3.6 (any behavioral SOUL edit requires an entry), and referenced from base `SOUL.md`. Rationale: D-004.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1731,7 +1731,7 @@
     "project": "core",
     "title": "Failure log",
     "body": "✓ Done — `Agents/[Agent Name]/FAILURES.md` exists per producing agent; failure-logging protocol lives in `SOUL_DISPATCHER.md §3.3` (root-cause tag, Oracle revision note, SOUL amendment proposal when a tag repeats 2+ times). Residual open item: Oracle grading test-skill results — see \"Harness — Next Session.\"",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1739,7 +1739,7 @@
     "project": "core",
     "title": "Evaluator/QA layer",
     "body": "✓ Done — **Oracle** (QA Reviewer) agent created and wired into routing per `SOUL_DISPATCHER.md §3.2`. Separates generation from evaluation for high-stakes dispatches. Residual open item: Oracle grading test-skill results — see \"Harness — Next Session.\"",
-    "priority": "high",
+    "priority": "P1",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1747,7 +1747,7 @@
     "project": "core",
     "title": "Session lifecycle skill",
     "body": "✓ Done — `/core-session-start` created; loads or creates PROJECT.md and project MEMORY/, sets session memory target to project directory.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1755,7 +1755,7 @@
     "project": "core",
     "title": "Routing test",
     "body": "✓ Done — `/test-dispatcher-routing-test` skill created; dispatches live scenarios and checks self-reported agent names against expected routing.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1763,7 +1763,7 @@
     "project": "core",
     "title": "Oracle grades test-skill results",
     "body": "✓ Done — grading authority for `/test-agent-roll-call`, `/test-dispatcher-routing-test`, and `/test-dispatch-quality-test` moved Tank → Oracle. Each skill collects raw outputs the same way, then dispatches Oracle once to grade against its unchanged pass criteria. `/run-all-tests` folds the three into a single consolidated Oracle grading dispatch and consolidates from Oracle's verdicts. Closes the generation ≠ evaluation gap in the test layer. Rationale: D-013.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1771,7 +1771,7 @@
     "project": "core",
     "title": "`/core-status` command",
     "body": "✓ Done — read-only snapshot skill: agents, skills, memory/PRINCIPLES freshness, last maintenance/test run (best-effort from MEMORY + git log), and git state (branch/ahead/behind/dirty). Registered in SKILLS.md. Derives everything from existing artifacts; no new tracking infra. **Superseded:** genericized + renamed to `/project-status`, layered on a global generic skill (`~/.claude/commands/project-status.md`) so it runs from any session — same delegate-then-extend shape as `/project-maintenance`. Rationale: D-016.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1779,7 +1779,7 @@
     "project": "core",
     "title": "Harness improvements study (Warren)",
     "body": "✓ Done — The Architect studied `jayminwest/warren`; prioritized pit-of-success recommendations in `Agents/Harness Engineer/IMPROVEMENTS.md`, Oracle-verified against the live repo. Triaged into General Harness Improvements (Recs 1/2/4/5/6/7) and Maybe Add (Recs 3/9); Rec 8 (direct agent-to-agent messaging) reviewed and **declined**. Key finding: \"sqlitemail\" doesn't exist in Warren — it uses Burrow's per-burrow inbox + a SQLite `events` audit log.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1787,7 +1787,7 @@
     "project": "core",
     "title": "Handoff contracts — return envelope + acceptance checklist [Warren Rec 4+5]",
     "body": "✓ Done — `/dispatch` \"Done When\" is now a checkable acceptance checklist and \"Output\" a fixed `## Return` envelope (Status / Acceptance [echoes each Done-When item] / Summary / Files changed / Flags); universal rule in base `SOUL.md`, Tank composes/synthesizes per `SOUL_DISPATCHER.md §3.2/§3.3`, Oracle grades the echoed Acceptance. Rationale: D-017. *(Sprint-contracts extension still open above.)*",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1795,7 +1795,7 @@
     "project": "core",
     "title": "SOUL structural enforcement [Warren Rec 1] + no meta-commentary preamble [Warren Rec 6]",
     "body": "✓ Done — `/project-maintenance` Step 4 now asserts each specialist SOUL has the inheritance line + exactly one parseable `Dispatch model:` tier (static complement to `/test-agent-model-enforcement`); base `SOUL.md` gained a positively-framed \"lead with substance in parsed output\" rule. Rationale: D-018.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1803,7 +1803,7 @@
     "project": "core",
     "title": "SOUL \"Operating Contract\" block [Warren Rec 2]",
     "body": "✓ Done — uniform `## Operating Contract` block (Produces / Authority / Boundaries / Escalates to Tank when) consolidated into all 5 specialist SOULs (no boundary change), asserted by `/project-maintenance` Step 4. Surfaced that Designer/Switch lacked an escalation trigger → resolved by giving Switch an `## Escalation Triggers` section (Steve-approved). Rationale: D-019 (block), D-020 (Switch escalation).",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1811,7 +1811,7 @@
     "project": "core",
     "title": "QA/Evaluator Agent",
     "body": "✓ Done — **Oracle** (QA Reviewer) lives in `Agents/QA Reviewer/`, registered in AGENTS.md, routing rule in `SOUL_DISPATCHER.md §3.2`.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1819,7 +1819,7 @@
     "project": "core",
     "title": "Role renames (designer / generalist engineer / sec-ops)",
     "body": "✓ Done — Frontend Design Specialist → **Designer**, Staff Engineer → **Generalist Engineer**, Head of Security → **Sec-Ops** (callsigns Switch/Mouse/Dozer unchanged). Folders, SOUL files (`SOUL_DESIGNER.md` / `SOUL_GENERALIST_ENGINEER.md` / `SOUL_SEC_OPS.md`), AGENTS.md, routing rules, tests, README, and docs updated; generic \"design/frontend/security/engineer\" preserved. Rationale: D-008.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1827,7 +1827,7 @@
     "project": "core",
     "title": "Harness Engineer agent + encode agentic-engineering principles",
     "body": "✓ Done — **The Architect** (Harness Engineer, opus) lives in `Agents/Harness Engineer/` with `SOUL_HARNESS_ENGINEER.md` + `PRINCIPLES.md` (distilled from jayminwest.com/agentic-engineering-book — harness engineering, guides/sensors, twelve leverage points, readiness). Registered in AGENTS.md, routing rule in `SOUL_DISPATCHER.md §3.2`, wired into roll-call / routing / dispatch-quality tests. `/core-session-start` delegates harness-session work to it. Rationale + delegation-model choice: D-005.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1835,7 +1835,7 @@
     "project": "core",
     "title": "CI/CD pipeline",
     "body": "✓ Decided — no GitHub CI. Pre-push gate enforced locally by Tank: run `/project-maintenance` and `/run-all-tests` before any push; block if either fails. Rule lives in `SOUL_DISPATCHER.md`.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1843,7 +1843,7 @@
     "project": "core",
     "title": "Make Core a git repo",
     "body": "✓ Done — pushed to `github.com/scolacur/core`.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1851,7 +1851,7 @@
     "project": "core",
     "title": "Agent registration",
     "body": "✓ Done — `/new-agent` handles adding to AGENTS.md and roll-call; `SOUL_DISPATCHER.md §3.6` enforces use of the command.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1859,7 +1859,7 @@
     "project": "core",
     "title": "SKILLS.md",
     "body": "✓ Done — `SKILLS.md` created; `/new-skill` handles registration; `SOUL_DISPATCHER.md §3.6` enforces use of the command.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1867,7 +1867,7 @@
     "project": "core",
     "title": "Harness brainstorm — what else does a good harness need?",
     "body": "✓ Done — findings folded into \"Harness — Next Session\" above.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1875,7 +1875,7 @@
     "project": "core",
     "title": "Mission Control lives in `Projects/mission-control/` as a separate project",
     "body": "✓ Superseded — see Dashboard DECISIONS.md D-014 and the current \"Mission Control\" section above.",
-    "priority": "medium",
+    "priority": "P3",
     "status": "completed",
     "source": "seed:core/META-TODOS.md"
   },
@@ -1883,7 +1883,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Ticket relations UI (blocked-by / blocking)",
     "body": "Overflow menu → \"Mark as\" → \"Blocked by…\" / \"Blocking…\"; search modal that filters tickets as you type; blocker/blocked badges on cards. Schema exists: agent_ticket_relations (blocks/relates/duplicates).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1891,7 +1891,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Tags UI (assign / create / filter)",
     "body": "Assign, create, and recolor tags on a ticket; filter the board by tag. Schema exists: agent_tags + agent_ticket_tags (seeded UI, Infra).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1899,7 +1899,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Reminders — UI + delivery job",
     "body": "Add/remove reminders on a ticket (remind_at + note); a scheduled job sends when due (ties into Discord / inbox notifications). Schema exists: agent_ticket_reminders.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1907,7 +1907,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Recurring tickets — recur logic",
     "body": "On completing a ticket with recur_interval set (e.g. weekly maintenance), spawn the next occurrence. Schema exists: agent_tickets.recur_interval.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1915,7 +1915,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Assignee UI",
     "body": "Set/clear a ticket assignee (human or agent, e.g. \"sortie\"); filter by assignee. Schema exists: agent_tickets.assignee.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1923,7 +1923,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Drag-and-drop reordering within a lane",
     "body": "Reorder tickets within a column via drag-and-drop, writing a fractional sort_order between neighbours. Schema already supports it (sort_order REAL); today moves append.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1931,7 +1931,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Activity Feed",
     "body": "Chronological feed of ticket events (created / status_changed / archived / converted). Schema exists: agent_ticket_events (populated from day one).",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1939,7 +1939,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Archived view + restore",
     "body": "View soft-deleted (archived) tickets and restore them. Schema exists: agent_tickets.archived_at; delete already soft-deletes.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1947,7 +1947,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Phase 3 — Convert ticket to Sortie issue",
     "body": "Per-ticket \"Convert to Sortie issue\": Claude API formats the ticket into the Sortie issue format (goal/acceptance-criteria/scope) → draft-then-approve → creates a sortie:queued GitHub issue in the project's repo → links issue back to the ticket. Needs ANTHROPIC_API_KEY + write-scoped GH token on the NAS. Only for sortie_enabled projects.",
-    "priority": "high",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1955,7 +1955,7 @@
     "project": "personal-dashboard",
     "title": "[Agent Dashboard] Derived status sync from GitHub labels",
     "body": "node-cron job polls GitHub for each converted ticket's sortie:* label + PR merge-state and writes in_progress / in_review / completed onto the row (the derived columns). Avoids coupling to Sortie's internal :7678 API.",
-    "priority": "medium",
+    "priority": null,
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   },
@@ -1963,7 +1963,7 @@
     "project": "core",
     "title": "Fetch Core TODOs from the dashboard ticket API instead of META-TODOS.md",
     "body": "META-TODOS.md stays canonical/Markdown for now (it's load-bearing — referenced across core's README/PROJECT/DECISIONS/MEMORY, and PROJECT.md §42 mandates Markdown). But core's tickets now also live in the dashboard board. Migrate core's references (session-start, /project-maintenance, /project-status) to read Core's tickets from the Agent Dashboard ticket API (GET /api/widgets/agent-dashboard/tickets filtered to project=core) so there's one source of truth. Requires the dashboard API reachable from core sessions + a sync/authoring path back. Ties into the META-TODOS 'memory-library'/'replicate Core dev tooling' items.",
-    "priority": "high",
+    "priority": "P1",
     "status": "backlog",
     "source": "seed:agent-dashboard/followups"
   }

@@ -6,7 +6,8 @@ export interface SeedTicket {
   project: string;
   title: string;
   body: string | null;
-  priority: TicketPriority;
+  /** P0–P5, or null for unset. */
+  priority: TicketPriority | null;
   status: TicketStatus;
   source: string;
 }
