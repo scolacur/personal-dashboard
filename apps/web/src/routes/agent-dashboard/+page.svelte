@@ -358,11 +358,21 @@
                   title="Click to change priority"
                   onclick={() => cyclePriority(ticket)}>{ticket.priority}</button
                 >
-                {#if ticket.githubIssueUrl}
-                  <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
-                    #{ticket.githubIssueNumber}
-                  </a>
-                {/if}
+                <span class="card-top-right">
+                  {#if ticket.githubIssueUrl}
+                    <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
+                      #{ticket.githubIssueNumber}
+                    </a>
+                  {/if}
+                  {#if ticket.displayId}
+                    <a
+                      class="ticket-id"
+                      href="/agent-dashboard/tickets/{ticket.displayId}"
+                      title="Open ticket {ticket.displayId}"
+                      draggable="false">{ticket.displayId}</a
+                    >
+                  {/if}
+                </span>
               </div>
               <p class="card-title">{ticket.title}</p>
               {#if ticket.body && !condensed}

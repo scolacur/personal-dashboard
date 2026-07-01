@@ -139,6 +139,9 @@ gh api repos/scolacur/personal-dashboard/branches/main/protection \
    CLAUDE_CODE_OAUTH_TOKEN=...   # Pro plan via `claude setup-token` (or ANTHROPIC_API_KEY for metered API)
    SORTIE_GITHUB_TOKEN=...       # bot classic PAT, public_repo scope
    SORTIE_GITHUB_PROJECT=scolacur/personal-dashboard
+   ANTHROPIC_MODEL=claude-sonnet-4-6   # fleet-wide model for Sortie's `claude` sessions (agent.command is bare `claude`).
+                                       # Sonnet = far lighter on the Pro session quota than Opus + plenty for atomic issues.
+                                       # Use "sonnet" to track latest, or pin the ID. No per-issue switching.
    ```
 4. **Build:**
    ```sh
