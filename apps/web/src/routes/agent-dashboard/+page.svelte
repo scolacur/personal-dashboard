@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { AgentProject, AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
-  import { TICKET_STATUSES } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import * as api from './api';
 
   const COLUMNS: { status: TicketStatus; label: string }[] = [
     { status: 'backlog', label: 'Backlog' },
     { status: 'ready', label: 'Ready' },
+    { status: 'queued', label: 'Queued' },
     { status: 'in_progress', label: 'In progress' },
     { status: 'in_review', label: 'In review' },
     { status: 'completed', label: 'Completed' },
@@ -22,6 +22,12 @@
   // null = "All projects"
   let filterProjectId = $state<number | null>(null);
 
+  // Free-text filter over ticket title + body (case-insensitive).
+  let search = $state('');
+
+  // Condensed view hides card descriptions to fit more tickets on screen.
+  let condensed = $state(false);
+
   // Add / edit form state. `editingId === null` while adding.
   let formOpen = $state(false);
   let editingId = $state<number | null>(null);
@@ -33,7 +39,12 @@
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
   function visibleTickets(): AgentTicket[] {
-    return filterProjectId === null ? tickets : tickets.filter((t) => t.projectId === filterProjectId);
+    const q = search.trim().toLowerCase();
+    return tickets.filter((t) => {
+      if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
+      if (q && !`${t.title} ${t.body ?? ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
   }
 
   function byStatus(status: TicketStatus): AgentTicket[] {
@@ -104,14 +115,86 @@
     }
   }
 
-  async function move(ticket: AgentTicket, delta: number) {
-    const idx = TICKET_STATUSES.indexOf(ticket.status);
-    const next = TICKET_STATUSES[idx + delta];
-    if (!next) return;
+  /* ── Drag & drop ──────────────────────────────────
+     Native HTML5 DnD. A single dragover handler on each column body computes the
+     insertion point by comparing the pointer to each card's vertical midpoint, so
+     reordering within a lane and moving between lanes share one code path. */
+  let draggingId = $state<number | null>(null);
+  // Where the dragged card would land: `beforeId === null` means append to the end.
+  let dropTarget = $state<{ status: TicketStatus; beforeId: number | null } | null>(null);
+
+  function onDragStart(e: DragEvent, ticket: AgentTicket) {
+    draggingId = ticket.id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(ticket.id));
+    }
+  }
+
+  function onDragEnd() {
+    draggingId = null;
+    dropTarget = null;
+  }
+
+  function onColumnDragOver(e: DragEvent, status: TicketStatus) {
+    if (draggingId === null) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const cards = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.card');
+    let beforeId: number | null = null;
+    for (const el of cards) {
+      if (Number(el.dataset.id) === draggingId) continue;
+      const rect = el.getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) {
+        beforeId = Number(el.dataset.id);
+        break;
+      }
+    }
+    dropTarget = { status, beforeId };
+  }
+
+  // sort_order is a REAL column, so we can slot a card between neighbours by
+  // averaging their orders (or stepping ±1 past the ends).
+  function computeSortOrder(status: TicketStatus, beforeId: number | null, draggedId: number): number {
+    const col = byStatus(status).filter((t) => t.id !== draggedId);
+    let idx = beforeId === null ? col.length : col.findIndex((t) => t.id === beforeId);
+    if (idx === -1) idx = col.length;
+    const prev = col[idx - 1];
+    const next = col[idx];
+    if (!prev && !next) return 0;
+    if (!prev) return next.sortOrder - 1;
+    if (!next) return prev.sortOrder + 1;
+    return (prev.sortOrder + next.sortOrder) / 2;
+  }
+
+  async function onDrop(e: DragEvent, status: TicketStatus) {
+    e.preventDefault();
+    const id = draggingId;
+    const target = dropTarget;
+    draggingId = null;
+    dropTarget = null;
+    if (id === null) return;
+    const ticket = tickets.find((t) => t.id === id);
+    if (!ticket) return;
+    const sortOrder = computeSortOrder(status, target?.beforeId ?? null, id);
+    // Skip the round-trip if nothing actually changed.
+    if (ticket.status === status && ticket.sortOrder === sortOrder) return;
     error = null;
     try {
-      // Append to the end of the destination column.
-      await api.updateTicket(ticket.id, { status: next, sortOrder: Date.now() });
+      await api.updateTicket(id, { status, sortOrder });
+      await load();
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // Click the priority chip to cycle low → medium → high → low.
+  async function cyclePriority(ticket: AgentTicket) {
+    const idx = PRIORITIES.indexOf(ticket.priority);
+    const next = PRIORITIES[(idx + 1) % PRIORITIES.length];
+    error = null;
+    try {
+      await api.updateTicket(ticket.id, { priority: next });
       await load();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -128,38 +211,44 @@
       error = e instanceof Error ? e.message : String(e);
     }
   }
-
-  function canMoveLeft(ticket: AgentTicket): boolean {
-    return TICKET_STATUSES.indexOf(ticket.status) > 0;
-  }
-  function canMoveRight(ticket: AgentTicket): boolean {
-    return TICKET_STATUSES.indexOf(ticket.status) < TICKET_STATUSES.length - 1;
-  }
 </script>
 
 <header class="page-head">
   <h1>Mission Control</h1>
-  <div class="head-controls">
-    <label class="project-filter">
-      <span class="sr-label">Project</span>
-      <select
-        value={filterProjectId === null ? 'all' : String(filterProjectId)}
-        onchange={(e) => {
-          const v = e.currentTarget.value;
-          filterProjectId = v === 'all' ? null : Number(v);
-        }}
-      >
-        <option value="all">All projects</option>
-        {#each projects as p (p.id)}
-          <option value={String(p.id)}>{p.name}</option>
-        {/each}
-      </select>
-    </label>
-    <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
-      + Add Ticket
-    </button>
-  </div>
 </header>
+
+<section class="tickets-section">
+  <div class="section-head">
+    <h2 class="section-title">Tickets</h2>
+    <div class="head-controls">
+      <label class="ticket-search">
+        <span class="sr-label">Search tickets</span>
+        <input type="search" bind:value={search} placeholder="Search tickets…" />
+      </label>
+      <label class="condensed-toggle" title="Hide descriptions">
+        <input type="checkbox" bind:checked={condensed} />
+        <span>Condensed</span>
+      </label>
+      <label class="project-filter">
+        <span class="sr-label">Project</span>
+        <select
+          value={filterProjectId === null ? 'all' : String(filterProjectId)}
+          onchange={(e) => {
+            const v = e.currentTarget.value;
+            filterProjectId = v === 'all' ? null : Number(v);
+          }}
+        >
+          <option value="all">All projects</option>
+          {#each projects as p (p.id)}
+            <option value={String(p.id)}>{p.name}</option>
+          {/each}
+        </select>
+      </label>
+      <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
+        + Add Ticket
+      </button>
+    </div>
+  </div>
 
 {#if error}
   <p class="error" role="alert">{error}</p>
@@ -212,16 +301,35 @@
   <div class="board">
     {#each COLUMNS as col (col.status)}
       {@const items = byStatus(col.status)}
-      <section class="column">
+      <section class="column" class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
         <h2 class="column-head">
           {col.label}<span class="count">{items.length}</span>
         </h2>
-        <div class="column-body">
+        <div
+          class="column-body"
+          role="list"
+          ondragover={(e) => onColumnDragOver(e, col.status)}
+          ondrop={(e) => onDrop(e, col.status)}
+        >
           {#each items as ticket (ticket.id)}
             {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
-            <article class="card" class:done={ticket.status === 'completed'}>
+            <article
+              class="card"
+              class:done={ticket.status === 'completed'}
+              class:dragging={draggingId === ticket.id}
+              class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+              data-id={ticket.id}
+              draggable="true"
+              ondragstart={(e) => onDragStart(e, ticket)}
+              ondragend={onDragEnd}
+            >
               <div class="card-top">
-                <span class="priority priority-{ticket.priority}">{ticket.priority}</span>
+                <button
+                  type="button"
+                  class="priority priority-{ticket.priority}"
+                  title="Click to change priority"
+                  onclick={() => cyclePriority(ticket)}>{ticket.priority}</button
+                >
                 {#if ticket.githubIssueUrl}
                   <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
                     #{ticket.githubIssueNumber}
@@ -229,7 +337,7 @@
                 {/if}
               </div>
               <p class="card-title">{ticket.title}</p>
-              {#if ticket.body}
+              {#if ticket.body && !condensed}
                 <p class="card-body">{ticket.body}</p>
               {/if}
               {#if project}
@@ -240,20 +348,6 @@
                 >
               {/if}
               <div class="card-actions">
-                <button
-                  type="button"
-                  title="Move left"
-                  aria-label="Move left"
-                  disabled={!canMoveLeft(ticket)}
-                  onclick={() => move(ticket, -1)}>◀</button
-                >
-                <button
-                  type="button"
-                  title="Move right"
-                  aria-label="Move right"
-                  disabled={!canMoveRight(ticket)}
-                  onclick={() => move(ticket, 1)}>▶</button
-                >
                 <span class="spacer"></span>
                 <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
                   >✎</button
@@ -267,6 +361,9 @@
               </div>
             </article>
           {/each}
+          {#if draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
+            <div class="drop-end"></div>
+          {/if}
           {#if items.length === 0}
             <p class="empty">—</p>
           {/if}
@@ -275,5 +372,6 @@
     {/each}
   </div>
 {/if}
+</section>
 
 <style lang="scss" src="./+page.scss"></style>

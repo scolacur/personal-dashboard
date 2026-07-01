@@ -1,16 +1,23 @@
 // Types for the Agent Dashboard "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
-// The five Kanban columns. Backlog/ready are set by hand; the agent statuses
+// The Kanban columns. Backlog/ready/queued are set by hand; the agent statuses
 // (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
 // converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
-export type TicketStatus = 'backlog' | 'ready' | 'in_progress' | 'in_review' | 'completed';
+export type TicketStatus =
+  | 'backlog'
+  | 'ready'
+  | 'queued'
+  | 'in_progress'
+  | 'in_review'
+  | 'completed';
 
 export type TicketPriority = 'low' | 'medium' | 'high';
 
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
   'ready',
+  'queued',
   'in_progress',
   'in_review',
   'completed',
