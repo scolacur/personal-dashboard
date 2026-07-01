@@ -1,5 +1,9 @@
 .DS_Store
-.claude/
+# Version project skills; keep local/machine settings out. `.claude/*` (not `.claude/`)
+# so git still descends and honors the negation below. Add `!.claude/settings.json`
+# later to also version project permissions; settings.local.json stays ignored.
+.claude/*
+!.claude/commands/
 node_modules/
 dist/
 .env
