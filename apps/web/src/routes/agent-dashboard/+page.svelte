@@ -29,6 +29,9 @@
   // null = "All projects"
   let filterProjectId = $state<number | null>(null);
 
+  // Priority filter: 'all' (no filter), 'none' (unset), or a specific P-level.
+  let filterPriority = $state<'all' | 'none' | TicketPriority>('all');
+
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
@@ -65,6 +68,7 @@
     const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
+      if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
       if (q && !`${t.title} ${t.body ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -303,6 +307,16 @@
       <label class="condensed-toggle" title="Hide descriptions">
         <input type="checkbox" bind:checked={condensed} />
         <span>Condensed</span>
+      </label>
+      <label class="priority-filter">
+        <span class="sr-label">Priority</span>
+        <select bind:value={filterPriority}>
+          <option value="all">All priorities</option>
+          {#each TICKET_PRIORITIES as p (p)}
+            <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+          {/each}
+          <option value="none">— None</option>
+        </select>
       </label>
       <label class="project-filter">
         <span class="sr-label">Project</span>
