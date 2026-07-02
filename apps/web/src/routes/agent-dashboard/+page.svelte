@@ -332,51 +332,49 @@
 <section class="tickets-section">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
-    <div class="head-controls">
-      <label class="ticket-search">
-        <span class="sr-label">Search tickets</span>
-        <input type="search" bind:value={search} placeholder="Search tickets…" />
-      </label>
-      <button
-        class="info-btn"
-        type="button"
-        title="Priority levels"
-        aria-label="Priority levels"
-        onclick={() => (legendOpen = true)}>i</button
+    <label class="ticket-search">
+      <span class="sr-label">Search tickets</span>
+      <input type="search" bind:value={search} placeholder="Search tickets…" />
+    </label>
+    <label class="project-filter">
+      <span class="sr-label">Project</span>
+      <select
+        value={filterProjectId === null ? 'all' : String(filterProjectId)}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          filterProjectId = v === 'all' ? null : Number(v);
+        }}
       >
-      <label class="condensed-toggle" title="Hide descriptions">
-        <input type="checkbox" bind:checked={condensed} />
-        <span>Condensed</span>
-      </label>
-      <label class="priority-filter">
-        <span class="sr-label">Priority</span>
-        <select bind:value={filterPriority}>
-          <option value="all">All priorities</option>
-          {#each TICKET_PRIORITIES as p (p)}
-            <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-          {/each}
-          <option value="none">— None</option>
-        </select>
-      </label>
-      <label class="project-filter">
-        <span class="sr-label">Project</span>
-        <select
-          value={filterProjectId === null ? 'all' : String(filterProjectId)}
-          onchange={(e) => {
-            const v = e.currentTarget.value;
-            filterProjectId = v === 'all' ? null : Number(v);
-          }}
-        >
-          <option value="all">All projects</option>
-          {#each projects as p (p.id)}
-            <option value={String(p.id)}>{p.name}</option>
-          {/each}
-        </select>
-      </label>
-      <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
-        + Add Ticket
-      </button>
-    </div>
+        <option value="all">All projects</option>
+        {#each projects as p (p.id)}
+          <option value={String(p.id)}>{p.name}</option>
+        {/each}
+      </select>
+    </label>
+    <label class="priority-filter">
+      <span class="sr-label">Priority</span>
+      <select bind:value={filterPriority}>
+        <option value="all">All priorities</option>
+        {#each TICKET_PRIORITIES as p (p)}
+          <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+        {/each}
+        <option value="none">— None</option>
+      </select>
+    </label>
+    <button
+      class="info-btn"
+      type="button"
+      title="Priority levels"
+      aria-label="Priority levels"
+      onclick={() => (legendOpen = true)}>i</button
+    >
+    <label class="condensed-toggle" title="Hide descriptions">
+      <input type="checkbox" bind:checked={condensed} />
+      <span>Condensed</span>
+    </label>
+    <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
+      + Add Ticket
+    </button>
   </div>
 
 {#if error}
