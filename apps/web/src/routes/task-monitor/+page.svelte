@@ -496,8 +496,7 @@
     </label>
     <label>
       <span>Details</span>
-      <textarea bind:value={formBody} rows="12" placeholder="Plain-English description (optional)"
-      ></textarea>
+      <textarea bind:value={formBody} rows="12"></textarea>
     </label>
     <label>
       <span>Status</span>
