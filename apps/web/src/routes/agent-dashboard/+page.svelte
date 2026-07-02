@@ -3,12 +3,13 @@
   import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
+  import GithubMark from '$lib/icons/GithubMark.svelte';
   import * as api from './api';
 
   const COLUMNS: { status: TicketStatus; label: string }[] = [
     { status: 'backlog', label: 'Backlog' },
-    { status: 'ready', label: 'Ready' },
-    { status: 'queued', label: 'Queued' },
+    { status: 'ready', label: 'Ready for Robot' },
+    { status: 'queued', label: 'Queued for Robot' },
     { status: 'in_progress', label: 'In progress' },
     { status: 'in_review', label: 'In review' },
     { status: 'completed', label: 'Completed' },
@@ -64,6 +65,21 @@
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
+
+  // The per-card ID label is colour-coded by project (replaces the old project
+  // badge). PD/NSW use theme accent tokens; Core keeps its teal project colour.
+  function idColor(project: AgentProject | undefined): string {
+    switch (project?.key) {
+      case 'PD':
+        return 'var(--accent)';
+      case 'C':
+        return '#0d9488'; // teal — Core
+      case 'NSW':
+        return 'var(--accent-2)';
+      default:
+        return 'var(--muted)';
+    }
+  }
 
   function visibleTickets(): AgentTicket[] {
     const q = search.trim().toLowerCase();
@@ -338,51 +354,49 @@
 <section class="tickets-section">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
-    <div class="head-controls">
-      <label class="ticket-search">
-        <span class="sr-label">Search tickets</span>
-        <input type="search" bind:value={search} placeholder="Search tickets…" />
-      </label>
-      <button
-        class="info-btn"
-        type="button"
-        title="Priority levels"
-        aria-label="Priority levels"
-        onclick={() => (legendOpen = true)}>i</button
+    <label class="ticket-search">
+      <span class="sr-label">Search tickets</span>
+      <input type="search" bind:value={search} placeholder="Search tickets…" />
+    </label>
+    <label class="project-filter">
+      <span class="sr-label">Project</span>
+      <select
+        value={filterProjectId === null ? 'all' : String(filterProjectId)}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          filterProjectId = v === 'all' ? null : Number(v);
+        }}
       >
-      <label class="condensed-toggle" title="Hide descriptions">
-        <input type="checkbox" bind:checked={condensed} />
-        <span>Condensed</span>
-      </label>
-      <label class="priority-filter">
-        <span class="sr-label">Priority</span>
-        <select bind:value={filterPriority}>
-          <option value="all">All priorities</option>
-          {#each TICKET_PRIORITIES as p (p)}
-            <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-          {/each}
-          <option value="none">— None</option>
-        </select>
-      </label>
-      <label class="project-filter">
-        <span class="sr-label">Project</span>
-        <select
-          value={filterProjectId === null ? 'all' : String(filterProjectId)}
-          onchange={(e) => {
-            const v = e.currentTarget.value;
-            filterProjectId = v === 'all' ? null : Number(v);
-          }}
-        >
-          <option value="all">All projects</option>
-          {#each projects as p (p.id)}
-            <option value={String(p.id)}>{p.name}</option>
-          {/each}
-        </select>
-      </label>
-      <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
-        + Add Ticket
-      </button>
-    </div>
+        <option value="all">All projects</option>
+        {#each projects as p (p.id)}
+          <option value={String(p.id)}>{p.name}</option>
+        {/each}
+      </select>
+    </label>
+    <label class="priority-filter">
+      <span class="sr-label">Priority</span>
+      <select bind:value={filterPriority}>
+        <option value="all">All priorities</option>
+        {#each TICKET_PRIORITIES as p (p)}
+          <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+        {/each}
+        <option value="none">— None</option>
+      </select>
+    </label>
+    <button
+      class="info-btn"
+      type="button"
+      title="Priority levels"
+      aria-label="Priority levels"
+      onclick={() => (legendOpen = true)}>i</button
+    >
+    <label class="condensed-toggle" title="Hide descriptions">
+      <input type="checkbox" bind:checked={condensed} />
+      <span>Condensed</span>
+    </label>
+    <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
+      + Add Ticket
+    </button>
   </div>
 
 {#if error}
@@ -495,6 +509,7 @@
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               class:locked={isStatusLocked(ticket)}
+              class:shimmer={ticket.agentState === 'working'}
               data-id={ticket.id}
               data-priority={bandKey(ticket.priority)}
               draggable={true}
@@ -533,15 +548,24 @@
                 </div>
                 <span class="card-top-right">
                   {#if ticket.githubIssueUrl}
-                    <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
-                      #{ticket.githubIssueNumber}
+                    <a
+                      class="issue-link"
+                      href={ticket.githubIssueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      draggable="false"
+                      title="GitHub issue #{ticket.githubIssueNumber}"
+                      aria-label="GitHub issue #{ticket.githubIssueNumber}"
+                    >
+                      <GithubMark size={14} />
                     </a>
                   {/if}
                   {#if ticket.displayId}
                     <a
                       class="ticket-id"
+                      style="--id-color: {idColor(project)}"
                       href="/agent-dashboard/tickets/{ticket.displayId}"
-                      title="Open ticket {ticket.displayId}"
+                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
                       draggable="false">{ticket.displayId}</a
                     >
                   {/if}
@@ -550,13 +574,6 @@
               <p class="card-title">{ticket.title}</p>
               {#if ticket.body && !condensed}
                 <p class="card-body">{ticket.body}</p>
-              {/if}
-              {#if project}
-                <span
-                  class="project-chip"
-                  style="--chip: {project.color ?? 'var(--muted)'}"
-                  title={project.name}>{project.name}</span
-                >
               {/if}
               <div class="card-actions">
                 <span class="spacer"></span>

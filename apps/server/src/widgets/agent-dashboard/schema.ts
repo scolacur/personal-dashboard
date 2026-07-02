@@ -36,6 +36,7 @@ export function bootstrapSchema(db: Database.Database): void {
       sort_order          REAL    NOT NULL DEFAULT 0,
       github_issue_number INTEGER,
       github_issue_url    TEXT,
+      agent_state         TEXT,                     -- derived sortie:* agent state (PD-165); NULL = none
       archived_at         INTEGER,                  -- soft delete; NULL = active
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL
@@ -108,6 +109,9 @@ export function bootstrapSchema(db: Database.Database): void {
     addColumn(d, 'agent_tickets', 'assignee', 'TEXT');
     addColumn(d, 'agent_tickets', 'recur_interval', 'TEXT');
     addColumn(d, 'agent_tickets', 'archived_at', 'INTEGER');
+  });
+  migrate(db, 'agent_tickets_add_agent_state', (d) => {
+    addColumn(d, 'agent_tickets', 'agent_state', 'TEXT');
   });
 
   // Remap legacy low/medium/high priorities to the P0–P5 scale ('none' = unset).

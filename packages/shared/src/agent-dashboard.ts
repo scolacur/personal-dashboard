@@ -28,6 +28,13 @@ export type TicketStatus =
 // *unset* — represented as `null` in the domain/API (see AgentTicket.priority).
 export type TicketPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
 
+// Fine-grained agent state, derived by the GitHub-label poller (PD-165) from the
+// `sortie:*` label on a linked issue. Distinct from `status`: several of these map
+// to the same `in_progress` status but mean different things — only 'working'
+// should drive the active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are
+// paused-and-need-attention. `null` = no agent state (manual / not being worked).
+export type AgentState = 'working' | 'stuck' | 'needs-human' | 'awaiting-human' | 'wontfix';
+
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
   'ready',
@@ -114,6 +121,8 @@ export interface AgentTicket {
   /** Set when the Ticket is converted to a GitHub issue (Phase 3). */
   githubIssueNumber: number | null;
   githubIssueUrl: string | null;
+  /** Fine-grained agent state derived from the linked issue's `sortie:*` label (PD-165); null = none. */
+  agentState: AgentState | null;
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -153,6 +162,9 @@ export interface UpdateTicketInput {
   projectId?: number;
   /** 'steve' | 'robot', or `null` to unassign. Omit to leave unchanged. */
   assignee?: TicketAssignee | null;
+  /** Link (or unlink, via `null`) a GitHub issue. Set together. Omit to leave unchanged. */
+  githubIssueNumber?: number | null;
+  githubIssueUrl?: string | null;
 }
 
 /**

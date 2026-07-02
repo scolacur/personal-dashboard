@@ -6,6 +6,135 @@ Newest decisions at the top.
 
 ---
 
+## D-033: "Refine" (PD-172) is a Claude-Agent-SDK sidecar with clone-grounded grilling and propose→approve write-back
+
+**Decision:** The backlog→Ready "Refine" flow runs a **dedicated `refine-agent` sidecar container**
+on the `egress_internal` network (mirroring Sortie), running the **Claude Agent SDK** with a
+purpose-built refine prompt that reuses the `/grill-me` interview methodology — it does NOT run
+`/to-issues`/`/to-sortie-issues` verbatim, since those target GitHub/tracker issues, not board
+tickets. On Refine, the sidecar **shallow-clones the ticket's `github_repo` read-only** to ground the
+grilling in real code (text-only fallback when `github_repo` is null). The chat streams to a modal
+over **SSE** (agent→browser tokens) with a **POST per user turn**, both proxied by the dashboard
+server. The agent's final output is a **structured Ready-ticket proposal**; the user edits/approves
+in the modal, and the **dashboard server** (not the agent) creates the Ready tickets.
+
+**Why:**
+
+- **Agent SDK over a bespoke Messages-API loop or a one-shot call.** The interactive grill is the
+  point of Refine; the Agent SDK provides the multi-turn tool-loop + skill execution a hand-rolled
+  loop would reimplement, and a one-shot "format this ticket" call would drop the grilling entirely.
+- **Sidecar over in-dashboard-server.** Isolates long-running interactive sessions + secrets
+  (Anthropic key, GH token) from the Fastify web process, and reuses the containerized, egress-scoped
+  pattern Sortie already established ([[D-016]]) under the egress-hardened networking of PD-7. Egress
+  to `api.anthropic.com` goes through the existing squid proxy.
+- **Propose→approve→server-writes over agent-writes-directly.** Keeps board-write credentials out of
+  the agent (least privilege — the sidecar holds only a **read-only** GH token, for cloning), and
+  bakes in a human gate structurally rather than trusting the agent to stop and ask.
+- **Clone-grounded grilling.** Ungrounded refinement produces the vague, guessy tickets [[D-020]]'s
+  pipeline exists to eliminate; Sortie already clones per-issue workspaces, so a read-only clone is a
+  consistent, cheap way to ground ticket-slicing in real files.
+
+**Trade-off:** A new sidecar + SSE plumbing + a clone-per-session is materially more infrastructure
+than a one-shot API call — accepted because interactive, code-grounded refinement is the feature.
+Session state is server-side and ephemeral: one Refine session at a time, discarded if the modal
+closes before approval (no grill persistence in v1).
+
+**Implications:** Requires an `ANTHROPIC_API_KEY` + a **read-only** GH token in the sidecar env only
+(NAS `.env`, added to `.env.example`); never in the web process or browser. Depends on PD-7's
+egress/networking outcome. Refine is offered on any backlog ticket; grounding degrades gracefully for
+`github_repo`-null projects. See [[D-032]] for why the Claude-powered formatting lives here and not in
+the Queued poller.
+
+---
+
+## D-032: The TODO→Sortie "Phase 3" splits — Claude formatting moves to Refine (PD-172); the Queued poller (PD-164) is mechanical and Claude-free
+
+**Decision:** [[D-020]] framed "Phase 3" as a single Claude-API "Convert to issue" step (format +
+draft-then-approve + create + link). That step is **split in two**:
+
+- **Formatting is upstream, in Refine ([[D-033]], PD-172):** the Claude-powered work of turning a
+  rough backlog blurb into well-formed, Sortie-shaped tickets happens (human-gated) on the
+  **backlog→Ready** transition.
+- **Issue creation is mechanical, in the Queued poller (PD-164):** a node-cron poller (extending
+  PD-165's GitHub-sync poller) finds tickets that are **currently `queued`, `sortie_enabled`, have a
+  `github_repo`, and have `githubIssueNumber = null`**, then creates a GitHub issue **verbatim from
+  the ticket's existing title+body**, labels it `sortie:queued`, and writes
+  `githubIssueNumber`/`githubIssueUrl` back to the row. **No Claude, no Convert button, no second
+  approval.**
+
+**Why:**
+
+- **Dragging a ticket to `queued` IS the approval.** By the time a ticket reaches the Queued lane it
+  has already been refined + deliberately advanced by a human, so a second draft-then-approve gate at
+  issue-creation is redundant. The Queued lane ([[D-026]]) becomes the dispatch boundary.
+- **The ticket body is already Sortie-formatted** by Refine, so re-running it through Claude at
+  creation adds cost + latency + nondeterminism for no gain. PD-164 collapses to a pure GitHub-**write**
+  extension of PD-165's existing poller (shared cron registry + GitHub client) and **loses its
+  `ANTHROPIC_API_KEY` dependency entirely**.
+- **Two poll directions, one poller foundation.** PD-165 reads GitHub→board (derived status from
+  `sortie:*` labels + PR state); PD-164 writes board→GitHub (create+link on Queued). They share the
+  cron + GitHub-client scaffolding, so PD-164 is built on PD-165, not duplicated.
+
+**Trade-off:** A ticket dragged straight to Queued **without** going through Refine gets an issue
+created from its raw body — a rougher issue. Mitigated **deterministically** by PD-177: on the
+transition into `queued`, a shared `isSortieReady(body)` validator (checks for the required
+`## Context` / `## Task` / `## Done When` / `## Out of scope` sections — no Claude) **warns** the
+human so they can Refine first. Accepted over a Claude safety-net in the poller, which would
+reintroduce the exact cost/coupling this split removes.
+
+**Implications:** PD-164 needs only a **write-scoped** GH token (issues + labels) — not Anthropic.
+Idempotency is by the `githubIssueNumber = null` guard + same-tick write-back (negligible dupe risk
+on a crash between create and write-back, hand-fixable on a single-user board). The `isSortieReady`
+validator lives in `packages/shared` so the UI warning (PD-177) and, if ever wanted, the poller can
+share one definition of "Sortie-ready shape." This supersedes the single-step framing in [[D-020]]'s
+"Phase 3"; [[D-033]] covers the Refine side.
+---
+
+## D-031: Mac Mini M4 becomes the primary always-on host; NAS demotes to storage/backup appliance
+
+**Decision:** An always-on **Mac Mini M4 (24GB)** becomes the primary host for **both the dashboard
+and Sortie, migrated together in one move**. The Synology NAS demotes to a **storage/backup
+appliance** — it retains the DJ library and Hyper Backup → Backblaze, but stops running the app.
+**The migration happens before the branch-preview feature**; previews are deferred QOL. Migration
+strategy is **lift-and-shift** (keep the GHCR-image + Watchtower-pull pipeline, change only what the
+new host physically forces); re-architecting the deploy model and going private are separate later
+steps.
+
+**Why move them together (not dashboard-first):** the dashboard was never the bottleneck — it ran
+fine on the NAS; **Sortie** is the workload that suffered from the weak NAS (clone storms,
+CPU-bound runs). More importantly, splitting them turns the **dashboard↔Sortie link** (Mission
+Control → `sortie:7678`, the P3 convert-to-issue flow, the future preview reconciler reading Sortie
+state) into a **cross-machine** problem — the unresolved "reach across machines" question — which
+would then have to be re-wired when Sortie eventually moved. Co-locating keeps that link on one host
+/ one Docker network (localhost), so it's never wired cross-machine. Cost: a bigger, riskier cutover
+(Sortie's egress-hardened squid containment, tokens, `.sortie.db`, quota-refund cron all come across
+and get re-verified on Colima).
+
+**Why:** The NAS is CPU/RAM-weak — the entire deploy pipeline is pull-based (Watchtower) precisely to
+avoid building on it (see the 2026-06-30 CI/CD work). The M4 is vastly more capable: it makes ~10
+concurrent branch previews feasible, is a far better Sortie host, and leaves headroom. Branch
+previews were the trigger for this conversation, but the powerful host is the bigger win.
+
+**Consequences (ripples to handle during migration — not yet designed):**
+- Dashboard + prod `dashboard.db` move to the Mini; **DJ library becomes a network mount (SMB/NFS)**
+  from the NAS for music-tracker matching.
+- Backups must follow the DB to the Mini. (Tracked as PD-190 — off-box target replacing Hyper Backup;
+  the consistent-snapshot job itself is [[D-029]], which is host-agnostic and ports as-is.)
+- **Docker on headless macOS via Colima/OrbStack, not Docker Desktop** (which needs a GUI session).
+- If the repo goes private, **GHCR pull auth breaks** — the pull path needs a `read:packages` token
+  (currently public/no-auth).
+
+**Branch previews, when built (deferred, rejected alternatives recorded so they aren't
+re-proposed):** an **in-process poll-based reconciler** in the Mini dashboard (reads open PRs +
+running `preview-pr-*` containers each tick, converges: start/stop/evict-oldest). Rejected:
+self-hosted Actions runner (public-repo fork-code risk + event-drift), cloud preview (loses the DJ
+library mount, breaks the egress-hardened posture), and dashboard-GUI-driven Docker (Fastify→Docker
+socket = a security surface deliberately avoided). Previews build **locally on the Mini** (native
+arm64, no GHCR push) with a **deterministic per-PR URL** so a GitHub Action links it to the ticket
+without polling.
+
+---
+
 ## D-030: Off-LAN access via Tailscale, with tailnet membership as the authentication (PD-34)
 
 **Decision:** Reach the dashboard off-LAN over **Tailscale**, not a public reverse proxy.

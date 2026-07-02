@@ -40,7 +40,7 @@ for (const widget of widgets) {
 // core jobs (DB backups) register directly. Uses Fastify's pino logger.
 const cron = new CronRegistry(app.log);
 for (const widget of widgets) {
-  widget.registerCron?.(cron);
+  widget.registerCron?.(cron, app.log);
 }
 // PD-33: daily consistent snapshot of dashboard.db into <dataDir>/backups.
 registerBackupJob(cron, app.log, db, path.join(dataDir, 'backups'));
