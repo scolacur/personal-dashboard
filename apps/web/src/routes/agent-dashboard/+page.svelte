@@ -547,6 +547,14 @@
                   </select>
                 </div>
                 <span class="card-top-right">
+                  {#if ticket.agentState === 'stuck' || ticket.agentState === 'needs-human' || ticket.agentState === 'awaiting-human'}
+                    <span
+                      class="agent-state-badge agent-state-attention"
+                      title="Agent state: {ticket.agentState}"
+                    >{ticket.agentState.replace(/-/g, ' ')}</span>
+                  {:else if ticket.agentState === 'wontfix'}
+                    <span class="agent-state-badge agent-state-wontfix" title="Agent state: wontfix">wontfix</span>
+                  {/if}
                   {#if ticket.githubIssueUrl}
                     <a
                       class="issue-link"
