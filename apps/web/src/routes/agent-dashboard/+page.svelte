@@ -602,21 +602,6 @@
                       <option value={p}>{p}</option>
                     {/each}
                   </select>
-                  <select
-                    class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
-                    title={isStatusLocked(ticket)
-                      ? 'Agent-controlled — cannot reassign'
-                      : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
-                    value={ticket.assignee ?? ''}
-                    disabled={isStatusLocked(ticket)}
-                    onchange={(e) =>
-                      setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
-                  >
-                    <option value="">—</option>
-                    {#each TICKET_ASSIGNEES as a (a)}
-                      <option value={a}>{assigneeLabel(a)}</option>
-                    {/each}
-                  </select>
                 </div>
                 <span class="card-top-right">
                   {#if ticket.agentState === 'stuck' || ticket.agentState === 'needs-human' || ticket.agentState === 'awaiting-human'}
@@ -656,6 +641,21 @@
                 <p class="card-body">{ticket.body}</p>
               {/if}
               <div class="card-actions">
+                <select
+                  class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
+                  title={isStatusLocked(ticket)
+                    ? 'Agent-controlled — cannot reassign'
+                    : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
+                  value={ticket.assignee ?? ''}
+                  disabled={isStatusLocked(ticket)}
+                  onchange={(e) =>
+                    setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
+                >
+                  <option value="">—</option>
+                  {#each TICKET_ASSIGNEES as a (a)}
+                    <option value={a}>{assigneeLabel(a)}</option>
+                  {/each}
+                </select>
                 <span class="spacer"></span>
                 <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
                   >✎</button
