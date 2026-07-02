@@ -123,7 +123,7 @@ describe('PATCH /api/widgets/agent-dashboard/tickets/:id — status closed', () 
 });
 
 describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
-  it('defaults to steve when assignee is omitted', async () => {
+  it('defaults to null when assignee is omitted', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
@@ -132,7 +132,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
       payload: { title: 'test', projectId: pid },
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json().assignee).toBe('steve');
+    expect(res.json().assignee).toBeNull();
   });
 
   it('accepts explicit robot assignee on create', async () => {
@@ -173,7 +173,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
 });
 
 describe('PATCH /api/widgets/agent-dashboard/tickets/:id — assignee', () => {
-  it('can patch assignee steve → robot → null and round-trips on GET', async () => {
+  it('can patch assignee null → robot → null and round-trips on GET', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({

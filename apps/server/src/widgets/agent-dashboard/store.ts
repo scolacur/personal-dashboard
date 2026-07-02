@@ -210,7 +210,7 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     } else {
       displayId = nextDisplayId(db, input.projectId);
     }
-    const assignee: TicketAssignee | null = input.assignee === undefined ? 'steve' : input.assignee;
+    const assignee: TicketAssignee | null = input.assignee === undefined ? null : input.assignee;
     const result = db
       .prepare(
         `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, source, sort_order, created_at, updated_at)
