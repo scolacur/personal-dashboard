@@ -10,6 +10,7 @@
   import * as api from './api';
   import { projectIdColor } from './api';
   import { ticketMatchesQuery } from './filter-logic';
+  import { buildCopyText, copyToClipboard } from './copy-utils';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -388,11 +389,9 @@
   }
 
   async function copyIssue(ticket: AgentTicket, project: AgentProject | undefined) {
-    const label = ticket.displayId ?? project?.key ?? '';
-    const header = label ? `**[${label}] ${ticket.title}**` : `**${ticket.title}**`;
-    const text = ticket.body ? `${header}\n\n${ticket.body}` : header;
+    const text = buildCopyText(ticket, project);
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       showToast('Copied to clipboard.');
     } catch {
       showToast('Failed to copy.');
