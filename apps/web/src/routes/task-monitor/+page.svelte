@@ -149,7 +149,13 @@
   onMount(() => {
     load();
     window.addEventListener('click', handleWindowClick);
-    return () => window.removeEventListener('click', handleWindowClick);
+    // Auto-refresh every 30 s so GitHub label changes (synced server-side every minute)
+    // are reflected on the board without requiring a manual page reload.
+    const refreshTimer = setInterval(() => load(true), 30_000);
+    return () => {
+      window.removeEventListener('click', handleWindowClick);
+      clearInterval(refreshTimer);
+    };
   });
 
   function openAdd(status: TicketStatus = 'backlog') {
