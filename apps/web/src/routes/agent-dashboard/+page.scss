@@ -539,6 +539,27 @@
   }
 }
 
+// Agent-state badge — mirrors .priority pill patterns.
+// Shown on cards with stuck/needs-human/awaiting-human (attention) or wontfix.
+.agent-state-badge {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid;
+  white-space: nowrap;
+
+  &.agent-state-attention {
+    color: #d97706;
+    border-color: #d97706;
+  }
+
+  &.agent-state-wontfix {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+}
+
 .card-title {
   margin: 0;
   font-size: var(--font-size-sm);
