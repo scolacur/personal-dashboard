@@ -210,7 +210,8 @@
 /* ── Board ─────────────────────────────────────── */
 .board {
   display: grid;
-  grid-template-columns: repeat(6, minmax(190px, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(190px, 1fr);
   gap: var(--space-md);
   align-items: start;
   overflow-x: auto;
@@ -472,6 +473,60 @@
   }
 }
 
+/* ── Lanes show/hide menu ───────────────────────── */
+.lanes-menu-wrap {
+  position: relative;
+}
+
+.lanes-btn {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs) var(--space-md);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover,
+  &[aria-expanded='true'] {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.lanes-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-xs) 0;
+  min-width: 160px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.lanes-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+
+  input[type='checkbox'] {
+    cursor: pointer;
+  }
+}
+
 .field-note {
   display: block;
   margin-top: var(--space-xs);
@@ -664,8 +719,13 @@
     flex: 0 0 auto;
   }
 
-  .condensed-toggle {
+  .lanes-menu-wrap {
     order: 7;
+    flex: 0 0 auto;
+  }
+
+  .condensed-toggle {
+    order: 8;
     flex: 0 0 100%;
   }
 
