@@ -16,13 +16,16 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
 // The Kanban columns. Backlog/ready/queued are set by hand; the agent statuses
 // (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
 // converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
+// 'closed' is a manual terminal status for tickets closed for any reason other than
+// completion (cancelled, won't fix, out of scope, etc.) — see DECISIONS.md D-034.
 export type TicketStatus =
   | 'backlog'
   | 'ready'
   | 'queued'
   | 'in_progress'
   | 'in_review'
-  | 'completed';
+  | 'completed'
+  | 'closed';
 
 // Priority is a P0–P5 scale (P0 most urgent). A ticket's priority may also be
 // *unset* — represented as `null` in the domain/API (see AgentTicket.priority).
@@ -42,6 +45,7 @@ export const TICKET_STATUSES: readonly TicketStatus[] = [
   'in_progress',
   'in_review',
   'completed',
+  'closed',
 ] as const;
 
 export const TICKET_PRIORITIES: readonly TicketPriority[] = [

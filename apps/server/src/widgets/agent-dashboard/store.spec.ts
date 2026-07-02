@@ -178,6 +178,38 @@ describe('assignee', () => {
   });
 });
 
+describe('closed status', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('can create a ticket with closed status', () => {
+    const t = createTicket(db, { title: 'closed ticket', projectId: pd, status: 'closed' });
+    expect(t.status).toBe('closed');
+  });
+
+  it('can transition a ticket to closed via updateTicket', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    const updated = updateTicket(db, t.id, { status: 'closed' });
+    expect(updated?.status).toBe('closed');
+  });
+
+  it('orders closed tickets after completed in listTickets', () => {
+    createTicket(db, { title: 'done', projectId: pd, status: 'completed' });
+    createTicket(db, { title: 'shut', projectId: pd, status: 'closed' });
+    createTicket(db, { title: 'wip', projectId: pd, status: 'in_progress' });
+    const statuses = listTickets(db).map((t) => t.status);
+    const wipIdx = statuses.indexOf('in_progress');
+    const doneIdx = statuses.indexOf('completed');
+    const shutIdx = statuses.indexOf('closed');
+    expect(wipIdx).toBeLessThan(doneIdx);
+    expect(doneIdx).toBeLessThan(shutIdx);
+  });
+});
+
 describe('activity log', () => {
   it('records created and status_changed events', () => {
     const db = freshDb();

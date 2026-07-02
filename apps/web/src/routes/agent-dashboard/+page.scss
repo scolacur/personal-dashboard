@@ -101,6 +101,92 @@
   }
 }
 
+.assignee-filter {
+  .sr-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  select {
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-sm) var(--space-md);
+    cursor: pointer;
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+  }
+}
+
+.lanes-menu-wrapper {
+  position: relative;
+}
+
+.lanes-btn {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.lanes-menu {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+  min-width: 170px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.lanes-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  cursor: pointer;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius);
+  user-select: none;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+
+  input[type='checkbox'] {
+    cursor: pointer;
+  }
+}
+
 .add-btn {
   font-family: var(--font-sans);
   font-size: var(--font-size-sm);
@@ -210,7 +296,7 @@
 /* ── Board ─────────────────────────────────────── */
 .board {
   display: grid;
-  grid-template-columns: repeat(6, minmax(190px, 1fr));
+  grid-template-columns: repeat(var(--num-cols, 6), minmax(190px, 1fr));
   gap: var(--space-md);
   align-items: start;
   overflow-x: auto;
@@ -608,11 +694,11 @@
 
 /* ── Mobile responsive (≤640px) ─────────────────── */
 @media (max-width: 640px) {
-  // Header reflows into 5 rows using flex order:
+  // Header reflows into rows using flex order:
   // Row 1: Tickets (left) | +Add Ticket (right)
   // Row 2: Search (full width)
   // Row 3: Projects (full width)
-  // Row 4: Priority (fills) | info button (right)
+  // Row 4: Priority (fills) | Assignee | info btn | Lanes
   // Row 5: Condensed (full width)
   .section-head {
     flex-wrap: wrap;
@@ -659,13 +745,23 @@
     }
   }
 
-  .info-btn {
+  .assignee-filter {
     order: 6;
     flex: 0 0 auto;
   }
 
-  .condensed-toggle {
+  .info-btn {
     order: 7;
+    flex: 0 0 auto;
+  }
+
+  .lanes-menu-wrapper {
+    order: 8;
+    flex: 0 0 auto;
+  }
+
+  .condensed-toggle {
+    order: 9;
     flex: 0 0 100%;
   }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
@@ -13,6 +14,7 @@
     { status: 'in_progress', label: 'In progress' },
     { status: 'in_review', label: 'In review' },
     { status: 'completed', label: 'Completed' },
+    { status: 'closed', label: 'Closed' },
   ];
 
   // Once a ticket is picked up by an agent, its status is controlled externally,
@@ -38,6 +40,39 @@
 
   // Condensed view hides card descriptions to fit more tickets on screen. On by default.
   let condensed = $state(true);
+
+  // Which lanes are hidden on the board. 'closed' is hidden by default.
+  const hiddenLanes = new SvelteSet<TicketStatus>(['closed']);
+  // Whether the lanes visibility menu is open.
+  let lanesMenuOpen = $state(false);
+  // DOM ref for the lanes menu wrapper (used for click-outside).
+  let lanesMenuEl = $state<HTMLElement | null>(null);
+
+  // Assignee filter: 'all' = no filter, null = unassigned, or a specific assignee.
+  let filterAssignee = $state<'all' | TicketAssignee | null>('all');
+
+  // Columns visible on the board (all except hidden ones).
+  const visibleColumns = $derived(COLUMNS.filter((c) => !hiddenLanes.has(c.status)));
+
+  function toggleLane(status: TicketStatus) {
+    if (hiddenLanes.has(status)) {
+      hiddenLanes.delete(status);
+    } else {
+      hiddenLanes.add(status);
+    }
+  }
+
+  // Close lanes menu when clicking outside its wrapper.
+  $effect(() => {
+    if (!lanesMenuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (lanesMenuEl && !lanesMenuEl.contains(e.target as Node)) {
+        lanesMenuOpen = false;
+      }
+    }
+    document.addEventListener('click', onDocClick, true);
+    return () => document.removeEventListener('click', onDocClick, true);
+  });
 
   // Lanes group by priority (P0 on top … P5, then unset at the bottom). A card can
   // only be reordered within its own band and never dragged into another band.
@@ -86,6 +121,10 @@
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
+      if (filterAssignee !== 'all') {
+        if (filterAssignee === null && t.assignee !== null) return false;
+        if (filterAssignee !== null && t.assignee !== filterAssignee) return false;
+      }
       if (q && !`${t.title} ${t.body ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -383,6 +422,22 @@
         <option value="none">— None</option>
       </select>
     </label>
+    <label class="assignee-filter">
+      <span class="sr-label">Assignee</span>
+      <select
+        value={filterAssignee === null ? 'unassigned' : filterAssignee}
+        onchange={(e) => {
+          const v = e.currentTarget.value;
+          filterAssignee = v === 'all' ? 'all' : v === 'unassigned' ? null : (v as TicketAssignee);
+        }}
+      >
+        <option value="all">All assignees</option>
+        {#each TICKET_ASSIGNEES as a (a)}
+          <option value={a}>{ASSIGNEE_LABELS[a]}</option>
+        {/each}
+        <option value="unassigned">— Unassigned</option>
+      </select>
+    </label>
     <button
       class="info-btn"
       type="button"
@@ -390,6 +445,29 @@
       aria-label="Priority levels"
       onclick={() => (legendOpen = true)}>i</button
     >
+    <div class="lanes-menu-wrapper" bind:this={lanesMenuEl}>
+      <button
+        class="lanes-btn"
+        type="button"
+        title="Show/hide lanes"
+        aria-label="Show/hide lanes"
+        onclick={() => (lanesMenuOpen = !lanesMenuOpen)}
+      >Lanes</button>
+      {#if lanesMenuOpen}
+        <div class="lanes-menu" role="menu">
+          {#each COLUMNS as col (col.status)}
+            <label class="lanes-menu-item">
+              <input
+                type="checkbox"
+                checked={!hiddenLanes.has(col.status)}
+                onchange={() => toggleLane(col.status)}
+              />
+              {col.label}
+            </label>
+          {/each}
+        </div>
+      {/if}
+    </div>
     <label class="condensed-toggle" title="Hide descriptions">
       <input type="checkbox" bind:checked={condensed} />
       <span>Condensed</span>
@@ -488,8 +566,8 @@
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
-  <div class="board">
-    {#each COLUMNS as col (col.status)}
+  <div class="board" style="--num-cols: {visibleColumns.length}">
+    {#each visibleColumns as col (col.status)}
       {@const items = byStatus(col.status)}
       <section class="column" class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
         <h2 class="column-head">
@@ -505,7 +583,7 @@
             {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
             <article
               class="card"
-              class:done={ticket.status === 'completed'}
+              class:done={ticket.status === 'completed' || ticket.status === 'closed'}
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               class:locked={isStatusLocked(ticket)}

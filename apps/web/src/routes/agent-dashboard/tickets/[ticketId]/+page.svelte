@@ -20,6 +20,7 @@
     in_progress: 'In progress',
     in_review: 'In review',
     completed: 'Completed',
+    closed: 'Closed',
   };
 
   // No single-ticket API endpoint yet, so find it in the list (works against the
