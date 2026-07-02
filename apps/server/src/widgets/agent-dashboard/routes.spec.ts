@@ -68,6 +68,18 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('INVALID_STATUS');
   });
+
+  it('accepts closed as a valid status', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'cancelled', projectId: pid, status: 'closed' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().status).toBe('closed');
+  });
 });
 
 describe('PATCH /api/widgets/agent-dashboard/tickets/:id — status closed', () => {
