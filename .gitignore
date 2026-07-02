@@ -10,3 +10,7 @@ dist/
 data/
 apps/web/.svelte-kit/
 apps/web/build/
+
+# also match node_modules symlinks/files, not just directories
+node_modules
+**/node_modules
