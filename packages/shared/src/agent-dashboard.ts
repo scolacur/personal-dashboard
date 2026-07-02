@@ -17,7 +17,7 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
 // (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
 // converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
 // 'closed' is a manual terminal status for tickets closed for any reason other than
-// completion (cancelled, won't fix, out of scope, etc.) — see DECISIONS.md D-034.
+// completion (cancelled, won't fix, out of scope, etc.) — see DECISIONS.md D-036.
 export type TicketStatus =
   | 'backlog'
   | 'ready'
