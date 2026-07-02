@@ -1,5 +1,18 @@
 import type { AgentProject, AgentTicket, CreateTicketInput, UpdateTicketInput } from '@dashboard/shared';
 
+export function projectIdColor(project: AgentProject | undefined | null): string {
+  switch (project?.key) {
+    case 'PD':
+      return 'var(--accent)';
+    case 'C':
+      return '#0d9488';
+    case 'NSW':
+      return 'var(--accent-2)';
+    default:
+      return 'var(--muted)';
+  }
+}
+
 const BASE = '/api/widgets/agent-dashboard/tickets';
 const PROJECTS = '/api/widgets/agent-dashboard/projects';
 
