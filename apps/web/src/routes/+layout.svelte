@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
+  import { Sun, Moon } from 'lucide-svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -32,10 +33,10 @@
     <span class="env-badge" title="Local development — not production">DEV</span>
   {/if}
   <div class="nav-links">
-    <a href="/agent-dashboard">Mission Control</a>
+    <a href="/task-monitor">Task Monitor</a>
   </div>
   <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
-    {theme === 'dark' ? '☀' : '☾'}
+    {#if theme === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
   </button>
 </nav>
 <main class="content">

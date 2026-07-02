@@ -6,7 +6,9 @@
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
+  import { Pencil, Copy, Trash2, ClipboardCopy } from 'lucide-svelte';
   import * as api from './api';
+  import { projectIdColor } from './api';
   import { ticketMatchesQuery } from './filter-logic';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
@@ -19,7 +21,7 @@
     { status: 'closed', label: 'Closed', defaultHidden: true },
   ];
 
-  const LANE_VISIBILITY_KEY = 'agent-dashboard:hidden-lanes';
+  const LANE_VISIBILITY_KEY = 'task-monitor:hidden-lanes';
 
   function loadHiddenLanes(): SvelteSet<TicketStatus> {
     const defaults = new SvelteSet(COLUMNS.filter((c) => c.defaultHidden).map((c) => c.status));
@@ -32,7 +34,7 @@
       const parsed = JSON.parse(stored) as TicketStatus[];
       return new SvelteSet(parsed);
     } catch (err) {
-      console.warn('[agent-dashboard] failed to parse hidden lanes from localStorage', err);
+      console.warn('[task-monitor] failed to parse hidden lanes from localStorage', err);
       return defaults;
     }
   }
@@ -41,7 +43,7 @@
     try {
       localStorage.setItem(LANE_VISIBILITY_KEY, JSON.stringify([...hidden]));
     } catch (err) {
-      console.warn('[agent-dashboard] failed to persist lane visibility', err);
+      console.warn('[task-monitor] failed to persist lane visibility', err);
     }
   }
 
@@ -115,20 +117,6 @@
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
-  // The per-card ID label is colour-coded by project (replaces the old project
-  // badge). PD/NSW use theme accent tokens; Core keeps its teal project colour.
-  function idColor(project: AgentProject | undefined): string {
-    switch (project?.key) {
-      case 'PD':
-        return 'var(--accent)';
-      case 'C':
-        return '#0d9488'; // teal — Core
-      case 'NSW':
-        return 'var(--accent-2)';
-      default:
-        return 'var(--muted)';
-    }
-  }
 
   function visibleTickets(): AgentTicket[] {
     return tickets.filter((t) => {
@@ -145,15 +133,15 @@
       .sort((a, b) => rankOf(a.priority) - rankOf(b.priority) || a.sortOrder - b.sortOrder);
   }
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     error = null;
     try {
       [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
-      loading = false;
+      if (!silent) loading = false;
     }
   }
 
@@ -222,7 +210,7 @@
         });
       }
       formOpen = false;
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -238,9 +226,9 @@
         projectId: ticket.projectId,
         body: ticket.body,
         priority: ticket.priority,
-        status: 'backlog',
+        status: ticket.status,
       });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -352,7 +340,7 @@
     error = null;
     try {
       await api.updateTicket(id, { status, sortOrder });
-      await load();
+      await load(true);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -364,7 +352,7 @@
     error = null;
     try {
       await api.updateTicket(ticket.id, { priority });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -376,7 +364,7 @@
     error = null;
     try {
       await api.updateTicket(ticket.id, { assignee });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -393,15 +381,27 @@
     error = null;
     try {
       await api.deleteTicket(ticket.id);
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function copyIssue(ticket: AgentTicket, project: AgentProject | undefined) {
+    const label = ticket.displayId ?? project?.key ?? '';
+    const header = label ? `**[${label}] ${ticket.title}**` : `**${ticket.title}**`;
+    const text = ticket.body ? `${header}\n\n${ticket.body}` : header;
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Copied to clipboard.');
+    } catch {
+      showToast('Failed to copy.');
     }
   }
 </script>
 
 <header class="page-head">
-  <h1>Mission Control</h1>
+  <h1>Task Monitor</h1>
 </header>
 
 <section class="tickets-section">
@@ -603,18 +603,15 @@
             >
               <div class="card-top">
                 <div class="card-top-left">
-                  <select
-                    class="priority priority-{bandKey(ticket.priority)}"
-                    title="Set priority"
-                    value={ticket.priority ?? ''}
-                    onchange={(e) =>
-                      setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
-                  >
-                    <option value="">—</option>
-                    {#each TICKET_PRIORITIES as p (p)}
-                      <option value={p}>{p}</option>
-                    {/each}
-                  </select>
+                  {#if ticket.displayId}
+                    <a
+                      class="ticket-id"
+                      style="--id-color: {projectIdColor(project)}"
+                      href="/task-monitor/tickets/{ticket.displayId}"
+                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
+                      draggable="false">{ticket.displayId}</a
+                    >
+                  {/if}
                 </div>
                 <span class="card-top-right">
                   {#if ticket.agentState === 'stuck' || ticket.agentState === 'needs-human' || ticket.agentState === 'awaiting-human'}
@@ -638,15 +635,18 @@
                       <GithubMark size={14} />
                     </a>
                   {/if}
-                  {#if ticket.displayId}
-                    <a
-                      class="ticket-id"
-                      style="--id-color: {idColor(project)}"
-                      href="/agent-dashboard/tickets/{ticket.displayId}"
-                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
-                      draggable="false">{ticket.displayId}</a
-                    >
-                  {/if}
+                  <select
+                    class="priority priority-{bandKey(ticket.priority)}"
+                    title="Set priority"
+                    value={ticket.priority ?? ''}
+                    onchange={(e) =>
+                      setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
+                  >
+                    <option value="">—</option>
+                    {#each TICKET_PRIORITIES as p (p)}
+                      <option value={p}>{p}</option>
+                    {/each}
+                  </select>
                 </span>
               </div>
               <p class="card-title">{ticket.title}</p>
@@ -670,20 +670,29 @@
                   {/each}
                 </select>
                 <span class="spacer"></span>
-                <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
-                  >✎</button
+                <button class="action-edit" type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
+                  ><Pencil size={13} /></button
                 >
                 <button
+                  class="action-dup"
                   type="button"
                   title="Duplicate"
                   aria-label="Duplicate"
-                  onclick={() => duplicate(ticket)}>⧉</button
+                  onclick={() => duplicate(ticket)}><Copy size={13} /></button
+                >
+                <button
+                  class="action-copy"
+                  type="button"
+                  title="Copy issue text"
+                  aria-label="Copy issue text"
+                  onclick={() => copyIssue(ticket, project)}><ClipboardCopy size={13} /></button
                 >
                 <button
                   type="button"
                   title="Delete"
                   aria-label="Delete"
-                  onclick={() => remove(ticket)}>🗑</button
+                  onclick={() => remove(ticket)}
+                ><Trash2 size={13} /></button
                 >
               </div>
             </article>
