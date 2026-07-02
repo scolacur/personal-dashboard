@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
-import type { AgentState, TicketStatus } from '@dashboard/shared';
+import type { AgentState, TicketAssignee, TicketStatus } from '@dashboard/shared';
 import type { CronLogger, CronRegistry } from '../../cron';
-import { applyDerivedState, listQueuedIssueTargets, listSyncTargets, updateTicket } from './store';
+import { applyDerivedState, getTicket, listQueuedIssueTargets, listSyncTargets, updateTicket } from './store';
 
 // PD-165: derive board status + agent state from a linked issue's `sortie:*` labels
 // by polling GitHub (D-020: labels are the state machine, not the Sortie :7678 API).
@@ -11,17 +11,20 @@ import { applyDerivedState, listQueuedIssueTargets, listSyncTargets, updateTicke
 export interface DerivedState {
   status: TicketStatus;
   agentState: AgentState | null;
+  /** When present, force this assignee on the ticket. Absent = don't touch. */
+  assignee?: TicketAssignee;
 }
 
 // Precedence-ordered: first matching label wins (Sortie applies one active state at
 // a time, but ordering makes a stray extra label deterministic). Only 'working'
 // drives the active shimmer; stuck/needs-human/awaiting-human are paused-need-attention.
-const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: AgentState | null }[] = [
-  { label: 'sortie:stuck', status: 'in_progress', agentState: 'stuck' },
-  { label: 'sortie:needs-human', status: 'in_progress', agentState: 'needs-human' },
-  { label: 'sortie:awaiting-human', status: 'in_progress', agentState: 'awaiting-human' },
+// `assignee: 'robot'` is set for any label where the agent is the active owner.
+const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: AgentState | null; assignee?: TicketAssignee }[] = [
+  { label: 'sortie:stuck', status: 'in_progress', agentState: 'stuck', assignee: 'robot' },
+  { label: 'sortie:needs-human', status: 'in_progress', agentState: 'needs-human', assignee: 'robot' },
+  { label: 'sortie:awaiting-human', status: 'in_progress', agentState: 'awaiting-human', assignee: 'robot' },
   { label: 'sortie:in-review', status: 'in_review', agentState: null },
-  { label: 'sortie:in-progress', status: 'in_progress', agentState: 'working' },
+  { label: 'sortie:in-progress', status: 'in_progress', agentState: 'working', assignee: 'robot' },
   { label: 'sortie:done', status: 'completed', agentState: null },
 ] as const;
 
@@ -43,9 +46,33 @@ export function deriveState(labels: string[], issueState: 'open' | 'closed'): De
   if (issueState === 'closed') return { status: 'completed', agentState: null };
   // Open issue: derive from its active sortie:* label (precedence-ordered).
   for (const rule of LABEL_RULES) {
-    if (set.has(rule.label)) return { status: rule.status, agentState: rule.agentState };
+    if (set.has(rule.label)) {
+      const derived: DerivedState = { status: rule.status, agentState: rule.agentState };
+      if (rule.assignee !== undefined) derived.assignee = rule.assignee;
+      return derived;
+    }
   }
   return null;
+}
+
+// Labels that indicate an agent is the active owner of the ticket. Used to auto-assign
+// tickets to 'robot' when the poller detects these labels — including sortie:queued,
+// where deriveState returns null (no status change) but the assignee should still be set.
+const AGENT_ACTIVE_LABELS = new Set([
+  'sortie:queued',
+  'sortie:in-progress',
+  'sortie:stuck',
+  'sortie:needs-human',
+  'sortie:awaiting-human',
+]);
+
+/**
+ * Returns `'robot'` when any agent-active sortie label is present, else `undefined`
+ * (meaning "no assignee change"). Case-insensitive.
+ */
+export function deriveAssignee(labels: string[]): TicketAssignee | undefined {
+  const set = new Set(labels.map((l) => l.toLowerCase()));
+  return [...AGENT_ACTIVE_LABELS].some((l) => set.has(l)) ? 'robot' : undefined;
 }
 
 interface GithubIssue {
@@ -85,11 +112,24 @@ export async function runGithubSync({ db, token, log, fetchImpl = fetch }: Githu
         continue;
       }
       const issue = (await res.json()) as GithubIssue;
-      const derived = deriveState((issue.labels ?? []).map((l) => l.name), issue.state);
-      if (derived && applyDerivedState(db, t.id, derived.status, derived.agentState)) {
-        log.info(
-          `github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> ${derived.status}/${derived.agentState ?? '-'}`,
-        );
+      const issueLabels = (issue.labels ?? []).map((l) => l.name);
+      const derived = deriveState(issueLabels, issue.state);
+      if (derived) {
+        if (applyDerivedState(db, t.id, derived.status, derived.agentState, derived.assignee)) {
+          log.info(
+            `github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> ${derived.status}/${derived.agentState ?? '-'}`,
+          );
+        }
+      } else {
+        // No status change (e.g. only sortie:queued) — still assign to the agent if applicable.
+        const agentAssignee = deriveAssignee(issueLabels);
+        if (agentAssignee !== undefined) {
+          const existing = getTicket(db, t.id);
+          if (existing && existing.assignee !== agentAssignee) {
+            updateTicket(db, t.id, { assignee: agentAssignee });
+            log.info(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> assignee/${agentAssignee}`);
+          }
+        }
       }
     } catch (err) {
       log.error(

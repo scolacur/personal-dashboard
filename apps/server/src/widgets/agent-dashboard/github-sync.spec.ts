@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { createTicket, getProjectBySlug, getTicket, updateTicket } from './store';
-import { deriveState, runGithubSync, runQueuedSync } from './github-sync';
+import { deriveAssignee, deriveState, runGithubSync, runQueuedSync } from './github-sync';
 
 const noopLog = { info() {}, error() {} };
 
@@ -30,19 +30,20 @@ function fakeFetch(issue: { state: 'open' | 'closed'; labels: string[] }, status
 
 describe('deriveState', () => {
   it('maps each sortie:* label to the right status + agent state', () => {
-    expect(deriveState(['sortie:in-progress'], 'open')).toEqual({ status: 'in_progress', agentState: 'working' });
+    expect(deriveState(['sortie:in-progress'], 'open')).toEqual({ status: 'in_progress', agentState: 'working', assignee: 'robot' });
     expect(deriveState(['sortie:in-review'], 'open')).toEqual({ status: 'in_review', agentState: null });
-    expect(deriveState(['sortie:stuck'], 'open')).toEqual({ status: 'in_progress', agentState: 'stuck' });
-    expect(deriveState(['sortie:needs-human'], 'open')).toEqual({ status: 'in_progress', agentState: 'needs-human' });
+    expect(deriveState(['sortie:stuck'], 'open')).toEqual({ status: 'in_progress', agentState: 'stuck', assignee: 'robot' });
+    expect(deriveState(['sortie:needs-human'], 'open')).toEqual({ status: 'in_progress', agentState: 'needs-human', assignee: 'robot' });
     expect(deriveState(['sortie:awaiting-human'], 'open')).toEqual({
       status: 'in_progress',
       agentState: 'awaiting-human',
+      assignee: 'robot',
     });
     expect(deriveState(['sortie:done'], 'open')).toEqual({ status: 'completed', agentState: null });
   });
 
   it('is case-insensitive on label names', () => {
-    expect(deriveState(['SORTIE:IN-PROGRESS'], 'open')).toEqual({ status: 'in_progress', agentState: 'working' });
+    expect(deriveState(['SORTIE:IN-PROGRESS'], 'open')).toEqual({ status: 'in_progress', agentState: 'working', assignee: 'robot' });
   });
 
   it('returns null when no rule applies (only queued / no sortie label)', () => {
@@ -75,7 +76,31 @@ describe('deriveState', () => {
     expect(deriveState(['sortie:in-progress', 'sortie:stuck'], 'open')).toEqual({
       status: 'in_progress',
       agentState: 'stuck',
+      assignee: 'robot',
     });
+  });
+});
+
+describe('deriveAssignee', () => {
+  it('returns robot for each agent-active label', () => {
+    expect(deriveAssignee(['sortie:queued'])).toBe('robot');
+    expect(deriveAssignee(['sortie:in-progress'])).toBe('robot');
+    expect(deriveAssignee(['sortie:stuck'])).toBe('robot');
+    expect(deriveAssignee(['sortie:needs-human'])).toBe('robot');
+    expect(deriveAssignee(['sortie:awaiting-human'])).toBe('robot');
+  });
+
+  it('returns undefined when no agent-active label is present', () => {
+    expect(deriveAssignee([])).toBeUndefined();
+    expect(deriveAssignee(['bug', 'enhancement'])).toBeUndefined();
+    expect(deriveAssignee(['sortie:in-review'])).toBeUndefined();
+    expect(deriveAssignee(['sortie:done'])).toBeUndefined();
+    expect(deriveAssignee(['sortie:wontfix'])).toBeUndefined();
+  });
+
+  it('is case-insensitive', () => {
+    expect(deriveAssignee(['SORTIE:QUEUED'])).toBe('robot');
+    expect(deriveAssignee(['Sortie:In-Progress'])).toBe('robot');
   });
 });
 
@@ -90,6 +115,52 @@ describe('runGithubSync', () => {
     const after = getTicket(db, t.id);
     expect(after?.status).toBe('in_progress');
     expect(after?.agentState).toBe('working');
+    expect(after?.assignee).toBe('robot');
+  });
+
+  it('auto-assigns to robot when issue has sortie:in-progress', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'unassigned', projectId: pdProjectId(db), status: 'queued', assignee: 'steve' });
+    updateTicket(db, t.id, { githubIssueNumber: 70, githubIssueUrl: 'https://x/70' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:in-progress'] }) });
+
+    expect(getTicket(db, t.id)?.assignee).toBe('robot');
+  });
+
+  it('auto-assigns to robot when issue has only sortie:queued (no status change)', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'queued ticket', projectId: pdProjectId(db), status: 'queued', assignee: 'steve' });
+    updateTicket(db, t.id, { githubIssueNumber: 71, githubIssueUrl: 'https://x/71' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:queued'] }) });
+
+    const after = getTicket(db, t.id);
+    expect(after?.assignee).toBe('robot');
+    expect(after?.status).toBe('queued');  // status unchanged
+  });
+
+  it('does not change assignee for non-agent labels (e.g. sortie:done)', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'done', projectId: pdProjectId(db), status: 'in_progress', assignee: 'steve' });
+    updateTicket(db, t.id, { githubIssueNumber: 72, githubIssueUrl: 'https://x/72' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:done'] }) });
+
+    expect(getTicket(db, t.id)?.status).toBe('completed');
+    expect(getTicket(db, t.id)?.assignee).toBe('steve');  // unchanged
+  });
+
+  it('is a no-op for sortie:queued when assignee is already robot', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'already robot', projectId: pdProjectId(db), status: 'queued', assignee: 'robot' });
+    updateTicket(db, t.id, { githubIssueNumber: 73, githubIssueUrl: 'https://x/73' });
+    const fetchImpl = fakeFetch({ state: 'open', labels: ['sortie:queued'] });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl });
+    const first = getTicket(db, t.id)!.updatedAt;
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl });
+    expect(getTicket(db, t.id)!.updatedAt).toBe(first);
   });
 
   it('skips tickets with no linked issue', async () => {

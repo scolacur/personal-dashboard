@@ -323,24 +323,34 @@ export function listSyncTargets(db: Database.Database): SyncTarget[] {
 }
 
 /**
- * Write a GitHub-derived (status, agentState) onto a ticket. Poller-only: unlike
- * `updateTicket` it also sets `agent_state`, and it's a no-op (returns false) when
- * nothing changed, so an unchanged poll writes nothing and logs no event.
+ * Write a GitHub-derived (status, agentState, assignee) onto a ticket. Poller-only:
+ * unlike `updateTicket` it also sets `agent_state`, and it's a no-op (returns false)
+ * when nothing changed, so an unchanged poll writes nothing and logs no event.
+ * `assignee` is optional — when absent, the ticket's assignee is left alone.
  */
 export function applyDerivedState(
   db: Database.Database,
   id: number,
   status: TicketStatus,
   agentState: AgentState | null,
+  assignee?: TicketAssignee,
 ): boolean {
   const existing = getTicket(db, id);
   if (!existing) return false;
-  if (existing.status === status && existing.agentState === agentState) return false;
+  const assigneeChanged = assignee !== undefined && existing.assignee !== assignee;
+  if (existing.status === status && existing.agentState === agentState && !assigneeChanged) return false;
   const now = Date.now();
   const apply = db.transaction(() => {
-    db.prepare(
-      'UPDATE agent_tickets SET status = ?, agent_state = ?, updated_at = ? WHERE id = ?',
-    ).run(status, agentState, now, id);
+    if (assigneeChanged) {
+      db.prepare(
+        'UPDATE agent_tickets SET status = ?, agent_state = ?, assignee = ?, updated_at = ? WHERE id = ?',
+      ).run(status, agentState, assignee, now, id);
+      logEvent(db, id, 'assignee_changed', { from: existing.assignee, to: assignee, via: 'github-sync' });
+    } else {
+      db.prepare(
+        'UPDATE agent_tickets SET status = ?, agent_state = ?, updated_at = ? WHERE id = ?',
+      ).run(status, agentState, now, id);
+    }
     if (existing.status !== status) {
       logEvent(db, id, 'status_changed', { from: existing.status, to: status, via: 'github-sync' });
     }
