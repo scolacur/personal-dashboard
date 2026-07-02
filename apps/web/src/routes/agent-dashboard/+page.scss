@@ -751,12 +751,18 @@
     justify-content: center;
   }
 
-  /* Card action buttons: comfortable tap targets */
+  /* Card action buttons: comfortable tap targets with visible icons */
   .card-actions button {
     min-height: 40px;
     padding: var(--space-sm) var(--space-md);
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    font-size: var(--font-size-base);
+
+    :global(svg) {
+      width: 1rem;
+      height: 1rem;
+    }
   }
 }

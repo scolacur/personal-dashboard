@@ -5,6 +5,7 @@
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
+  import TrashIcon from '$lib/icons/TrashIcon.svelte';
   import * as api from './api';
   import { ticketMatchesQuery } from './filter-logic';
 
@@ -670,7 +671,7 @@
                   type="button"
                   title="Delete"
                   aria-label="Delete"
-                  onclick={() => remove(ticket)}>🗑</button
+                  onclick={() => remove(ticket)}><TrashIcon size={14} /></button
                 >
               </div>
             </article>
