@@ -497,12 +497,11 @@
     </label>
     <label>
       <span>Title</span>
-      <input type="text" bind:value={formTitle} placeholder="What needs doing?" />
+      <input type="text" bind:value={formTitle} />
     </label>
     <label>
       <span>Details</span>
-      <textarea bind:value={formBody} rows="12" placeholder="Plain-English description (optional)"
-      ></textarea>
+      <textarea bind:value={formBody} rows="12"></textarea>
     </label>
     <label>
       <span>Status</span>
