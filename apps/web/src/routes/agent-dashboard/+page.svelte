@@ -141,15 +141,15 @@
       .sort((a, b) => rankOf(a.priority) - rankOf(b.priority) || a.sortOrder - b.sortOrder);
   }
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     error = null;
     try {
       [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
-      loading = false;
+      if (!silent) loading = false;
     }
   }
 
@@ -217,7 +217,7 @@
         });
       }
       formOpen = false;
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -235,7 +235,7 @@
         priority: ticket.priority,
         status: 'backlog',
       });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -347,7 +347,7 @@
     error = null;
     try {
       await api.updateTicket(id, { status, sortOrder });
-      await load();
+      await load(true);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -359,7 +359,7 @@
     error = null;
     try {
       await api.updateTicket(ticket.id, { priority });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -371,7 +371,7 @@
     error = null;
     try {
       await api.updateTicket(ticket.id, { assignee });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -388,7 +388,7 @@
     error = null;
     try {
       await api.deleteTicket(ticket.id);
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
