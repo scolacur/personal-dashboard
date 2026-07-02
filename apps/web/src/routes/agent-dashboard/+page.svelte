@@ -7,8 +7,6 @@
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import * as api from './api';
   import { ticketMatchesQuery } from './filter-logic';
-  import { insertionBeforeId } from './touch-drag';
-  import type { CardLayout } from './touch-drag';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
