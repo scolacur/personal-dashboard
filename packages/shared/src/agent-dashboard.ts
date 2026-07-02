@@ -153,6 +153,9 @@ export interface UpdateTicketInput {
   projectId?: number;
   /** 'steve' | 'robot', or `null` to unassign. Omit to leave unchanged. */
   assignee?: TicketAssignee | null;
+  /** Link (or unlink, via `null`) a GitHub issue. Set together. Omit to leave unchanged. */
+  githubIssueNumber?: number | null;
+  githubIssueUrl?: string | null;
 }
 
 /**

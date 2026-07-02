@@ -248,13 +248,18 @@ export function updateTicket(
     assignee: patch.assignee === undefined ? existing.assignee : patch.assignee,
     sortOrder: patch.sortOrder ?? existing.sortOrder,
     projectId: patch.projectId ?? existing.projectId,
+    // `null` is meaningful (unlink), so distinguish it from "not provided".
+    githubIssueNumber:
+      patch.githubIssueNumber === undefined ? existing.githubIssueNumber : patch.githubIssueNumber,
+    githubIssueUrl:
+      patch.githubIssueUrl === undefined ? existing.githubIssueUrl : patch.githubIssueUrl,
     updatedAt: Date.now(),
   };
 
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -264,6 +269,8 @@ export function updateTicket(
       next.sortOrder,
       next.projectId,
       next.assignee,
+      next.githubIssueNumber,
+      next.githubIssueUrl,
       next.updatedAt,
       id,
     );
