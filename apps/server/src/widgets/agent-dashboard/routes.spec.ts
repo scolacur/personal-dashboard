@@ -45,6 +45,18 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     expect(res.json().status).toBe('ready');
   });
 
+  it('accepts closed status on create', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'test', projectId: pid, status: 'closed' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().status).toBe('closed');
+  });
+
   it('rejects an invalid status with 400 and INVALID_STATUS code', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
@@ -67,6 +79,46 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().status).toBe('closed');
+  });
+});
+
+describe('PATCH /api/widgets/agent-dashboard/tickets/:id — status closed', () => {
+  it('can patch a ticket status to closed', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'test', projectId: pid },
+    });
+    const id: number = create.json().id;
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      payload: { status: 'closed' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('closed');
+  });
+
+  it('rejects invalid status on patch with 400 and INVALID_STATUS code', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'test', projectId: pid },
+    });
+    const id: number = create.json().id;
+
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      payload: { status: 'banana' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_STATUS');
   });
 });
 

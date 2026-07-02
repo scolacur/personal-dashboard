@@ -6,13 +6,63 @@ Newest decisions at the top.
 
 ---
 
-## D-034: `closed` is a separate terminal status from `completed` (PD-81)
+## D-036: `closed` is a separate terminal status from `completed` (PD-81)
 
 **Decision:** Added `'closed'` as a seventh `TicketStatus` value, distinct from `'completed'`. Closed is for manually terminating a ticket for any reason other than successful completion (cancelled, won't-fix, superseded, out-of-scope). `completed` remains the agent-set terminal state (derived from GitHub via the PD-165 poller). The `closed` lane is hidden by default but can be shown via the Lanes menu.
 
 **Alternatives considered:**
 - Re-use `completed` with a wontfix badge — rejected because `completed` is externally controlled (poller-set via GitHub label), and conflating "done by agent" with "cancelled by human" muddies both the visual display and the sync logic.
 - A soft-archive action — `archiveTicket` already exists for true soft-delete; `closed` is for tickets you want visible (and searchable) in the terminal lane without deleting them.
+
+---
+
+## D-035: Mac Mini migration mechanics — Colima, manual cutover, `.local` addressing, auto-login boot, NFS library (resolves [[D-031]]'s open items)
+
+**Decision:** The migration mechanics [[D-031]] left "not yet designed" are settled. Lift-and-shift,
+so only the host-forced changes:
+
+- **Docker runtime: Colima** (not OrbStack, not Docker Desktop). Headless/launchd-managed, OSS (no
+  licensing), explicit VM sizing on the shared 24 GB box (rec. `--cpu 6 --memory 12 --disk 100`).
+  Docker Desktop needs a GUI session; OrbStack is commercial + desktop-oriented. **Re-evaluate after
+  ~1 month** (P2 ticket; set a 2026-08-01 reminder once the reminders feature lands). Watchtower's
+  socket mount changes under Colima (`~/.colima/default/docker.sock`, not `/var/run/docker.sock`) —
+  adjust the dashboard compose.
+- **Addressing: mDNS `.local` hostname, keep port 8088.** Set a stable name via
+  `scutil --set HostName`. One-time sweep of hardcoded `192.168.68.50:8088` (CLAUDE.md,
+  `SORTIE_BOARD_URL`, `ops/` runbooks, compose) → `<mini>.local:8088`. (8080 is free without gluetun,
+  but keeping 8088 avoids gratuitous reference churn.)
+- **Data cutover: manual.** Stop both stacks → `VACUUM INTO` each DB (folds the WAL — the D-025
+  lesson) → transfer NAS→Mini over `ssh cat` (NAS has no SFTP subsystem) → checksum + verify (health,
+  ticket count, Sortie row counts) → **keep the NAS DBs frozen as rollback** until the Mini is
+  proven, then decommission. Sortie egress containment re-verified on Colima (direct = blocked,
+  proxied = 200 — same Linux Docker engine inside the Lima VM, so it ports as-is; a verify item, not
+  a redesign).
+- **Reboot recovery: auto-login + a LaunchAgent** that starts Colima → waits for `docker info` →
+  brings up the dashboard stack → then the Sortie egress stack (explicit order), with
+  `restart: unless-stopped` as backstop. Colima is per-user, so unattended recovery requires a
+  logged-in session → auto-login. **Trade-off accepted:** the box boots to an unlocked session
+  (FileVault left off) — acceptable for an always-on LAN home server whose entire purpose is
+  unattended uptime.
+- **DJ library: NFS mounted directly inside the Colima VM (`:ro`), as a fast-follow** (separate
+  ticket), off the critical-path cutover — music-tracker isn't wired to the real library yet.
+  NFS-into-the-VM avoids the macOS-host→VM double-hop and SMB quirks; resolves D-031's "SMB/NFS"
+  open choice.
+
+**Go private stays a separate later step (P1 ticket):** flipping the repo private breaks the
+currently-public GHCR pull — the Mini's pull path then needs a `read:packages` token, or the
+lift-and-shift Watchtower pull fails silently.
+
+**Why manual / lift-and-shift throughout:** a one-time personal-LAN cutover — minimize
+simultaneously-changing variables and keep the proven pipeline. Re-architecting the deploy model
+(local build now that the M4 can build) is deferred, per [[D-031]].
+
+---
+
+## D-034: Lane show/hide uses localStorage; board grid uses grid-auto-flow:column (PD-49)
+
+**Decision:** Lane visibility preference is persisted to `localStorage` (key `agent-dashboard:hidden-lanes`) with no backend involvement. The board CSS was changed from `grid-template-columns: repeat(N, ...)` to `grid-auto-flow: column; grid-auto-columns: minmax(190px, 1fr)` so the grid adapts to any number of visible lanes without leaving empty column slots.
+
+**Why:** The issue spec explicitly required client-side-only persistence. Implicit grid columns (`grid-auto-flow: column`) are the correct primitive here because the number of visible lanes is dynamic — an explicit `repeat(7, ...)` would create empty columns when lanes are hidden.
 
 ---
 
@@ -125,7 +175,7 @@ avoid building on it (see the 2026-06-30 CI/CD work). The M4 is vastly more capa
 concurrent branch previews feasible, is a far better Sortie host, and leaves headroom. Branch
 previews were the trigger for this conversation, but the powerful host is the bigger win.
 
-**Consequences (ripples to handle during migration — not yet designed):**
+**Consequences (ripples to handle during migration — mechanics now designed in [[D-034]]):**
 - Dashboard + prod `dashboard.db` move to the Mini; **DJ library becomes a network mount (SMB/NFS)**
   from the NAS for music-tracker matching.
 - Backups must follow the DB to the Mini. (Tracked as PD-190 — off-box target replacing Hyper Backup;

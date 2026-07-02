@@ -28,18 +28,20 @@ const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: A
 /**
  * Map an issue's labels + open/closed state to a derived (status, agentState), or
  * `null` when no rule applies — meaning "leave the ticket's status alone" (e.g. only
- * `sortie:queued`, or no sortie label yet). Deliberately does NOT handle
- * `sortie:wontfix`: that maps to the `closed` status which doesn't exist until #49
- * ships (see PD-193). Badges for the fine-grained states are PD-194.
+ * `sortie:queued`, or no sortie label yet).
  */
 export function deriveState(labels: string[], issueState: 'open' | 'closed'): DerivedState | null {
+  const set = new Set(labels.map((l) => l.toLowerCase()));
+  // sortie:wontfix is a terminal label that maps to board `closed` regardless of
+  // whether the GitHub issue is still open or already closed — checked before the
+  // generic closed→completed fallback so it is never swallowed by it.
+  if (set.has('sortie:wontfix')) return { status: 'closed', agentState: null };
   // Closed is terminal and authoritative: a closed issue is completed regardless of
   // any stale non-terminal label still hanging on it (e.g. an issue closed while it
-  // still wore sortie:in-review). Checked FIRST so a stale label can't override closed.
-  // (PD-193 will refine closed + wontfix/not-planned → the `closed` status once it exists.)
+  // still wore sortie:in-review). Checked before LABEL_RULES so stale labels can't
+  // override a closed issue state.
   if (issueState === 'closed') return { status: 'completed', agentState: null };
   // Open issue: derive from its active sortie:* label (precedence-ordered).
-  const set = new Set(labels.map((l) => l.toLowerCase()));
   for (const rule of LABEL_RULES) {
     if (set.has(rule.label)) return { status: rule.status, agentState: rule.agentState };
   }

@@ -13,7 +13,7 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
   robot: 'Robot',
 };
 
-// The Kanban columns. Backlog/ready/queued are set by hand; the agent statuses
+// The Kanban columns. Backlog/ready/queued/closed are set by hand; the agent statuses
 // (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
 // converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
 // 'closed' is a manual terminal status for tickets closed for any reason other than
