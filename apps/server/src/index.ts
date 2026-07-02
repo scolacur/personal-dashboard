@@ -10,6 +10,7 @@ import { widget as helloWidget } from './widgets/hello/index';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as agentDashboardWidget } from './widgets/agent-dashboard/index';
 import { widget as pomodoroWidget } from './widgets/pomodoro/index';
+import { initDeployStatus, getDeployInfo } from './deploy-status';
 
 const widgets: BackendWidget[] = [
   helloWidget,
@@ -48,6 +49,12 @@ registerBackupJob(cron, app.log, db, path.join(dataDir, 'backups'));
 // APP_VERSION is baked into the image at build time (git short SHA via deploy.yml);
 // 'dev' locally. Lets you confirm which build is live and verify a deploy landed.
 app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION ?? 'dev' }));
+
+// Fetched once at startup from GitHub API (fire-and-forget; cached for process lifetime).
+// The frontend reads this without polling — the cache is refreshed automatically when
+// Watchtower recreates the container on a new deploy.
+void initDeployStatus();
+app.get('/api/deploy-info', async () => getDeployInfo());
 
 const webBuildDir = process.env.WEB_BUILD_DIR ?? path.join(__dirname, '../../../apps/web/build');
 
