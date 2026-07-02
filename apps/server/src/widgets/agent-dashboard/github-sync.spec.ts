@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { createTicket, getProjectBySlug, getTicket, updateTicket } from './store';
-import { deriveState, runGithubSync } from './github-sync';
+import { deriveState, runGithubSync, runQueuedSync } from './github-sync';
 
 const noopLog = { info() {}, error() {} };
 
@@ -119,5 +119,78 @@ describe('runGithubSync', () => {
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 404) });
 
     expect(getTicket(db, t.id)?.status).toBe('queued');
+  });
+});
+
+/** A fetch mock for the queued-sync (create issue / read labels / add label). */
+function queuedFetch(opts: { getLabels?: string[]; createNumber?: number }) {
+  const calls: { url: string; method: string; body?: unknown }[] = [];
+  const impl = (async (url: string, init?: { method?: string; body?: string }) => {
+    const method = init?.method ?? 'GET';
+    calls.push({ url, method, body: init?.body ? JSON.parse(init.body) : undefined });
+    if (method === 'POST' && /\/issues$/.test(url)) {
+      const n = opts.createNumber ?? 100;
+      return { ok: true, status: 201, json: async () => ({ number: n, html_url: `https://gh/${n}` }) };
+    }
+    if (method === 'GET' && /\/issues\/\d+$/.test(url)) {
+      return { ok: true, status: 200, json: async () => ({ state: 'open', labels: (opts.getLabels ?? []).map((name) => ({ name })) }) };
+    }
+    if (method === 'POST' && /\/labels$/.test(url)) {
+      return { ok: true, status: 200, json: async () => [] };
+    }
+    return { ok: false, status: 404, json: async () => ({}) };
+  }) as unknown as typeof fetch;
+  return { impl, calls };
+}
+
+describe('runQueuedSync', () => {
+  it('creates + labels + links an issue for an unlinked queued ticket', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'needs issue', projectId: pdProjectId(db), status: 'queued' });
+    const { impl, calls } = queuedFetch({ createNumber: 200 });
+
+    await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });
+
+    const after = getTicket(db, t.id);
+    expect(after?.githubIssueNumber).toBe(200);
+    expect(after?.githubIssueUrl).toBe('https://gh/200');
+    const create = calls.find((c) => c.method === 'POST' && /\/issues$/.test(c.url));
+    expect((create?.body as { labels: string[] }).labels).toContain('sortie:queued');
+  });
+
+  it('adds sortie:queued to a linked issue that has no sortie:* label yet', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'linked bare', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 50, githubIssueUrl: 'https://gh/50' });
+    const { impl, calls } = queuedFetch({ getLabels: [] });
+
+    await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });
+
+    const addLabel = calls.find((c) => c.method === 'POST' && /\/issues\/50\/labels$/.test(c.url));
+    expect(addLabel).toBeDefined();
+    expect((addLabel?.body as { labels: string[] }).labels).toContain('sortie:queued');
+  });
+
+  it('leaves a linked issue alone if it already has a sortie:* label', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'already moving', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 51, githubIssueUrl: 'https://gh/51' });
+    const { impl, calls } = queuedFetch({ getLabels: ['sortie:in-progress'] });
+
+    await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });
+
+    expect(calls.some((c) => /\/labels$/.test(c.url))).toBe(false);
+  });
+
+  it('skips non-queued tickets and non-sortie-enabled projects', async () => {
+    const db = freshDb();
+    createTicket(db, { title: 'ready one', projectId: pdProjectId(db), status: 'ready' }); // wrong lane
+    const core = getProjectBySlug(db, 'core'); // sortie_enabled = 0
+    if (core) createTicket(db, { title: 'core queued', projectId: core.id, status: 'queued' });
+    const { impl, calls } = queuedFetch({ createNumber: 300 });
+
+    await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });
+
+    expect(calls).toHaveLength(0);
   });
 });
