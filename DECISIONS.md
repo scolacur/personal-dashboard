@@ -6,7 +6,7 @@ Newest decisions at the top.
 
 ---
 
-## D-030: "Refine" (PD-172) is a Claude-Agent-SDK sidecar with clone-grounded grilling and propose→approve write-back
+## D-033: "Refine" (PD-172) is a Claude-Agent-SDK sidecar with clone-grounded grilling and propose→approve write-back
 
 **Decision:** The backlog→Ready "Refine" flow runs a **dedicated `refine-agent` sidecar container**
 on the `egress_internal` network (mirroring Sortie), running the **Claude Agent SDK** with a
@@ -42,17 +42,17 @@ closes before approval (no grill persistence in v1).
 **Implications:** Requires an `ANTHROPIC_API_KEY` + a **read-only** GH token in the sidecar env only
 (NAS `.env`, added to `.env.example`); never in the web process or browser. Depends on PD-7's
 egress/networking outcome. Refine is offered on any backlog ticket; grounding degrades gracefully for
-`github_repo`-null projects. See [[D-029]] for why the Claude-powered formatting lives here and not in
+`github_repo`-null projects. See [[D-032]] for why the Claude-powered formatting lives here and not in
 the Queued poller.
 
 ---
 
-## D-029: The TODO→Sortie "Phase 3" splits — Claude formatting moves to Refine (PD-172); the Queued poller (PD-164) is mechanical and Claude-free
+## D-032: The TODO→Sortie "Phase 3" splits — Claude formatting moves to Refine (PD-172); the Queued poller (PD-164) is mechanical and Claude-free
 
 **Decision:** [[D-020]] framed "Phase 3" as a single Claude-API "Convert to issue" step (format +
 draft-then-approve + create + link). That step is **split in two**:
 
-- **Formatting is upstream, in Refine ([[D-030]], PD-172):** the Claude-powered work of turning a
+- **Formatting is upstream, in Refine ([[D-033]], PD-172):** the Claude-powered work of turning a
   rough backlog blurb into well-formed, Sortie-shaped tickets happens (human-gated) on the
   **backlog→Ready** transition.
 - **Issue creation is mechanical, in the Queued poller (PD-164):** a node-cron poller (extending
@@ -87,7 +87,70 @@ Idempotency is by the `githubIssueNumber = null` guard + same-tick write-back (n
 on a crash between create and write-back, hand-fixable on a single-user board). The `isSortieReady`
 validator lives in `packages/shared` so the UI warning (PD-177) and, if ever wanted, the poller can
 share one definition of "Sortie-ready shape." This supersedes the single-step framing in [[D-020]]'s
-"Phase 3"; [[D-030]] covers the Refine side.
+"Phase 3"; [[D-033]] covers the Refine side.
+---
+
+## D-030: Off-LAN access via Tailscale, with tailnet membership as the authentication (PD-34)
+
+**Decision:** Reach the dashboard off-LAN over **Tailscale**, not a public reverse proxy.
+Tailnet membership **is** the auth — the app stays login-less and is never publicly exposed.
+
+**Why (over Synology RP + DDNS + Let's Encrypt, or Cloudflare Tunnel):**
+
+- Tailscale already runs on the NAS for other apps, and the app container already publishes
+  `8088` on all host interfaces, so it's reachable at `http://<nas-tailnet-name>:8088` from any
+  device on the tailnet with **zero** app changes — no port-forward, no DDNS, no inbound ingress.
+- The ticket requires "authentication before exposing." A public URL would mean building an app
+  login (out of scope, and a standing attack surface). Tailscale makes the **tailnet the auth
+  boundary** (WireGuard device identity): only my own devices can reach it, and it's never exposed.
+  For a single-user personal dashboard, tailnet membership is sufficient and stronger than a
+  bolt-on password. This also matches the egress-hardening security posture already in place.
+- **Ports to the Mac Mini for free** — the app is moving off Synology ([[D-029]] context); Tailscale
+  is just installed on the new host and the same access model holds.
+
+**HTTPS deferred, not required:** traffic over the tailnet is already WireGuard-encrypted end-to-end,
+so plain HTTP is fine. `tailscale serve` can later add a real Let's Encrypt cert on `*.ts.net`
+(still private) if a secure-context browser feature (PWA/service worker) or the "not secure" label
+makes it worth it. Public exposure via RP/Cloudflare only earns its complexity if the dashboard ever
+needs to be shared with someone **not** on the tailnet.
+
+**Manual (🧑) steps** (no code): confirm Tailscale + MagicDNS are up on the NAS, install/log in the
+phone, hit the MagicDNS URL off-wifi. Runbook: `ops/access/README.md`.
+
+---
+
+## D-029: Consistent SQLite snapshots run in-process via node-cron, not a host script (PD-33)
+
+**Decision:** Produce WAL-consistent SQLite snapshots from an **in-process `node-cron` job**
+(`apps/server/src/backup.ts`, scheduled through a new `CronRegistry`), not a Synology Task Scheduler
+shell script. Each run takes an online `.backup()` of the live `dashboard.db`, collapses the copy to
+a **single self-contained file** (`journal_mode = DELETE`, no `-wal`/`-shm` sidecars), verifies it
+with `PRAGMA integrity_check`, and writes it to `<DATA_DIR>/backups/` where the existing off-box
+backup already ships it.
+
+**Why in-process, not a host script (the `quota-refund.sh` pattern the ticket cited):**
+
+- The app is **moving off Synology to a Mac Mini**, so anything bound to DSM Task Scheduler / host
+  `/bin/sqlite3` would be throwaway. `node-cron` runs wherever Node runs → **ports with zero change**.
+- It also builds the `CronRegistry` PROJECT.md §2 always specified but never had (the widget
+  `registerCron` hook is now wired), which the music-tracker Spotify poller will reuse.
+
+**Why the WAL matters (not theoretical):** the D-025 prod restore hit a 4 MB uncheckpointed WAL — a
+file-level copy of the `.db` alone would have restored stale/empty data. `.backup()` + `journal_mode
+= DELETE` yields one coherent file that's safe to ship and restore on its own.
+
+**Design notes:** the module takes the DB handle and all paths as **parameters** (no module-level
+`db` import) so it unit-tests without opening real data. It accepts optional **extra DB paths**
+(opened read-only) so **Sortie's `.sortie.db`** can be added once the Mac Mini layout lets the runtime
+reach it — scoped to `dashboard.db` for now (the precious, no-other-source-of-truth data). A snapshot
+that fails verification is deleted, and pruning of old snapshots only runs **after** a good new one,
+so a bad run never eats good backups. Config via env (`BACKUP_CRON`, `BACKUP_RETAIN_DAYS`,
+`BACKUP_DIR`, `BACKUP_EXTRA_DB_PATHS`); defaults 03:00 daily / 14-day retention.
+
+**Out of scope / revisit:** *shipping* snapshots off-box. On Synology, Hyper Backup → Backblaze
+already carries `data/backups/`; on the Mac Mini a new off-box target (Backblaze/restic/etc.) will be
+needed — orthogonal to producing the consistent file. The ticket's two 🧑 items stand while on
+Synology: confirm Hyper Backup covers `/volume1/docker/`, and do one test restore.
 
 ---
 

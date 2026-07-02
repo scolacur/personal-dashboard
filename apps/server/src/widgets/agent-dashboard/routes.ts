@@ -89,6 +89,9 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     if (body.assignee !== undefined && body.assignee !== null && !isAssignee(body.assignee)) {
       return reply.status(400).send({ error: 'invalid assignee', code: 'INVALID_ASSIGNEE' });
     }
+    if (body.status !== undefined && !isStatus(body.status)) {
+      return reply.status(400).send({ error: 'invalid status', code: 'INVALID_STATUS' });
+    }
 
     const input: CreateTicketInput = {
       title: body.title.trim(),
@@ -96,6 +99,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       body: (body.body as string | null | undefined) ?? null,
       priority: body.priority === null ? null : isPriority(body.priority) ? body.priority : undefined,
       assignee: body.assignee === undefined ? undefined : body.assignee === null ? null : (body.assignee as TicketAssignee),
+      status: isStatus(body.status) ? body.status : undefined,
     };
     return reply.status(201).send(createTicket(db, input));
   });

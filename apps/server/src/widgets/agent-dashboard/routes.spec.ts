@@ -20,6 +20,44 @@ function projectId(db: Database.Database, slug: string): number {
   return p.id;
 }
 
+describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
+  it('defaults to backlog when status is omitted', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'test', projectId: pid },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().status).toBe('backlog');
+  });
+
+  it('respects an explicit status on create', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'test', projectId: pid, status: 'ready' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().status).toBe('ready');
+  });
+
+  it('rejects an invalid status with 400 and INVALID_STATUS code', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'test', projectId: pid, status: 'banana' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_STATUS');
+  });
+});
+
 describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
   it('defaults to steve when assignee is omitted', async () => {
     const { app, db } = freshSetup();
