@@ -1,0 +1,54 @@
+.deploy-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.label {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.value {
+  color: var(--text);
+}
+
+a.value {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 0.15s;
+
+  &:hover {
+    text-decoration-color: var(--accent);
+  }
+}
+
+.sha {
+  font-family: monospace;
+  font-size: 0.8em;
+}
+
+.commit-msg {
+  color: var(--muted);
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sep {
+  color: var(--border);
+  user-select: none;
+}
