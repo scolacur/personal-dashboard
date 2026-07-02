@@ -159,12 +159,12 @@
     return () => window.removeEventListener('click', handleWindowClick);
   });
 
-  function openAdd() {
+  function openAdd(status: TicketStatus = 'backlog') {
     editingId = null;
     editingLocked = false;
     formTitle = '';
     formBody = '';
-    formStatus = 'backlog'; // new tickets start in the backlog
+    formStatus = status;
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = 'steve'; // default assignee
     // Default to the active filter, else the first project.
@@ -466,7 +466,7 @@
       <input type="checkbox" bind:checked={condensed} />
       <span>Condensed</span>
     </label>
-    <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
+    <button class="add-btn" type="button" onclick={() => openAdd()} disabled={projects.length === 0}>
       + Add Ticket
     </button>
   </div>
@@ -567,6 +567,14 @@
         <h2 class="column-head">
           {col.label}<span class="count">{items.length}</span>
         </h2>
+        <button
+          class="column-add-btn"
+          type="button"
+          title="Add ticket to {col.label}"
+          aria-label="Add ticket to {col.label}"
+          onclick={() => openAdd(col.status)}
+          disabled={projects.length === 0}
+        >+</button>
         <div
           class="column-body"
           role="list"
