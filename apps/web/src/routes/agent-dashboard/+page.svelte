@@ -3,12 +3,13 @@
   import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
+  import GithubMark from '$lib/icons/GithubMark.svelte';
   import * as api from './api';
 
   const COLUMNS: { status: TicketStatus; label: string }[] = [
     { status: 'backlog', label: 'Backlog' },
-    { status: 'ready', label: 'Ready' },
-    { status: 'queued', label: 'Queued' },
+    { status: 'ready', label: 'Ready for Robot' },
+    { status: 'queued', label: 'Queued for Robot' },
     { status: 'in_progress', label: 'In progress' },
     { status: 'in_review', label: 'In review' },
     { status: 'completed', label: 'Completed' },
@@ -527,8 +528,16 @@
                 </div>
                 <span class="card-top-right">
                   {#if ticket.githubIssueUrl}
-                    <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
-                      #{ticket.githubIssueNumber}
+                    <a
+                      class="issue-link"
+                      href={ticket.githubIssueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      draggable="false"
+                      title="GitHub issue #{ticket.githubIssueNumber}"
+                      aria-label="GitHub issue #{ticket.githubIssueNumber}"
+                    >
+                      <GithubMark size={14} />
                     </a>
                   {/if}
                   {#if ticket.displayId}

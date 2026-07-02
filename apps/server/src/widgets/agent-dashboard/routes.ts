@@ -155,6 +155,28 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       }
       patch.assignee = body.assignee as TicketAssignee | null;
     }
+    if (body.githubIssueNumber !== undefined) {
+      // null = unlink; otherwise a positive integer issue number.
+      if (
+        body.githubIssueNumber !== null &&
+        (typeof body.githubIssueNumber !== 'number' ||
+          !Number.isInteger(body.githubIssueNumber) ||
+          body.githubIssueNumber <= 0)
+      ) {
+        return reply
+          .status(400)
+          .send({ error: 'invalid githubIssueNumber', code: 'INVALID_GITHUB_ISSUE_NUMBER' });
+      }
+      patch.githubIssueNumber = body.githubIssueNumber as number | null;
+    }
+    if (body.githubIssueUrl !== undefined) {
+      if (body.githubIssueUrl !== null && typeof body.githubIssueUrl !== 'string') {
+        return reply
+          .status(400)
+          .send({ error: 'githubIssueUrl must be a string', code: 'INVALID_GITHUB_ISSUE_URL' });
+      }
+      patch.githubIssueUrl = body.githubIssueUrl as string | null;
+    }
 
     const updated = updateTicket(db, id, patch);
     if (!updated) {
