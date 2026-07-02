@@ -157,7 +157,8 @@ export function listTickets(db: Database.Database): AgentTicket[] {
            WHEN 'in_progress' THEN 3
            WHEN 'in_review' THEN 4
            WHEN 'completed' THEN 5
-           ELSE 6
+           WHEN 'closed' THEN 6
+           ELSE 7
          END,
          sort_order ASC,
          id ASC`,

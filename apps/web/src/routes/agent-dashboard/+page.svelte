@@ -7,6 +7,7 @@
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import * as api from './api';
+  import { ticketMatchesQuery } from './filter-logic';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -130,11 +131,10 @@
   }
 
   function visibleTickets(): AgentTicket[] {
-    const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
-      if (q && !`${t.title} ${t.body ?? ''}`.toLowerCase().includes(q)) return false;
+      if (!ticketMatchesQuery(t, search)) return false;
       return true;
     });
   }
@@ -163,16 +163,17 @@
     return () => window.removeEventListener('click', handleWindowClick);
   });
 
-  function openAdd() {
+  function openAdd(status: TicketStatus = 'backlog') {
     editingId = null;
     editingLocked = false;
     formTitle = '';
     formBody = '';
-    formStatus = 'backlog'; // new tickets start in the backlog
+    formStatus = status;
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = 'steve'; // default assignee
-    // Default to the active filter, else the first project.
-    formProjectId = filterProjectId ?? projects[0]?.id ?? null;
+    // Default to the active filter, else "personal-dashboard", else the first project.
+    const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
+    formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
     formOpen = true;
   }
 
@@ -470,7 +471,7 @@
       <input type="checkbox" bind:checked={condensed} />
       <span>Condensed</span>
     </label>
-    <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
+    <button class="add-btn" type="button" onclick={() => openAdd()} disabled={projects.length === 0}>
       + Add Ticket
     </button>
   </div>
@@ -571,6 +572,14 @@
         <h2 class="column-head">
           {col.label}<span class="count">{items.length}</span>
         </h2>
+        <button
+          class="column-add-btn"
+          type="button"
+          title="Add ticket to {col.label}"
+          aria-label="Add ticket to {col.label}"
+          onclick={() => openAdd(col.status)}
+          disabled={projects.length === 0}
+        >+</button>
         <div
           class="column-body"
           role="list"
@@ -604,21 +613,6 @@
                     <option value="">—</option>
                     {#each TICKET_PRIORITIES as p (p)}
                       <option value={p}>{p}</option>
-                    {/each}
-                  </select>
-                  <select
-                    class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
-                    title={isStatusLocked(ticket)
-                      ? 'Agent-controlled — cannot reassign'
-                      : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
-                    value={ticket.assignee ?? ''}
-                    disabled={isStatusLocked(ticket)}
-                    onchange={(e) =>
-                      setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
-                  >
-                    <option value="">—</option>
-                    {#each TICKET_ASSIGNEES as a (a)}
-                      <option value={a}>{assigneeLabel(a)}</option>
                     {/each}
                   </select>
                 </div>
@@ -660,6 +654,21 @@
                 <p class="card-body">{ticket.body}</p>
               {/if}
               <div class="card-actions">
+                <select
+                  class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
+                  title={isStatusLocked(ticket)
+                    ? 'Agent-controlled — cannot reassign'
+                    : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
+                  value={ticket.assignee ?? ''}
+                  disabled={isStatusLocked(ticket)}
+                  onchange={(e) =>
+                    setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
+                >
+                  <option value="">—</option>
+                  {#each TICKET_ASSIGNEES as a (a)}
+                    <option value={a}>{assigneeLabel(a)}</option>
+                  {/each}
+                </select>
                 <span class="spacer"></span>
                 <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
                   >✎</button
