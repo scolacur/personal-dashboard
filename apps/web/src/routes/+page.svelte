@@ -2,7 +2,10 @@
   import { widgets } from '$lib/widgets';
   import Widget from '$lib/Widget.svelte';
   import PomodoroTimer from './widgets/pomodoro/PomodoroTimer.svelte';
+  import DeployStatus from './DeployStatus.svelte';
 </script>
+
+<DeployStatus />
 
 {#if widgets.length === 0}
   <p style="color: var(--muted); text-align: center; margin-top: 4rem; font-size: 0.875rem;">
