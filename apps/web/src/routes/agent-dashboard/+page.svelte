@@ -167,8 +167,9 @@
     formStatus = 'backlog'; // new tickets start in the backlog
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = 'steve'; // default assignee
-    // Default to the active filter, else the first project.
-    formProjectId = filterProjectId ?? projects[0]?.id ?? null;
+    // Default to the active filter, else "personal-dashboard", else the first project.
+    const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
+    formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
     formOpen = true;
   }
 
