@@ -94,6 +94,10 @@
   .top-nav {
     flex-wrap: wrap;
     padding: var(--space-sm) var(--space-md);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg);
   }
 
   /* Push theme toggle to the right of the brand on the first row */
