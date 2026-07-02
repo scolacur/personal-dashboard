@@ -62,9 +62,13 @@ describe('deriveState', () => {
     expect(deriveState(['sortie:stuck'], 'closed')).toEqual({ status: 'completed', agentState: null });
   });
 
-  it('does NOT map sortie:wontfix (deferred to PD-193 / the closed status)', () => {
-    // Open + wontfix only → no rule → null (status untouched).
-    expect(deriveState(['sortie:wontfix'], 'open')).toBeNull();
+  it('maps sortie:wontfix to board closed status (PD-193)', () => {
+    expect(deriveState(['sortie:wontfix'], 'open')).toEqual({ status: 'closed', agentState: null });
+  });
+
+  it('sortie:wontfix wins over a closed GitHub issue state (maps to closed, not completed)', () => {
+    // An issue closed as wontfix must land on board `closed`, not `completed`.
+    expect(deriveState(['sortie:wontfix'], 'closed')).toEqual({ status: 'closed', agentState: null });
   });
 
   it('applies precedence — stuck wins over in-progress', () => {
@@ -119,6 +123,29 @@ describe('runGithubSync', () => {
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 404) });
 
     expect(getTicket(db, t.id)?.status).toBe('queued');
+  });
+
+  it('sets a wontfix-labelled issue to board closed status', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'wontfix', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 62, githubIssueUrl: 'https://x/62' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'closed', labels: ['sortie:wontfix'] }) });
+
+    expect(getTicket(db, t.id)?.status).toBe('closed');
+    expect(getTicket(db, t.id)?.agentState).toBeNull();
+  });
+
+  it('is a no-op when ticket is already in the target terminal status (idempotent)', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'closed already', projectId: pdProjectId(db), status: 'closed' });
+    updateTicket(db, t.id, { githubIssueNumber: 63, githubIssueUrl: 'https://x/63' });
+    const fetchImpl = fakeFetch({ state: 'closed', labels: ['sortie:wontfix'] });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl });
+    const first = getTicket(db, t.id)!.updatedAt;
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl });
+    expect(getTicket(db, t.id)!.updatedAt).toBe(first);
   });
 });
 
