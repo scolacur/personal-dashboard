@@ -6,20 +6,20 @@
 .section-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
 
 .section-title {
   margin: 0;
   font-size: var(--font-size-lg);
+  flex: 0 0 auto;
 }
 
-.head-controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
+// On desktop, margin-left: auto on project-filter creates the left/right split:
+// left → (Tickets | Search), right → (Projects | Priority | Info | Condensed | Add)
+.project-filter {
+  margin-left: auto;
 }
 
 .ticket-search {
@@ -558,26 +558,65 @@
 
 /* ── Mobile responsive (≤640px) ─────────────────── */
 @media (max-width: 640px) {
-  /* Header: stack title above controls, controls wrap */
+  // Header reflows into 5 rows using flex order:
+  // Row 1: Tickets (left) | +Add Ticket (right)
+  // Row 2: Search (full width)
+  // Row 3: Projects (full width)
+  // Row 4: Priority (fills) | info button (right)
+  // Row 5: Condensed (full width)
   .section-head {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .head-controls {
-    width: 100%;
     flex-wrap: wrap;
     gap: var(--space-xs);
+    align-items: center;
   }
 
-  /* Search takes a full row; drop the fixed min-width */
+  .section-title {
+    order: 1;
+    margin-right: auto;
+  }
+
+  .add-btn {
+    order: 2;
+  }
+
   .ticket-search {
+    order: 3;
     flex: 0 0 100%;
 
     input {
       min-width: 0;
       width: 100%;
     }
+  }
+
+  .project-filter {
+    order: 4;
+    flex: 0 0 100%;
+    margin-left: 0;
+
+    select {
+      width: 100%;
+    }
+  }
+
+  .priority-filter {
+    order: 5;
+    flex: 1 1 auto;
+    min-width: 0;
+
+    select {
+      width: 100%;
+    }
+  }
+
+  .info-btn {
+    order: 6;
+    flex: 0 0 auto;
+  }
+
+  .condensed-toggle {
+    order: 7;
+    flex: 0 0 100%;
   }
 
   /* Board: flex row with scroll-snap so each lane ≈ 85vw */
