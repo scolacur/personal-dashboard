@@ -10,6 +10,7 @@
   import * as api from './api';
   import { projectIdColor } from './api';
   import { ticketMatchesQuery } from './filter-logic';
+  import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
@@ -131,7 +132,7 @@
   function byStatus(status: TicketStatus): AgentTicket[] {
     return visibleTickets()
       .filter((t) => t.status === status)
-      .sort((a, b) => rankOf(a.priority) - rankOf(b.priority) || a.sortOrder - b.sortOrder);
+      .sort((a, b) => compareTicketsInColumn(status, a, b));
   }
 
   async function load(silent = false) {
