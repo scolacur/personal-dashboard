@@ -3,6 +3,7 @@
   import type { AgentProject, AgentTicket, TicketStatus } from '@dashboard/shared';
   import { PRIORITY_LABELS } from '@dashboard/shared';
   import * as api from '../../api';
+  import { projectIdColor } from '../../api';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
@@ -58,7 +59,7 @@
 </script>
 
 <nav class="detail-nav">
-  <a href="/agent-dashboard">← Back to board</a>
+  <a href="/task-monitor">← Back to board</a>
 </nav>
 
 {#if loading}
@@ -80,7 +81,7 @@
       {/if}
       <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
       {#if project}
-        <span class="project-chip" style="--chip: {project.color ?? 'var(--muted)'}"
+        <span class="project-chip" style="--chip: {projectIdColor(project)}"
           >{project.name}</span
         >
       {/if}
