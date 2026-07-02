@@ -6,6 +6,18 @@ Newest decisions at the top.
 
 ---
 
+## D-037: Sortie bots must run `npm run verify` before pushing (enforced via `self_review`)
+
+**Decision:** All Sortie-authored code changes must pass `npm run verify` (build → typecheck → lint → test) before being pushed and a PR opened. This is enforced two ways: (1) `self_review` in `ops/sortie/WORKFLOW.md` runs `npm ci && npm run verify` automatically inside the agent turn before hand-off, and (2) the agent's Finish protocol (CLAUDE.md / WORKFLOW.md prompt) requires the agent itself to run `npm ci && npm run verify` before committing. The `after_run` safety-net hook (which creates a PR if the agent crashes before finishing) does NOT run verify — it is a last-resort fallback only, not a quality gate.
+
+**Why (root cause):** PR #88 (issue #55) was created by the `after_run` safety-net after the agent crashed mid-turn. The safety-net pushed whatever was staged without running CI. The code had two unused imports (`insertionBeforeId`, `CardLayout` from `touch-drag.ts`) that ESLint's `no-unused-vars: error` rule flagged, causing CI to fail on the PR. The agent had imported them as stubs for a partially-implemented feature.
+
+**Fix applied:** The two unused imports were removed from `apps/web/src/routes/agent-dashboard/+page.svelte` on branch `sortie/55` (fixing PR #88's CI). Going forward, the `self_review` gate prevents this class of error from reaching the PR in the first place — if `npm run verify` fails, the agent is required to fix it before pushing.
+
+**Trade-off:** The `after_run` safety-net will never be a full quality gate (it runs outside the agent turn and has no access to self_review). If an agent crashes after code changes but before running verify, a PR with failing CI may still appear. This is acceptable as an edge case — the safety-net's job is to preserve work-in-progress, not to guarantee CI green. Humans reviewing PRs should check the CI status badge.
+
+---
+
 ## D-036: `closed` is a separate terminal status from `completed` (PD-81)
 
 **Decision:** Added `'closed'` as a seventh `TicketStatus` value, distinct from `'completed'`. Closed is for manually terminating a ticket for any reason other than successful completion (cancelled, won't-fix, superseded, out-of-scope). `completed` remains the agent-set terminal state (derived from GitHub via the PD-165 poller). The `closed` lane is hidden by default but can be shown via the Lanes menu.
