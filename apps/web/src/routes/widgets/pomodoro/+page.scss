@@ -8,9 +8,60 @@
   }
 }
 
+/* wrapper used only in tomato mode to stack calyx + card */
+.tomato-widget {
+  &.active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+
+    .tomato-calyx {
+      /* SVG viewBox 100×60; rendered at 8rem wide → 4.8rem tall.
+         Calyx center at y=35 → 35/60 × 4.8rem = 2.8rem from SVG top.
+         margin-bottom pulls the card up so calyx sits on the card top. */
+      width: 8rem;
+      height: 4.8rem;
+      display: block;
+      margin-bottom: -1.5rem;
+      position: relative;
+      z-index: 2;
+    }
+  }
+}
+
 .timer-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 1.75rem;
+
+  &.tomato-mode {
+    /* Square base so the border-radius produces a proper tomato silhouette */
+    width: 16rem;
+    height: 16rem;
+
+    /* Slightly oblate: flatter on top, rounder on bottom, like a real tomato */
+    border-radius: 48% 48% 52% 52% / 44% 44% 56% 56%;
+
+    background:
+      /* dark dimple at the very top where stem attaches */
+      radial-gradient(ellipse 20% 10% at 50% 2%, rgba(60, 0, 0, 0.55) 0%, transparent 100%),
+      /* main tomato body */
+      radial-gradient(ellipse at 40% 32%, #ff5a48, #d83020 54%, #a82015);
+
+    border: none;
+    box-shadow:
+      0 16px 52px rgba(130, 18, 8, 0.55),
+      inset -12px -14px 26px rgba(0, 0, 0, 0.18),
+      inset 6px 6px 16px rgba(255, 255, 255, 0.14);
+
+    /* center the timer content inside the circle */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* clip content to tomato shape */
+    overflow: hidden;
+    padding: 2rem 2.5rem;
+  }
 }

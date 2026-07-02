@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.875rem;
+  width: 100%;
 }
 
 .timer-display {
@@ -142,4 +143,89 @@
   font-size: 0.75rem;
   color: var(--muted);
   text-align: center;
+}
+
+.btn-tomato {
+  flex-shrink: 0;
+  padding: 0.5rem 0.625rem;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: var(--radius, 6px);
+  border: 1px solid var(--border);
+  background: var(--surface-2, var(--surface));
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+
+  &.active {
+    background: color-mix(in srgb, #c0392b 15%, transparent);
+    border-color: #c0392b;
+  }
+
+  &:hover:not(:disabled) {
+    border-color: #c0392b;
+  }
+}
+
+/* tomato mode: hide settings rows, adapt colours for red background */
+.pomodoro.tomato-mode {
+  .rows {
+    display: none;
+  }
+
+  .timer-display {
+    font-size: 3rem;
+    color: white;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+
+    &.done {
+      background: none;
+      box-shadow: none;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 2rem;
+    }
+  }
+
+  .round-info {
+    color: rgba(255, 255, 255, 0.8);
+  }
+
+  .btn {
+    &.btn-primary {
+      background: #27ae60;
+      border-color: #219150;
+      color: white;
+
+      &:hover:not(:disabled) {
+        filter: brightness(1.1);
+      }
+    }
+
+    &.btn-secondary {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.35);
+      color: white;
+
+      &:hover:not(:disabled) {
+        border-color: white;
+        background: rgba(255, 255, 255, 0.28);
+      }
+    }
+
+    &.btn-tomato {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.35);
+
+      &.active {
+        background: rgba(0, 0, 0, 0.2);
+        border-color: rgba(0, 0, 0, 0.25);
+      }
+
+      &:hover:not(:disabled) {
+        border-color: white;
+        background: rgba(255, 255, 255, 0.28);
+      }
+    }
+  }
 }
