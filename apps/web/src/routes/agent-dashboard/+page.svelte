@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import * as api from './api';
 
@@ -127,6 +127,9 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
+    if (formStatus === 'queued' && !isSortieReady(formBody.trim() || null)) {
+      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    }
     error = null;
     try {
       if (editingId === null) {
@@ -274,6 +277,9 @@
     const sortOrder = computeSortOrder(status, ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
+    if (status === 'queued' && ticket.status !== 'queued' && !isSortieReady(ticket.body)) {
+      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    }
     error = null;
     try {
       await api.updateTicket(id, { status, sortOrder });

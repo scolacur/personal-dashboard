@@ -154,3 +154,25 @@ export interface UpdateTicketInput {
   /** 'steve' | 'robot', or `null` to unassign. Omit to leave unchanged. */
   assignee?: TicketAssignee | null;
 }
+
+/**
+ * The four section headers the `/to-sortie-issues` Refine flow produces.
+ * `## Done When` also accepts a `(acceptance checklist)` suffix.
+ * All matched case-insensitively, tolerant of trailing text on the heading line.
+ */
+const SORTIE_REQUIRED_HEADERS = [
+  /^## context/im,
+  /^## task/im,
+  /^## done when/im,
+  /^## out of scope/im,
+] as const;
+
+/**
+ * Returns true iff `body` contains all four Sortie-ready section headers.
+ * A ticket must pass this check before it can be meaningfully consumed by the
+ * issue-creation poller (PD-164) without additional reformatting.
+ */
+export function isSortieReady(body: string | null): boolean {
+  if (!body) return false;
+  return SORTIE_REQUIRED_HEADERS.every((re) => re.test(body));
+}
