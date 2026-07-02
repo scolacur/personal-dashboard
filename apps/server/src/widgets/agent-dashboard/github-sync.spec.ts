@@ -136,6 +136,40 @@ describe('runGithubSync', () => {
     expect(getTicket(db, t.id)?.agentState).toBeNull();
   });
 
+  it('reflects a sortie:stuck → sortie:awaiting-human label change (agentState transition)', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'was stuck', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 65, githubIssueUrl: 'https://x/65' });
+    // First sync: issue has sortie:stuck — sets agentState to 'stuck'.
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:stuck'] }) });
+    expect(getTicket(db, t.id)?.agentState).toBe('stuck');
+    // Second sync: label changed to sortie:awaiting-human — must update agentState.
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:awaiting-human'] }) });
+    const after = getTicket(db, t.id);
+    expect(after?.status).toBe('in_progress');
+    expect(after?.agentState).toBe('awaiting-human');
+  });
+
+  it('reflects a sortie:needs-human label on the board', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'needs human', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 66, githubIssueUrl: 'https://x/66' });
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:needs-human'] }) });
+    const after = getTicket(db, t.id);
+    expect(after?.status).toBe('in_progress');
+    expect(after?.agentState).toBe('needs-human');
+  });
+
+  it('sets a wontfix-labelled open issue to board closed status', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'wontfix open', projectId: pdProjectId(db), status: 'in_progress' });
+    updateTicket(db, t.id, { githubIssueNumber: 67, githubIssueUrl: 'https://x/67' });
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:wontfix'] }) });
+    const after = getTicket(db, t.id);
+    expect(after?.status).toBe('closed');
+    expect(after?.agentState).toBeNull();
+  });
+
   it('is a no-op when ticket is already in the target terminal status (idempotent)', async () => {
     const db = freshDb();
     const t = createTicket(db, { title: 'closed already', projectId: pdProjectId(db), status: 'closed' });
