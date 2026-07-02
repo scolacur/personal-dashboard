@@ -9,8 +9,5 @@ One line per day. Load today's and yesterday's files at session start.
 - [2026-06-29](2026-06-29.md) — SCSS-in-own-files convention decided (`<style lang=scss src>` + svelte-preprocess); documented in PROJECT.md §5.
 - [2026-06-28](2026-06-28.md) — Sortie-readiness: ESLint/Prettier + vitest (6→41 tests), hardened `verify` to main (PR #1), pilot issue #2 authored.
 - [2026-06-27](2026-06-27.md) — Session start — background: Symphony sibling project (D-013/D-014), Music Tracker steps 1–4 done.
-- [2026-05-26](2026-05-26.md) — Session start — same background context as 06-27 (Symphony D-013/D-014, Music Tracker 1–4).
-- [2026-05-25](2026-05-25.md) — Reconciled agent-dashboard PROJECT.md; added D-013/D-014 (Symphony standalone + Mission Control UI consuming its API).
-- [2026-05-24](2026-05-24.md) — Session initialized — project in design/planning phase, no code yet.
-</content>
-</invoke>
+
+*(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*

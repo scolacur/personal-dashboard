@@ -3,7 +3,9 @@ import type Database from 'better-sqlite3';
 import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
+  TICKET_ASSIGNEES,
   type CreateTicketInput,
+  type TicketAssignee,
   type TicketPriority,
   type TicketStatus,
   type UpdateTicketInput,
@@ -25,6 +27,10 @@ function isPriority(v: unknown): v is TicketPriority {
 
 function isStatus(v: unknown): v is TicketStatus {
   return typeof v === 'string' && (TICKET_STATUSES as readonly string[]).includes(v);
+}
+
+function isAssignee(v: unknown): v is TicketAssignee {
+  return typeof v === 'string' && (TICKET_ASSIGNEES as readonly string[]).includes(v);
 }
 
 export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
@@ -79,12 +85,21 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     if (body.body !== undefined && body.body !== null && typeof body.body !== 'string') {
       return reply.status(400).send({ error: 'body must be a string', code: 'INVALID_BODY' });
     }
+    // assignee may be null (unassigned) or a valid value; anything else is invalid.
+    if (body.assignee !== undefined && body.assignee !== null && !isAssignee(body.assignee)) {
+      return reply.status(400).send({ error: 'invalid assignee', code: 'INVALID_ASSIGNEE' });
+    }
+    if (body.status !== undefined && !isStatus(body.status)) {
+      return reply.status(400).send({ error: 'invalid status', code: 'INVALID_STATUS' });
+    }
 
     const input: CreateTicketInput = {
       title: body.title.trim(),
       projectId: body.projectId,
       body: (body.body as string | null | undefined) ?? null,
       priority: body.priority === null ? null : isPriority(body.priority) ? body.priority : undefined,
+      assignee: body.assignee === undefined ? undefined : body.assignee === null ? null : (body.assignee as TicketAssignee),
+      status: isStatus(body.status) ? body.status : undefined,
     };
     return reply.status(201).send(createTicket(db, input));
   });
@@ -136,6 +151,13 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
           .send({ error: 'sortOrder must be a number', code: 'INVALID_SORT_ORDER' });
       }
       patch.sortOrder = body.sortOrder;
+    }
+    if (body.assignee !== undefined) {
+      // null = unassign; otherwise must be a valid value.
+      if (body.assignee !== null && !isAssignee(body.assignee)) {
+        return reply.status(400).send({ error: 'invalid assignee', code: 'INVALID_ASSIGNEE' });
+      }
+      patch.assignee = body.assignee as TicketAssignee | null;
     }
 
     const updated = updateTicket(db, id, patch);

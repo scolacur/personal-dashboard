@@ -4,6 +4,7 @@ import type {
   AgentTicket,
   CreateProjectInput,
   CreateTicketInput,
+  TicketAssignee,
   TicketPriority,
   TicketStatus,
   UpdateTicketInput,
@@ -62,7 +63,7 @@ function rowToTicket(row: TicketRow): AgentTicket {
     status: row.status as AgentTicket['status'],
     priority: fromDbPriority(row.priority),
     projectId: row.project_id,
-    assignee: row.assignee,
+    assignee: row.assignee as AgentTicket['assignee'],
     recurInterval: row.recur_interval,
     source: row.source,
     sortOrder: row.sort_order,
@@ -205,12 +206,13 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     } else {
       displayId = nextDisplayId(db, input.projectId);
     }
+    const assignee: TicketAssignee | null = input.assignee === undefined ? 'steve' : input.assignee;
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, source, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, source, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, source, now, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, source, now, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     return id;
@@ -243,6 +245,7 @@ export function updateTicket(
     status: patch.status ?? existing.status,
     // `null` is a meaningful value (unset), so distinguish it from "not provided".
     priority: patch.priority === undefined ? existing.priority : patch.priority,
+    assignee: patch.assignee === undefined ? existing.assignee : patch.assignee,
     sortOrder: patch.sortOrder ?? existing.sortOrder,
     projectId: patch.projectId ?? existing.projectId,
     updatedAt: Date.now(),
@@ -251,7 +254,7 @@ export function updateTicket(
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -260,6 +263,7 @@ export function updateTicket(
       toDbPriority(next.priority),
       next.sortOrder,
       next.projectId,
+      next.assignee,
       next.updatedAt,
       id,
     );

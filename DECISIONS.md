@@ -6,7 +6,7 @@ Newest decisions at the top.
 
 ---
 
-## D-029: Tomato mode hides settings rows and reshapes the card
+## D-031: Tomato mode hides settings rows and reshapes the card
 
 **Decision:** In tomato mode the settings rows (work/break durations, rounds) are hidden and the
 card itself takes on the tomato shape. The timer display and controls remain visible.
@@ -19,6 +19,70 @@ border-radius / gradient without a `:has()` selector across component scope boun
 
 **Alternative considered:** keeping all rows visible and applying a very tall oval shape — rejected
 because the resulting shape looks like a capsule, not a tomato.
+
+---
+
+## D-030: Off-LAN access via Tailscale, with tailnet membership as the authentication (PD-34)
+
+**Decision:** Reach the dashboard off-LAN over **Tailscale**, not a public reverse proxy.
+Tailnet membership **is** the auth — the app stays login-less and is never publicly exposed.
+
+**Why (over Synology RP + DDNS + Let's Encrypt, or Cloudflare Tunnel):**
+
+- Tailscale already runs on the NAS for other apps, and the app container already publishes
+  `8088` on all host interfaces, so it's reachable at `http://<nas-tailnet-name>:8088` from any
+  device on the tailnet with **zero** app changes — no port-forward, no DDNS, no inbound ingress.
+- The ticket requires "authentication before exposing." A public URL would mean building an app
+  login (out of scope, and a standing attack surface). Tailscale makes the **tailnet the auth
+  boundary** (WireGuard device identity): only my own devices can reach it, and it's never exposed.
+  For a single-user personal dashboard, tailnet membership is sufficient and stronger than a
+  bolt-on password. This also matches the egress-hardening security posture already in place.
+- **Ports to the Mac Mini for free** — the app is moving off Synology ([[D-029]] context); Tailscale
+  is just installed on the new host and the same access model holds.
+
+**HTTPS deferred, not required:** traffic over the tailnet is already WireGuard-encrypted end-to-end,
+so plain HTTP is fine. `tailscale serve` can later add a real Let's Encrypt cert on `*.ts.net`
+(still private) if a secure-context browser feature (PWA/service worker) or the "not secure" label
+makes it worth it. Public exposure via RP/Cloudflare only earns its complexity if the dashboard ever
+needs to be shared with someone **not** on the tailnet.
+
+**Manual (🧑) steps** (no code): confirm Tailscale + MagicDNS are up on the NAS, install/log in the
+phone, hit the MagicDNS URL off-wifi. Runbook: `ops/access/README.md`.
+
+---
+
+## D-029: Consistent SQLite snapshots run in-process via node-cron, not a host script (PD-33)
+
+**Decision:** Produce WAL-consistent SQLite snapshots from an **in-process `node-cron` job**
+(`apps/server/src/backup.ts`, scheduled through a new `CronRegistry`), not a Synology Task Scheduler
+shell script. Each run takes an online `.backup()` of the live `dashboard.db`, collapses the copy to
+a **single self-contained file** (`journal_mode = DELETE`, no `-wal`/`-shm` sidecars), verifies it
+with `PRAGMA integrity_check`, and writes it to `<DATA_DIR>/backups/` where the existing off-box
+backup already ships it.
+
+**Why in-process, not a host script (the `quota-refund.sh` pattern the ticket cited):**
+
+- The app is **moving off Synology to a Mac Mini**, so anything bound to DSM Task Scheduler / host
+  `/bin/sqlite3` would be throwaway. `node-cron` runs wherever Node runs → **ports with zero change**.
+- It also builds the `CronRegistry` PROJECT.md §2 always specified but never had (the widget
+  `registerCron` hook is now wired), which the music-tracker Spotify poller will reuse.
+
+**Why the WAL matters (not theoretical):** the D-025 prod restore hit a 4 MB uncheckpointed WAL — a
+file-level copy of the `.db` alone would have restored stale/empty data. `.backup()` + `journal_mode
+= DELETE` yields one coherent file that's safe to ship and restore on its own.
+
+**Design notes:** the module takes the DB handle and all paths as **parameters** (no module-level
+`db` import) so it unit-tests without opening real data. It accepts optional **extra DB paths**
+(opened read-only) so **Sortie's `.sortie.db`** can be added once the Mac Mini layout lets the runtime
+reach it — scoped to `dashboard.db` for now (the precious, no-other-source-of-truth data). A snapshot
+that fails verification is deleted, and pruning of old snapshots only runs **after** a good new one,
+so a bad run never eats good backups. Config via env (`BACKUP_CRON`, `BACKUP_RETAIN_DAYS`,
+`BACKUP_DIR`, `BACKUP_EXTRA_DB_PATHS`); defaults 03:00 daily / 14-day retention.
+
+**Out of scope / revisit:** *shipping* snapshots off-box. On Synology, Hyper Backup → Backblaze
+already carries `data/backups/`; on the Mac Mini a new off-box target (Backblaze/restic/etc.) will be
+needed — orthogonal to producing the consistent file. The ticket's two 🧑 items stand while on
+Synology: confirm Hyper Backup covers `/volume1/docker/`, and do one test restore.
 
 ---
 

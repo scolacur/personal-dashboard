@@ -462,13 +462,45 @@ cd "$SORTIE_WORKSPACE"
    does, in the repo's conventional-commit style — e.g. `feat(music-tracker): add Spotify
    playlist poller` or `fix(web): persist theme toggle across reloads`. **Do NOT use a
    generic "sortie: resolve #N"** — the issue link comes from `Closes #N` in the body, so the
-   title is free to be informative. Put every assumption under an `## Assumptions` header.
+   title is free to be informative.
+
+   The PR **body must follow the standard envelope** below, so a human can review mechanically.
+   Fill in every `<...>` placeholder — do NOT leave them literal:
+   - `Closes #N`
+   - **Status:** DONE / PARTIAL / BLOCKED
+   - **Summary:** 1–3 lines on what changed
+   - **Acceptance:** echo each "Done When" / acceptance item from the issue with `[x]`/`[ ]` +
+     a one-line evidence pointer (if the issue had no explicit checklist, list what you verified)
+   - **Files changed:** each path + one line
+   - **Testing:** how a human can verify this change — exact steps (commands to run, URLs/routes to
+     open, what to click, what to expect). Include automated coverage (which tests you added/ran) AND
+     any manual check. Never leave this blank; if it can't be tested, say why.
+   - **Assumptions / Flags:** anything you assumed, did not do, or are unsure about (or "none")
    ```sh
    TITLE="<concise conventional-commit summary of your change, e.g. feat(scope): add X>"
    HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr create \
      --repo scolacur/personal-dashboard --base main --head "$BRANCH" \
      --title "$TITLE" \
-     --body "$(printf 'Closes #%s\n\nAutomated by Sortie for #%s.\n\n## Assumptions\n- <list yours, or "none">\n' "{{ .issue.identifier }}" "{{ .issue.identifier }}")" || true
+     --body "$(cat <<'BODY'
+Closes #{{ .issue.identifier }}
+
+**Status:** <DONE | PARTIAL | BLOCKED>
+
+**Summary:** <1–3 lines>
+
+**Acceptance:**
+- [ ] <echo each Done-When / acceptance item + one-line evidence>
+
+**Files changed:**
+- <path> — <one line>
+
+**Testing:**
+- <exact steps to verify: commands, routes/URLs, what to click, expected result — plus which tests you added/ran>
+
+**Assumptions / Flags:**
+- <list yours, or "none">
+BODY
+)" || true
    ```
    (On a follow-up the PR already exists, so `gh pr create` no-ops via `|| true` and keeps the
    original title. If the change's scope shifted, update it: `gh pr edit "$BRANCH" --repo scolacur/personal-dashboard --title "$TITLE"`.)

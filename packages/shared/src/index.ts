@@ -3,6 +3,7 @@
 export type {
   TicketStatus,
   TicketPriority,
+  TicketAssignee,
   AgentTicket,
   CreateTicketInput,
   UpdateTicketInput,
@@ -14,4 +15,6 @@ export {
   TICKET_PRIORITIES,
   PRIORITY_LABELS,
   PRIORITY_DESCRIPTIONS,
+  TICKET_ASSIGNEES,
+  ASSIGNEE_LABELS,
 } from './agent-dashboard';
