@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
@@ -21,6 +22,9 @@
 
   function loadHiddenLanes(): SvelteSet<TicketStatus> {
     const defaults = new SvelteSet(COLUMNS.filter((c) => c.defaultHidden).map((c) => c.status));
+    // Runs during SSR (component init) where localStorage doesn't exist — return
+    // defaults on the server; the browser reads the persisted preference.
+    if (!browser) return defaults;
     const stored = localStorage.getItem(LANE_VISIBILITY_KEY);
     if (stored === null) return defaults;
     try {
