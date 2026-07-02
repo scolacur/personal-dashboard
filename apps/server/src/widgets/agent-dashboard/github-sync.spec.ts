@@ -55,6 +55,13 @@ describe('deriveState', () => {
     expect(deriveState([], 'closed')).toEqual({ status: 'completed', agentState: null });
   });
 
+  it('treats closed as terminal — completed wins over a stale non-terminal label', () => {
+    // An issue closed while still wearing an active label must NOT map to that label.
+    expect(deriveState(['sortie:in-review'], 'closed')).toEqual({ status: 'completed', agentState: null });
+    expect(deriveState(['sortie:in-progress'], 'closed')).toEqual({ status: 'completed', agentState: null });
+    expect(deriveState(['sortie:stuck'], 'closed')).toEqual({ status: 'completed', agentState: null });
+  });
+
   it('does NOT map sortie:wontfix (deferred to PD-193 / the closed status)', () => {
     // Open + wontfix only → no rule → null (status untouched).
     expect(deriveState(['sortie:wontfix'], 'open')).toBeNull();

@@ -33,12 +33,16 @@ const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: A
  * ships (see PD-193). Badges for the fine-grained states are PD-194.
  */
 export function deriveState(labels: string[], issueState: 'open' | 'closed'): DerivedState | null {
+  // Closed is terminal and authoritative: a closed issue is completed regardless of
+  // any stale non-terminal label still hanging on it (e.g. an issue closed while it
+  // still wore sortie:in-review). Checked FIRST so a stale label can't override closed.
+  // (PD-193 will refine closed + wontfix/not-planned → the `closed` status once it exists.)
+  if (issueState === 'closed') return { status: 'completed', agentState: null };
+  // Open issue: derive from its active sortie:* label (precedence-ordered).
   const set = new Set(labels.map((l) => l.toLowerCase()));
   for (const rule of LABEL_RULES) {
     if (set.has(rule.label)) return { status: rule.status, agentState: rule.agentState };
   }
-  // Closed with no terminal label (merged & auto-closed) → completed.
-  if (issueState === 'closed') return { status: 'completed', agentState: null };
   return null;
 }
 
