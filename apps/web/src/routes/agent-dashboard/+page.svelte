@@ -66,6 +66,21 @@
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
+  // The per-card ID label is colour-coded by project (replaces the old project
+  // badge). PD/NSW use theme accent tokens; Core keeps its teal project colour.
+  function idColor(project: AgentProject | undefined): string {
+    switch (project?.key) {
+      case 'PD':
+        return 'var(--accent)';
+      case 'C':
+        return '#0d9488'; // teal — Core
+      case 'NSW':
+        return 'var(--accent-2)';
+      default:
+        return 'var(--muted)';
+    }
+  }
+
   function visibleTickets(): AgentTicket[] {
     const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
@@ -543,8 +558,9 @@
                   {#if ticket.displayId}
                     <a
                       class="ticket-id"
+                      style="--id-color: {idColor(project)}"
                       href="/agent-dashboard/tickets/{ticket.displayId}"
-                      title="Open ticket {ticket.displayId}"
+                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
                       draggable="false">{ticket.displayId}</a
                     >
                   {/if}
@@ -553,13 +569,6 @@
               <p class="card-title">{ticket.title}</p>
               {#if ticket.body && !condensed}
                 <p class="card-body">{ticket.body}</p>
-              {/if}
-              {#if project}
-                <span
-                  class="project-chip"
-                  style="--chip: {project.color ?? 'var(--muted)'}"
-                  title={project.name}>{project.name}</span
-                >
               {/if}
               <div class="card-actions">
                 <span class="spacer"></span>
