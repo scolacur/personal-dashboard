@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.875rem;
+  width: 100%;
 }
 
 .timer-display {
@@ -167,44 +168,16 @@
   }
 }
 
+/* tomato mode: hide settings rows, adapt colours for red background */
 .pomodoro.tomato-mode {
-  position: relative;
-
-  .tomato-calyx {
-    position: absolute;
-    top: -8rem;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 14rem;
-    height: 10.85rem;
-    pointer-events: none;
-    overflow: visible;
-    z-index: 1;
-  }
-
   .rows {
     display: none;
   }
 
   .timer-display {
-    position: static;
-    width: auto;
-    height: auto;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
-    align-self: auto;
-    margin: 0;
-    display: block;
     font-size: 3rem;
     color: white;
-    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-    text-align: center;
-
-    &::before,
-    &::after {
-      display: none;
-    }
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 
     &.done {
       background: none;

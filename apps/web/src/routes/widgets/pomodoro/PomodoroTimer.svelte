@@ -70,28 +70,6 @@
 </script>
 
 <div class="pomodoro" class:tomato-mode={tomatoMode}>
-  {#if tomatoMode}
-    <svg
-      class="tomato-calyx"
-      viewBox="0 0 200 155"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <!-- Stem: thick and tall -->
-      <rect x="91" y="4" width="18" height="81" rx="9" fill="#27ae60" />
-      <!-- Stem highlight for 3D roundness -->
-      <rect x="93" y="6" width="8" height="76" rx="5" fill="rgba(255,255,255,0.2)" />
-      <!-- 5 sepals radiating from calyx center; rotated 36° so none points straight up into the stem -->
-      <g transform="translate(100, 85) rotate(36)">
-        <path d="M0 0 C-24 -16 -24 -44 0 -60 C24 -44 24 -16 0 0Z" fill="#2ecc71" />
-        <path d="M0 0 C-24 -16 -24 -44 0 -60 C24 -44 24 -16 0 0Z" fill="#27ae60" transform="rotate(72)" />
-        <path d="M0 0 C-24 -16 -24 -44 0 -60 C24 -44 24 -16 0 0Z" fill="#2ecc71" transform="rotate(144)" />
-        <path d="M0 0 C-24 -16 -24 -44 0 -60 C24 -44 24 -16 0 0Z" fill="#27ae60" transform="rotate(216)" />
-        <path d="M0 0 C-24 -16 -24 -44 0 -60 C24 -44 24 -16 0 0Z" fill="#2ecc71" transform="rotate(288)" />
-      </g>
-    </svg>
-  {/if}
-
   <div class="timer-display" class:done={phase === 'done'}>
     {phase === 'done' ? 'Done!' : formatTime(secondsRemaining)}
   </div>
