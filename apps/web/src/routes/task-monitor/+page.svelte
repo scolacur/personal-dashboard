@@ -491,7 +491,7 @@
     </label>
     <label>
       <span>Title</span>
-      <input type="text" bind:value={formTitle} placeholder="What needs doing?" />
+      <input type="text" bind:value={formTitle} />
     </label>
     <label>
       <span>Details</span>
