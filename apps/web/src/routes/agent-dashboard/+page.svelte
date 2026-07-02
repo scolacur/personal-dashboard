@@ -509,6 +509,7 @@
               class:dragging={draggingId === ticket.id}
               class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               class:locked={isStatusLocked(ticket)}
+              class:shimmer={ticket.agentState === 'working'}
               data-id={ticket.id}
               data-priority={bandKey(ticket.priority)}
               draggable={true}

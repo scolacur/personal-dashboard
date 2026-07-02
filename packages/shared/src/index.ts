@@ -4,6 +4,7 @@ export type {
   TicketStatus,
   TicketPriority,
   TicketAssignee,
+  AgentState,
   AgentTicket,
   CreateTicketInput,
   UpdateTicketInput,

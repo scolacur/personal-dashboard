@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type {
   AgentProject,
+  AgentState,
   AgentTicket,
   CreateProjectInput,
   CreateTicketInput,
@@ -26,6 +27,7 @@ interface TicketRow {
   sort_order: number;
   github_issue_number: number | null;
   github_issue_url: string | null;
+  agent_state: string | null;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -69,6 +71,7 @@ function rowToTicket(row: TicketRow): AgentTicket {
     sortOrder: row.sort_order,
     githubIssueNumber: row.github_issue_number,
     githubIssueUrl: row.github_issue_url,
+    agentState: row.agent_state as AgentTicket['agentState'],
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -281,6 +284,68 @@ export function updateTicket(
   apply();
 
   return next;
+}
+
+/** A ticket linked to a GitHub issue, paired with its project's repo — the poller's input. */
+export interface SyncTarget {
+  id: number;
+  githubIssueNumber: number;
+  githubRepo: string;
+  status: TicketStatus;
+  agentState: AgentState | null;
+}
+
+/**
+ * Active, GitHub-linked tickets whose project has a repo — the set the PD-165
+ * poller reconciles against GitHub labels. Manual/unlinked tickets are excluded
+ * so the poller never touches hand-managed lanes.
+ */
+export function listSyncTargets(db: Database.Database): SyncTarget[] {
+  const rows = db
+    .prepare(
+      `SELECT t.id AS id, t.github_issue_number AS n, t.status AS status,
+              t.agent_state AS agent_state, p.github_repo AS repo
+         FROM agent_tickets t
+         JOIN agent_projects p ON p.id = t.project_id
+        WHERE t.archived_at IS NULL
+          AND t.github_issue_number IS NOT NULL
+          AND p.github_repo IS NOT NULL`,
+    )
+    .all() as { id: number; n: number; status: string; agent_state: string | null; repo: string }[];
+  return rows.map((r) => ({
+    id: r.id,
+    githubIssueNumber: r.n,
+    githubRepo: r.repo,
+    status: r.status as TicketStatus,
+    agentState: r.agent_state as AgentState | null,
+  }));
+}
+
+/**
+ * Write a GitHub-derived (status, agentState) onto a ticket. Poller-only: unlike
+ * `updateTicket` it also sets `agent_state`, and it's a no-op (returns false) when
+ * nothing changed, so an unchanged poll writes nothing and logs no event.
+ */
+export function applyDerivedState(
+  db: Database.Database,
+  id: number,
+  status: TicketStatus,
+  agentState: AgentState | null,
+): boolean {
+  const existing = getTicket(db, id);
+  if (!existing) return false;
+  if (existing.status === status && existing.agentState === agentState) return false;
+  const now = Date.now();
+  const apply = db.transaction(() => {
+    db.prepare(
+      'UPDATE agent_tickets SET status = ?, agent_state = ?, updated_at = ? WHERE id = ?',
+    ).run(status, agentState, now, id);
+    if (existing.status !== status) {
+      logEvent(db, id, 'status_changed', { from: existing.status, to: status, via: 'github-sync' });
+    }
+  });
+  apply();
+  return true;
 }
 
 /** Soft-delete: hide from the board but keep the row (recoverable). */
