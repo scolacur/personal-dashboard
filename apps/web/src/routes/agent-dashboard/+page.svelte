@@ -6,6 +6,7 @@
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import * as api from './api';
+  import { ticketMatchesQuery } from './filter-logic';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -126,11 +127,10 @@
   }
 
   function visibleTickets(): AgentTicket[] {
-    const q = search.trim().toLowerCase();
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
-      if (q && !`${t.title} ${t.body ?? ''}`.toLowerCase().includes(q)) return false;
+      if (!ticketMatchesQuery(t, search)) return false;
       return true;
     });
   }
