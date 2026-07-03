@@ -145,9 +145,9 @@ describe('assignee', () => {
     pd = projectId(db, 'personal-dashboard');
   });
 
-  it('defaults to steve when omitted on create', () => {
+  it('defaults to null when omitted on create', () => {
     const t = createTicket(db, { title: 'test', projectId: pd });
-    expect(t.assignee).toBe('steve');
+    expect(t.assignee).toBeNull();
   });
 
   it('persists explicit assignee on create', () => {
@@ -160,9 +160,9 @@ describe('assignee', () => {
     expect(t.assignee).toBeNull();
   });
 
-  it('can patch assignee steve → robot → null', () => {
+  it('can patch assignee null → robot → null', () => {
     const t = createTicket(db, { title: 'x', projectId: pd });
-    expect(t.assignee).toBe('steve');
+    expect(t.assignee).toBeNull();
 
     const toRobot = updateTicket(db, t.id, { assignee: 'robot' });
     expect(toRobot?.assignee).toBe('robot');

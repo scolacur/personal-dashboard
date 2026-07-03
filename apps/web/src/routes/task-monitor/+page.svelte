@@ -114,7 +114,7 @@
   let formBody = $state('');
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
-  let formAssignee = $state<TicketAssignee | null>('steve');
+  let formAssignee = $state<TicketAssignee | null>(null);
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
@@ -166,7 +166,7 @@
     formBody = '';
     formStatus = status;
     formPriority = null; // unset by default — assigned deliberately
-    formAssignee = 'steve'; // default assignee
+    formAssignee = null;
     // Default to the active filter, else "personal-dashboard", else the first project.
     const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
     formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;

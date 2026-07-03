@@ -151,7 +151,7 @@ export interface CreateTicketInput {
    * is advanced past the forced number so later auto-allocations don't collide.
    */
   displayId?: string | null;
-  /** Who the ticket is assigned to. Defaults to 'steve' when omitted. */
+  /** Who the ticket is assigned to. Defaults to `null` when omitted. */
   assignee?: TicketAssignee | null;
 }
 
