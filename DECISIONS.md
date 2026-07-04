@@ -6,6 +6,46 @@ Newest decisions at the top.
 
 ---
 
+## D-039: Board↔issue authority — ticket is the durable spec, issue is an execution lease; ticket stays amendable post-queue; agent-created tickets are backlog-only, queuing gated by a server-computed depth cap (PD-207, PD-232)
+
+**Decision:** Defines who owns a ticket's content across its lifecycle, resolving the question [[D-038]]'s async-grill pipeline raised:
+
+- **The ticket is the durable spec; the GitHub issue is an execution lease.** At Queue the issue is minted from the ticket (PD-164, unchanged), but the ticket does **not** freeze. Post-queue edits and `ask_human` answers are written **back into the ticket body** (so the durable record improves) and **propagate to the linked open issue** via the write token. There is no 409 content-lock. *(This reworks PD-207 part B, which had specified a hard freeze-at-queue on the now-rejected premise that the issue becomes the sole operative spec.)*
+- **Deletion is ticket-authoritative.** Archiving a ticket closes its linked issue as `not planned` (PD-207 part A); a GitHub-side delete never deletes the ticket — it only unlinks it (PD-207 part C). *(Parts A + C are built; part B — propagation — is deferred behind the board redesign.)*
+- **Agent-created tickets are backlog-only for now.** A Sortie worker that decides a ticket is really several may create child tickets, but only into `backlog` — never a queue lane. A human advances them. This structurally prevents runaway self-dispatch.
+- **Queuing is gated by a server-computed depth cap, enabled later.** When an agent→dashboard ticket-creation path is built, `agent_tickets` gains `spawned_by_ticket_id` + `agent_queue_depth` (server-computed as `parent.depth + 1`, **never agent-supplied**). Agent-queuing is allowed only when the result is `≤ 1` ("one level of agent queuing"); deeper spawns can still be created into backlog. Enforced at the queue transition.
+
+**Why:**
+
+- **Async grilling requires a mutable spec.** [[D-038]] moves clarification *after* dispatch, so the spec keeps evolving while the issue is open; a freeze-at-queue would strand those answers in issue comments instead of improving the ticket. Ticket-as-durable-spec keeps the board the source of truth.
+- **Least-authority loop-breaking.** Backlog-only agent creation makes the infinite-dispatch loop impossible by construction (a spawned ticket cannot dispatch itself). The depth cap is the graduated relaxation for once a verified agent identity exists.
+- **The cap must be unforgeable to be worth anything.** Depth is server-computed from a **server-verified parent** (the issue the agent's run is scoped to), not an agent-declared field — otherwise an agent could reset its own depth. Hence the cap ships with, and depends on, the agent-auth design; until then agent ticket-creation does not exist at all, and backlog-only vs. capped-queuing are the same zero code on the agent side.
+
+**Trade-off:** Propagating ticket edits to an open issue adds a write path and a small divergence window (ticket and issue can briefly differ between polls) — accepted over a freeze, which the async pipeline can't tolerate. Backlog-only means a human must advance agent-split tickets even when they're obviously fine — accepted as the safe default until the depth cap + agent identity land.
+
+**Implications:** Reworks PD-207 (parts A + C build as-is — done here; part B becomes "propagate post-queue ticket edits to the linked issue", deferred behind the board redesign). Follow-on: agent ticket-creation API with server-verifiable identity + `spawned_by_ticket_id`/`agent_queue_depth` columns + the `≤ 1` queue guard. Columns are additive (D-021 migration framework). See [[D-038]] for the pipeline this serves.
+
+---
+
+## D-038: Issue pipeline is hybrid — mechanical `isSortieReady` gate + async in-run grill via `ask_human`; the heavyweight Refine sidecar (D-033) is dropped (PD-232)
+
+**Decision:** The backlog→Ready→Queued→dispatch pipeline drops the interactive **Refine sidecar** ([[D-033]], PD-172) as the refinement mechanism. Refinement instead happens in two cheaper places:
+
+- **A mechanical shape gate at Queue** — the existing Claude-free `isSortieReady(body)` validator (PD-177) warns when a ticket entering a queue lane lacks the `## Context` / `## Task` / `## Done When` / `## Out of scope` sections. This is the only *upfront* gate; it costs nothing and needs no agent.
+- **Async clarification during the run** — when the dispatched Sortie worker hits a real ambiguity it uses `ask_human` (post `### ❓ ask_human`, self-relabel `sortie:awaiting-human`, park), the human is notified (Discord, PD-6) and replies async, and the worker resumes. The grill is grounded in the *actual* task by the agent that will do the work.
+
+**Why:**
+
+- **`max_sessions` economics.** `agent.max_sessions: 3` is enforced by counting `run_history` rows, and every re-dispatch — including each `awaiting-human` resume — consumes one, with no native knob to exempt a park (only quota-fails are refunded, and only after the window resets). So async grilling spends the *expensive coding worker's* retry budget on Q&A. The mechanical gate keeps obviously-unshaped tickets from ever reaching the worker, bounding how much of that budget clarification can eat.
+- **One grilling system, not two.** Refine can't eliminate `ask_human` — a worker still hits real ambiguities mid-task — so keeping the sidecar means maintaining two grilling paths: one that *guesses* (Refine, upfront, against a prediction of the work) and one that *knows* (the worker, grounded in the real task). Collapsing to the in-run grill removes the guesswork path and a whole sidecar (SSE + clone-per-session + a second `ANTHROPIC_API_KEY` container).
+- **Fits a solo, often-AFK human.** A synchronous modal grill blocks Steve at his desk; async park + Discord ping + reply-whenever matches how the system is actually used (and works off-LAN via Tailscale, PD-34).
+
+**Trade-off:** A vague-but-`isSortieReady`-shaped ticket can still burn a coding session or two on clarification before any code lands. Accepted because the mechanical gate + a well-formed template make ≤ 1–2 rounds the common case, and the alternative (a full interactive sidecar) is materially more infra for a path the worker's own `ask_human` already has to cover. A *lightweight one-shot* "tidy into the four sections" formatter (single Claude call, not an interactive sidecar) may be added at backlog→Prioritized later if `isSortieReady` fails too often in practice — deferred until real tickets show the need.
+
+**Implications:** Supersedes [[D-033]] (Refine sidecar not built); narrows [[D-032]] (the "formatting upstream in Refine" half is dropped; the mechanical Queued poller PD-164 is unchanged). The async grill depends on making the park/resume loop **real + e2e-verified** — today the `sortie:awaiting-human` label + `sortie-ask-human.yml` re-queue Action exist on `main` but are unverified, and the dashboard only *displays* the state (it does not forward the question, notify, or offer a reply path) — and on Discord notify (PD-6). Follow-on tickets: verify park/resume e2e, Discord notify, and a board-side `ask_human` question+reply surface. The grilling step also routes each produced ticket to Steve's Queue or the Robot's Queue and sets its assignee accordingly (see the board-redesign decision). See [[D-039]] for the ticket↔issue authority model this pipeline implies.
+
+---
+
 ## D-037: Deploy status uses server-start time as deploy proxy; GitHub API fetched once at startup (PD-111)
 
 **Decision:** The home page live-status bar shows: deploy time (server process start time as proxy), git SHA linked to the GitHub commit or Actions run, and the commit message. The server fetches GitHub API exactly once at startup (fire-and-forget, cached for the process lifetime) from `apps/server/src/deploy-status.ts`. The frontend reads `/api/deploy-info` once on mount — no polling.

@@ -108,7 +108,17 @@ export async function runGithubSync({ db, token, log, fetchImpl = fetch }: Githu
         },
       );
       if (!res.ok) {
-        log.error(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> HTTP ${res.status}`);
+        if (res.status === 404) {
+          // PD-207 C: a 404 means the issue was deleted on GitHub. Unlink it (clear the
+          // issue number/url) but KEEP the ticket — deletion is ticket-authoritative
+          // (D-039). Only 404 unlinks; transient errors (403/5xx) are left to retry.
+          updateTicket(db, t.id, { githubIssueNumber: null, githubIssueUrl: null });
+          log.info(
+            `github-sync: ${t.githubRepo}#${t.githubIssueNumber} 404 (deleted) -> unlinked ticket ${t.id}`,
+          );
+        } else {
+          log.error(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> HTTP ${res.status}`);
+        }
         continue;
       }
       const issue = (await res.json()) as GithubIssue;
@@ -148,6 +158,26 @@ function ghHeaders(token: string, json = false): Record<string, string> {
   };
   if (json) h['Content-Type'] = 'application/json';
   return h;
+}
+
+/**
+ * PD-207 A: close a GitHub issue as "not planned" (state=closed, state_reason=not_planned).
+ * Called when a linked ticket is archived, so Sortie stops building a deleted ticket.
+ * Returns whether GitHub accepted it — the caller treats this as best-effort (logs
+ * failures, never blocks the archive). Uses the write-scoped token.
+ */
+export async function closeIssueNotPlanned(
+  repo: string,
+  issueNumber: number,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const res = await fetchImpl(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+    method: 'PATCH',
+    headers: ghHeaders(token, true),
+    body: JSON.stringify({ state: 'closed', state_reason: 'not_planned' }),
+  });
+  return res.ok;
 }
 
 /** The label Sortie polls for to pick up a ticket. */

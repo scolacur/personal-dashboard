@@ -186,14 +186,30 @@ describe('runGithubSync', () => {
     expect(getTicket(db, t.id)!.updatedAt).toBe(first);
   });
 
-  it('leaves the ticket untouched on an HTTP error', async () => {
+  it('leaves the ticket untouched on a transient HTTP error (5xx)', async () => {
     const db = freshDb();
     const t = createTicket(db, { title: 'err', projectId: pdProjectId(db), status: 'queued' });
     updateTicket(db, t.id, { githubIssueNumber: 61, githubIssueUrl: 'https://x/61' });
 
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 500) });
+
+    const after = getTicket(db, t.id);
+    expect(after?.status).toBe('queued');
+    // A non-404 error must NOT unlink — the issue may still exist (rate limit / outage).
+    expect(after?.githubIssueNumber).toBe(61);
+  });
+
+  it('unlinks the issue but keeps the ticket when the issue 404s (deleted on GitHub) — PD-207 C', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'deleted issue', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 500, githubIssueUrl: 'https://x/500' });
+
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 404) });
 
-    expect(getTicket(db, t.id)?.status).toBe('queued');
+    const after = getTicket(db, t.id);
+    expect(after?.githubIssueNumber).toBeNull();
+    expect(after?.githubIssueUrl).toBeNull();
+    expect(after?.status).toBe('queued'); // ticket itself is kept
   });
 
   it('sets a wontfix-labelled issue to board closed status', async () => {

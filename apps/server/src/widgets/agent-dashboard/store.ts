@@ -396,6 +396,30 @@ export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget
   }));
 }
 
+/** A ticket's linked issue number + its project's repo — the close-on-delete input (PD-207 A). */
+export interface TicketIssueRef {
+  githubIssueNumber: number | null;
+  githubRepo: string | null;
+}
+
+/**
+ * The linked-issue reference for one ticket: its `githubIssueNumber` and the project's
+ * `github_repo`. Returns null when the ticket doesn't exist. Either field may be null
+ * (unlinked ticket, or a project with no repo) — close-on-delete only fires when both
+ * are present.
+ */
+export function getTicketIssueRef(db: Database.Database, id: number): TicketIssueRef | null {
+  const row = db
+    .prepare(
+      `SELECT t.github_issue_number AS n, p.github_repo AS repo
+         FROM agent_tickets t
+         LEFT JOIN agent_projects p ON p.id = t.project_id
+        WHERE t.id = ?`,
+    )
+    .get(id) as { n: number | null; repo: string | null } | undefined;
+  return row ? { githubIssueNumber: row.n, githubRepo: row.repo } : null;
+}
+
 /** Soft-delete: hide from the board but keep the row (recoverable). */
 export function archiveTicket(db: Database.Database, id: number): boolean {
   const existing = getTicket(db, id);
