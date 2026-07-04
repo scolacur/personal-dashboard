@@ -35,6 +35,8 @@
 }
 
 .ticket-search {
+  position: relative;
+
   input {
     font-family: var(--font-sans);
     font-size: var(--font-size-sm);
@@ -42,7 +44,7 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm) 2.5rem var(--space-sm) var(--space-md);
     min-width: 220px;
 
     &::placeholder {
@@ -53,6 +55,26 @@
       outline: none;
       border-color: var(--accent);
     }
+  }
+
+  .search-hint {
+    position: absolute;
+    right: var(--space-sm);
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    transition: opacity 0.1s;
+
+    kbd {
+      font-family: var(--font-sans);
+      font-size: var(--font-size-xs);
+      color: var(--muted);
+      opacity: 0.7;
+    }
+  }
+
+  &:focus-within .search-hint {
+    opacity: 0;
   }
 }
 
