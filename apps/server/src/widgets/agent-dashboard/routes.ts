@@ -15,11 +15,13 @@ import {
   createProject,
   createTicket,
   getProjectBySlug,
+  getTicketIssueRef,
   listProjects,
   listTickets,
   projectExists,
   updateTicket,
 } from './store';
+import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned } from './github-sync';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -33,7 +35,19 @@ function isAssignee(v: unknown): v is TicketAssignee {
   return typeof v === 'string' && (TICKET_ASSIGNEES as readonly string[]).includes(v);
 }
 
-export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
+/** Injectable deps for the routes — defaults resolve from the environment / global fetch. */
+export interface AgentDashboardRouteDeps {
+  /** Write-scoped GitHub token for close-on-delete (PD-207 A). Defaults to `GITHUB_WRITE_TOKEN`. */
+  githubWriteToken?: string;
+  /** Injectable for tests; defaults to the global fetch. */
+  fetchImpl?: typeof fetch;
+}
+
+export function registerRoutes(
+  app: FastifyInstance,
+  db: Database.Database,
+  deps: AgentDashboardRouteDeps = {},
+): void {
   const base = '/api/widgets/agent-dashboard';
 
   /* ── Projects ─────────────────────────────── */
@@ -195,8 +209,37 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
+    // Capture the linked-issue ref before archiving (archive keeps it, but read once).
+    const ref = getTicketIssueRef(db, id);
     if (!archiveTicket(db, id)) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    // PD-207 A: best-effort close the linked issue as "not planned" so Sortie stops
+    // building a ticket that was just archived. Never blocks the 204 — a GitHub failure
+    // is logged and swallowed (deletion is ticket-authoritative, D-039).
+    const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
+    if (ref?.githubIssueNumber != null && ref.githubRepo && token) {
+      try {
+        const ok = await closeIssueNotPlanned(
+          ref.githubRepo,
+          ref.githubIssueNumber,
+          token,
+          deps.fetchImpl ?? fetch,
+        );
+        if (ok) {
+          app.log.info(
+            `agent-dashboard: closed ${ref.githubRepo}#${ref.githubIssueNumber} not_planned (ticket ${id} archived)`,
+          );
+        } else {
+          app.log.error(
+            `agent-dashboard: close ${ref.githubRepo}#${ref.githubIssueNumber} failed (ticket ${id} archived)`,
+          );
+        }
+      } catch (err) {
+        app.log.error(
+          `agent-dashboard: close ${ref.githubRepo}#${ref.githubIssueNumber} threw: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     return reply.status(204).send();
   });
