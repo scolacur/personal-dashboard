@@ -108,7 +108,17 @@ export async function runGithubSync({ db, token, log, fetchImpl = fetch }: Githu
         },
       );
       if (!res.ok) {
-        log.error(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> HTTP ${res.status}`);
+        if (res.status === 404) {
+          // PD-207 C: a 404 means the issue was deleted on GitHub. Unlink it (clear the
+          // issue number/url) but KEEP the ticket — deletion is ticket-authoritative
+          // (D-039). Only 404 unlinks; transient errors (403/5xx) are left to retry.
+          updateTicket(db, t.id, { githubIssueNumber: null, githubIssueUrl: null });
+          log.info(
+            `github-sync: ${t.githubRepo}#${t.githubIssueNumber} 404 (deleted) -> unlinked ticket ${t.id}`,
+          );
+        } else {
+          log.error(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> HTTP ${res.status}`);
+        }
         continue;
       }
       const issue = (await res.json()) as GithubIssue;
@@ -148,6 +158,50 @@ function ghHeaders(token: string, json = false): Record<string, string> {
   };
   if (json) h['Content-Type'] = 'application/json';
   return h;
+}
+
+// The `sortie:*` labels that keep an issue in Sortie's `query_filter` (WORKFLOW.md) and
+// therefore make it a dispatch candidate. Stripped on close-on-delete so an archived
+// ticket's issue leaves the candidate set regardless of how Sortie handles closed-issue
+// state (a closed issue *should* drop out per WORKFLOW.md, but that is an external,
+// version-dependent assumption — removing the labels is the belt-and-suspenders guarantee).
+const ACTIVE_SORTIE_LABELS = new Set(['sortie:queued', 'sortie:in-progress']);
+
+/**
+ * PD-207 A: cancel a linked issue when its ticket is archived — strip the active
+ * `sortie:*` labels (so it leaves Sortie's dispatch candidate set) AND close it as
+ * "not planned" (state=closed, state_reason=not_planned), in a single PATCH.
+ *
+ * Reads the current labels first so it can preserve non-sortie labels (GitHub's label
+ * PATCH replaces the whole set). If that read fails, it still closes — labels are left
+ * untouched rather than accidentally cleared. Returns whether the close PATCH was
+ * accepted; the caller treats the whole thing as best-effort. Uses the write-scoped token.
+ */
+export async function closeIssueNotPlanned(
+  repo: string,
+  issueNumber: number,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const url = `https://api.github.com/repos/${repo}/issues/${issueNumber}`;
+  // Read current labels so we can drop only the active sortie:* ones and keep the rest.
+  let keepLabels: string[] | undefined;
+  const get = await fetchImpl(url, { headers: ghHeaders(token) });
+  if (get.ok) {
+    const issue = (await get.json()) as GithubIssue;
+    keepLabels = (issue.labels ?? [])
+      .map((l) => l.name)
+      .filter((name) => !ACTIVE_SORTIE_LABELS.has(name.toLowerCase()));
+  }
+  // Close + (when we could read them) rewrite the label set without the active sortie:* labels.
+  const body: Record<string, unknown> = { state: 'closed', state_reason: 'not_planned' };
+  if (keepLabels !== undefined) body.labels = keepLabels;
+  const res = await fetchImpl(url, {
+    method: 'PATCH',
+    headers: ghHeaders(token, true),
+    body: JSON.stringify(body),
+  });
+  return res.ok;
 }
 
 /** The label Sortie polls for to pick up a ticket. */

@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { createTicket, getProjectBySlug, getTicket, updateTicket } from './store';
-import { deriveAssignee, deriveState, runGithubSync, runQueuedSync } from './github-sync';
+import {
+  closeIssueNotPlanned,
+  deriveAssignee,
+  deriveState,
+  runGithubSync,
+  runQueuedSync,
+} from './github-sync';
 
 const noopLog = { info() {}, error() {} };
 
@@ -186,14 +192,30 @@ describe('runGithubSync', () => {
     expect(getTicket(db, t.id)!.updatedAt).toBe(first);
   });
 
-  it('leaves the ticket untouched on an HTTP error', async () => {
+  it('leaves the ticket untouched on a transient HTTP error (5xx)', async () => {
     const db = freshDb();
     const t = createTicket(db, { title: 'err', projectId: pdProjectId(db), status: 'queued' });
     updateTicket(db, t.id, { githubIssueNumber: 61, githubIssueUrl: 'https://x/61' });
 
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 500) });
+
+    const after = getTicket(db, t.id);
+    expect(after?.status).toBe('queued');
+    // A non-404 error must NOT unlink — the issue may still exist (rate limit / outage).
+    expect(after?.githubIssueNumber).toBe(61);
+  });
+
+  it('unlinks the issue but keeps the ticket when the issue 404s (deleted on GitHub) — PD-207 C', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'deleted issue', projectId: pdProjectId(db), status: 'queued' });
+    updateTicket(db, t.id, { githubIssueNumber: 500, githubIssueUrl: 'https://x/500' });
+
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 404) });
 
-    expect(getTicket(db, t.id)?.status).toBe('queued');
+    const after = getTicket(db, t.id);
+    expect(after?.githubIssueNumber).toBeNull();
+    expect(after?.githubIssueUrl).toBeNull();
+    expect(after?.status).toBe('queued'); // ticket itself is kept
   });
 
   it('sets a wontfix-labelled issue to board closed status', async () => {
@@ -324,5 +346,72 @@ describe('runQueuedSync', () => {
     await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });
 
     expect(calls).toHaveLength(0);
+  });
+});
+
+/** A fetch mock for closeIssueNotPlanned: a GET returning `labels`, then a PATCH. */
+function closeFetch(opts: { labels?: string[]; getStatus?: number; patchOk?: boolean }) {
+  const calls: { method: string; body: Record<string, unknown> | undefined }[] = [];
+  const impl = (async (_url: string, init?: { method?: string; body?: string }) => {
+    const method = init?.method ?? 'GET';
+    calls.push({ method, body: init?.body ? JSON.parse(init.body) : undefined });
+    if (method === 'GET') {
+      const status = opts.getStatus ?? 200;
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => ({ state: 'open', labels: (opts.labels ?? []).map((name) => ({ name })) }),
+      };
+    }
+    return { ok: opts.patchOk ?? true, status: opts.patchOk === false ? 500 : 200, json: async () => ({}) };
+  }) as unknown as typeof fetch;
+  return { impl, calls };
+}
+
+describe('closeIssueNotPlanned (PD-207 A)', () => {
+  it('strips active sortie:* labels, keeps other labels, and closes as not_planned', async () => {
+    const { impl, calls } = closeFetch({ labels: ['sortie:queued', 'bug'] });
+
+    const ok = await closeIssueNotPlanned('o/r', 7, 'wtok', impl);
+
+    expect(ok).toBe(true);
+    const patch = calls.find((c) => c.method === 'PATCH');
+    expect(patch?.body).toMatchObject({ state: 'closed', state_reason: 'not_planned' });
+    expect(patch?.body?.labels).toEqual(['bug']); // sortie:queued removed, bug preserved
+  });
+
+  it('also strips sortie:in-progress (case-insensitive)', async () => {
+    const { impl, calls } = closeFetch({ labels: ['SORTIE:IN-PROGRESS', 'enhancement'] });
+
+    await closeIssueNotPlanned('o/r', 8, 'wtok', impl);
+
+    const patch = calls.find((c) => c.method === 'PATCH');
+    expect(patch?.body?.labels).toEqual(['enhancement']);
+  });
+
+  it('leaves non-active sortie labels alone (e.g. sortie:in-review)', async () => {
+    const { impl, calls } = closeFetch({ labels: ['sortie:in-review'] });
+
+    await closeIssueNotPlanned('o/r', 9, 'wtok', impl);
+
+    const patch = calls.find((c) => c.method === 'PATCH');
+    expect(patch?.body?.labels).toEqual(['sortie:in-review']); // in-review is not a dispatch label
+  });
+
+  it('still closes (labels untouched) when the label GET fails', async () => {
+    const { impl, calls } = closeFetch({ getStatus: 500 });
+
+    const ok = await closeIssueNotPlanned('o/r', 10, 'wtok', impl);
+
+    expect(ok).toBe(true);
+    const patch = calls.find((c) => c.method === 'PATCH');
+    expect(patch?.body).toMatchObject({ state: 'closed', state_reason: 'not_planned' });
+    expect(patch?.body?.labels).toBeUndefined(); // no label rewrite attempted
+  });
+
+  it('returns false when the close PATCH is rejected', async () => {
+    const { impl } = closeFetch({ labels: ['sortie:queued'], patchOk: false });
+
+    expect(await closeIssueNotPlanned('o/r', 11, 'wtok', impl)).toBe(false);
   });
 });
