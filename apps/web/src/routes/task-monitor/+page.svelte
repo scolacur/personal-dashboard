@@ -111,6 +111,7 @@
   let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
   let loading = $state(true);
+  let syncing = $state(false);
   let error = $state<string | null>(null);
 
   // null = "All projects"
@@ -180,12 +181,32 @@
     }
   }
 
+  // PD-252: pull GitHub→DB on demand, then re-read. Issue status/labels are owned by GitHub
+  // and only land in the DB via the server's once-a-minute cron; without this, neither a poll
+  // nor a hard refresh could surface a just-closed issue any sooner. The server guards/coalesces
+  // the pull, so this is safe to fire on mount and from the button. Never throws to the caller —
+  // a failed sync just falls back to whatever the DB already has.
+  async function syncThenLoad(silent = false) {
+    syncing = true;
+    try {
+      await api.syncNow();
+    } catch (e) {
+      console.warn('[task-monitor] sync failed; showing current data', e);
+    } finally {
+      syncing = false;
+    }
+    await load(silent);
+  }
+
   onMount(() => {
+    // Paint the board immediately from the current DB, then reconcile with GitHub and
+    // refresh in place — so a hard refresh reflects a just-closed issue within ~seconds.
     load();
+    void syncThenLoad(true);
     window.addEventListener('click', handleWindowClick);
     window.addEventListener('keydown', handleWindowKeydown);
-    // Auto-refresh every 30 s so GitHub label changes (synced server-side every minute)
-    // are reflected on the board without requiring a manual page reload.
+    // Background auto-refresh every 30 s. Reads the DB only; the server cron keeps it fresh
+    // for idle tabs. On-demand sync (mount + button) covers the "I just changed something" case.
     const refreshTimer = setInterval(() => load(true), 30_000);
     return () => {
       window.removeEventListener('click', handleWindowClick);
@@ -483,6 +504,13 @@
       aria-label="Priority levels"
       onclick={() => (legendOpen = true)}>i</button
     >
+    <button
+      class="sync-btn"
+      type="button"
+      title="Fetch the latest issue status &amp; labels from GitHub now"
+      onclick={() => syncThenLoad(true)}
+      disabled={syncing}
+    >{syncing ? 'Syncing…' : 'Sync now'}</button>
     <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
       <button
         class="lanes-btn"

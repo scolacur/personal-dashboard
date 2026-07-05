@@ -200,3 +200,76 @@ Exposes one port (default 8080). No external auth — relies on LAN-only access.
 ## 7. Open questions / things to revisit
 
 - Whether `node-cron` is sufficient or if a real job queue (BullMQ) is needed — defer until a second widget with scheduling is added.
+
+---
+
+## 8. Glossary / Domain Language
+
+Definitions of the domain language used across the board and the Sortie agent pipeline.
+Definitions only — no implementation detail. Decisions live in `DECISIONS.md` (`D-NNN`).
+
+### Agent pipeline
+
+**Refine**:
+The interactive session (launched from a **Refine** button on a board card) in which an
+agent works *with Steve* to sharpen a ticket: it grills, plans, decomposes into one or
+more well-shaped tickets, suggests assignments, and — after Steve's approval — creates
+and routes them. The whole feature; **Grill** is the interrogation activity inside it.
+
+**Grill**:
+The **pre-dispatch interrogation/decomposition activity** inside a Refine session, run on
+a Prioritized ticket. Produces one or more well-shaped tickets and proposes a lane for
+each. Runs *before* a Sortie worker is dispatched.
+_Avoid_: using "grill" for questions an agent asks mid-run (that is **ask_human**).
+
+**ask_human**:
+A question a **dispatched Sortie worker** raises mid-run when it hits real ambiguity —
+it posts `### ❓ ask_human`, self-labels `sortie:awaiting-human`, parks, and resumes
+after a human replies async. Clarifies the *current* ticket in place; it does **not**
+produce new tickets and does **not** route anything.
+_Avoid_: calling this a "grill".
+
+**Auto-routing**:
+Assigning each ticket a queue lane (**Robot's Queue** or **Steve's Queue**) and the
+matching **assignee** (`robot` / `steve`). "Grill auto-routing" = doing this to the
+tickets a Refine session produces.
+
+**Autonomous agent** (e.g. a dispatched **Sortie worker**):
+An agent operating *unsupervised*. **May not queue tickets** — it can create tickets into
+`backlog` only (D-039). Prompt-based limits are not trustworthy for an unsupervised agent
+(token-blowout risk), so queuing stays forbidden until a depth cap is enforced by
+something stronger than a prompt (PD-244). This is the class D-039's backlog-only rule
+governs.
+
+**Interactive agent** (e.g. the **Refine**/Grill agent):
+An agent that is *always working with Steve in the loop*. **May queue tickets — but only
+after Steve's explicit approval.** Human-in-the-loop is the enforcement, so it is safe in
+a way an autonomous agent is not. This is why Refine can route into queue lanes without
+waiting on PD-244.
+
+**Prioritized**:
+The pre-grill triage lane — "this matters, do it next." Renames the old `ready` lane.
+Refine runs on a Prioritized ticket.
+
+**Robot's Queue** (`robot_queue`, assignee `robot`):
+The single lane for all in-flight Sortie work (collapses queued + in_progress +
+in_review); the fine-grained `sortie:*` state shows as a status pill. Routing/dragging a
+ticket here is the dispatch trigger.
+
+**Steve's Queue** (`steve_queue`, assignee `steve`):
+Tasks that must be done under Steve's supervision. No sub-states.
+
+**Assignee** (`steve` | `robot` | null):
+Who owns a ticket. **Optional hint pre-queue** (in backlog/prioritized Steve may set it
+early when he already knows who'll do the work, or leave it null), then **forced by the
+lane on queue entry** — entering `robot_queue` sets `robot`, entering `steve_queue` sets
+`steve`, overriding any prior hint. The lane is authoritative once queued.
+
+**Ticket**:
+The durable spec for a unit of work, owned by the dashboard board (`agent_tickets`).
+Stays amendable across its whole lifecycle (D-039).
+_Avoid_: conflating with **issue**.
+
+**Issue**:
+A GitHub issue minted from a ticket at dispatch — an *execution lease*, not the durable
+spec. Deletion is ticket-authoritative (D-039).

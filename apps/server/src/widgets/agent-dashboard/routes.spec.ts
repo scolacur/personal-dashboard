@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes, type AgentDashboardRouteDeps } from './routes';
 import { createNotification, getProjectBySlug } from './store';
+import { __resetOnDemandSyncGuard } from './github-sync';
 
 function freshSetup(deps?: AgentDashboardRouteDeps) {
   const db = new Database(':memory:');
@@ -456,5 +457,34 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       payload: { body: 'hi' },
     });
     expect(res.statusCode).toBe(502);
+  });
+});
+
+describe('POST /api/widgets/agent-dashboard/sync — on-demand GitHub reconciliation (PD-252)', () => {
+  it('503s when no read token is configured', async () => {
+    __resetOnDemandSyncGuard();
+    const { app } = freshSetup(); // no githubReadToken, and env token not injected
+    const res = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().code).toBe('NO_READ_TOKEN');
+  });
+
+  it('runs a pass when a read token is present and reports the outcome', async () => {
+    __resetOnDemandSyncGuard();
+    const { impl } = recordingFetch('ok');
+    const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
+    const res = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().outcome).toBe('ran');
+  });
+
+  it('throttles a second immediate call so refresh spam cannot hammer GitHub', async () => {
+    __resetOnDemandSyncGuard();
+    const { impl } = recordingFetch('ok');
+    const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
+    const first = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    const second = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    expect(first.json().outcome).toBe('ran');
+    expect(second.json().outcome).toBe('throttled');
   });
 });
