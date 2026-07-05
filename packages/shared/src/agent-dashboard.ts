@@ -92,6 +92,8 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
   done: 'done',
 };
 
+// TODO(#144): Once the Sortie integration wiki exists, update these descriptions to link to
+// the relevant entries (e.g. "watchdog" → wiki anchor). See also #145 (Karpathy memory model).
 /** One-sentence descriptions for each agent state, shown in the status-legend modal. */
 export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
   queued: 'Picked up by Sortie and waiting in the autonomous loop to start.',
