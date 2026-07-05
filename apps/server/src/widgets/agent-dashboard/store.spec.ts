@@ -137,6 +137,39 @@ describe('priority migration (legacy low/medium/high → P-levels)', () => {
   });
 });
 
+describe('D-040 lane migration (legacy statuses → 6-lane model)', () => {
+  it('remaps ready→prioritized and the agent lanes→robot_queue, seeding agent_state for linked rows', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    const now = Date.now();
+    const ins = db.prepare(
+      `INSERT INTO agent_tickets (title, status, priority, project_id, source, github_issue_number, created_at, updated_at)
+       VALUES (?, ?, 'none', ?, 'manual', ?, ?, ?)`,
+    );
+    ins.run('r', 'ready', pd, null, now, now);
+    ins.run('q', 'queued', pd, 10, now, now);
+    ins.run('ip', 'in_progress', pd, 11, now, now);
+    ins.run('ir', 'in_review', pd, 12, now, now);
+    ins.run('manual-ip', 'in_progress', pd, null, now, now); // no linked issue → pill not seeded
+
+    // Re-run the lane migration (it already ran once on the empty DB) against the legacy rows.
+    db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_lanes_d040'").run();
+    bootstrapSchema(db);
+
+    const byTitle = Object.fromEntries(listTickets(db).map((t) => [t.title, t]));
+    expect(byTitle['r'].status).toBe('prioritized');
+    expect(byTitle['q'].status).toBe('robot_queue');
+    expect(byTitle['q'].agentState).toBe('queued');
+    expect(byTitle['ip'].status).toBe('robot_queue');
+    expect(byTitle['ip'].agentState).toBe('working');
+    expect(byTitle['ir'].status).toBe('robot_queue');
+    expect(byTitle['ir'].agentState).toBe('in-review');
+    // A row with no linked issue collapses to robot_queue but gets no synthetic pill.
+    expect(byTitle['manual-ip'].status).toBe('robot_queue');
+    expect(byTitle['manual-ip'].agentState).toBeNull();
+  });
+});
+
 describe('assignee', () => {
   let db: Database.Database;
   let pd: number;
@@ -200,9 +233,9 @@ describe('closed status', () => {
   it('orders closed tickets after completed in listTickets', () => {
     createTicket(db, { title: 'done', projectId: pd, status: 'completed' });
     createTicket(db, { title: 'shut', projectId: pd, status: 'closed' });
-    createTicket(db, { title: 'wip', projectId: pd, status: 'in_progress' });
+    createTicket(db, { title: 'wip', projectId: pd, status: 'robot_queue' });
     const statuses = listTickets(db).map((t) => t.status);
-    const wipIdx = statuses.indexOf('in_progress');
+    const wipIdx = statuses.indexOf('robot_queue');
     const doneIdx = statuses.indexOf('completed');
     const shutIdx = statuses.indexOf('closed');
     expect(wipIdx).toBeLessThan(doneIdx);
@@ -215,13 +248,13 @@ describe('activity log', () => {
     const db = freshDb();
     const pd = projectId(db, 'personal-dashboard');
     const t = createTicket(db, { title: 'x', projectId: pd });
-    updateTicket(db, t.id, { status: 'ready' });
+    updateTicket(db, t.id, { status: 'prioritized' });
     updateTicket(db, t.id, { priority: 'P1' }); // no status change → no event
 
     const events = db
       .prepare('SELECT type, detail FROM agent_ticket_events WHERE ticket_id = ? ORDER BY id')
       .all(t.id) as { type: string; detail: string | null }[];
     expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
-    expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'ready' });
+    expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'prioritized' });
   });
 });

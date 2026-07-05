@@ -13,17 +13,20 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
   robot: 'Robot',
 };
 
-// The Kanban columns. Backlog/ready/queued/closed are set by hand; the agent statuses
-// (in_progress/in_review/completed) are derived from GitHub once a Ticket has been
-// converted to a Sortie issue (Phase 3) — see DECISIONS.md D-020.
-// 'closed' is a manual terminal status for tickets closed for any reason other than
-// completion (cancelled, won't fix, out of scope, etc.) — see DECISIONS.md D-034.
+// The Kanban lanes (DECISIONS D-040 board redesign, PD-245). All six are the `status`.
+//  - backlog / prioritized: set by hand (prioritized = pre-grill triage, "do this next").
+//  - robot_queue: ONE lane for a ticket dispatched to Sortie — every non-terminal
+//    `sortie:*` label lives here; the fine state (queued/in-progress/in-review/…) is
+//    carried by `agentState` and shown as a status pill. Entering this lane is the
+//    dispatch trigger (mints the GitHub issue).
+//  - steve_queue: work Steve does under his own supervision (manual, never agent-locked).
+//  - completed: agent-set terminal (sortie:done). closed: manual/wontfix terminal (D-036),
+//    hidden by default.
 export type TicketStatus =
   | 'backlog'
-  | 'ready'
-  | 'queued'
-  | 'in_progress'
-  | 'in_review'
+  | 'prioritized'
+  | 'robot_queue'
+  | 'steve_queue'
   | 'completed'
   | 'closed';
 
@@ -32,18 +35,25 @@ export type TicketStatus =
 export type TicketPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
 
 // Fine-grained agent state, derived by the GitHub-label poller (PD-165) from the
-// `sortie:*` label on a linked issue. Distinct from `status`: several of these map
-// to the same `in_progress` status but mean different things — only 'working'
-// should drive the active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are
-// paused-and-need-attention. `null` = no agent state (manual / not being worked).
-export type AgentState = 'working' | 'stuck' | 'needs-human' | 'awaiting-human' | 'wontfix';
+// `sortie:*` label on a linked issue. In the redesigned board (D-040) every non-terminal
+// sortie:* label maps to the single `robot_queue` status, so `agentState` is what
+// distinguishes them on the card (rendered as a status pill). Only 'working' drives the
+// active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are paused-need-attention;
+// 'queued'/'in-review' are informational. `null` = no agent state (manual / not worked).
+export type AgentState =
+  | 'queued'
+  | 'working'
+  | 'in-review'
+  | 'stuck'
+  | 'needs-human'
+  | 'awaiting-human'
+  | 'wontfix';
 
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
-  'ready',
-  'queued',
-  'in_progress',
-  'in_review',
+  'prioritized',
+  'robot_queue',
+  'steve_queue',
   'completed',
   'closed',
 ] as const;

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
@@ -15,10 +15,9 @@
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
-    { status: 'ready', label: 'Ready for Robot' },
-    { status: 'queued', label: 'Queued for Robot' },
-    { status: 'in_progress', label: 'In progress' },
-    { status: 'in_review', label: 'In review' },
+    { status: 'prioritized', label: 'Prioritized' },
+    { status: 'robot_queue', label: "Robot's Queue" },
+    { status: 'steve_queue', label: "Steve's Queue" },
     { status: 'completed', label: 'Completed' },
     { status: 'closed', label: 'Closed', defaultHidden: true },
   ];
@@ -70,7 +69,25 @@
 
   // Once a ticket is picked up by an agent, its status is controlled externally,
   // so manual editing (field + drag) is locked for these statuses when assigned.
-  const AGENT_CONTROLLED: TicketStatus[] = ['queued', 'in_progress', 'in_review', 'completed'];
+  // D-040: the agent lanes collapsed into robot_queue; steve_queue is manual (never locked).
+  const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
+
+  // The card pill for a Robot's-Queue ticket: agentState carries the fine sortie:* state
+  // (D-040). Display label + which visual group it belongs to.
+  const AGENT_STATE_LABELS: Record<AgentState, string> = {
+    queued: 'queued',
+    working: 'in progress',
+    'in-review': 'in review',
+    stuck: 'stuck',
+    'needs-human': 'needs human',
+    'awaiting-human': 'awaiting human',
+    wontfix: 'wontfix',
+  };
+  function agentStateClass(s: AgentState): string {
+    if (s === 'stuck' || s === 'needs-human' || s === 'awaiting-human') return 'agent-state-attention';
+    if (s === 'wontfix') return 'agent-state-wontfix';
+    return 'agent-state-info'; // queued / working / in-review
+  }
   function isStatusLocked(t: AgentTicket): boolean {
     return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
   }
@@ -192,7 +209,7 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
-    if (formStatus === 'queued' && !isSortieReady(formBody.trim() || null)) {
+    if (formStatus === 'robot_queue' && !isSortieReady(formBody.trim() || null)) {
       showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
     }
     error = null;
@@ -342,7 +359,7 @@
     const sortOrder = computeSortOrder(status, ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
-    if (status === 'queued' && ticket.status !== 'queued' && !isSortieReady(ticket.body)) {
+    if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isSortieReady(ticket.body)) {
       showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
     }
     error = null;
@@ -619,13 +636,11 @@
                   {/if}
                 </div>
                 <span class="card-top-right">
-                  {#if ticket.agentState === 'stuck' || ticket.agentState === 'needs-human' || ticket.agentState === 'awaiting-human'}
+                  {#if ticket.agentState}
                     <span
-                      class="agent-state-badge agent-state-attention"
+                      class="agent-state-badge {agentStateClass(ticket.agentState)}"
                       title="Agent state: {ticket.agentState}"
-                    >{ticket.agentState.replace(/-/g, ' ')}</span>
-                  {:else if ticket.agentState === 'wontfix'}
-                    <span class="agent-state-badge agent-state-wontfix" title="Agent state: wontfix">wontfix</span>
+                    >{AGENT_STATE_LABELS[ticket.agentState]}</span>
                   {/if}
                   {#if ticket.githubIssueUrl}
                     <a

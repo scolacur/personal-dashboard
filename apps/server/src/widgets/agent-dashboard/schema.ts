@@ -131,6 +131,27 @@ export function bootstrapSchema(db: Database.Database): void {
     ).run();
   });
 
+  // D-040 board redesign (PD-245): collapse the old 7 lanes into the new 6-lane model.
+  // Data-only, non-destructive; no-op on a fresh DB. ready -> prioritized; the old agent
+  // lanes queued/in_progress/in_review -> the single robot_queue lane. For issue-linked
+  // rows, seed agent_state (the card pill) from the old status BEFORE collapsing it, and
+  // only when the poller hasn't already set it; the live poller re-derives on next sync.
+  migrate(db, 'agent_tickets_lanes_d040', (d) => {
+    d.prepare("UPDATE agent_tickets SET status = 'prioritized' WHERE status = 'ready'").run();
+    d.prepare(
+      "UPDATE agent_tickets SET agent_state = 'working' WHERE status = 'in_progress' AND agent_state IS NULL AND github_issue_number IS NOT NULL",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET agent_state = 'in-review' WHERE status = 'in_review' AND agent_state IS NULL AND github_issue_number IS NOT NULL",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET agent_state = 'queued' WHERE status = 'queued' AND agent_state IS NULL AND github_issue_number IS NOT NULL",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET status = 'robot_queue' WHERE status IN ('queued', 'in_progress', 'in_review')",
+    ).run();
+  });
+
   // Seed the known projects once (with display-id keys). Idempotent, and backfills
   // the key on any project a prior seed created before `key` existed.
   migrate(db, 'seed_projects', (d) => {

@@ -16,10 +16,9 @@
 
   const STATUS_LABELS: Record<TicketStatus, string> = {
     backlog: 'Backlog',
-    ready: 'Ready',
-    queued: 'Queued for Robot',
-    in_progress: 'In progress',
-    in_review: 'In review',
+    prioritized: 'Prioritized',
+    robot_queue: "Robot's Queue",
+    steve_queue: "Steve's Queue",
     completed: 'Completed',
     closed: 'Closed',
   };
