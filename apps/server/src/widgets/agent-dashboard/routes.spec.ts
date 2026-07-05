@@ -50,10 +50,10 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/agent-dashboard/tickets',
-      payload: { title: 'test', projectId: pid, status: 'ready' },
+      payload: { title: 'test', projectId: pid, status: 'prioritized' },
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json().status).toBe('ready');
+    expect(res.json().status).toBe('prioritized');
   });
 
   it('accepts closed status on create', async () => {

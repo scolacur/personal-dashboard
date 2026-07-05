@@ -615,8 +615,9 @@
   }
 }
 
-// Agent-state badge — mirrors .priority pill patterns.
-// Shown on cards with stuck/needs-human/awaiting-human (attention) or wontfix.
+// Agent-state badge — mirrors .priority pill patterns. In Robot's Queue (D-040) it shows
+// the fine sortie:* state: info (queued/in progress/in review), attention
+// (stuck/needs-human/awaiting-human), or wontfix.
 .agent-state-badge {
   font-family: var(--font-sans);
   font-size: var(--font-size-xs);
@@ -624,6 +625,11 @@
   padding: 0 var(--space-sm);
   border: 1px solid;
   white-space: nowrap;
+
+  &.agent-state-info {
+    color: #1d76db;
+    border-color: #1d76db;
+  }
 
   &.agent-state-attention {
     color: #d97706;

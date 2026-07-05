@@ -61,20 +61,20 @@ describe('compareTicketsInColumn', () => {
       const p0 = makeTicket({ priority: 'P0', sortOrder: 100 });
       const p1 = makeTicket({ priority: 'P1', sortOrder: 0 });
       expect(compareTicketsInColumn('backlog', p0, p1)).toBeLessThan(0);
-      expect(compareTicketsInColumn('ready', p1, p0)).toBeGreaterThan(0);
+      expect(compareTicketsInColumn('prioritized', p1, p0)).toBeGreaterThan(0);
     });
 
     it('sorts by sortOrder within the same priority band', () => {
       const first = makeTicket({ priority: 'P2', sortOrder: 10 });
       const second = makeTicket({ priority: 'P2', sortOrder: 20 });
-      expect(compareTicketsInColumn('in_progress', first, second)).toBeLessThan(0);
+      expect(compareTicketsInColumn('robot_queue', first, second)).toBeLessThan(0);
     });
 
     it('places unset priority after all explicit levels', () => {
       const p5 = makeTicket({ priority: 'P5', sortOrder: 0 });
       const unset = makeTicket({ priority: null, sortOrder: 0 });
-      expect(compareTicketsInColumn('in_review', p5, unset)).toBeLessThan(0);
-      expect(compareTicketsInColumn('queued', unset, p5)).toBeGreaterThan(0);
+      expect(compareTicketsInColumn('steve_queue', p5, unset)).toBeLessThan(0);
+      expect(compareTicketsInColumn('robot_queue', unset, p5)).toBeGreaterThan(0);
     });
 
     it('returns 0 for equal priority and sortOrder', () => {

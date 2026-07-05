@@ -2,13 +2,7 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { createTicket, getProjectBySlug, getTicket, updateTicket } from './store';
-import {
-  closeIssueNotPlanned,
-  deriveAssignee,
-  deriveState,
-  runGithubSync,
-  runQueuedSync,
-} from './github-sync';
+import { closeIssueNotPlanned, deriveState, runGithubSync, runQueuedSync } from './github-sync';
 
 const noopLog = { info() {}, error() {} };
 
@@ -35,13 +29,14 @@ function fakeFetch(issue: { state: 'open' | 'closed'; labels: string[] }, status
 }
 
 describe('deriveState', () => {
-  it('maps each sortie:* label to the right status + agent state', () => {
-    expect(deriveState(['sortie:in-progress'], 'open')).toEqual({ status: 'in_progress', agentState: 'working', assignee: 'robot' });
-    expect(deriveState(['sortie:in-review'], 'open')).toEqual({ status: 'in_review', agentState: null });
-    expect(deriveState(['sortie:stuck'], 'open')).toEqual({ status: 'in_progress', agentState: 'stuck', assignee: 'robot' });
-    expect(deriveState(['sortie:needs-human'], 'open')).toEqual({ status: 'in_progress', agentState: 'needs-human', assignee: 'robot' });
+  it('maps every non-terminal sortie:* label to robot_queue with the fine agentState (D-040)', () => {
+    expect(deriveState(['sortie:queued'], 'open')).toEqual({ status: 'robot_queue', agentState: 'queued', assignee: 'robot' });
+    expect(deriveState(['sortie:in-progress'], 'open')).toEqual({ status: 'robot_queue', agentState: 'working', assignee: 'robot' });
+    expect(deriveState(['sortie:in-review'], 'open')).toEqual({ status: 'robot_queue', agentState: 'in-review' });
+    expect(deriveState(['sortie:stuck'], 'open')).toEqual({ status: 'robot_queue', agentState: 'stuck', assignee: 'robot' });
+    expect(deriveState(['sortie:needs-human'], 'open')).toEqual({ status: 'robot_queue', agentState: 'needs-human', assignee: 'robot' });
     expect(deriveState(['sortie:awaiting-human'], 'open')).toEqual({
-      status: 'in_progress',
+      status: 'robot_queue',
       agentState: 'awaiting-human',
       assignee: 'robot',
     });
@@ -49,11 +44,10 @@ describe('deriveState', () => {
   });
 
   it('is case-insensitive on label names', () => {
-    expect(deriveState(['SORTIE:IN-PROGRESS'], 'open')).toEqual({ status: 'in_progress', agentState: 'working', assignee: 'robot' });
+    expect(deriveState(['SORTIE:IN-PROGRESS'], 'open')).toEqual({ status: 'robot_queue', agentState: 'working', assignee: 'robot' });
   });
 
-  it('returns null when no rule applies (only queued / no sortie label)', () => {
-    expect(deriveState(['sortie:queued'], 'open')).toBeNull();
+  it('returns null only when no sortie:* label applies', () => {
     expect(deriveState([], 'open')).toBeNull();
     expect(deriveState(['bug', 'enhancement'], 'open')).toBeNull();
   });
@@ -80,53 +74,31 @@ describe('deriveState', () => {
 
   it('applies precedence — stuck wins over in-progress', () => {
     expect(deriveState(['sortie:in-progress', 'sortie:stuck'], 'open')).toEqual({
-      status: 'in_progress',
+      status: 'robot_queue',
       agentState: 'stuck',
       assignee: 'robot',
     });
   });
-});
 
-describe('deriveAssignee', () => {
-  it('returns robot for each agent-active label', () => {
-    expect(deriveAssignee(['sortie:queued'])).toBe('robot');
-    expect(deriveAssignee(['sortie:in-progress'])).toBe('robot');
-    expect(deriveAssignee(['sortie:stuck'])).toBe('robot');
-    expect(deriveAssignee(['sortie:needs-human'])).toBe('robot');
-    expect(deriveAssignee(['sortie:awaiting-human'])).toBe('robot');
-  });
-
-  it('returns undefined when no agent-active label is present', () => {
-    expect(deriveAssignee([])).toBeUndefined();
-    expect(deriveAssignee(['bug', 'enhancement'])).toBeUndefined();
-    expect(deriveAssignee(['sortie:in-review'])).toBeUndefined();
-    expect(deriveAssignee(['sortie:done'])).toBeUndefined();
-    expect(deriveAssignee(['sortie:wontfix'])).toBeUndefined();
-  });
-
-  it('is case-insensitive', () => {
-    expect(deriveAssignee(['SORTIE:QUEUED'])).toBe('robot');
-    expect(deriveAssignee(['Sortie:In-Progress'])).toBe('robot');
-  });
 });
 
 describe('runGithubSync', () => {
   it('writes derived status + agent state onto a linked ticket', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'linked', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'linked', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 59, githubIssueUrl: 'https://x/59' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:in-progress'] }) });
 
     const after = getTicket(db, t.id);
-    expect(after?.status).toBe('in_progress');
+    expect(after?.status).toBe('robot_queue');
     expect(after?.agentState).toBe('working');
     expect(after?.assignee).toBe('robot');
   });
 
   it('auto-assigns to robot when issue has sortie:in-progress', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'unassigned', projectId: pdProjectId(db), status: 'queued', assignee: 'steve' });
+    const t = createTicket(db, { title: 'unassigned', projectId: pdProjectId(db), status: 'robot_queue', assignee: 'steve' });
     updateTicket(db, t.id, { githubIssueNumber: 70, githubIssueUrl: 'https://x/70' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:in-progress'] }) });
@@ -136,19 +108,19 @@ describe('runGithubSync', () => {
 
   it('auto-assigns to robot when issue has only sortie:queued (no status change)', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'queued ticket', projectId: pdProjectId(db), status: 'queued', assignee: 'steve' });
+    const t = createTicket(db, { title: 'queued ticket', projectId: pdProjectId(db), status: 'robot_queue', assignee: 'steve' });
     updateTicket(db, t.id, { githubIssueNumber: 71, githubIssueUrl: 'https://x/71' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:queued'] }) });
 
     const after = getTicket(db, t.id);
     expect(after?.assignee).toBe('robot');
-    expect(after?.status).toBe('queued');  // status unchanged
+    expect(after?.status).toBe('robot_queue');  // status unchanged
   });
 
   it('does not change assignee for non-agent labels (e.g. sortie:done)', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'done', projectId: pdProjectId(db), status: 'in_progress', assignee: 'steve' });
+    const t = createTicket(db, { title: 'done', projectId: pdProjectId(db), status: 'robot_queue', assignee: 'steve' });
     updateTicket(db, t.id, { githubIssueNumber: 72, githubIssueUrl: 'https://x/72' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:done'] }) });
@@ -159,7 +131,7 @@ describe('runGithubSync', () => {
 
   it('is a no-op for sortie:queued when assignee is already robot', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'already robot', projectId: pdProjectId(db), status: 'queued', assignee: 'robot' });
+    const t = createTicket(db, { title: 'already robot', projectId: pdProjectId(db), status: 'robot_queue', assignee: 'robot' });
     updateTicket(db, t.id, { githubIssueNumber: 73, githubIssueUrl: 'https://x/73' });
     const fetchImpl = fakeFetch({ state: 'open', labels: ['sortie:queued'] });
 
@@ -171,18 +143,18 @@ describe('runGithubSync', () => {
 
   it('skips tickets with no linked issue', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'unlinked', projectId: pdProjectId(db), status: 'ready' });
+    const t = createTicket(db, { title: 'unlinked', projectId: pdProjectId(db), status: 'prioritized' });
     // no updateTicket → githubIssueNumber stays null
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:in-progress'] }) });
 
-    expect(getTicket(db, t.id)?.status).toBe('ready');
+    expect(getTicket(db, t.id)?.status).toBe('prioritized');
     expect(getTicket(db, t.id)?.agentState).toBeNull();
   });
 
   it('is a no-op when the derived state is unchanged (does not bump updated_at)', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'x', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'x', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 60, githubIssueUrl: 'https://x/60' });
     const fetchImpl = fakeFetch({ state: 'open', labels: ['sortie:in-progress'] });
 
@@ -194,20 +166,20 @@ describe('runGithubSync', () => {
 
   it('leaves the ticket untouched on a transient HTTP error (5xx)', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'err', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'err', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 61, githubIssueUrl: 'https://x/61' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 500) });
 
     const after = getTicket(db, t.id);
-    expect(after?.status).toBe('queued');
+    expect(after?.status).toBe('robot_queue');
     // A non-404 error must NOT unlink — the issue may still exist (rate limit / outage).
     expect(after?.githubIssueNumber).toBe(61);
   });
 
   it('unlinks the issue but keeps the ticket when the issue 404s (deleted on GitHub) — PD-207 C', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'deleted issue', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'deleted issue', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 500, githubIssueUrl: 'https://x/500' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: [] }, 404) });
@@ -215,12 +187,12 @@ describe('runGithubSync', () => {
     const after = getTicket(db, t.id);
     expect(after?.githubIssueNumber).toBeNull();
     expect(after?.githubIssueUrl).toBeNull();
-    expect(after?.status).toBe('queued'); // ticket itself is kept
+    expect(after?.status).toBe('robot_queue'); // ticket itself is kept
   });
 
   it('sets a wontfix-labelled issue to board closed status', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'wontfix', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'wontfix', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 62, githubIssueUrl: 'https://x/62' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'closed', labels: ['sortie:wontfix'] }) });
@@ -231,7 +203,7 @@ describe('runGithubSync', () => {
 
   it('reflects a sortie:stuck → sortie:awaiting-human label change (agentState transition)', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'was stuck', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'was stuck', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 65, githubIssueUrl: 'https://x/65' });
     // First sync: issue has sortie:stuck — sets agentState to 'stuck'.
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:stuck'] }) });
@@ -239,23 +211,23 @@ describe('runGithubSync', () => {
     // Second sync: label changed to sortie:awaiting-human — must update agentState.
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:awaiting-human'] }) });
     const after = getTicket(db, t.id);
-    expect(after?.status).toBe('in_progress');
+    expect(after?.status).toBe('robot_queue');
     expect(after?.agentState).toBe('awaiting-human');
   });
 
   it('reflects a sortie:needs-human label on the board', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'needs human', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'needs human', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 66, githubIssueUrl: 'https://x/66' });
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:needs-human'] }) });
     const after = getTicket(db, t.id);
-    expect(after?.status).toBe('in_progress');
+    expect(after?.status).toBe('robot_queue');
     expect(after?.agentState).toBe('needs-human');
   });
 
   it('sets a wontfix-labelled open issue to board closed status', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'wontfix open', projectId: pdProjectId(db), status: 'in_progress' });
+    const t = createTicket(db, { title: 'wontfix open', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 67, githubIssueUrl: 'https://x/67' });
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:wontfix'] }) });
     const after = getTicket(db, t.id);
@@ -300,7 +272,7 @@ function queuedFetch(opts: { getLabels?: string[]; createNumber?: number }) {
 describe('runQueuedSync', () => {
   it('creates + labels + links an issue for an unlinked queued ticket', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'needs issue', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'needs issue', projectId: pdProjectId(db), status: 'robot_queue' });
     const { impl, calls } = queuedFetch({ createNumber: 200 });
 
     await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });
@@ -314,7 +286,7 @@ describe('runQueuedSync', () => {
 
   it('adds sortie:queued to a linked issue that has no sortie:* label yet', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'linked bare', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'linked bare', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 50, githubIssueUrl: 'https://gh/50' });
     const { impl, calls } = queuedFetch({ getLabels: [] });
 
@@ -327,7 +299,7 @@ describe('runQueuedSync', () => {
 
   it('leaves a linked issue alone if it already has a sortie:* label', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'already moving', projectId: pdProjectId(db), status: 'queued' });
+    const t = createTicket(db, { title: 'already moving', projectId: pdProjectId(db), status: 'robot_queue' });
     updateTicket(db, t.id, { githubIssueNumber: 51, githubIssueUrl: 'https://gh/51' });
     const { impl, calls } = queuedFetch({ getLabels: ['sortie:in-progress'] });
 
@@ -338,9 +310,9 @@ describe('runQueuedSync', () => {
 
   it('skips non-queued tickets and non-sortie-enabled projects', async () => {
     const db = freshDb();
-    createTicket(db, { title: 'ready one', projectId: pdProjectId(db), status: 'ready' }); // wrong lane
+    createTicket(db, { title: 'ready one', projectId: pdProjectId(db), status: 'prioritized' }); // wrong lane
     const core = getProjectBySlug(db, 'core'); // sortie_enabled = 0
-    if (core) createTicket(db, { title: 'core queued', projectId: core.id, status: 'queued' });
+    if (core) createTicket(db, { title: 'core queued', projectId: core.id, status: 'robot_queue' });
     const { impl, calls } = queuedFetch({ createNumber: 300 });
 
     await runQueuedSync({ db, token: 'wtok', log: noopLog, fetchImpl: impl });

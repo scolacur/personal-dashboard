@@ -152,13 +152,12 @@ export function listTickets(db: Database.Database): AgentTicket[] {
        ORDER BY
          CASE status
            WHEN 'backlog' THEN 0
-           WHEN 'ready' THEN 1
-           WHEN 'queued' THEN 2
-           WHEN 'in_progress' THEN 3
-           WHEN 'in_review' THEN 4
-           WHEN 'completed' THEN 5
-           WHEN 'closed' THEN 6
-           ELSE 7
+           WHEN 'prioritized' THEN 1
+           WHEN 'robot_queue' THEN 2
+           WHEN 'steve_queue' THEN 3
+           WHEN 'completed' THEN 4
+           WHEN 'closed' THEN 5
+           ELSE 6
          END,
          sort_order ASC,
          id ASC`,
@@ -359,7 +358,7 @@ export function applyDerivedState(
   return true;
 }
 
-/** A ticket in the `queued` lane whose project is sortie-enabled with a repo — the
+/** A ticket in the `robot_queue` lane whose project is sortie-enabled with a repo — the
  *  input for the board→GitHub queued-issue sync (PD-164). `githubIssueNumber` is null
  *  when no issue has been created/linked yet. */
 export interface QueuedIssueTarget {
@@ -371,9 +370,10 @@ export interface QueuedIssueTarget {
 }
 
 /**
- * Tickets currently in `queued`, in a sortie-enabled project with a repo — both
- * already-linked and not-yet-linked. PD-164 ensures each has a `sortie:queued`
- * GitHub issue (creating + linking one when absent).
+ * Tickets currently in `robot_queue` (the D-040 dispatch lane), in a sortie-enabled
+ * project with a repo — both already-linked and not-yet-linked. PD-164 ensures each has
+ * a `sortie:queued` GitHub issue (creating + linking one when absent). Entering
+ * `robot_queue` is therefore the dispatch trigger.
  */
 export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget[] {
   const rows = db
@@ -382,7 +382,7 @@ export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
         WHERE t.archived_at IS NULL
-          AND t.status = 'queued'
+          AND t.status = 'robot_queue'
           AND p.sortie_enabled = 1
           AND p.github_repo IS NOT NULL`,
     )
