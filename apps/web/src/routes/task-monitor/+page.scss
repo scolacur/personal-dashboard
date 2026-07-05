@@ -209,7 +209,7 @@
   transition: border-color 0.12s;
 
   &.robot-queue {
-    border-color: #eab308;
+    border-color: var(--status-working);
   }
 
   // Highlight the lane a dragged card is hovering over.
