@@ -626,45 +626,45 @@
   border: 1px solid;
   white-space: nowrap;
 
-  // Per-state colours (D-040 pills each carry their own hue).
+  // Per-state colours (D-040 pills each carry their own hue) — tokens in global.scss.
   &.agent-state-queued {
-    color: #1d76db; // blue
-    border-color: #1d76db;
+    color: var(--status-queued);
+    border-color: var(--status-queued);
   }
 
   &.agent-state-working {
-    color: #b08800; // yellow
-    border-color: #b08800;
+    color: var(--status-working);
+    border-color: var(--status-working);
   }
 
   &.agent-state-in-review {
-    color: #8250df; // purple
-    border-color: #8250df;
+    color: var(--status-in-review);
+    border-color: var(--status-in-review);
   }
 
   &.agent-state-stuck {
-    color: #cf222e; // red
-    border-color: #cf222e;
+    color: var(--status-stuck);
+    border-color: var(--status-stuck);
   }
 
   &.agent-state-needs-human {
-    color: #c2410c; // dark orange
-    border-color: #c2410c;
+    color: var(--status-needs-human);
+    border-color: var(--status-needs-human);
   }
 
   &.agent-state-awaiting-human {
-    color: #f59e0b; // light orange
-    border-color: #f59e0b;
+    color: var(--status-awaiting-human);
+    border-color: var(--status-awaiting-human);
   }
 
   &.agent-state-wontfix {
-    color: var(--muted); // gray
+    color: var(--muted);
     border-color: var(--border);
   }
 
   &.agent-state-done {
-    color: #1a7f37; // green
-    border-color: #1a7f37;
+    color: var(--status-done);
+    border-color: var(--status-done);
   }
 }
 
