@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { Sun, Moon } from 'lucide-svelte';
   import SideNav from '$lib/SideNav.svelte';
+  import NotificationBell from '$lib/NotificationBell.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -58,6 +59,7 @@
         <span class="env-badge" title="Local development — not production">DEV</span>
       {/if}
       <div class="nav-spacer"></div>
+      <NotificationBell />
       <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
         {#if theme === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
       </button>

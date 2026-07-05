@@ -1,0 +1,134 @@
+// Notification Center bell + dropdown (D-040 / PD-250). Sits in the app top nav.
+.notif-root {
+  position: relative;
+  display: inline-flex;
+}
+
+.notif-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-sm);
+
+  &:hover {
+    background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  }
+}
+
+.notif-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #d92d20;
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  font-family: var(--font-sans);
+}
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(360px, 90vw);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  z-index: 50;
+}
+
+.notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.notif-markall {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+
+  &:disabled {
+    color: var(--muted);
+    cursor: default;
+  }
+}
+
+.notif-empty {
+  padding: var(--space-lg) var(--space-md);
+  color: var(--muted);
+  text-align: center;
+  font-size: var(--font-size-sm);
+}
+
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.notif-item {
+  border-bottom: 1px solid var(--border);
+
+  &.unread {
+    background: var(--surface-2, rgba(29, 118, 219, 0.06));
+  }
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.notif-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-sm) var(--space-md);
+  color: inherit;
+  text-decoration: none;
+  font: inherit;
+
+  &:hover {
+    background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  }
+}
+
+.notif-title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.notif-body {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+}

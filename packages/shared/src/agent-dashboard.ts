@@ -202,3 +202,32 @@ export function isSortieReady(body: string | null): boolean {
   if (!body) return false;
   return SORTIE_REQUIRED_HEADERS.every((re) => re.test(body));
 }
+
+// ── Notification Center (D-040) ──────────────────────────────────────────────
+// A notification surfaced in the dashboard's in-app inbox. MVP kinds cover an agent
+// parking for a human (ask_human / needs-human); widget notifications plug in later.
+export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human';
+
+export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
+  'agent_awaiting_human',
+  'agent_needs_human',
+] as const;
+
+export interface AgentNotification {
+  id: number;
+  kind: NotificationKind;
+  /** The ticket this notification is about, if any (null for non-ticket sources). */
+  ticketId: number | null;
+  /** Ticket display-id (e.g. 'PD-7') for linking/display; null when unresolved. */
+  ticketDisplayId: string | null;
+  title: string;
+  /** Free-text detail — e.g. the agent's ask_human question. */
+  body: string | null;
+  /** Unix ms when marked read; null = unread. */
+  readAt: number | null;
+  createdAt: number;
+}
+
+/** The HTML-comment marker the Notification Center puts on a forwarded human reply so
+ *  the `sortie-ask-human` Action (PD-133) re-queues the parked agent. */
+export const HUMAN_REPLY_MARKER = '<!-- sortie:human-reply -->';
