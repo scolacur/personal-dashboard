@@ -3,7 +3,7 @@
   import { browser } from '$app/environment';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, AGENT_STATE_LABELS, AGENT_STATE_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import { Pencil, Copy, Trash2, ClipboardCopy } from 'lucide-svelte';
@@ -73,23 +73,63 @@
   const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
 
   // The card pill for a Robot's-Queue ticket: agentState carries the fine sortie:* state
-  // (D-040). Display label + per-state colour class.
-  const AGENT_STATE_LABELS: Record<AgentState, string> = {
-    queued: 'queued',
-    working: 'in progress',
-    'in-review': 'in review',
-    stuck: 'stuck',
-    'needs-human': 'needs human',
-    'awaiting-human': 'awaiting human',
-    wontfix: 'wontfix',
-    done: 'done',
-  };
+  // (D-040). Display label + per-state colour class. Labels come from @dashboard/shared.
   // Each state gets its own colour (see .agent-state-badge in +page.scss):
   // queued=blue, working=yellow, in-review=purple, stuck=red, needs-human=dark orange,
   // awaiting-human=light orange, wontfix=gray, done=green.
   function agentStateClass(s: AgentState): string {
     return `agent-state-${s}`;
   }
+
+  // Display order for the status-legend modal.
+  const AGENT_STATE_ORDER: AgentState[] = [
+    'queued',
+    'working',
+    'in-review',
+    'stuck',
+    'needs-human',
+    'awaiting-human',
+    'wontfix',
+    'done',
+  ];
+
+  // Recommended human actions for the three "attention" states shown in the modal.
+  const AGENT_STATE_ACTIONS: Partial<Record<AgentState, string[]>> = {
+    'needs-human': [
+      'Read the outstanding "Request changes" review comments on the PR.',
+      'Finish the changes manually — push commits to the sortie/<id> branch to complete the work.',
+      "Re-scope or split the ticket if it's too big, then re-queue the smaller pieces.",
+      'Give clearer / updated feedback and re-trigger Sortie to try again.',
+      "Merge the PR as-is if it's acceptable, or close it wontfix.",
+    ],
+    stuck: [
+      'Open the sortie/<id> branch / PR (if one exists) and check how far the run got.',
+      "Read the last run's logs/output to find where it stalled (env error, ambiguity, or a loop).",
+      'Fix the blocker or clarify the issue, then remove sortie:stuck and re-apply sortie:queued to retry.',
+      "If it's too big or ambiguous, re-scope / split it into smaller issues and re-queue those.",
+      "If it isn't worth continuing, close it sortie:wontfix.",
+    ],
+    'awaiting-human': [
+      "Read the agent's ask_human question (posted as an issue comment).",
+      'Answer it so the worker can resume (per the ask-human reply flow).',
+      'If the question exposes missing scope, edit the issue body to add the needed detail.',
+      "If it's blocked on an external decision, leave it parked until you can decide.",
+      'If the answer is "don\'t proceed", close it sortie:wontfix.',
+    ],
+  };
+
+  // Status-legend modal (mirrors the priority-legend modal).
+  let statusLegendOpen = $state(false);
+  let statusLegendState = $state<AgentState | null>(null);
+
+  $effect(() => {
+    if (!statusLegendOpen || !statusLegendState) return;
+    const target = statusLegendState;
+    const timer = setTimeout(() => {
+      document.getElementById(`status-legend-state-${target}`)?.scrollIntoView({ block: 'nearest' });
+    }, 50);
+    return () => clearTimeout(timer);
+  });
   function isStatusLocked(t: AgentTicket): boolean {
     return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
   }
@@ -586,6 +626,30 @@
   </ul>
 </Modal>
 
+<Modal open={statusLegendOpen} title="Sortie statuses" onClose={() => (statusLegendOpen = false)}>
+  <ul class="status-legend">
+    {#each AGENT_STATE_ORDER as state (state)}
+      {@const actions = AGENT_STATE_ACTIONS[state]}
+      <li id="status-legend-state-{state}" class:status-legend-highlighted={state === statusLegendState}>
+        <div class="status-legend-header">
+          <span class="agent-state-badge {agentStateClass(state)}">{AGENT_STATE_LABELS[state]}</span>
+        </div>
+        <p class="status-legend-desc">{AGENT_STATE_DESCRIPTIONS[state]}</p>
+        {#if actions}
+          <div class="status-legend-actions">
+            <p class="status-legend-actions-title">Recommended actions</p>
+            <ol>
+              {#each actions as action, i (i)}
+                <li>{action}</li>
+              {/each}
+            </ol>
+          </div>
+        {/if}
+      </li>
+    {/each}
+  </ul>
+</Modal>
+
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
@@ -639,10 +703,15 @@
                 </div>
                 <span class="card-top-right">
                   {#if ticket.agentState}
-                    <span
+                    <button
                       class="agent-state-badge {agentStateClass(ticket.agentState)}"
-                      title="Agent state: {ticket.agentState}"
-                    >{AGENT_STATE_LABELS[ticket.agentState]}</span>
+                      type="button"
+                      aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
+                      onclick={() => {
+                        statusLegendState = ticket.agentState;
+                        statusLegendOpen = true;
+                      }}
+                    >{AGENT_STATE_LABELS[ticket.agentState]}</button>
                   {/if}
                   {#if ticket.githubIssueUrl}
                     <a

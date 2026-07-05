@@ -618,6 +618,7 @@
 // Agent-state badge — mirrors .priority pill patterns. In Robot's Queue (D-040) it shows
 // the fine sortie:* state: info (queued/in progress/in review), attention
 // (stuck/needs-human/awaiting-human), or wontfix.
+// Rendered as a <button> so it opens the status-legend modal on click.
 .agent-state-badge {
   font-family: var(--font-sans);
   font-size: var(--font-size-xs);
@@ -625,6 +626,14 @@
   padding: 0 var(--space-sm);
   border: 1px solid;
   white-space: nowrap;
+  background: none;
+  cursor: pointer;
+  line-height: 1.6;
+
+  &:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
 
   // Per-state colours (D-040 pills each carry their own hue).
   &.agent-state-queued {
@@ -665,6 +674,69 @@
   &.agent-state-done {
     color: #1a7f37; // green
     border-color: #1a7f37;
+  }
+}
+
+.status-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+
+  > li {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius);
+    transition: background 0.1s;
+
+    &:last-child {
+      border-bottom: 0;
+    }
+
+    &.status-legend-highlighted {
+      background: rgba(0, 0, 0, 0.06);
+      padding-left: var(--space-sm);
+      padding-right: var(--space-sm);
+      margin: 0 calc(-1 * var(--space-sm));
+    }
+  }
+
+  .status-legend-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+  }
+
+  .status-legend-desc {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--muted);
+  }
+
+  .status-legend-actions {
+    margin-top: var(--space-xs);
+
+    .status-legend-actions-title {
+      margin: 0 0 var(--space-xs);
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    ol {
+      margin: 0;
+      padding-left: 1.4em;
+    }
+
+    li {
+      font-size: var(--font-size-sm);
+      color: var(--muted);
+      line-height: 1.5;
+    }
   }
 }
 

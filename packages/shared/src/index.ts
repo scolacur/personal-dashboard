@@ -18,5 +18,7 @@ export {
   PRIORITY_DESCRIPTIONS,
   TICKET_ASSIGNEES,
   ASSIGNEE_LABELS,
+  AGENT_STATE_LABELS,
+  AGENT_STATE_DESCRIPTIONS,
   isSortieReady,
 } from './agent-dashboard';

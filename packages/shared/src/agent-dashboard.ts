@@ -80,6 +80,33 @@ export const PRIORITY_LABELS: Record<TicketPriority, string> = {
   P5: 'Window Dressing',
 };
 
+/** Short labels for each agent state (displayed in pills and the status-legend modal). */
+export const AGENT_STATE_LABELS: Record<AgentState, string> = {
+  queued: 'queued',
+  working: 'in progress',
+  'in-review': 'in review',
+  stuck: 'stuck',
+  'needs-human': 'needs human',
+  'awaiting-human': 'awaiting human',
+  wontfix: 'wontfix',
+  done: 'done',
+};
+
+/** One-sentence descriptions for each agent state, shown in the status-legend modal. */
+export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
+  queued: 'Picked up by Sortie and waiting in the autonomous loop to start.',
+  working: 'A Sortie agent is actively working the issue right now.',
+  'in-review': 'The run succeeded and a PR is open, awaiting human review.',
+  stuck:
+    'The run stalled/gave up and was flagged by the watchdog; needs human intervention.',
+  'needs-human':
+    "A PR exists but the automated review-feedback loop hit its cap; a human must drive it home.",
+  'awaiting-human':
+    'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
+  wontfix: "Terminal: the issue was closed as won't-fix.",
+  done: 'Terminal: Sortie finished the work and the issue is sortie:done (green pill; lives in the Completed lane).',
+};
+
 /** Longer descriptions for the priority-legend modal. */
 export const PRIORITY_DESCRIPTIONS: Record<TicketPriority, string> = {
   P0: 'Reserved for time-sensitive things like open security threats, leaked credentials, etc.',
