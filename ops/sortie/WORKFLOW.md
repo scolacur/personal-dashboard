@@ -49,7 +49,7 @@ agent:
   max_turns: 50
   max_concurrent_agents: 1                  # PILOT: one ticket at a time
   # --- TOKEN-BURN BOUNDARIES (default for both is 0 = UNLIMITED — that's how #6/#8 hit attempt 43) ---
-  max_sessions: 3                           # HARD retry cap: stop dispatching an issue after 3 sessions.
+  max_sessions: 5                           # HARD retry cap: stop dispatching an issue after 5 sessions.
                                             # NOTE: a quota-exhausted run still writes a run_history row and
                                             # counts here, permanently capping an issue when the Anthropic Pro
                                             # window resets. There is NO native knob to exempt it. The NAS
@@ -77,43 +77,30 @@ self_review:
     - "npm run verify"                      # build && typecheck && lint && test (41 vitest tests)
   verification_timeout_ms: 180000
 
-# ─── PR REACTIONS: change-requested → re-work (BEHAVIOR 1, NATIVE) ──────────────
-# Source: reference/reactions + guides/configure-review-feedback + reference/workflow-config.
-# `reactions` is a MAP of named reaction kinds (NOT `enabled: bool` — that's why the
-# earlier `enabled: true` failed with "expected map, got bool"). We enable ONLY
-# review_comments. How it works:
-#   • Trigger: a human "Request changes" (reviewDecision CHANGES_REQUESTED) review on
-#     the issue's PR. Bot/automated comments are filtered out by the adapter.
-#   • Dispatch: a CONTINUATION turn in the SAME existing workspace + branch (it pushes
-#     fixes onto the existing PR). It does NOT relabel the issue — reactions fire while
-#     the issue sits in handoff_state (sortie:in-review). See README "Follow-ups" for why
-#     we deliberately do NOT flip the label back to in-progress for the review path.
-#   • PR lookup: requires .sortie/scm.json (written by the after_run hook above).
-# Loop bounding (so we can't re-storm like attempt 43):
-#   • fingerprint = sorted set of non-outdated comment IDs; an unchanged review is
-#     skipped (deduplicated) — it only re-dispatches when the comment set CHANGES.
-#   • debounce_ms waits after the newest comment before dispatching (batches edits).
-#   • max_continuation_turns is the hard ceiling on review-triggered continuations.
-#   • per-issue agent.max_sessions / max_tokens still bind across everything.
-# NOTE: `reactions` values are NOT env-expanded (per reference/workflow-config), so
-# `provider` is the literal "github".
-# ⚠ CONFIRM at deploy against your installed version's reference/reactions: the
-#   sub-field names below (poll_interval_ms / debounce_ms / max_continuation_turns)
-#   are from the current public docs; older builds may differ.
-reactions:
-  review_comments:
-    provider: github
-    poll_interval_ms: 120000        # min 30000; poll PR review state every 2m
-    debounce_ms: 60000              # wait 60s after newest comment before dispatch
-    max_continuation_turns: 3       # hard cap on review-triggered re-works
-    max_retries: 2
-    escalation: label               # on cap-exhaustion, label for a human
-    escalation_label: "sortie:needs-human"   # MUST be pre-created in the repo
-  # NOTE: merge-conflict (CONFLICTING/DIRTY) is NOT a native reaction kind — Sortie's
-  # auto_merge only acts on clean/unstable PRs and no reaction detects DIRTY. Behavior 2
-  # is therefore handled by an in-repo bridge: .github/workflows/sortie-conflict-rework.yml
-  # flips the issue label back into the active set so Sortie re-dispatches a normal run
-  # (which then merges origin/main per the prompt body). See README "Follow-ups".
+# ─── PR REACTIONS: DISABLED — review re-work moved to an in-repo Actions bridge ───
+# The native `reactions.review_comments` is intentionally NOT configured (see D-042).
+#
+# WHY DISABLED: the native reaction only arms its watch-set at the process-startup
+# "pending reaction recovery" pass — i.e. once per container restart. An issue that hands
+# off to sortie:in-review BETWEEN restarts is never watched, so a human review/comment on
+# its PR is silently dropped until the next restart (root-caused live for PD-256: issue
+# #132 handed off 12m after a restart; its "Request changes" review 17h later did nothing;
+# a manual restart re-armed it and it immediately re-worked — proving the restart coupling).
+# The reaction also only ever fired on a CHANGES_REQUESTED *review*, never on a plain PR
+# comment or a "Comment" review — so most human feedback never triggered re-work at all.
+#
+# REPLACEMENT: .github/workflows/sortie-review-rework.yml. On a trusted human review OR
+# comment (Request-changes, Comment review, inline review comment, or top-level PR comment)
+# it flips the issue sortie:in-review -> sortie:queued, exactly like sortie-conflict-rework.yml
+# does for conflicts. Sortie re-dispatches a NORMAL run; before_run reuses the existing
+# sortie/<id> branch; and the "check for an open PR" step in the prompt body (Step 2B) reads
+# the review feedback off the PR via `gh api` and addresses it. Runs in GitHub Actions,
+# independent of Sortie's internal poller, so it is not coupled to container restarts and it
+# broadens the trigger set. Loop-bounded by the in-review->queued flip + per-issue
+# max_sessions/max_tokens. `sortie:needs-human` remains a valid manual escalation label.
+#
+# Merge-conflict re-work is the OTHER in-repo bridge: .github/workflows/sortie-conflict-rework.yml
+# (Sortie has no native reaction for CONFLICTING/DIRTY PRs). See README "Follow-ups".
 
 hooks:
   # Clone the Dashboard ONLY into the isolated workspace. Token-in-URL because
