@@ -425,10 +425,6 @@
   }
 </script>
 
-<header class="page-head">
-  <h1>Task Monitor</h1>
-</header>
-
 <section class="tickets-section">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
