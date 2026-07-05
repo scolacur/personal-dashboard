@@ -607,7 +607,7 @@
   <div class="board">
     {#each COLUMNS.filter((c) => !hiddenLanes.has(c.status)) as col (col.status)}
       {@const items = byStatus(col.status)}
-      <section class="column" class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
+      <section class="column" class:robot-queue={col.status === 'robot_queue'} class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
         <h2 class="column-head">
           {col.label}<span class="count">{items.length}</span>
         </h2>
