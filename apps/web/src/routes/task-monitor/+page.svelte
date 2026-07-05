@@ -13,6 +13,8 @@
   import { ticketMatchesQuery } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
+  import { insertionBeforeId } from './touch-drag';
+  import type { CardLayout } from './touch-drag';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -184,12 +186,18 @@
     load();
     window.addEventListener('click', handleWindowClick);
     window.addEventListener('keydown', handleWindowKeydown);
+    document.addEventListener('touchmove', onDocTouchMove, { passive: false });
+    document.addEventListener('touchend', onDocTouchEnd);
+    document.addEventListener('touchcancel', onDocTouchCancel);
     // Auto-refresh every 30 s so GitHub label changes (synced server-side every minute)
     // are reflected on the board without requiring a manual page reload.
     const refreshTimer = setInterval(() => load(true), 30_000);
     return () => {
       window.removeEventListener('click', handleWindowClick);
       window.removeEventListener('keydown', handleWindowKeydown);
+      document.removeEventListener('touchmove', onDocTouchMove);
+      document.removeEventListener('touchend', onDocTouchEnd);
+      document.removeEventListener('touchcancel', onDocTouchCancel);
       clearInterval(refreshTimer);
     };
   });
@@ -295,6 +303,86 @@
       toast = null;
       toastTimer = null;
     }, 3000);
+  }
+
+  // ── Touch drag ──────────────────────────────────────────────────────────────
+  // Plain (non-reactive) gesture tracker. draggingId + dropTarget ($state) drive the UI.
+  let touchState: { id: number; startX: number; startY: number; active: boolean } | null = null;
+  const TOUCH_DRAG_THRESHOLD = 8; // px before drag activates
+
+  function onTouchStart(e: TouchEvent, ticket: AgentTicket) {
+    if (isStatusLocked(ticket)) {
+      showToast("This ticket is agent-controlled and can't be moved.");
+      return;
+    }
+    const touch = e.changedTouches[0];
+    touchState = { id: ticket.id, startX: touch.clientX, startY: touch.clientY, active: false };
+  }
+
+  function onDocTouchMove(e: TouchEvent) {
+    if (!touchState) return;
+    const touch = e.changedTouches[0];
+    if (!touchState.active) {
+      const dx = touch.clientX - touchState.startX;
+      const dy = touch.clientY - touchState.startY;
+      if (Math.hypot(dx, dy) < TOUCH_DRAG_THRESHOLD) return;
+      touchState.active = true;
+      draggingId = touchState.id;
+    }
+    e.preventDefault(); // prevent scroll while dragging
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    const colBody = el?.closest<HTMLElement>('.column-body[data-status]');
+    if (!colBody) {
+      dropTarget = null;
+      return;
+    }
+    const status = colBody.dataset.status as TicketStatus;
+    const id = touchState.id;
+    const dragged = tickets.find((t) => t.id === id);
+    if (!dragged) return;
+    const rank = rankOf(dragged.priority);
+    const cards: CardLayout[] = [...colBody.querySelectorAll<HTMLElement>('.card')]
+      .filter((c) => Number(c.dataset.id) !== id)
+      .map((c) => {
+        const rect = c.getBoundingClientRect();
+        return { id: Number(c.dataset.id), priority: c.dataset.priority ?? 'none', top: rect.top, height: rect.height };
+      });
+    dropTarget = { status, beforeId: insertionBeforeId(touch.clientY, rank, cards, PRIORITY_RANK) };
+  }
+
+  async function onDocTouchEnd() {
+    if (!touchState) return;
+    const { id, active } = touchState;
+    touchState = null;
+    if (!active) {
+      // tap, not drag — leave draggingId/dropTarget alone (they're already null)
+      return;
+    }
+    draggingId = null;
+    const target = dropTarget;
+    dropTarget = null;
+    if (!target) return;
+    const ticket = tickets.find((t) => t.id === id);
+    if (!ticket) return;
+    const sortOrder = computeSortOrder(target.status, ticket.priority, target.beforeId, id);
+    if (ticket.status === target.status && ticket.sortOrder === sortOrder) return;
+    if (target.status === 'robot_queue' && ticket.status !== 'robot_queue' && !isSortieReady(ticket.body)) {
+      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    }
+    error = null;
+    try {
+      await api.updateTicket(id, { status: target.status, sortOrder });
+      await load(true);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  function onDocTouchCancel() {
+    if (!touchState) return;
+    touchState = null;
+    draggingId = null;
+    dropTarget = null;
   }
 
   function onDragStart(e: DragEvent, ticket: AgentTicket) {
@@ -622,6 +710,7 @@
         <div
           class="column-body"
           role="list"
+          data-status={col.status}
           ondragover={(e) => onColumnDragOver(e, col.status)}
           ondrop={(e) => onDrop(e, col.status)}
         >
@@ -639,6 +728,7 @@
               draggable={true}
               ondragstart={(e) => onDragStart(e, ticket)}
               ondragend={onDragEnd}
+              ontouchstart={(e) => onTouchStart(e, ticket)}
             >
               <div class="card-top">
                 <div class="card-top-left">

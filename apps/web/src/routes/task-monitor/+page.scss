@@ -336,8 +336,10 @@
   }
 
   // The card being dragged fades out to show it's in flight.
+  // pointer-events: none lets elementFromPoint see through to the column body during touch drag.
   &.dragging {
     opacity: 0.4;
+    pointer-events: none;
   }
 
   // Insertion line drawn above the card the drop would land before.

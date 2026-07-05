@@ -6,6 +6,24 @@ Newest decisions at the top.
 
 ---
 
+## D-043: Touch drag uses global `touchmove`/`touchend` listeners + `insertionBeforeId` helper (PD-55)
+
+**Decision:** Implement touch drag-and-drop in `task-monitor/+page.svelte` using native Touch
+Events registered on `document` (with `{ passive: false }` to allow `preventDefault`), sharing the
+existing `insertionBeforeId` helper (extracted in `touch-drag.ts`) and `computeSortOrder`/`onDrop`
+logic. Added `pointer-events: none` to `.card.dragging` so `elementFromPoint` can see through the
+dragged card to the column body underneath.
+
+**Why native Touch Events over a library:** No new dependency needed. Touch events fire on the
+element where `touchstart` occurred and can be tracked globally through the gesture, which is
+exactly what drag tracking needs. The `insertionBeforeId` helper already encapsulates the priority-
+band insertion logic, keeping the touch path in sync with mouse DnD.
+
+**Alternatives rejected:** (a) Pointer Events API — would work but adds complexity distinguishing
+pointer types without benefit here; (b) HTML5 DnD `ondragstart` polyfill library — adds a
+dependency and would require shimming the DragEvent API; (c) long-press-to-activate — adds latency
+and is less intuitive than immediate drag.
+
 ## D-042: Sortie review re-work moves from the native `reactions.review_comments` to an in-repo Actions bridge (PD-256)
 
 **Decision:** Disable Sortie's native `reactions.review_comments` and drive PR-feedback re-work
