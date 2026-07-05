@@ -212,6 +212,10 @@
   min-height: 120px;
   transition: border-color 0.12s;
 
+  &.robot-queue {
+    border-color: #eab308;
+  }
+
   // Highlight the lane a dragged card is hovering over.
   &.drag-over {
     border-color: var(--accent);
