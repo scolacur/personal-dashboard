@@ -17,8 +17,8 @@
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
     { status: 'prioritized', label: 'Prioritized' },
-    { status: 'robot_queue', label: "Robot's Queue" },
     { status: 'steve_queue', label: "Steve's Queue" },
+    { status: 'robot_queue', label: "Robot's Queue" },
     { status: 'completed', label: 'Completed' },
     { status: 'closed', label: 'Closed', defaultHidden: true },
   ];
