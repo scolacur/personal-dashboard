@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import DeployStatus from '../DeployStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
@@ -424,6 +425,8 @@
     }
   }
 </script>
+
+<DeployStatus />
 
 <section class="tickets-section">
   <div class="section-head">
