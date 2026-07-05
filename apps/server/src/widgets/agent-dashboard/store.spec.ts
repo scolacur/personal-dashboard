@@ -216,6 +216,96 @@ describe('assignee', () => {
   });
 });
 
+// D-044: entering a queue lane forces the matching assignee (robot_queue⇒robot,
+// steve_queue⇒steve), overriding any prior value or hint. Non-queue lanes leave
+// assignee free. Enforced in the store so it holds for every writer.
+describe('lane→assignee invariant (D-044)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  function lastAssigneeEvent(ticketId: number): { from: unknown; to: unknown } | null {
+    const row = db
+      .prepare(
+        `SELECT detail FROM agent_ticket_events
+          WHERE ticket_id = ? AND type = 'assignee_changed'
+          ORDER BY id DESC LIMIT 1`,
+      )
+      .get(ticketId) as { detail: string | null } | undefined;
+    return row?.detail ? (JSON.parse(row.detail) as { from: unknown; to: unknown }) : null;
+  }
+
+  it('forces robot when created directly in robot_queue (assignee omitted)', () => {
+    const t = createTicket(db, { title: 'auto', projectId: pd, status: 'robot_queue' });
+    expect(t.assignee).toBe('robot');
+  });
+
+  it('forces steve when created directly in steve_queue', () => {
+    const t = createTicket(db, { title: 'auto', projectId: pd, status: 'steve_queue' });
+    expect(t.assignee).toBe('steve');
+  });
+
+  it('queue lane on create overrides a conflicting assignee hint', () => {
+    const t = createTicket(db, {
+      title: 'conflict',
+      projectId: pd,
+      status: 'robot_queue',
+      assignee: 'steve',
+    });
+    expect(t.assignee).toBe('robot');
+  });
+
+  it('leaves the assignee hint alone in a non-queue lane on create', () => {
+    expect(createTicket(db, { title: 'a', projectId: pd, assignee: 'robot' }).assignee).toBe('robot');
+    expect(createTicket(db, { title: 'b', projectId: pd }).assignee).toBeNull();
+    expect(
+      createTicket(db, { title: 'c', projectId: pd, status: 'prioritized', assignee: 'steve' })
+        .assignee,
+    ).toBe('steve');
+  });
+
+  it('forces the assignee when a ticket is moved into a queue lane (manual drag: status only)', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd, status: 'prioritized' });
+    expect(t.assignee).toBeNull();
+
+    const robot = updateTicket(db, t.id, { status: 'robot_queue' });
+    expect(robot?.assignee).toBe('robot');
+    expect(lastAssigneeEvent(t.id)).toEqual({ from: null, to: 'robot' });
+
+    const steve = updateTicket(db, t.id, { status: 'steve_queue' });
+    expect(steve?.assignee).toBe('steve');
+    expect(lastAssigneeEvent(t.id)).toEqual({ from: 'robot', to: 'steve' });
+  });
+
+  it('overrides a conflicting assignee sent alongside a queue-lane transition', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd, status: 'prioritized' });
+    const moved = updateTicket(db, t.id, { status: 'robot_queue', assignee: 'steve' });
+    expect(moved?.assignee).toBe('robot');
+  });
+
+  it('does not clear the assignee when moving OUT of a queue lane (becomes a hint)', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd, status: 'robot_queue' });
+    expect(t.assignee).toBe('robot');
+    const back = updateTicket(db, t.id, { status: 'prioritized' });
+    expect(back?.assignee).toBe('robot');
+  });
+
+  it('logs assignee_changed only when the assignee actually changes', () => {
+    // Already robot in robot_queue → a same-lane no-op patch must not log a change.
+    const t = createTicket(db, { title: 'x', projectId: pd, status: 'robot_queue' });
+    updateTicket(db, t.id, { title: 'renamed' });
+    const count = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM agent_ticket_events WHERE ticket_id = ? AND type = 'assignee_changed'`,
+      )
+      .get(t.id) as { n: number };
+    expect(count.n).toBe(0);
+  });
+});
+
 describe('closed status', () => {
   let db: Database.Database;
   let pd: number;

@@ -13,6 +13,27 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
   robot: 'Robot',
 };
 
+/**
+ * The assignee a lane forces on entry, or `null` if the lane leaves assignee free.
+ *
+ * D-044: entering a queue lane makes "queued = assigned" true in the data layer —
+ * `robot_queue` ⇒ `robot`, `steve_queue` ⇒ `steve` — overriding any prior value or
+ * hint, so the invariant holds no matter who writes (the griller, a manual board
+ * drag, or the API). In `backlog`/`prioritized`/`completed`/`closed`, assignee is a
+ * free optional hint and this returns `null` (leave it as provided). The store layer
+ * (createTicket/updateTicket) is the single enforcement point.
+ */
+export function laneForcedAssignee(status: TicketStatus): TicketAssignee | null {
+  switch (status) {
+    case 'robot_queue':
+      return 'robot';
+    case 'steve_queue':
+      return 'steve';
+    default:
+      return null;
+  }
+}
+
 // The Kanban lanes (DECISIONS D-040 board redesign, PD-245). All six are the `status`.
 //  - backlog / prioritized: set by hand (prioritized = pre-grill triage, "do this next").
 //  - robot_queue: ONE lane for a ticket dispatched to Sortie — every non-terminal

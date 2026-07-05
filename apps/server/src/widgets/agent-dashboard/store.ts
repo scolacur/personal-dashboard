@@ -12,6 +12,7 @@ import type {
   TicketStatus,
   UpdateTicketInput,
 } from '@dashboard/shared';
+import { laneForcedAssignee } from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
 // never see snake_case (PROJECT.md §5: typed helpers, no raw SQL in routes).
@@ -211,7 +212,11 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     } else {
       displayId = nextDisplayId(db, input.projectId);
     }
-    const assignee: TicketAssignee | null = input.assignee === undefined ? null : input.assignee;
+    // D-044: a queue lane forces its assignee on entry, overriding any hint the
+    // caller passed; non-queue lanes keep the requested value (a free hint / null).
+    const requestedAssignee: TicketAssignee | null =
+      input.assignee === undefined ? null : input.assignee;
+    const assignee: TicketAssignee | null = laneForcedAssignee(status) ?? requestedAssignee;
     const result = db
       .prepare(
         `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, source, sort_order, created_at, updated_at)
@@ -261,6 +266,14 @@ export function updateTicket(
     updatedAt: Date.now(),
   };
 
+  // D-044: entering a queue lane forces the matching assignee, overriding any prior
+  // value or hint — so "queued = assigned" holds regardless of who writes (the
+  // griller, a manual board drag, the API). Non-queue lanes leave assignee as set above.
+  const forcedAssignee = laneForcedAssignee(next.status);
+  if (forcedAssignee !== null) {
+    next.assignee = forcedAssignee;
+  }
+
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
@@ -281,6 +294,10 @@ export function updateTicket(
     );
     if (next.status !== existing.status) {
       logEvent(db, id, 'status_changed', { from: existing.status, to: next.status });
+    }
+    // Covers both an explicit assignee change and a lane-forced one (D-044).
+    if (next.assignee !== existing.assignee) {
+      logEvent(db, id, 'assignee_changed', { from: existing.assignee, to: next.assignee });
     }
   });
   apply();
@@ -327,7 +344,10 @@ export function listSyncTargets(db: Database.Database): SyncTarget[] {
  * Write a GitHub-derived (status, agentState, assignee) onto a ticket. Poller-only:
  * unlike `updateTicket` it also sets `agent_state`, and it's a no-op (returns false)
  * when nothing changed, so an unchanged poll writes nothing and logs no event.
- * `assignee` is optional — when absent, the ticket's assignee is left alone.
+ * `assignee` is optional — when absent, the ticket's assignee is left alone, EXCEPT
+ * that a queue-lane target still forces its assignee (D-044): entering `robot_queue`/
+ * `steve_queue` sets robot/steve even when the derived rule carries no assignee (e.g.
+ * the `sortie:in-review` label), so the poller can't leave a queue lane mis-assigned.
  */
 export function applyDerivedState(
   db: Database.Database,
@@ -338,15 +358,17 @@ export function applyDerivedState(
 ): boolean {
   const existing = getTicket(db, id);
   if (!existing) return false;
-  const assigneeChanged = assignee !== undefined && existing.assignee !== assignee;
+  // Lane wins; else the derived assignee; else undefined = leave alone.
+  const effectiveAssignee = laneForcedAssignee(status) ?? assignee;
+  const assigneeChanged = effectiveAssignee !== undefined && existing.assignee !== effectiveAssignee;
   if (existing.status === status && existing.agentState === agentState && !assigneeChanged) return false;
   const now = Date.now();
   const apply = db.transaction(() => {
     if (assigneeChanged) {
       db.prepare(
         'UPDATE agent_tickets SET status = ?, agent_state = ?, assignee = ?, updated_at = ? WHERE id = ?',
-      ).run(status, agentState, assignee, now, id);
-      logEvent(db, id, 'assignee_changed', { from: existing.assignee, to: assignee, via: 'github-sync' });
+      ).run(status, agentState, effectiveAssignee, now, id);
+      logEvent(db, id, 'assignee_changed', { from: existing.assignee, to: effectiveAssignee, via: 'github-sync' });
     } else {
       db.prepare(
         'UPDATE agent_tickets SET status = ?, agent_state = ?, updated_at = ? WHERE id = ?',

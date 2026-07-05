@@ -125,15 +125,33 @@ describe('runGithubSync', () => {
     expect(after?.status).toBe('robot_queue');  // status unchanged
   });
 
-  it('does not change assignee for non-agent labels (e.g. sortie:done)', async () => {
+  it('does not change assignee for non-agent/terminal labels (e.g. sortie:done)', async () => {
     const db = freshDb();
-    const t = createTicket(db, { title: 'done', projectId: pdProjectId(db), status: 'robot_queue', assignee: 'steve' });
+    // A non-queue lane can legally hold a 'steve' assignee (D-044 only forces the queue
+    // lanes); sortie:done → completed (terminal, non-queue) must leave that assignee
+    // untouched — the terminal label neither forces nor clears it.
+    const t = createTicket(db, { title: 'done', projectId: pdProjectId(db), status: 'prioritized', assignee: 'steve' });
     updateTicket(db, t.id, { githubIssueNumber: 72, githubIssueUrl: 'https://x/72' });
 
     await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:done'] }) });
 
     expect(getTicket(db, t.id)?.status).toBe('completed');
     expect(getTicket(db, t.id)?.assignee).toBe('steve');  // unchanged
+  });
+
+  it('forces robot on a queue-lane label that carries no assignee rule (sortie:in-review)', async () => {
+    const db = freshDb();
+    // sortie:in-review maps to robot_queue but LABEL_RULES sets no assignee. D-044:
+    // applyDerivedState forces the lane's assignee anyway, so the poller can't land a
+    // ticket in robot_queue still assigned to steve.
+    const t = createTicket(db, { title: 'in review', projectId: pdProjectId(db), status: 'prioritized', assignee: 'steve' });
+    updateTicket(db, t.id, { githubIssueNumber: 73, githubIssueUrl: 'https://x/73' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: fakeFetch({ state: 'open', labels: ['sortie:in-review'] }) });
+
+    const after = getTicket(db, t.id);
+    expect(after?.status).toBe('robot_queue');
+    expect(after?.assignee).toBe('robot'); // forced by the lane, not the label rule
   });
 
   it('is a no-op for sortie:queued when assignee is already robot', async () => {
