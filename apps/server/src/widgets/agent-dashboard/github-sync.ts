@@ -156,6 +156,44 @@ export async function runGithubSync({ db, token, log, fetchImpl = fetch }: Githu
   }
 }
 
+/**
+ * On-demand sync guard (PD-252): the board triggers a reconciliation pass on page load
+ * (and via a "Sync now" button) so a just-closed issue shows up without waiting for the
+ * once-a-minute cron. This guards that trigger so a burst of refreshes — or many open
+ * tabs — can't hammer GitHub's rate limit:
+ *   - a pass already running → later callers piggyback on it (coalesce) and resolve when
+ *     it lands, so they still re-read fresh data;
+ *   - a pass ran within `MIN_ON_DEMAND_INTERVAL_MS` → skip (the DB is already fresh enough).
+ * The cron pass runs independently and does not touch this guard.
+ */
+const MIN_ON_DEMAND_INTERVAL_MS = 10_000;
+let onDemandInFlight: Promise<void> | null = null;
+let lastOnDemandAt = 0;
+
+export type OnDemandSyncOutcome = 'ran' | 'coalesced' | 'throttled';
+
+export async function requestGithubSync(deps: GithubSyncDeps): Promise<OnDemandSyncOutcome> {
+  if (onDemandInFlight) {
+    await onDemandInFlight;
+    return 'coalesced';
+  }
+  if (Date.now() - lastOnDemandAt < MIN_ON_DEMAND_INTERVAL_MS) {
+    return 'throttled';
+  }
+  onDemandInFlight = runGithubSync(deps).finally(() => {
+    lastOnDemandAt = Date.now();
+    onDemandInFlight = null;
+  });
+  await onDemandInFlight;
+  return 'ran';
+}
+
+/** Reset the on-demand guard — for tests only, so module state doesn't leak across cases. */
+export function __resetOnDemandSyncGuard(): void {
+  onDemandInFlight = null;
+  lastOnDemandAt = 0;
+}
+
 function ghHeaders(token: string, json = false): Record<string, string> {
   const h: Record<string, string> = {
     Authorization: `Bearer ${token}`,

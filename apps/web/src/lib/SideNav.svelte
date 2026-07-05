@@ -16,7 +16,7 @@
 <nav class="side-nav" aria-label="Primary">
   <a href="/" class="side-brand" onclick={onNavigate}>
     <span class="side-brand-mark"><YinYang size={24} /></span>
-    <span class="side-brand-text">Dashboard</span>
+    <span class="side-brand-text">Da Steve Zone</span>
   </a>
   <ul class="side-links">
     {#each pages as p (p.id)}

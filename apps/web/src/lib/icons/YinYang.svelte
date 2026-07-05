@@ -7,7 +7,7 @@
 
 <img
   src="/apple-touch-icon.png"
-  alt="Dashboard"
+  alt="Da Steve Zone"
   width={size}
   height={size}
   style="border-radius: 50%; display: block;"

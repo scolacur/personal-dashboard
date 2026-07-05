@@ -26,7 +26,13 @@ import {
   unreadNotificationCount,
   updateTicket,
 } from './store';
-import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
+import {
+  GITHUB_READ_TOKEN_ENV,
+  GITHUB_WRITE_TOKEN_ENV,
+  closeIssueNotPlanned,
+  postIssueComment,
+  requestGithubSync,
+} from './github-sync';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -44,6 +50,8 @@ function isAssignee(v: unknown): v is TicketAssignee {
 export interface AgentDashboardRouteDeps {
   /** Write-scoped GitHub token for close-on-delete (PD-207 A). Defaults to `GITHUB_WRITE_TOKEN`. */
   githubWriteToken?: string;
+  /** Read-scoped GitHub token for the on-demand sync endpoint (PD-252). Defaults to `GITHUB_READ_TOKEN`. */
+  githubReadToken?: string;
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -84,6 +92,28 @@ export function registerRoutes(
   /* ── Tickets ────────────────────────────────── */
 
   app.get(`${base}/tickets`, async () => listTickets(db));
+
+  // PD-252: on-demand GitHub→board reconciliation. The board calls this on page load (and
+  // from a "Sync now" button) so a just-closed issue reflects without waiting up to a minute
+  // for the cron. Guarded/coalesced in `requestGithubSync`, so refresh spam can't hammer
+  // GitHub. Returns the outcome ('ran' | 'coalesced' | 'throttled'); the caller re-fetches
+  // tickets afterwards regardless. A missing read token (e.g. dev) is a benign 503 the client
+  // ignores — the board still loads from the current DB.
+  app.post(`${base}/sync`, async (_request, reply) => {
+    const token = deps.githubReadToken ?? process.env[GITHUB_READ_TOKEN_ENV];
+    if (!token) {
+      return reply
+        .status(503)
+        .send({ error: 'sync unavailable — no read token configured', code: 'NO_READ_TOKEN' });
+    }
+    const outcome = await requestGithubSync({
+      db,
+      token,
+      log: app.log,
+      fetchImpl: deps.fetchImpl ?? fetch,
+    });
+    return { outcome };
+  });
 
   app.post(`${base}/tickets`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
