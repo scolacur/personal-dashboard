@@ -6,13 +6,33 @@ Newest decisions at the top.
 
 ---
 
-## D-040: Cmd+K shortcut uses metaKey-only (no Ctrl+K fallback) and toggles search focus (PD-126)
+## D-041: Cmd+K shortcut uses metaKey-only (no Ctrl+K fallback) and toggles search focus (PD-126)
 
 **Decision:** The `⌘K` keyboard shortcut on the Task Monitor board only checks `e.metaKey` (Mac Command key), not `e.ctrlKey`. Focus is toggled: pressing again while the search is focused blurs it.
 
 **Reasoning:** The issue specifies "Mac(Command)+K". Ctrl+K is used by browsers on some platforms to focus the URL/search bar, so adding a Ctrl+K fallback could interfere. The toggle behavior (focus → blur on second press) is standard command-palette UX and avoids a second shortcut to dismiss.
 
 **Alternative:** Support `metaKey || ctrlKey` to cover Linux/Windows. Rejected for now since this is a personal Mac-only dashboard.
+
+---
+
+## D-040: Agent + widget notifications go through a dashboard-native Notification Center with a pluggable delivery transport; web push is primary, Discord is demoted to an optional adapter (PD-6, PD-142, PD-242, PD-243)
+
+**Decision:** Notifications — agent `ask_human`/`needs-human` parks, PR-ready pings, reminders, and per-widget alerts — are handled by **two layers**, not a Discord integration:
+
+- **Notification Center — a dashboard-native store + surface.** Messages/questions live in the dashboard next to the ticket/widget they belong to, are marked read/actioned, and (for agent questions) answered **inline** — an inline reply posts the GitHub issue comment that re-queues the parked agent (the inbound loop verified in PD-241). This is the durable source of truth and **subsumes PD-243** (surface `ask_human` on the board). It serves every "notify me" need on the board, not just agents (reminders PD-158, pomodoro PD-137, music-tracker PD-131, habit PD-107, agent-agent visibility core C-3).
+- **Delivery transport — pluggable, web-push-primary.** The "reach me when I'm AFK" leg is a swappable adapter behind the Center. **Web push (service worker + VAPID, PD-142)** is the primary transport; Discord (PD-6) is demoted to an optional adapter or dropped.
+
+**Why:**
+
+- **Center-alone can't reach an AFK human; transport-alone is a poor surface.** They're different layers — a store/surface vs. a delivery channel — and D-038's async grill needs both.
+- **Web push is outbound-only.** Delivery is dashboard-server → the browser vendor's push service → the installed PWA on the device, so the dashboard needs **no inbound exposure**: it reaches phone/desktop **off-LAN today without a reverse proxy** and without exposing the box — the exact requirement Discord was there for, met natively. The app is already a PWA (`manifest.webmanifest`) and PD-142 already planned web push.
+- **No external dependency, data stays local, richer surface.** Agent questions stay on Steve's infra; the Center carries `sortie:*` state + threaded history (`agent_ticket_events`) and supports inline actions — none of which a Discord chat log does well.
+- **One system for many needs.** A single Center + transport serves reminders, pomodoro, music-tracker, habit, and agent messages; a Discord integration would serve only the agent slice while adding a third-party account.
+
+**Trade-off:** Web push is more upfront build than a one-line Discord webhook (VAPID keys, service worker, per-device opt-in; iOS requires the PWA be home-screen-installed, 16.4+). Accepted for the better end state; Discord may still serve as a *temporary* transport to get the async loop live before the Center lands, then be retired. **Shared prerequisite (from PD-241):** `sortie-ask-human.yml` gates the re-queue on `comment.user.login == 'scolacur'`, so an inline dashboard/bot reply (authored by the bot, not the owner) must be accepted by widening that gate — true for any non-owner-authored reply, Discord or dashboard.
+
+**Implications:** Reframes PD-6 (Discord) as an optional adapter, not the plan; elevates PD-142 (web push) from a Reminders-widget feature to the general delivery transport; PD-243 folds into the Notification Center; PD-242 (notify-on-park) becomes a consumer of the Center + transport. New tickets: Notification Center (store + inbox + inline reply) and the web-push delivery transport. Depends on widening the `ask_human` reply gate (PD-241/PD-242 caveat). See [[D-038]] — the pipeline that needs this notify leg.
 
 ---
 

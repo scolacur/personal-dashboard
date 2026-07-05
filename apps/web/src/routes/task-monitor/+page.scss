@@ -637,8 +637,9 @@
   }
 }
 
-// Agent-state badge — mirrors .priority pill patterns.
-// Shown on cards with stuck/needs-human/awaiting-human (attention) or wontfix.
+// Agent-state badge — mirrors .priority pill patterns. In Robot's Queue (D-040) it shows
+// the fine sortie:* state: info (queued/in progress/in review), attention
+// (stuck/needs-human/awaiting-human), or wontfix.
 .agent-state-badge {
   font-family: var(--font-sans);
   font-size: var(--font-size-xs);
@@ -647,14 +648,45 @@
   border: 1px solid;
   white-space: nowrap;
 
-  &.agent-state-attention {
-    color: #d97706;
-    border-color: #d97706;
+  // Per-state colours (D-040 pills each carry their own hue) — tokens in global.scss.
+  &.agent-state-queued {
+    color: var(--status-queued);
+    border-color: var(--status-queued);
+  }
+
+  &.agent-state-working {
+    color: var(--status-working);
+    border-color: var(--status-working);
+  }
+
+  &.agent-state-in-review {
+    color: var(--status-in-review);
+    border-color: var(--status-in-review);
+  }
+
+  &.agent-state-stuck {
+    color: var(--status-stuck);
+    border-color: var(--status-stuck);
+  }
+
+  &.agent-state-needs-human {
+    color: var(--status-needs-human);
+    border-color: var(--status-needs-human);
+  }
+
+  &.agent-state-awaiting-human {
+    color: var(--status-awaiting-human);
+    border-color: var(--status-awaiting-human);
   }
 
   &.agent-state-wontfix {
     color: var(--muted);
     border-color: var(--border);
+  }
+
+  &.agent-state-done {
+    color: var(--status-done);
+    border-color: var(--status-done);
   }
 }
 

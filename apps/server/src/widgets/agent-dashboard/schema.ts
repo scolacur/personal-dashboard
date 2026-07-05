@@ -93,6 +93,21 @@ export function bootstrapSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_ticket_reminders_due
       ON agent_ticket_reminders (remind_at) WHERE sent_at IS NULL;
+
+    -- Notification Center (D-040): in-app inbox. MVP source is the agent-park poller
+    -- (awaiting-human / needs-human); widget notifications plug in later. A brand-new
+    -- table, so CREATE IF NOT EXISTS covers both fresh and existing DBs (no migrate step).
+    CREATE TABLE IF NOT EXISTS agent_notifications (
+      id         INTEGER PRIMARY KEY,
+      kind       TEXT    NOT NULL,                   -- NotificationKind (agent_awaiting_human, …)
+      ticket_id  INTEGER REFERENCES agent_tickets(id) ON DELETE CASCADE,  -- null = not ticket-scoped
+      title      TEXT    NOT NULL,
+      body       TEXT,                               -- e.g. the agent's ask_human question
+      read_at    INTEGER,                            -- NULL = unread
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_notifications_unread
+      ON agent_notifications (read_at, created_at);
   `);
 
   // Bring pre-existing tables (older dev DBs) up to the current schema. Each is a
@@ -128,6 +143,27 @@ export function bootstrapSchema(db: Database.Database): void {
     // Safety net: any leftover legacy/invalid value (e.g. medium in ready/queued/in_review) → P3.
     d.prepare(
       "UPDATE agent_tickets SET priority = 'P3' WHERE priority NOT IN ('P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'none')",
+    ).run();
+  });
+
+  // D-040 board redesign (PD-245): collapse the old 7 lanes into the new 6-lane model.
+  // Data-only, non-destructive; no-op on a fresh DB. ready -> prioritized; the old agent
+  // lanes queued/in_progress/in_review -> the single robot_queue lane. For issue-linked
+  // rows, seed agent_state (the card pill) from the old status BEFORE collapsing it, and
+  // only when the poller hasn't already set it; the live poller re-derives on next sync.
+  migrate(db, 'agent_tickets_lanes_d040', (d) => {
+    d.prepare("UPDATE agent_tickets SET status = 'prioritized' WHERE status = 'ready'").run();
+    d.prepare(
+      "UPDATE agent_tickets SET agent_state = 'working' WHERE status = 'in_progress' AND agent_state IS NULL AND github_issue_number IS NOT NULL",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET agent_state = 'in-review' WHERE status = 'in_review' AND agent_state IS NULL AND github_issue_number IS NOT NULL",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET agent_state = 'queued' WHERE status = 'queued' AND agent_state IS NULL AND github_issue_number IS NOT NULL",
+    ).run();
+    d.prepare(
+      "UPDATE agent_tickets SET status = 'robot_queue' WHERE status IN ('queued', 'in_progress', 'in_review')",
     ).run();
   });
 

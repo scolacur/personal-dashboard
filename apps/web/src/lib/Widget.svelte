@@ -7,20 +7,21 @@
 
   let flipped = $state(false);
 
-  function flip(e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
+  function flip() {
     flipped = !flipped;
   }
 </script>
 
 <div class="widget">
   <div class="widget-inner" class:flipped>
-    <a href={route} class="face face-front">
+    <div class="face face-front">
+      <!-- Stretched link: covers the whole face so clicking anywhere on the
+           card navigates — except the flip button, which sits above it. -->
+      <a href={route} class="stretched-link" aria-label={title}></a>
       <h2>{title}</h2>
       <p>{description}</p>
       <button type="button" class="flip-btn" onclick={flip} aria-label="Flip widget">↺</button>
-    </a>
+    </div>
     <div class="face face-back">
       <p class="back-name">{title}</p>
       <p class="back-label">Rear panel</p>

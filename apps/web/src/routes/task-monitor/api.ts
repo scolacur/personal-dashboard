@@ -63,3 +63,13 @@ export async function deleteTicket(id: number): Promise<void> {
   const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
+
+/** Reply to a parked agent (PD-250): posts a marked GitHub comment that re-queues it. */
+export async function replyToTicket(id: number, body: string): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/reply`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) return parseError(res);
+}

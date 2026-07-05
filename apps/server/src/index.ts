@@ -6,14 +6,12 @@ import { db, dataDir } from './db';
 import { CronRegistry } from './cron';
 import { registerBackupJob } from './backup';
 import type { BackendWidget } from './types';
-import { widget as helloWidget } from './widgets/hello/index';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as agentDashboardWidget } from './widgets/agent-dashboard/index';
 import { widget as pomodoroWidget } from './widgets/pomodoro/index';
 import { initDeployStatus, getDeployInfo } from './deploy-status';
 
 const widgets: BackendWidget[] = [
-  helloWidget,
   musicTrackerWidget,
   agentDashboardWidget,
   pomodoroWidget,

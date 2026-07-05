@@ -19,12 +19,36 @@
   letter-spacing: -0.01em;
 }
 
+/* ── App shell: fixed side rail + main column ─────── */
+.shell {
+  display: flex;
+  align-items: flex-start;
+  min-height: 100vh;
+}
+
+.sidebar {
+  flex-shrink: 0;
+  width: 220px;
+  align-self: stretch;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.main-col {
+  flex: 1;
+  min-width: 0;
+}
+
 .top-nav {
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-md);
 
   // Unmistakable dev signal: amber top stripe + badge. Never rendered in the
   // production build (import.meta.env.DEV is false there).
@@ -32,8 +56,23 @@
     border-top: 3px solid #fabc50;
   }
 }
+.nav-menu-btn {
+  // Hidden on desktop — the side rail is always visible there. Shown as the
+  // yin-yang drawer toggle on mobile. The icon is a self-contained tile, so the
+  // button itself is chromeless.
+  display: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.nav-spacer {
+  margin-left: auto;
+}
 .env-badge {
-  margin-left: var(--space-md);
   padding: 2px 8px;
   border-radius: 999px;
   background: #fabc50;
@@ -48,22 +87,6 @@
   font-weight: 600;
   font-size: var(--font-size-lg);
   letter-spacing: -0.01em;
-}
-.nav-links {
-  display: flex;
-  gap: var(--space-md);
-  margin-right: auto;
-  margin-left: var(--space-lg);
-  font-size: var(--font-size-sm);
-
-  a {
-    color: var(--muted);
-    transition: color 0.15s;
-
-    &:hover {
-      color: var(--accent);
-    }
-  }
 }
 .theme-toggle {
   display: grid;
@@ -84,35 +107,52 @@
     border-color: var(--accent);
   }
 }
+.scrim {
+  display: none;
+}
 .content {
   padding: var(--space-xl) var(--space-lg);
 }
 
-/* ── Mobile responsive (≤640px) ─────────────────── */
-@media (max-width: 640px) {
-  /* Nav wraps: brand + toggle on row 1, links on row 2 */
+/* ── Mobile responsive (≤768px): rail becomes a drawer ─────────────────── */
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    width: 240px;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+
+    &.open {
+      transform: translateX(0);
+      box-shadow: 0 0 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    border: none;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+  }
+
+  .nav-menu-btn {
+    display: grid;
+  }
+
   .top-nav {
-    flex-wrap: wrap;
     padding: var(--space-sm) var(--space-md);
     position: sticky;
     top: 0;
     z-index: 100;
     background: var(--bg);
-  }
-
-  /* Push theme toggle to the right of the brand on the first row */
-  .theme-toggle {
-    margin-left: auto;
-  }
-
-  /* Nav links drop to their own full-width row */
-  .nav-links {
-    order: 3;
-    width: 100%;
-    margin-left: 0;
-    margin-right: 0;
-    padding: var(--space-xs) 0;
-    flex-wrap: wrap;
   }
 
   .content {

@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3';
 import type {
+  AgentNotification,
   AgentProject,
   AgentState,
   AgentTicket,
   CreateProjectInput,
   CreateTicketInput,
+  NotificationKind,
   TicketAssignee,
   TicketPriority,
   TicketStatus,
@@ -152,13 +154,12 @@ export function listTickets(db: Database.Database): AgentTicket[] {
        ORDER BY
          CASE status
            WHEN 'backlog' THEN 0
-           WHEN 'ready' THEN 1
-           WHEN 'queued' THEN 2
-           WHEN 'in_progress' THEN 3
-           WHEN 'in_review' THEN 4
-           WHEN 'completed' THEN 5
-           WHEN 'closed' THEN 6
-           ELSE 7
+           WHEN 'prioritized' THEN 1
+           WHEN 'robot_queue' THEN 2
+           WHEN 'steve_queue' THEN 3
+           WHEN 'completed' THEN 4
+           WHEN 'closed' THEN 5
+           ELSE 6
          END,
          sort_order ASC,
          id ASC`,
@@ -359,7 +360,7 @@ export function applyDerivedState(
   return true;
 }
 
-/** A ticket in the `queued` lane whose project is sortie-enabled with a repo — the
+/** A ticket in the `robot_queue` lane whose project is sortie-enabled with a repo — the
  *  input for the board→GitHub queued-issue sync (PD-164). `githubIssueNumber` is null
  *  when no issue has been created/linked yet. */
 export interface QueuedIssueTarget {
@@ -371,9 +372,10 @@ export interface QueuedIssueTarget {
 }
 
 /**
- * Tickets currently in `queued`, in a sortie-enabled project with a repo — both
- * already-linked and not-yet-linked. PD-164 ensures each has a `sortie:queued`
- * GitHub issue (creating + linking one when absent).
+ * Tickets currently in `robot_queue` (the D-040 dispatch lane), in a sortie-enabled
+ * project with a repo — both already-linked and not-yet-linked. PD-164 ensures each has
+ * a `sortie:queued` GitHub issue (creating + linking one when absent). Entering
+ * `robot_queue` is therefore the dispatch trigger.
  */
 export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget[] {
   const rows = db
@@ -382,7 +384,7 @@ export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
         WHERE t.archived_at IS NULL
-          AND t.status = 'queued'
+          AND t.status = 'robot_queue'
           AND p.sortie_enabled = 1
           AND p.github_repo IS NOT NULL`,
     )
@@ -431,4 +433,109 @@ export function archiveTicket(db: Database.Database, id: number): boolean {
   });
   apply();
   return true;
+}
+
+/* ── Notifications (Notification Center, D-040) ─────────────────────── */
+
+interface NotificationRow {
+  id: number;
+  kind: string;
+  ticket_id: number | null;
+  title: string;
+  body: string | null;
+  read_at: number | null;
+  created_at: number;
+  display_id: string | null; // joined from agent_tickets
+}
+
+function rowToNotification(row: NotificationRow): AgentNotification {
+  return {
+    id: row.id,
+    kind: row.kind as NotificationKind,
+    ticketId: row.ticket_id,
+    ticketDisplayId: row.display_id,
+    title: row.title,
+    body: row.body,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  };
+}
+
+const NOTIFICATION_SELECT = `
+  SELECT n.id, n.kind, n.ticket_id, n.title, n.body, n.read_at, n.created_at,
+         t.display_id AS display_id
+    FROM agent_notifications n
+    LEFT JOIN agent_tickets t ON t.id = n.ticket_id`;
+
+export interface CreateNotificationInput {
+  kind: NotificationKind;
+  ticketId?: number | null;
+  title: string;
+  body?: string | null;
+}
+
+/**
+ * Create a notification. Dedup guard: when ticket-scoped, if the same (ticketId, kind)
+ * already has an UNREAD notification we skip and return null — so a parked ticket the
+ * poller sees every minute is not re-notified until the human reads/acts on it.
+ */
+export function createNotification(
+  db: Database.Database,
+  input: CreateNotificationInput,
+): AgentNotification | null {
+  if (input.ticketId != null) {
+    const dup = db
+      .prepare('SELECT 1 FROM agent_notifications WHERE ticket_id = ? AND kind = ? AND read_at IS NULL')
+      .get(input.ticketId, input.kind);
+    if (dup) return null;
+  }
+  const now = Date.now();
+  const res = db
+    .prepare('INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(input.kind, input.ticketId ?? null, input.title, input.body ?? null, now);
+  const row = db.prepare(`${NOTIFICATION_SELECT} WHERE n.id = ?`).get(Number(res.lastInsertRowid)) as
+    | NotificationRow
+    | undefined;
+  return row ? rowToNotification(row) : null;
+}
+
+/** Newest first. `unreadOnly` limits to unread; `limit` caps the row count (for the
+ *  nav dropdown — the full-history page omits it). */
+export function listNotifications(
+  db: Database.Database,
+  opts: { unreadOnly?: boolean; limit?: number } = {},
+): AgentNotification[] {
+  const where = opts.unreadOnly ? 'WHERE n.read_at IS NULL' : '';
+  // limit is coerced to a non-negative integer, so it's safe to inline.
+  const limit =
+    opts.limit != null && Number.isFinite(opts.limit)
+      ? ` LIMIT ${Math.max(0, Math.floor(opts.limit))}`
+      : '';
+  const rows = db
+    .prepare(`${NOTIFICATION_SELECT} ${where} ORDER BY n.created_at DESC, n.id DESC${limit}`)
+    .all() as NotificationRow[];
+  return rows.map(rowToNotification);
+}
+
+export function unreadNotificationCount(db: Database.Database): number {
+  const row = db
+    .prepare('SELECT COUNT(*) AS c FROM agent_notifications WHERE read_at IS NULL')
+    .get() as { c: number };
+  return row.c;
+}
+
+/** Mark one notification read (idempotent). Returns false only when the id doesn't exist. */
+export function markNotificationRead(db: Database.Database, id: number): boolean {
+  const res = db
+    .prepare('UPDATE agent_notifications SET read_at = COALESCE(read_at, ?) WHERE id = ?')
+    .run(Date.now(), id);
+  return res.changes > 0;
+}
+
+/** Mark all unread notifications read; returns how many were flipped. */
+export function markAllNotificationsRead(db: Database.Database): number {
+  const res = db
+    .prepare('UPDATE agent_notifications SET read_at = ? WHERE read_at IS NULL')
+    .run(Date.now());
+  return res.changes;
 }

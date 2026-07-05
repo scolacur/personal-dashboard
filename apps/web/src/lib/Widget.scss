@@ -22,6 +22,10 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  // Keep children in the 3D context so their own backface-visibility applies —
+  // otherwise absolutely-positioned children (the flip button) bleed through
+  // the hidden face in Chrome.
+  transform-style: preserve-3d;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
 }
@@ -31,7 +35,9 @@
   color: inherit;
   transition: border-color 0.15s;
 
-  &:hover {
+  // Highlight the card border only when the navigable overlay is hovered — not
+  // when hovering the flip button (which sits above the link).
+  &:has(.stretched-link:hover) {
     border-color: var(--accent);
   }
 
@@ -73,10 +79,21 @@
   }
 }
 
+.stretched-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--radius);
+}
+
 .flip-btn {
   position: absolute;
   bottom: 0.625rem;
   right: 0.625rem;
+  z-index: 2;
+  // Hide the button on whichever face is turned away from the viewer.
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
   width: 28px;
   height: 28px;
   border-radius: 50%;
