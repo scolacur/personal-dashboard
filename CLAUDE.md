@@ -7,7 +7,7 @@ At the start of EVERY session, do the following:
 Let me know when you've completed reading it.
 
 **Backlog:** TODOs are no longer tracked in `TODO.md` files — they live as **tickets in the
-Agent Dashboard** ("Mission Control", `/agent-dashboard`), backed by the `agent_tickets` table.
+Task Monitor** (`/task-monitor`), backed by the `agent_tickets` table.
 The board is the single source of truth for project tasks across all projects. Query them via the
 API (`GET /api/widgets/agent-dashboard/tickets`). The old `TODO.md`/`META-TODOS.md` files were
 seeded into the board and archived to `/Users/steve/Documents/Dev/archive/` (see DECISIONS.md D-020).

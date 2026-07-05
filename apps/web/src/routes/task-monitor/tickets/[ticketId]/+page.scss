@@ -147,3 +147,50 @@
     color: var(--text);
   }
 }
+
+// PD-250 inline reply to a parked agent.
+.reply-box {
+  margin-top: var(--space-lg);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2, rgba(29, 118, 219, 0.05));
+
+  h2 {
+    margin: 0 0 var(--space-xs);
+    font-size: var(--font-size-md);
+  }
+
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: var(--space-sm);
+    padding: var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--surface, #fff);
+    color: inherit;
+    font: inherit;
+    resize: vertical;
+  }
+}
+
+.reply-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+
+    &:disabled { opacity: 0.5; cursor: default; }
+  }
+}
+
+.reply-msg { color: var(--muted); font-size: var(--font-size-sm); }

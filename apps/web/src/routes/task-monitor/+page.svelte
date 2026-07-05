@@ -1,34 +1,42 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
+  import DeployStatus from '../DeployStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
+  import { Pencil, Copy, Trash2, ClipboardCopy } from 'lucide-svelte';
   import * as api from './api';
+  import { projectIdColor } from './api';
   import { ticketMatchesQuery } from './filter-logic';
+  import { compareTicketsInColumn } from './sort-logic';
+  import { buildCopyText, copyToClipboard } from './copy-utils';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
-    { status: 'ready', label: 'Ready for Robot' },
-    { status: 'queued', label: 'Queued for Robot' },
-    { status: 'in_progress', label: 'In progress' },
-    { status: 'in_review', label: 'In review' },
+    { status: 'prioritized', label: 'Prioritized' },
+    { status: 'robot_queue', label: "Robot's Queue" },
+    { status: 'steve_queue', label: "Steve's Queue" },
     { status: 'completed', label: 'Completed' },
     { status: 'closed', label: 'Closed', defaultHidden: true },
   ];
 
-  const LANE_VISIBILITY_KEY = 'agent-dashboard:hidden-lanes';
+  const LANE_VISIBILITY_KEY = 'task-monitor:hidden-lanes';
 
   function loadHiddenLanes(): SvelteSet<TicketStatus> {
     const defaults = new SvelteSet(COLUMNS.filter((c) => c.defaultHidden).map((c) => c.status));
+    // Runs during SSR (component init) where localStorage doesn't exist — return
+    // defaults on the server; the browser reads the persisted preference.
+    if (!browser) return defaults;
     const stored = localStorage.getItem(LANE_VISIBILITY_KEY);
     if (stored === null) return defaults;
     try {
       const parsed = JSON.parse(stored) as TicketStatus[];
       return new SvelteSet(parsed);
     } catch (err) {
-      console.warn('[agent-dashboard] failed to parse hidden lanes from localStorage', err);
+      console.warn('[task-monitor] failed to parse hidden lanes from localStorage', err);
       return defaults;
     }
   }
@@ -37,13 +45,14 @@
     try {
       localStorage.setItem(LANE_VISIBILITY_KEY, JSON.stringify([...hidden]));
     } catch (err) {
-      console.warn('[agent-dashboard] failed to persist lane visibility', err);
+      console.warn('[task-monitor] failed to persist lane visibility', err);
     }
   }
 
   let hiddenLanes = $state(loadHiddenLanes());
   let laneMenuOpen = $state(false);
   let laneMenuRef = $state<HTMLElement | null>(null);
+  let searchInputRef = $state<HTMLInputElement | null>(null);
 
   function toggleLane(status: TicketStatus) {
     if (hiddenLanes.has(status)) {
@@ -60,9 +69,41 @@
     }
   }
 
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.metaKey && e.key === 'k' && !formOpen && !legendOpen) {
+      e.preventDefault();
+      if (document.activeElement === searchInputRef) {
+        searchInputRef?.blur();
+      } else {
+        searchInputRef?.focus();
+        searchInputRef?.select();
+      }
+    }
+  }
+
   // Once a ticket is picked up by an agent, its status is controlled externally,
   // so manual editing (field + drag) is locked for these statuses when assigned.
-  const AGENT_CONTROLLED: TicketStatus[] = ['queued', 'in_progress', 'in_review', 'completed'];
+  // D-040: the agent lanes collapsed into robot_queue; steve_queue is manual (never locked).
+  const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
+
+  // The card pill for a Robot's-Queue ticket: agentState carries the fine sortie:* state
+  // (D-040). Display label + per-state colour class.
+  const AGENT_STATE_LABELS: Record<AgentState, string> = {
+    queued: 'queued',
+    working: 'in progress',
+    'in-review': 'in review',
+    stuck: 'stuck',
+    'needs-human': 'needs human',
+    'awaiting-human': 'awaiting human',
+    wontfix: 'wontfix',
+    done: 'done',
+  };
+  // Each state gets its own colour (see .agent-state-badge in +page.scss):
+  // queued=blue, working=yellow, in-review=purple, stuck=red, needs-human=dark orange,
+  // awaiting-human=light orange, wontfix=gray, done=green.
+  function agentStateClass(s: AgentState): string {
+    return `agent-state-${s}`;
+  }
   function isStatusLocked(t: AgentTicket): boolean {
     return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
   }
@@ -106,25 +147,11 @@
   let formBody = $state('');
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
-  let formAssignee = $state<TicketAssignee | null>('steve');
+  let formAssignee = $state<TicketAssignee | null>(null);
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
-  // The per-card ID label is colour-coded by project (replaces the old project
-  // badge). PD/NSW use theme accent tokens; Core keeps its teal project colour.
-  function idColor(project: AgentProject | undefined): string {
-    switch (project?.key) {
-      case 'PD':
-        return 'var(--accent)';
-      case 'C':
-        return '#0d9488'; // teal — Core
-      case 'NSW':
-        return 'var(--accent-2)';
-      default:
-        return 'var(--muted)';
-    }
-  }
 
   function visibleTickets(): AgentTicket[] {
     return tickets.filter((t) => {
@@ -138,37 +165,46 @@
   function byStatus(status: TicketStatus): AgentTicket[] {
     return visibleTickets()
       .filter((t) => t.status === status)
-      .sort((a, b) => rankOf(a.priority) - rankOf(b.priority) || a.sortOrder - b.sortOrder);
+      .sort((a, b) => compareTicketsInColumn(status, a, b));
   }
 
-  async function load() {
-    loading = true;
+  async function load(silent = false) {
+    if (!silent) loading = true;
     error = null;
     try {
       [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
-      loading = false;
+      if (!silent) loading = false;
     }
   }
 
   onMount(() => {
     load();
     window.addEventListener('click', handleWindowClick);
-    return () => window.removeEventListener('click', handleWindowClick);
+    window.addEventListener('keydown', handleWindowKeydown);
+    // Auto-refresh every 30 s so GitHub label changes (synced server-side every minute)
+    // are reflected on the board without requiring a manual page reload.
+    const refreshTimer = setInterval(() => load(true), 30_000);
+    return () => {
+      window.removeEventListener('click', handleWindowClick);
+      window.removeEventListener('keydown', handleWindowKeydown);
+      clearInterval(refreshTimer);
+    };
   });
 
-  function openAdd() {
+  function openAdd(status: TicketStatus = 'backlog') {
     editingId = null;
     editingLocked = false;
     formTitle = '';
     formBody = '';
-    formStatus = 'backlog'; // new tickets start in the backlog
+    formStatus = status;
     formPriority = null; // unset by default — assigned deliberately
-    formAssignee = 'steve'; // default assignee
-    // Default to the active filter, else the first project.
-    formProjectId = filterProjectId ?? projects[0]?.id ?? null;
+    formAssignee = null;
+    // Default to the active filter, else "personal-dashboard", else the first project.
+    const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
+    formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
     formOpen = true;
   }
 
@@ -191,7 +227,7 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
-    if (formStatus === 'queued' && !isSortieReady(formBody.trim() || null)) {
+    if (formStatus === 'robot_queue' && !isSortieReady(formBody.trim() || null)) {
       showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
     }
     error = null;
@@ -217,7 +253,7 @@
         });
       }
       formOpen = false;
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -233,9 +269,9 @@
         projectId: ticket.projectId,
         body: ticket.body,
         priority: ticket.priority,
-        status: 'backlog',
+        status: ticket.status,
       });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -341,13 +377,13 @@
     const sortOrder = computeSortOrder(status, ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
-    if (status === 'queued' && ticket.status !== 'queued' && !isSortieReady(ticket.body)) {
+    if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isSortieReady(ticket.body)) {
       showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
     }
     error = null;
     try {
       await api.updateTicket(id, { status, sortOrder });
-      await load();
+      await load(true);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     }
@@ -359,7 +395,7 @@
     error = null;
     try {
       await api.updateTicket(ticket.id, { priority });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -371,7 +407,7 @@
     error = null;
     try {
       await api.updateTicket(ticket.id, { assignee });
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -388,23 +424,32 @@
     error = null;
     try {
       await api.deleteTicket(ticket.id);
-      await load();
+      await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
   }
+
+  async function copyIssue(ticket: AgentTicket, project: AgentProject | undefined) {
+    const text = buildCopyText(ticket, project);
+    try {
+      await copyToClipboard(text);
+      showToast('Copied to clipboard.');
+    } catch {
+      showToast('Failed to copy.');
+    }
+  }
 </script>
 
-<header class="page-head">
-  <h1>Mission Control</h1>
-</header>
+<DeployStatus />
 
 <section class="tickets-section">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
     <label class="ticket-search">
       <span class="sr-label">Search tickets</span>
-      <input type="search" bind:value={search} placeholder="Search tickets…" />
+      <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
+      <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
     </label>
     <label class="project-filter">
       <span class="sr-label">Project</span>
@@ -466,7 +511,7 @@
       <input type="checkbox" bind:checked={condensed} />
       <span>Condensed</span>
     </label>
-    <button class="add-btn" type="button" onclick={openAdd} disabled={projects.length === 0}>
+    <button class="add-btn" type="button" onclick={() => openAdd()} disabled={projects.length === 0}>
       + Add Ticket
     </button>
   </div>
@@ -487,12 +532,11 @@
     </label>
     <label>
       <span>Title</span>
-      <input type="text" bind:value={formTitle} placeholder="What needs doing?" />
+      <input type="text" bind:value={formTitle} />
     </label>
     <label>
       <span>Details</span>
-      <textarea bind:value={formBody} rows="12" placeholder="Plain-English description (optional)"
-      ></textarea>
+      <textarea bind:value={formBody} rows="12"></textarea>
     </label>
     <label>
       <span>Status</span>
@@ -563,10 +607,18 @@
   <div class="board">
     {#each COLUMNS.filter((c) => !hiddenLanes.has(c.status)) as col (col.status)}
       {@const items = byStatus(col.status)}
-      <section class="column" class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
+      <section class="column" class:robot-queue={col.status === 'robot_queue'} class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
         <h2 class="column-head">
           {col.label}<span class="count">{items.length}</span>
         </h2>
+        <button
+          class="column-add-btn"
+          type="button"
+          title="Add ticket to {col.label}"
+          aria-label="Add ticket to {col.label}"
+          onclick={() => openAdd(col.status)}
+          disabled={projects.length === 0}
+        >+</button>
         <div
           class="column-body"
           role="list"
@@ -590,42 +642,22 @@
             >
               <div class="card-top">
                 <div class="card-top-left">
-                  <select
-                    class="priority priority-{bandKey(ticket.priority)}"
-                    title="Set priority"
-                    value={ticket.priority ?? ''}
-                    onchange={(e) =>
-                      setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
-                  >
-                    <option value="">—</option>
-                    {#each TICKET_PRIORITIES as p (p)}
-                      <option value={p}>{p}</option>
-                    {/each}
-                  </select>
-                  <select
-                    class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
-                    title={isStatusLocked(ticket)
-                      ? 'Agent-controlled — cannot reassign'
-                      : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
-                    value={ticket.assignee ?? ''}
-                    disabled={isStatusLocked(ticket)}
-                    onchange={(e) =>
-                      setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
-                  >
-                    <option value="">—</option>
-                    {#each TICKET_ASSIGNEES as a (a)}
-                      <option value={a}>{assigneeLabel(a)}</option>
-                    {/each}
-                  </select>
+                  {#if ticket.displayId}
+                    <a
+                      class="ticket-id"
+                      style="--id-color: {projectIdColor(project)}"
+                      href="/task-monitor/tickets/{ticket.displayId}"
+                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
+                      draggable="false">{ticket.displayId}</a
+                    >
+                  {/if}
                 </div>
                 <span class="card-top-right">
-                  {#if ticket.agentState === 'stuck' || ticket.agentState === 'needs-human' || ticket.agentState === 'awaiting-human'}
+                  {#if ticket.agentState}
                     <span
-                      class="agent-state-badge agent-state-attention"
+                      class="agent-state-badge {agentStateClass(ticket.agentState)}"
                       title="Agent state: {ticket.agentState}"
-                    >{ticket.agentState.replace(/-/g, ' ')}</span>
-                  {:else if ticket.agentState === 'wontfix'}
-                    <span class="agent-state-badge agent-state-wontfix" title="Agent state: wontfix">wontfix</span>
+                    >{AGENT_STATE_LABELS[ticket.agentState]}</span>
                   {/if}
                   {#if ticket.githubIssueUrl}
                     <a
@@ -640,15 +672,18 @@
                       <GithubMark size={14} />
                     </a>
                   {/if}
-                  {#if ticket.displayId}
-                    <a
-                      class="ticket-id"
-                      style="--id-color: {idColor(project)}"
-                      href="/agent-dashboard/tickets/{ticket.displayId}"
-                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
-                      draggable="false">{ticket.displayId}</a
-                    >
-                  {/if}
+                  <select
+                    class="priority priority-{bandKey(ticket.priority)}"
+                    title="Set priority"
+                    value={ticket.priority ?? ''}
+                    onchange={(e) =>
+                      setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
+                  >
+                    <option value="">—</option>
+                    {#each TICKET_PRIORITIES as p (p)}
+                      <option value={p}>{p}</option>
+                    {/each}
+                  </select>
                 </span>
               </div>
               <p class="card-title">{ticket.title}</p>
@@ -656,21 +691,45 @@
                 <p class="card-body">{ticket.body}</p>
               {/if}
               <div class="card-actions">
+                <select
+                  class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
+                  title={isStatusLocked(ticket)
+                    ? 'Agent-controlled — cannot reassign'
+                    : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
+                  value={ticket.assignee ?? ''}
+                  disabled={isStatusLocked(ticket)}
+                  onchange={(e) =>
+                    setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
+                >
+                  <option value="">—</option>
+                  {#each TICKET_ASSIGNEES as a (a)}
+                    <option value={a}>{assigneeLabel(a)}</option>
+                  {/each}
+                </select>
                 <span class="spacer"></span>
-                <button type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
-                  >✎</button
+                <button class="action-edit" type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
+                  ><Pencil size={13} /></button
                 >
                 <button
+                  class="action-dup"
                   type="button"
                   title="Duplicate"
                   aria-label="Duplicate"
-                  onclick={() => duplicate(ticket)}>⧉</button
+                  onclick={() => duplicate(ticket)}><Copy size={13} /></button
+                >
+                <button
+                  class="action-copy"
+                  type="button"
+                  title="Copy issue text"
+                  aria-label="Copy issue text"
+                  onclick={() => copyIssue(ticket, project)}><ClipboardCopy size={13} /></button
                 >
                 <button
                   type="button"
                   title="Delete"
                   aria-label="Delete"
-                  onclick={() => remove(ticket)}>🗑</button
+                  onclick={() => remove(ticket)}
+                ><Trash2 size={13} /></button
                 >
               </div>
             </article>

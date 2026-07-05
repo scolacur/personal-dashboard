@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
+  import { Sun, Moon } from 'lucide-svelte';
+  import { page } from '$app/state';
+  import SideNav from '$lib/SideNav.svelte';
+  import NotificationBell from '$lib/NotificationBell.svelte';
+  import YinYang from '$lib/icons/YinYang.svelte';
+  import { resolvePageTitle } from '$lib/nav-utils';
 
   let { children }: { children: Snippet } = $props();
 
@@ -9,6 +15,11 @@
   const isDev = import.meta.env.DEV;
 
   let theme = $state<'light' | 'dark'>('dark');
+  // Mobile-only: the side nav slides in as a drawer. Always false on desktop
+  // where the rail is permanently visible (the toggle button is hidden there).
+  let drawerOpen = $state(false);
+
+  const currentPageTitle = $derived(resolvePageTitle(page.url.pathname));
 
   onMount(() => {
     const t = document.documentElement.getAttribute('data-theme');
@@ -24,22 +35,43 @@
       // ignore — storage may be unavailable
     }
   }
+
+  function openDrawer() {
+    drawerOpen = true;
+  }
+  function closeDrawer() {
+    drawerOpen = false;
+  }
 </script>
 
-<nav class="top-nav" class:is-dev={isDev}>
-  <a href="/" class="nav-brand">Dashboard</a>
-  {#if isDev}
-    <span class="env-badge" title="Local development — not production">DEV</span>
+<div class="shell">
+  <aside class="sidebar" class:open={drawerOpen}>
+    <SideNav onNavigate={closeDrawer} />
+  </aside>
+
+  {#if drawerOpen}
+    <button class="scrim" onclick={closeDrawer} aria-label="Close navigation menu"></button>
   {/if}
-  <div class="nav-links">
-    <a href="/agent-dashboard">Mission Control</a>
+
+  <div class="main-col">
+    <nav class="top-nav" class:is-dev={isDev}>
+      <button class="nav-menu-btn" onclick={openDrawer} aria-label="Open navigation menu">
+        <YinYang size={22} />
+      </button>
+      <a href="/" class="nav-brand">{currentPageTitle}</a>
+      {#if isDev}
+        <span class="env-badge" title="Local development — not production">DEV</span>
+      {/if}
+      <div class="nav-spacer"></div>
+      <NotificationBell />
+      <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
+        {#if theme === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
+      </button>
+    </nav>
+    <main class="content">
+      {@render children()}
+    </main>
   </div>
-  <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
-    {theme === 'dark' ? '☀' : '☾'}
-  </button>
-</nav>
-<main class="content">
-  {@render children()}
-</main>
+</div>
 
 <style lang="scss" src="./+layout.scss"></style>

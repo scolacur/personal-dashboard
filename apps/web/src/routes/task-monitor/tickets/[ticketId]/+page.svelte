@@ -3,6 +3,7 @@
   import type { AgentProject, AgentTicket, TicketStatus } from '@dashboard/shared';
   import { PRIORITY_LABELS } from '@dashboard/shared';
   import * as api from '../../api';
+  import { projectIdColor } from '../../api';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
@@ -15,10 +16,9 @@
 
   const STATUS_LABELS: Record<TicketStatus, string> = {
     backlog: 'Backlog',
-    ready: 'Ready',
-    queued: 'Queued for Robot',
-    in_progress: 'In progress',
-    in_review: 'In review',
+    prioritized: 'Prioritized',
+    robot_queue: "Robot's Queue",
+    steve_queue: "Steve's Queue",
     completed: 'Completed',
     closed: 'Closed',
   };
@@ -55,10 +55,34 @@
   function fmt(ts: number): string {
     return new Date(ts).toLocaleString();
   }
+
+  // PD-250 inline reply: shown when the agent has parked for input on a linked issue.
+  let replyText = $state('');
+  let replying = $state(false);
+  let replyMsg = $state<string | null>(null);
+
+  const isParked = $derived(
+    ticket?.agentState === 'awaiting-human' || ticket?.agentState === 'needs-human',
+  );
+
+  async function submitReply() {
+    if (!ticket || !replyText.trim()) return;
+    replying = true;
+    replyMsg = null;
+    try {
+      await api.replyToTicket(ticket.id, replyText.trim());
+      replyMsg = 'Reply sent — the agent will resume shortly.';
+      replyText = '';
+    } catch (e) {
+      replyMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      replying = false;
+    }
+  }
 </script>
 
 <nav class="detail-nav">
-  <a href="/agent-dashboard">← Back to board</a>
+  <a href="/task-monitor">← Back to board</a>
 </nav>
 
 {#if loading}
@@ -80,7 +104,7 @@
       {/if}
       <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
       {#if project}
-        <span class="project-chip" style="--chip: {project.color ?? 'var(--muted)'}"
+        <span class="project-chip" style="--chip: {projectIdColor(project)}"
           >{project.name}</span
         >
       {/if}
@@ -100,6 +124,28 @@
           >GitHub issue #{ticket.githubIssueNumber}</a
         >
       </p>
+    {/if}
+
+    {#if isParked && ticket.githubIssueNumber}
+      <section class="reply-box">
+        <h2>Reply to the agent</h2>
+        <p class="muted">
+          The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
+          reply is posted to the issue and re-queues it.
+        </p>
+        <textarea
+          bind:value={replyText}
+          rows="4"
+          placeholder="Type your answer…"
+          disabled={replying}
+        ></textarea>
+        <div class="reply-actions">
+          <button onclick={submitReply} disabled={replying || !replyText.trim()}>
+            {replying ? 'Sending…' : 'Send reply'}
+          </button>
+          {#if replyMsg}<span class="reply-msg">{replyMsg}</span>{/if}
+        </div>
+      </section>
     {/if}
 
     <dl class="detail-meta">

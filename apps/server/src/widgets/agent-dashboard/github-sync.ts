@@ -1,7 +1,14 @@
 import type Database from 'better-sqlite3';
-import type { AgentState, TicketStatus } from '@dashboard/shared';
+import type { AgentState, TicketAssignee, TicketStatus } from '@dashboard/shared';
 import type { CronLogger, CronRegistry } from '../../cron';
-import { applyDerivedState, listQueuedIssueTargets, listSyncTargets, updateTicket } from './store';
+import {
+  applyDerivedState,
+  createNotification,
+  getTicket,
+  listQueuedIssueTargets,
+  listSyncTargets,
+  updateTicket,
+} from './store';
 
 // PD-165: derive board status + agent state from a linked issue's `sortie:*` labels
 // by polling GitHub (D-020: labels are the state machine, not the Sortie :7678 API).
@@ -11,24 +18,28 @@ import { applyDerivedState, listQueuedIssueTargets, listSyncTargets, updateTicke
 export interface DerivedState {
   status: TicketStatus;
   agentState: AgentState | null;
+  /** When present, force this assignee on the ticket. Absent = don't touch. */
+  assignee?: TicketAssignee;
 }
 
 // Precedence-ordered: first matching label wins (Sortie applies one active state at
-// a time, but ordering makes a stray extra label deterministic). Only 'working'
-// drives the active shimmer; stuck/needs-human/awaiting-human are paused-need-attention.
-const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: AgentState | null }[] = [
-  { label: 'sortie:stuck', status: 'in_progress', agentState: 'stuck' },
-  { label: 'sortie:needs-human', status: 'in_progress', agentState: 'needs-human' },
-  { label: 'sortie:awaiting-human', status: 'in_progress', agentState: 'awaiting-human' },
-  { label: 'sortie:in-review', status: 'in_review', agentState: null },
-  { label: 'sortie:in-progress', status: 'in_progress', agentState: 'working' },
-  { label: 'sortie:done', status: 'completed', agentState: null },
+// a time, but ordering makes a stray extra label deterministic). Under the D-040
+// redesign EVERY non-terminal sortie:* label maps to the single `robot_queue` lane —
+// the fine state lives in `agentState` (shown as a card pill). Only 'working' drives
+// the shimmer; stuck/needs-human/awaiting-human are paused-need-attention; queued/
+// in-review are informational. `assignee: 'robot'` is set where the agent is the owner.
+const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: AgentState | null; assignee?: TicketAssignee }[] = [
+  { label: 'sortie:stuck', status: 'robot_queue', agentState: 'stuck', assignee: 'robot' },
+  { label: 'sortie:needs-human', status: 'robot_queue', agentState: 'needs-human', assignee: 'robot' },
+  { label: 'sortie:awaiting-human', status: 'robot_queue', agentState: 'awaiting-human', assignee: 'robot' },
+  { label: 'sortie:in-review', status: 'robot_queue', agentState: 'in-review' },
+  { label: 'sortie:in-progress', status: 'robot_queue', agentState: 'working', assignee: 'robot' },
+  { label: 'sortie:queued', status: 'robot_queue', agentState: 'queued', assignee: 'robot' },
 ] as const;
 
 /**
- * Map an issue's labels + open/closed state to a derived (status, agentState), or
- * `null` when no rule applies — meaning "leave the ticket's status alone" (e.g. only
- * `sortie:queued`, or no sortie label yet).
+ * Map an issue's labels + open/closed state to a derived (status, agentState[, assignee]),
+ * or `null` when no rule applies — meaning "leave the ticket alone" (no sortie:* label yet).
  */
 export function deriveState(labels: string[], issueState: 'open' | 'closed'): DerivedState | null {
   const set = new Set(labels.map((l) => l.toLowerCase()));
@@ -36,6 +47,11 @@ export function deriveState(labels: string[], issueState: 'open' | 'closed'): De
   // whether the GitHub issue is still open or already closed — checked before the
   // generic closed→completed fallback so it is never swallowed by it.
   if (set.has('sortie:wontfix')) return { status: 'closed', agentState: null };
+  // sortie:done is terminal → the `completed` lane, but keeps the 'done' agentState so the
+  // card shows a green "done" pill. Checked before the generic closed→completed fallback
+  // because a Sortie-completed issue is usually ALSO closed on GitHub; without this the
+  // closed branch below would strip the agentState to null and the pill would vanish.
+  if (set.has('sortie:done')) return { status: 'completed', agentState: 'done' };
   // Closed is terminal and authoritative: a closed issue is completed regardless of
   // any stale non-terminal label still hanging on it (e.g. an issue closed while it
   // still wore sortie:in-review). Checked before LABEL_RULES so stale labels can't
@@ -43,7 +59,11 @@ export function deriveState(labels: string[], issueState: 'open' | 'closed'): De
   if (issueState === 'closed') return { status: 'completed', agentState: null };
   // Open issue: derive from its active sortie:* label (precedence-ordered).
   for (const rule of LABEL_RULES) {
-    if (set.has(rule.label)) return { status: rule.status, agentState: rule.agentState };
+    if (set.has(rule.label)) {
+      const derived: DerivedState = { status: rule.status, agentState: rule.agentState };
+      if (rule.assignee !== undefined) derived.assignee = rule.assignee;
+      return derived;
+    }
   }
   return null;
 }
@@ -81,15 +101,52 @@ export async function runGithubSync({ db, token, log, fetchImpl = fetch }: Githu
         },
       );
       if (!res.ok) {
-        log.error(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> HTTP ${res.status}`);
+        if (res.status === 404) {
+          // PD-207 C: a 404 means the issue was deleted on GitHub. Unlink it (clear the
+          // issue number/url) but KEEP the ticket — deletion is ticket-authoritative
+          // (D-039). Only 404 unlinks; transient errors (403/5xx) are left to retry.
+          updateTicket(db, t.id, { githubIssueNumber: null, githubIssueUrl: null });
+          log.info(
+            `github-sync: ${t.githubRepo}#${t.githubIssueNumber} 404 (deleted) -> unlinked ticket ${t.id}`,
+          );
+        } else {
+          log.error(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> HTTP ${res.status}`);
+        }
         continue;
       }
       const issue = (await res.json()) as GithubIssue;
-      const derived = deriveState((issue.labels ?? []).map((l) => l.name), issue.state);
-      if (derived && applyDerivedState(db, t.id, derived.status, derived.agentState)) {
+      const issueLabels = (issue.labels ?? []).map((l) => l.name);
+      const derived = deriveState(issueLabels, issue.state);
+      // Under D-040 every agent-active label (incl. sortie:queued) yields a derived
+      // state with the robot assignee, so applyDerivedState covers status + agentState +
+      // assignee in one write; a null derived means no sortie:* label → leave the ticket.
+      if (derived && applyDerivedState(db, t.id, derived.status, derived.agentState, derived.assignee)) {
         log.info(
           `github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> ${derived.status}/${derived.agentState ?? '-'}`,
         );
+      }
+      // PD-250 Notification Center: when the ticket NEWLY enters an attention state
+      // (awaiting-human / needs-human), surface a notification with the agent's question.
+      // `t.agentState` is the pre-poll value, so this fires once per park (dedup in the
+      // store backstops it). Best-effort — the status write above has already landed.
+      const parkedKind =
+        derived?.agentState === 'awaiting-human'
+          ? 'agent_awaiting_human'
+          : derived?.agentState === 'needs-human'
+            ? 'agent_needs_human'
+            : null;
+      if (parkedKind && t.agentState !== derived!.agentState) {
+        const ticket = getTicket(db, t.id);
+        const question = await fetchLatestAskHuman(t.githubRepo, t.githubIssueNumber, token, fetchImpl);
+        const created = createNotification(db, {
+          kind: parkedKind,
+          ticketId: t.id,
+          title: `${ticket?.displayId ?? `#${t.githubIssueNumber}`} — agent needs you`,
+          body: question ?? 'The agent paused and needs your input. Open the ticket to reply.',
+        });
+        if (created) {
+          log.info(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> notification (${parkedKind})`);
+        }
       }
     } catch (err) {
       log.error(
@@ -108,6 +165,104 @@ function ghHeaders(token: string, json = false): Record<string, string> {
   };
   if (json) h['Content-Type'] = 'application/json';
   return h;
+}
+
+/**
+ * Post a comment on an issue via the write token (PD-250 inline reply). Returns whether
+ * GitHub accepted it — best-effort at the call site. The caller adds the
+ * `<!-- sortie:human-reply -->` marker so the sortie-ask-human Action (PD-133) re-queues.
+ */
+export async function postIssueComment(
+  repo: string,
+  issueNumber: number,
+  body: string,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const res = await fetchImpl(`https://api.github.com/repos/${repo}/issues/${issueNumber}/comments`, {
+    method: 'POST',
+    headers: ghHeaders(token, true),
+    body: JSON.stringify({ body }),
+  });
+  return res.ok;
+}
+
+/** The marker line the agent's ask_human question opens with (WORKFLOW.md). */
+const ASK_HUMAN_MARKER = '### ❓ ask_human';
+
+/**
+ * Best-effort: fetch an issue's comments and return the latest `### ❓ ask_human`
+ * question body (with the marker line stripped). Returns null on any failure or when no
+ * such comment exists — the caller falls back to a generic notification body.
+ */
+async function fetchLatestAskHuman(
+  repo: string,
+  issueNumber: number,
+  token: string,
+  fetchImpl: typeof fetch,
+): Promise<string | null> {
+  try {
+    const res = await fetchImpl(
+      `https://api.github.com/repos/${repo}/issues/${issueNumber}/comments?per_page=100`,
+      { headers: ghHeaders(token) },
+    );
+    if (!res.ok) return null;
+    const comments = (await res.json()) as { body?: string }[];
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const body = comments[i]?.body ?? '';
+      if (body.startsWith(ASK_HUMAN_MARKER)) {
+        const stripped = body.slice(ASK_HUMAN_MARKER.length).trim();
+        return stripped || body.trim();
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// The `sortie:*` labels that keep an issue in Sortie's `query_filter` (WORKFLOW.md) and
+// therefore make it a dispatch candidate. Stripped on close-on-delete so an archived
+// ticket's issue leaves the candidate set regardless of how Sortie handles closed-issue
+// state (a closed issue *should* drop out per WORKFLOW.md, but that is an external,
+// version-dependent assumption — removing the labels is the belt-and-suspenders guarantee).
+const ACTIVE_SORTIE_LABELS = new Set(['sortie:queued', 'sortie:in-progress']);
+
+/**
+ * PD-207 A: cancel a linked issue when its ticket is archived — strip the active
+ * `sortie:*` labels (so it leaves Sortie's dispatch candidate set) AND close it as
+ * "not planned" (state=closed, state_reason=not_planned), in a single PATCH.
+ *
+ * Reads the current labels first so it can preserve non-sortie labels (GitHub's label
+ * PATCH replaces the whole set). If that read fails, it still closes — labels are left
+ * untouched rather than accidentally cleared. Returns whether the close PATCH was
+ * accepted; the caller treats the whole thing as best-effort. Uses the write-scoped token.
+ */
+export async function closeIssueNotPlanned(
+  repo: string,
+  issueNumber: number,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const url = `https://api.github.com/repos/${repo}/issues/${issueNumber}`;
+  // Read current labels so we can drop only the active sortie:* ones and keep the rest.
+  let keepLabels: string[] | undefined;
+  const get = await fetchImpl(url, { headers: ghHeaders(token) });
+  if (get.ok) {
+    const issue = (await get.json()) as GithubIssue;
+    keepLabels = (issue.labels ?? [])
+      .map((l) => l.name)
+      .filter((name) => !ACTIVE_SORTIE_LABELS.has(name.toLowerCase()));
+  }
+  // Close + (when we could read them) rewrite the label set without the active sortie:* labels.
+  const body: Record<string, unknown> = { state: 'closed', state_reason: 'not_planned' };
+  if (keepLabels !== undefined) body.labels = keepLabels;
+  const res = await fetchImpl(url, {
+    method: 'PATCH',
+    headers: ghHeaders(token, true),
+    body: JSON.stringify(body),
+  });
+  return res.ok;
 }
 
 /** The label Sortie polls for to pick up a ticket. */

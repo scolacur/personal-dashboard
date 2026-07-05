@@ -49,7 +49,7 @@ agent:
   max_turns: 50
   max_concurrent_agents: 1                  # PILOT: one ticket at a time
   # --- TOKEN-BURN BOUNDARIES (default for both is 0 = UNLIMITED — that's how #6/#8 hit attempt 43) ---
-  max_sessions: 3                           # HARD retry cap: stop dispatching an issue after 3 sessions.
+  max_sessions: 5                           # HARD retry cap: stop dispatching an issue after 5 sessions.
                                             # NOTE: a quota-exhausted run still writes a run_history row and
                                             # counts here, permanently capping an issue when the Anthropic Pro
                                             # window resets. There is NO native knob to exempt it. The NAS
@@ -77,43 +77,30 @@ self_review:
     - "npm run verify"                      # build && typecheck && lint && test (41 vitest tests)
   verification_timeout_ms: 180000
 
-# ─── PR REACTIONS: change-requested → re-work (BEHAVIOR 1, NATIVE) ──────────────
-# Source: reference/reactions + guides/configure-review-feedback + reference/workflow-config.
-# `reactions` is a MAP of named reaction kinds (NOT `enabled: bool` — that's why the
-# earlier `enabled: true` failed with "expected map, got bool"). We enable ONLY
-# review_comments. How it works:
-#   • Trigger: a human "Request changes" (reviewDecision CHANGES_REQUESTED) review on
-#     the issue's PR. Bot/automated comments are filtered out by the adapter.
-#   • Dispatch: a CONTINUATION turn in the SAME existing workspace + branch (it pushes
-#     fixes onto the existing PR). It does NOT relabel the issue — reactions fire while
-#     the issue sits in handoff_state (sortie:in-review). See README "Follow-ups" for why
-#     we deliberately do NOT flip the label back to in-progress for the review path.
-#   • PR lookup: requires .sortie/scm.json (written by the after_run hook above).
-# Loop bounding (so we can't re-storm like attempt 43):
-#   • fingerprint = sorted set of non-outdated comment IDs; an unchanged review is
-#     skipped (deduplicated) — it only re-dispatches when the comment set CHANGES.
-#   • debounce_ms waits after the newest comment before dispatching (batches edits).
-#   • max_continuation_turns is the hard ceiling on review-triggered continuations.
-#   • per-issue agent.max_sessions / max_tokens still bind across everything.
-# NOTE: `reactions` values are NOT env-expanded (per reference/workflow-config), so
-# `provider` is the literal "github".
-# ⚠ CONFIRM at deploy against your installed version's reference/reactions: the
-#   sub-field names below (poll_interval_ms / debounce_ms / max_continuation_turns)
-#   are from the current public docs; older builds may differ.
-reactions:
-  review_comments:
-    provider: github
-    poll_interval_ms: 120000        # min 30000; poll PR review state every 2m
-    debounce_ms: 60000              # wait 60s after newest comment before dispatch
-    max_continuation_turns: 3       # hard cap on review-triggered re-works
-    max_retries: 2
-    escalation: label               # on cap-exhaustion, label for a human
-    escalation_label: "sortie:needs-human"   # MUST be pre-created in the repo
-  # NOTE: merge-conflict (CONFLICTING/DIRTY) is NOT a native reaction kind — Sortie's
-  # auto_merge only acts on clean/unstable PRs and no reaction detects DIRTY. Behavior 2
-  # is therefore handled by an in-repo bridge: .github/workflows/sortie-conflict-rework.yml
-  # flips the issue label back into the active set so Sortie re-dispatches a normal run
-  # (which then merges origin/main per the prompt body). See README "Follow-ups".
+# ─── PR REACTIONS: DISABLED — review re-work moved to an in-repo Actions bridge ───
+# The native `reactions.review_comments` is intentionally NOT configured (see D-042).
+#
+# WHY DISABLED: the native reaction only arms its watch-set at the process-startup
+# "pending reaction recovery" pass — i.e. once per container restart. An issue that hands
+# off to sortie:in-review BETWEEN restarts is never watched, so a human review/comment on
+# its PR is silently dropped until the next restart (root-caused live for PD-256: issue
+# #132 handed off 12m after a restart; its "Request changes" review 17h later did nothing;
+# a manual restart re-armed it and it immediately re-worked — proving the restart coupling).
+# The reaction also only ever fired on a CHANGES_REQUESTED *review*, never on a plain PR
+# comment or a "Comment" review — so most human feedback never triggered re-work at all.
+#
+# REPLACEMENT: .github/workflows/sortie-review-rework.yml. On a trusted human review OR
+# comment (Request-changes, Comment review, inline review comment, or top-level PR comment)
+# it flips the issue sortie:in-review -> sortie:queued, exactly like sortie-conflict-rework.yml
+# does for conflicts. Sortie re-dispatches a NORMAL run; before_run reuses the existing
+# sortie/<id> branch; and the "check for an open PR" step in the prompt body (Step 2B) reads
+# the review feedback off the PR via `gh api` and addresses it. Runs in GitHub Actions,
+# independent of Sortie's internal poller, so it is not coupled to container restarts and it
+# broadens the trigger set. Loop-bounded by the in-review->queued flip + per-issue
+# max_sessions/max_tokens. `sortie:needs-human` remains a valid manual escalation label.
+#
+# Merge-conflict re-work is the OTHER in-repo bridge: .github/workflows/sortie-conflict-rework.yml
+# (Sortie has no native reaction for CONFLICTING/DIRTY PRs). See README "Follow-ups".
 
 hooks:
   # Clone the Dashboard ONLY into the isolated workspace. Token-in-URL because
@@ -250,50 +237,83 @@ db_path: /home/sortie/.sortie.db
 
 ---
 
-## STEP 0 — Are you continuing existing work? Check for an open PR on your branch.
+## Step 1 — Read PROJECT.md & CLAUDE.md (every run, no exceptions)
 
-**Do NOT trust any "continuation" banner or assume this is a first attempt.** Review-feedback
-and conflict-rework dispatches arrive looking exactly like a fresh run (Sortie's
-`is_continuation` is false for them), so the reliable signal is whether a PR already exists
-for your branch. Run this FIRST, before any work:
+```sh
+cat PROJECT.md
+```
+
+```sh
+cat CLAUDE.md
+```
+
+These files define the stack, architecture, conventions, and workign agreements.
+
+---
+
+## Step 2 — Check for prior context before touching any code
+
+Two things to check, in order:
+
+### A. Check the issue for any ask_human replies
+
+You may have paused a prior run with a question. Check now:
 
 ```sh
 export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
+# REST (public_repo-safe) — `gh issue view --comments` uses GraphQL org fields the token lacks:
+gh api "repos/scolacur/personal-dashboard/issues/{{ .issue.identifier }}/comments" \
+  --jq '.[] | "\(.user.login): \(.body)"'
+```
+
+If you find a `### ❓ ask_human` question you posted with a human reply beneath it, treat
+that reply as the decision and continue the work. Do not ask the same question again.
+
+### B. Check for an open PR on your branch
+
+**Do NOT trust any "continuation" banner.** Review-feedback and conflict-rework dispatches
+arrive looking exactly like a fresh run, so the reliable signal is whether a PR exists:
+
+```sh
 BRANCH="sortie/{{ .issue.identifier }}"
 PR=$(gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number 2>/dev/null || true)
 echo "existing PR: ${PR:-none}"
 ```
 
-**If `$PR` is set, this is a FOLLOW-UP — not a first attempt.** Your prior commits are on the
-branch. Do NOT start over, do NOT recreate the PR, do NOT duplicate prior work.
+**If `$PR` is set — this is a follow-up.** Your prior commits are on the branch. Do NOT
+start over, recreate the PR, or duplicate prior work.
 
-1. **Read ALL the feedback.** A top-level "Request changes" *summary* is NOT shown by
-   `gh pr view --comments`, so fetch reviews explicitly:
+1. **Read all the review feedback:**
    ```sh
-   # summary review bodies (the "Request changes" text itself):
+   # Summary review bodies ("Request changes" text):
    gh api "repos/scolacur/personal-dashboard/pulls/$PR/reviews" \
      --jq '.[] | select(.state=="CHANGES_REQUESTED" or .state=="COMMENTED") | "[\(.state)] \(.user.login): \(.body)"'
-   # inline review comments, with file + line:
+   # Inline review comments, with file + line:
    gh api "repos/scolacur/personal-dashboard/pulls/$PR/comments" \
      --jq '.[] | "\(.path):\(.line // .original_line): \(.body)"'
-   # full conversation (REST — public_repo-safe; `gh pr view --comments` uses a GraphQL
-   # query with team/org fields (Team.slug etc.) that need read:org/read:discussion, which
-   # the bot's public_repo-only token lacks → it errors. PR conversation = issue comments):
+   # PR conversation (public_repo-safe — `gh pr view --comments` uses GraphQL org fields the bot's public_repo-only token lacks):
    gh api "repos/scolacur/personal-dashboard/issues/$PR/comments" \
      --jq '.[] | "\(.user.login): \(.body)"'
    ```
-2. **See what you already changed**, so you EDIT it rather than pile on more:
+
+2. **See what you already changed:**
    ```sh
    git fetch origin main
    git log --oneline origin/main..HEAD
    git diff origin/main
    ```
-3. **Address every requested change by editing your existing work.** If the reviewer says
-   "there should be only one X" or "change A to B", make the diff end in exactly that state —
-   modify or remove what you added before; do NOT append yet another change. Then re-run
-   `npm ci && npm run verify`. Do NOT weaken or delete tests to make feedback pass.
 
-**If `$PR` is empty, this is a first attempt** — proceed normally with the issue below.
+3. **Reconcile with main:**
+   ```sh
+   git merge origin/main   # if conflicts: resolve them, then git add -A && git commit
+   ```
+   Keep both the PR's intent and main's changes when resolving. Never discard existing commits.
+
+4. **Address each piece of feedback** by editing your existing work — modify or remove what
+   you added before rather than piling on a new change. Re-run `npm ci & npm run verify` after. Do
+   not weaken or delete tests.
+
+**If `$PR` is empty — this is a first attempt.** Proceed with the issue above.
 
 {{ if .review_comments }}
 Structured review comments Sortie passed for this run (treat as authoritative locations):
@@ -304,57 +324,17 @@ Structured review comments Sortie passed for this run (treat as authoritative lo
 
 ---
 
-## Before anything else: check for answers to a question you asked (ask_human)
-
-Issue comments are NOT included above, and you may have asked the human a question on a
-previous turn. **First, read the issue conversation:**
-
-```sh
-export GH_TOKEN="$SORTIE_GITHUB_TOKEN"
-# REST (public_repo-safe) — `gh issue view --comments` uses GraphQL org/discussion fields the token lacks:
-gh api "repos/scolacur/personal-dashboard/issues/{{ .issue.identifier }}/comments" \
-  --jq '.[] | "\(.user.login): \(.body)"'
-```
-
-If you find a `### ❓ ask_human` question you posted earlier with a human reply beneath it,
-treat that reply as the decision and continue the work. **Do not ask the same question
-again.** If there is no such exchange, this is a normal run — proceed.
-
----
-
-## First: reconcile with `main` if this branch already has work
-
-The branch `sortie/{{ .issue.identifier }}` may already contain commits from a previous PR
-for this issue (if STEP 0 found an existing PR, it definitely does). Before doing anything
-else, make the branch mergeable into `main`:
-
-```sh
-git fetch origin main
-git merge origin/main   # if this reports conflicts, resolve them, git add, git commit
-```
-
-Keep BOTH the PR's intent and `main`'s changes when resolving. Never discard the branch's
-existing commits or recreate the branch/PR. Then proceed with the issue below.
-
 ## How to work in this repo
 
 - This is the **Personal Dashboard** — a TypeScript npm-workspaces monorepo
   (`apps/web` SvelteKit, `apps/server` Fastify + better-sqlite3, `packages/shared`).
-- **Orient before you code.** Read these first — they are the source of truth and
-  override your own defaults:
-  - `PROJECT.md` — scope, architecture, the stack, and the widget convention.
-  - `CLAUDE.md` — the repo working agreement.
-  - `DECISIONS.md` — *why* the codebase is the way it is. If an approach surprises
-    you, the reasoning is probably here; check it before fighting a convention.
-  - The nearest existing code to what you're touching — match its patterns.
 - **Prefer the codebase's existing conventions** over introducing new ones. When a
-  decision isn't obvious, match the nearest existing pattern rather than inventing one.
+  decision isn't obvious, read `DECISIONS.md.`. If it's still not obvious, match the nearest existing pattern rather than inventing one.
 - **Log architectural decisions.** If you make a non-obvious design choice — picking
   between two valid approaches, introducing a pattern, adding a dependency, or shaping a
   schema/API contract — append a short entry to `DECISIONS.md` (what you decided, the
-  alternatives, and why) **in this same PR**. This is how the next agent or human
-  understands your reasoning without re-deriving it. One or two lines is fine; skip it
-  only for mechanical changes with no judgement involved.
+  alternatives, and why) **in this same PR**. One or two lines is fine; skip it only for
+  mechanical changes with no judgement involved.
 - **Verify your work** with `npm run verify` (build + typecheck + lint + test).
   Do not weaken or delete tests to make it pass.
 

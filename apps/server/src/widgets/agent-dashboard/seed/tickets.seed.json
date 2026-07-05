@@ -292,7 +292,7 @@
     "title": "[Infra] HIGH — SQLite backup: consistent snapshots feeding Hyper Backup.",
     "body": "The NAS is backed up off-box (Synology Hyper Backup → Backblaze, versioned), which covers both `dashboard.db` and Sortie's `.sortie.db` (both live under `/volume1/docker/personal-dashboard/`). Gap: Hyper Backup does a file-level copy and is **not SQLite-aware** — with WAL on, a hot copy of `dashboard.db` + its `-wal`/`-shm` sidecars at slightly different instants can restore stale/inconsistent. Fix: a small cron using SQLite's online backup — `sqlite3 data/dashboard.db \".backup 'data/backups/dashboard.<UTC-stamp>.db'\"` — which is **guaranteed-consistent even while the app runs**, then let Hyper Backup ship the snapshot. Reuse the pattern already in `ops/sortie/quota-refund.sh` (`.backup` + timestamped file + prune old copies by retention days). Also: (a) confirm the Hyper Backup source set actually includes `/volume1/docker/`, and (b) do one **test restore** to verify. (RAID = disk-failure tolerance, a separate axis; backup is the thing that matters and is largely handled.)",
     "priority": "P1",
-    "status": "ready",
+    "status": "prioritized",
     "source": "seed:TODO.md",
     "displayId": "PD-33"
   },
@@ -301,7 +301,7 @@
     "title": "[Infra] HIGH — Reverse proxy for off-LAN access.",
     "body": "Set up a reverse proxy so the personal dashboard is reachable from outside the local network (e.g. on the phone off-wifi), per PROJECT.md §1's post-MVP goal. Options to weigh: Synology's built-in reverse proxy + DDNS + Let's Encrypt (simplest on this box), or Tailscale/Cloudflare Tunnel (no inbound port-forward, better security posture — aligns with the egress-hardening mindset). Leaning tailscale as its already being used for other apps running on the NAS. Must add **authentication** before exposing (the app is currently LAN-only, no auth — PROJECT.md §1). Mind the existing port map (8080=gluetun, 8088=prod app).",
     "priority": "P1",
-    "status": "ready",
+    "status": "prioritized",
     "source": "seed:TODO.md",
     "displayId": "PD-34"
   },
@@ -1822,7 +1822,7 @@
     "title": "PR-reaction feedback loop",
     "body": "Sortie watches reactions on the PR and feeds them into a follow-up attempt.",
     "priority": "P3",
-    "status": "in_progress",
+    "status": "robot_queue",
     "source": "seed:core/META-TODOS.md",
     "displayId": "C-48"
   },
@@ -2263,7 +2263,7 @@
     "title": "[Mission Control] Mobile-friendly interface",
     "body": "Make Mission Control usable on mobile — responsive layout for the ticket board, lanes, cards, and header controls (search / filters / add) on small screens.",
     "priority": "P1",
-    "status": "ready",
+    "status": "prioritized",
     "source": "manual",
     "displayId": "PD-171"
   },

@@ -10,16 +10,23 @@ import {
   type TicketStatus,
   type UpdateTicketInput,
 } from '@dashboard/shared';
+import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import {
   archiveTicket,
   createProject,
   createTicket,
   getProjectBySlug,
+  getTicketIssueRef,
+  listNotifications,
   listProjects,
   listTickets,
+  markAllNotificationsRead,
+  markNotificationRead,
   projectExists,
+  unreadNotificationCount,
   updateTicket,
 } from './store';
+import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -33,7 +40,19 @@ function isAssignee(v: unknown): v is TicketAssignee {
   return typeof v === 'string' && (TICKET_ASSIGNEES as readonly string[]).includes(v);
 }
 
-export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
+/** Injectable deps for the routes — defaults resolve from the environment / global fetch. */
+export interface AgentDashboardRouteDeps {
+  /** Write-scoped GitHub token for close-on-delete (PD-207 A). Defaults to `GITHUB_WRITE_TOKEN`. */
+  githubWriteToken?: string;
+  /** Injectable for tests; defaults to the global fetch. */
+  fetchImpl?: typeof fetch;
+}
+
+export function registerRoutes(
+  app: FastifyInstance,
+  db: Database.Database,
+  deps: AgentDashboardRouteDeps = {},
+): void {
   const base = '/api/widgets/agent-dashboard';
 
   /* ── Projects ─────────────────────────────── */
@@ -195,9 +214,108 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
+    // Capture the linked-issue ref before archiving (archive keeps it, but read once).
+    const ref = getTicketIssueRef(db, id);
     if (!archiveTicket(db, id)) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
+    // PD-207 A: best-effort close the linked issue as "not planned" so Sortie stops
+    // building a ticket that was just archived. Never blocks the 204 — a GitHub failure
+    // is logged and swallowed (deletion is ticket-authoritative, D-039).
+    const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
+    if (ref?.githubIssueNumber != null && ref.githubRepo && token) {
+      try {
+        const ok = await closeIssueNotPlanned(
+          ref.githubRepo,
+          ref.githubIssueNumber,
+          token,
+          deps.fetchImpl ?? fetch,
+        );
+        if (ok) {
+          app.log.info(
+            `agent-dashboard: closed ${ref.githubRepo}#${ref.githubIssueNumber} not_planned (ticket ${id} archived)`,
+          );
+        } else {
+          app.log.error(
+            `agent-dashboard: close ${ref.githubRepo}#${ref.githubIssueNumber} failed (ticket ${id} archived)`,
+          );
+        }
+      } catch (err) {
+        app.log.error(
+          `agent-dashboard: close ${ref.githubRepo}#${ref.githubIssueNumber} threw: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     return reply.status(204).send();
+  });
+
+  /* ── Notifications (Notification Center, D-040) ─────────────── */
+
+  // List notifications, newest first. `?unread=1` limits to unread; `?limit=N` caps the
+  // count (the nav dropdown passes limit=10; the full-history page omits it).
+  app.get(`${base}/notifications`, async (request) => {
+    const q = request.query as { unread?: string; limit?: string };
+    const parsed = q.limit != null ? Number(q.limit) : NaN;
+    const limit = Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+    return listNotifications(db, { unreadOnly: q.unread === '1' || q.unread === 'true', limit });
+  });
+
+  // Unread count — cheap poll for the nav bell badge.
+  app.get(`${base}/notifications/unread-count`, async () => ({ count: unreadNotificationCount(db) }));
+
+  app.post(`${base}/notifications/:id/read`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    if (!markNotificationRead(db, id)) {
+      return reply.status(404).send({ error: 'notification not found', code: 'NOT_FOUND' });
+    }
+    return reply.status(204).send();
+  });
+
+  app.post(`${base}/notifications/read-all`, async () => ({ marked: markAllNotificationsRead(db) }));
+
+  // Inline reply to a parked agent (PD-250). Posts the reply as a GitHub issue comment
+  // carrying the human-reply marker, so the sortie-ask-human Action (PD-133) re-queues the
+  // agent. Requires the ticket to have a linked issue and a write token to be configured.
+  app.post(`${base}/tickets/:id/reply`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.body !== 'string' || body.body.trim() === '') {
+      return reply.status(400).send({ error: 'reply body is required', code: 'INVALID_BODY' });
+    }
+    const ref = getTicketIssueRef(db, id);
+    if (!ref) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    if (ref.githubIssueNumber == null || !ref.githubRepo) {
+      return reply
+        .status(409)
+        .send({ error: 'ticket has no linked GitHub issue', code: 'NO_LINKED_ISSUE' });
+    }
+    const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
+    if (!token) {
+      return reply
+        .status(503)
+        .send({ error: 'reply unavailable — no write token configured', code: 'NO_WRITE_TOKEN' });
+    }
+    const commentBody = `${body.body.trim()}\n\n${HUMAN_REPLY_MARKER}`;
+    const ok = await postIssueComment(
+      ref.githubRepo,
+      ref.githubIssueNumber,
+      commentBody,
+      token,
+      deps.fetchImpl ?? fetch,
+    );
+    if (!ok) {
+      app.log.error(`agent-dashboard: reply to ${ref.githubRepo}#${ref.githubIssueNumber} failed`);
+      return reply.status(502).send({ error: 'GitHub rejected the reply', code: 'GITHUB_ERROR' });
+    }
+    app.log.info(`agent-dashboard: replied to ${ref.githubRepo}#${ref.githubIssueNumber} (ticket ${id})`);
+    return reply.status(201).send({ ok: true });
   });
 }

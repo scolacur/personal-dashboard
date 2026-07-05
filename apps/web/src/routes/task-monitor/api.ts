@@ -1,5 +1,18 @@
 import type { AgentProject, AgentTicket, CreateTicketInput, UpdateTicketInput } from '@dashboard/shared';
 
+export function projectIdColor(project: AgentProject | undefined | null): string {
+  switch (project?.key) {
+    case 'PD':
+      return 'var(--accent)';
+    case 'C':
+      return '#0d9488';
+    case 'NSW':
+      return 'var(--accent-2)';
+    default:
+      return 'var(--muted)';
+  }
+}
+
 const BASE = '/api/widgets/agent-dashboard/tickets';
 const PROJECTS = '/api/widgets/agent-dashboard/projects';
 
@@ -49,4 +62,14 @@ export async function updateTicket(id: number, patch: UpdateTicketInput): Promis
 export async function deleteTicket(id: number): Promise<void> {
   const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+/** Reply to a parked agent (PD-250): posts a marked GitHub comment that re-queues it. */
+export async function replyToTicket(id: number, body: string): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/reply`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) return parseError(res);
 }

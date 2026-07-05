@@ -6,9 +6,20 @@
   --border: #c6c6c6;
   --text: #2e2e2e;
   --muted: #585656;
-  --accent: #e6e606; /* primary */
+  --accent: #33a27d; /* primary */
   --accent-2: #954cb1; /* accent */
   --on-accent: #f0f0f0;
+
+  /* Agent-state / Sortie status pill colours (see .agent-state-badge). Each state
+     has its own hue; theme-agnostic (chosen to read on both light and dark). */
+  --status-queued: #1d76db; /* blue */
+  --status-working: #b08800; /* yellow */
+  --status-in-review: #8250df; /* purple */
+  --status-stuck: #cf222e; /* red */
+  --status-needs-human: #c2410c; /* dark orange */
+  --status-awaiting-human: #f59e0b; /* light orange */
+  --status-done: #1a7f37; /* green */
+  /* wontfix reuses the neutral --muted / --border tokens. */
 
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;

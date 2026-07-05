@@ -6,6 +6,129 @@ Newest decisions at the top.
 
 ---
 
+## D-042: Sortie review re-work moves from the native `reactions.review_comments` to an in-repo Actions bridge (PD-256)
+
+**Decision:** Disable Sortie's native `reactions.review_comments` and drive PR-feedback re-work
+from a new in-repo GitHub Actions workflow, `.github/workflows/sortie-review-rework.yml`. On a
+trusted human review or comment on a `sortie/*` PR it flips the linked issue
+`sortie:in-review` → `sortie:queued`; Sortie re-dispatches a normal run, `before_run` reuses the
+existing branch, and the prompt's "check for an open PR" step (Step 2B) reads the feedback off the
+PR and pushes fixes. Also bumped `agent.max_sessions` 3 → 5.
+
+**Why:** The native reaction was silently dropping feedback. Root-caused live for PD-256: the
+reaction only arms its watch-set at the process-startup "pending reaction recovery" pass — one per
+container **restart**. An issue that hands off to `sortie:in-review` *between* restarts is never
+watched, so a review/comment on its PR does nothing until the next restart. Proven on issue #132
+(handed off 12m after a restart; a "Request changes" review 17h later did nothing; a manual restart
+re-armed it and it immediately re-worked). Second defect: the native reaction only fired on a
+`CHANGES_REQUESTED` review — never a plain PR comment or a "Comment" review — so most of the ways
+feedback is actually left never triggered re-work. The bridge runs in GitHub Actions (not coupled
+to container restarts) and broadens the trigger set to Request-changes, Comment reviews, inline
+review comments, and top-level PR comments (a pure Approve is excluded).
+
+**This reverses the D-016-era note** in the old README/WORKFLOW that a label flip was *worse* than
+the native mechanism ("a flip would stop reactions by moving the issue out of `handoff_state`").
+That reasoning only held while we depended on the native reaction; now that it's disabled, the
+label flip is the mechanism — the same proven pattern as `sortie-conflict-rework.yml`.
+
+**Loop safety:** only the repo OWNER (or a COLLABORATOR carrying the `<!-- sortie:human-reply -->`
+marker) triggers it; the bot's own comments and the workflow's confirmation comment are excluded;
+flipping out of `in-review` makes duplicate events no-ops; per-issue `max_sessions`/`max_tokens`
+still cap re-work cycles.
+
+**Alternatives rejected:** (a) keep the native reaction and just restart the container on a cadence
+— fragile, and still change-requested-only; (b) run both native + bridge — risks double-dispatch if
+the native poller wakes after a restart. Single source of truth is the bridge.
+
+**Deploy:** the workflow is live only once merged to `main`; disabling the native reaction +
+`max_sessions: 5` needs a container **recreate** (not restart), per README Step 4.7.
+
+---
+
+## D-041: Cmd+K shortcut uses metaKey-only (no Ctrl+K fallback) and toggles search focus (PD-126)
+
+**Decision:** The `⌘K` keyboard shortcut on the Task Monitor board only checks `e.metaKey` (Mac Command key), not `e.ctrlKey`. Focus is toggled: pressing again while the search is focused blurs it.
+
+**Reasoning:** The issue specifies "Mac(Command)+K". Ctrl+K is used by browsers on some platforms to focus the URL/search bar, so adding a Ctrl+K fallback could interfere. The toggle behavior (focus → blur on second press) is standard command-palette UX and avoids a second shortcut to dismiss.
+
+**Alternative:** Support `metaKey || ctrlKey` to cover Linux/Windows. Rejected for now since this is a personal Mac-only dashboard.
+
+---
+
+## D-040: Agent + widget notifications go through a dashboard-native Notification Center with a pluggable delivery transport; web push is primary, Discord is demoted to an optional adapter (PD-6, PD-142, PD-242, PD-243)
+
+**Decision:** Notifications — agent `ask_human`/`needs-human` parks, PR-ready pings, reminders, and per-widget alerts — are handled by **two layers**, not a Discord integration:
+
+- **Notification Center — a dashboard-native store + surface.** Messages/questions live in the dashboard next to the ticket/widget they belong to, are marked read/actioned, and (for agent questions) answered **inline** — an inline reply posts the GitHub issue comment that re-queues the parked agent (the inbound loop verified in PD-241). This is the durable source of truth and **subsumes PD-243** (surface `ask_human` on the board). It serves every "notify me" need on the board, not just agents (reminders PD-158, pomodoro PD-137, music-tracker PD-131, habit PD-107, agent-agent visibility core C-3).
+- **Delivery transport — pluggable, web-push-primary.** The "reach me when I'm AFK" leg is a swappable adapter behind the Center. **Web push (service worker + VAPID, PD-142)** is the primary transport; Discord (PD-6) is demoted to an optional adapter or dropped.
+
+**Why:**
+
+- **Center-alone can't reach an AFK human; transport-alone is a poor surface.** They're different layers — a store/surface vs. a delivery channel — and D-038's async grill needs both.
+- **Web push is outbound-only.** Delivery is dashboard-server → the browser vendor's push service → the installed PWA on the device, so the dashboard needs **no inbound exposure**: it reaches phone/desktop **off-LAN today without a reverse proxy** and without exposing the box — the exact requirement Discord was there for, met natively. The app is already a PWA (`manifest.webmanifest`) and PD-142 already planned web push.
+- **No external dependency, data stays local, richer surface.** Agent questions stay on Steve's infra; the Center carries `sortie:*` state + threaded history (`agent_ticket_events`) and supports inline actions — none of which a Discord chat log does well.
+- **One system for many needs.** A single Center + transport serves reminders, pomodoro, music-tracker, habit, and agent messages; a Discord integration would serve only the agent slice while adding a third-party account.
+
+**Trade-off:** Web push is more upfront build than a one-line Discord webhook (VAPID keys, service worker, per-device opt-in; iOS requires the PWA be home-screen-installed, 16.4+). Accepted for the better end state; Discord may still serve as a *temporary* transport to get the async loop live before the Center lands, then be retired. **Shared prerequisite (from PD-241):** `sortie-ask-human.yml` gates the re-queue on `comment.user.login == 'scolacur'`, so an inline dashboard/bot reply (authored by the bot, not the owner) must be accepted by widening that gate — true for any non-owner-authored reply, Discord or dashboard.
+
+**Implications:** Reframes PD-6 (Discord) as an optional adapter, not the plan; elevates PD-142 (web push) from a Reminders-widget feature to the general delivery transport; PD-243 folds into the Notification Center; PD-242 (notify-on-park) becomes a consumer of the Center + transport. New tickets: Notification Center (store + inbox + inline reply) and the web-push delivery transport. Depends on widening the `ask_human` reply gate (PD-241/PD-242 caveat). See [[D-038]] — the pipeline that needs this notify leg.
+
+---
+
+## D-039: Board↔issue authority — ticket is the durable spec, issue is an execution lease; ticket stays amendable post-queue; agent-created tickets are backlog-only, queuing gated by a server-computed depth cap (PD-207, PD-232)
+
+**Decision:** Defines who owns a ticket's content across its lifecycle, resolving the question [[D-038]]'s async-grill pipeline raised:
+
+- **The ticket is the durable spec; the GitHub issue is an execution lease.** At Queue the issue is minted from the ticket (PD-164, unchanged), but the ticket does **not** freeze. Post-queue edits and `ask_human` answers are written **back into the ticket body** (so the durable record improves) and **propagate to the linked open issue** via the write token. There is no 409 content-lock. *(This reworks PD-207 part B, which had specified a hard freeze-at-queue on the now-rejected premise that the issue becomes the sole operative spec.)*
+- **Deletion is ticket-authoritative.** Archiving a ticket closes its linked issue as `not planned` (PD-207 part A); a GitHub-side delete never deletes the ticket — it only unlinks it (PD-207 part C). *(Parts A + C are built; part B — propagation — is deferred behind the board redesign.)*
+- **Agent-created tickets are backlog-only for now.** A Sortie worker that decides a ticket is really several may create child tickets, but only into `backlog` — never a queue lane. A human advances them. This structurally prevents runaway self-dispatch.
+- **Queuing is gated by a server-computed depth cap, enabled later.** When an agent→dashboard ticket-creation path is built, `agent_tickets` gains `spawned_by_ticket_id` + `agent_queue_depth` (server-computed as `parent.depth + 1`, **never agent-supplied**). Agent-queuing is allowed only when the result is `≤ 1` ("one level of agent queuing"); deeper spawns can still be created into backlog. Enforced at the queue transition.
+
+**Why:**
+
+- **Async grilling requires a mutable spec.** [[D-038]] moves clarification *after* dispatch, so the spec keeps evolving while the issue is open; a freeze-at-queue would strand those answers in issue comments instead of improving the ticket. Ticket-as-durable-spec keeps the board the source of truth.
+- **Least-authority loop-breaking.** Backlog-only agent creation makes the infinite-dispatch loop impossible by construction (a spawned ticket cannot dispatch itself). The depth cap is the graduated relaxation for once a verified agent identity exists.
+- **The cap must be unforgeable to be worth anything.** Depth is server-computed from a **server-verified parent** (the issue the agent's run is scoped to), not an agent-declared field — otherwise an agent could reset its own depth. Hence the cap ships with, and depends on, the agent-auth design; until then agent ticket-creation does not exist at all, and backlog-only vs. capped-queuing are the same zero code on the agent side.
+
+**Trade-off:** Propagating ticket edits to an open issue adds a write path and a small divergence window (ticket and issue can briefly differ between polls) — accepted over a freeze, which the async pipeline can't tolerate. Backlog-only means a human must advance agent-split tickets even when they're obviously fine — accepted as the safe default until the depth cap + agent identity land.
+
+**Implications:** Reworks PD-207 (parts A + C build as-is — done here; part B becomes "propagate post-queue ticket edits to the linked issue", deferred behind the board redesign). Follow-on: agent ticket-creation API with server-verifiable identity + `spawned_by_ticket_id`/`agent_queue_depth` columns + the `≤ 1` queue guard. Columns are additive (D-021 migration framework). See [[D-038]] for the pipeline this serves.
+
+---
+
+## D-038: Issue pipeline is hybrid — mechanical `isSortieReady` gate + async in-run grill via `ask_human`; the heavyweight Refine sidecar (D-033) is dropped (PD-232)
+
+**Decision:** The backlog→Ready→Queued→dispatch pipeline drops the interactive **Refine sidecar** ([[D-033]], PD-172) as the refinement mechanism. Refinement instead happens in two cheaper places:
+
+- **A mechanical shape gate at Queue** — the existing Claude-free `isSortieReady(body)` validator (PD-177) warns when a ticket entering a queue lane lacks the `## Context` / `## Task` / `## Done When` / `## Out of scope` sections. This is the only *upfront* gate; it costs nothing and needs no agent.
+- **Async clarification during the run** — when the dispatched Sortie worker hits a real ambiguity it uses `ask_human` (post `### ❓ ask_human`, self-relabel `sortie:awaiting-human`, park), the human is notified (Discord, PD-6) and replies async, and the worker resumes. The grill is grounded in the *actual* task by the agent that will do the work.
+
+**Why:**
+
+- **`max_sessions` economics.** `agent.max_sessions: 3` is enforced by counting `run_history` rows, and every re-dispatch — including each `awaiting-human` resume — consumes one, with no native knob to exempt a park (only quota-fails are refunded, and only after the window resets). So async grilling spends the *expensive coding worker's* retry budget on Q&A. The mechanical gate keeps obviously-unshaped tickets from ever reaching the worker, bounding how much of that budget clarification can eat.
+- **One grilling system, not two.** Refine can't eliminate `ask_human` — a worker still hits real ambiguities mid-task — so keeping the sidecar means maintaining two grilling paths: one that *guesses* (Refine, upfront, against a prediction of the work) and one that *knows* (the worker, grounded in the real task). Collapsing to the in-run grill removes the guesswork path and a whole sidecar (SSE + clone-per-session + a second `ANTHROPIC_API_KEY` container).
+- **Fits a solo, often-AFK human.** A synchronous modal grill blocks Steve at his desk; async park + Discord ping + reply-whenever matches how the system is actually used (and works off-LAN via Tailscale, PD-34).
+
+**Trade-off:** A vague-but-`isSortieReady`-shaped ticket can still burn a coding session or two on clarification before any code lands. Accepted because the mechanical gate + a well-formed template make ≤ 1–2 rounds the common case, and the alternative (a full interactive sidecar) is materially more infra for a path the worker's own `ask_human` already has to cover. A *lightweight one-shot* "tidy into the four sections" formatter (single Claude call, not an interactive sidecar) may be added at backlog→Prioritized later if `isSortieReady` fails too often in practice — deferred until real tickets show the need.
+
+**Implications:** Supersedes [[D-033]] (Refine sidecar not built); narrows [[D-032]] (the "formatting upstream in Refine" half is dropped; the mechanical Queued poller PD-164 is unchanged). The async grill depends on making the park/resume loop **real + e2e-verified** — today the `sortie:awaiting-human` label + `sortie-ask-human.yml` re-queue Action exist on `main` but are unverified, and the dashboard only *displays* the state (it does not forward the question, notify, or offer a reply path) — and on Discord notify (PD-6). Follow-on tickets: verify park/resume e2e, Discord notify, and a board-side `ask_human` question+reply surface. The grilling step also routes each produced ticket to Steve's Queue or the Robot's Queue and sets its assignee accordingly (see the board-redesign decision). See [[D-039]] for the ticket↔issue authority model this pipeline implies.
+
+---
+
+## D-037: Deploy status uses server-start time as deploy proxy; GitHub API fetched once at startup (PD-111)
+
+**Decision:** The home page live-status bar shows: deploy time (server process start time as proxy), git SHA linked to the GitHub commit or Actions run, and the commit message. The server fetches GitHub API exactly once at startup (fire-and-forget, cached for the process lifetime) from `apps/server/src/deploy-status.ts`. The frontend reads `/api/deploy-info` once on mount — no polling.
+
+**Why server-start = deploy time:** Watchtower recreates the container whenever it sees a new `:latest` digest. That recreation = a fresh process start. So `Date.now()` at module load is effectively "when this image was deployed."
+
+**Why fetch GitHub API at server startup (not at browser load):** GitHub's unauthenticated API limit is 60 req/hr shared across the host IP. Fetching once at server startup means one request per deploy regardless of how many browser sessions load the dashboard. The server caches the result and serves it indefinitely.
+
+**Why not bake more metadata into the image:** CI/Dockerfile are off-limits per the repo's agent scope rules. `APP_VERSION` (7-char SHA) is already set by `deploy.yml`; all other metadata (commit message, Actions run URL) is derived from it via the GitHub public API at runtime.
+
+**Alternatives considered:** polling GitHub API from the browser on each page load (hits rate limit quickly on busy days), writing a `deploy.json` sidecar file at build time (requires CI change), querying the GitHub API on every `/api/deploy-info` request (redundant after the first hit).
+
+---
+
 ## D-036: `closed` is a separate terminal status from `completed` (PD-81)
 
 **Decision:** Added `'closed'` as a seventh `TicketStatus` value, distinct from `'completed'`. Closed is for manually terminating a ticket for any reason other than successful completion (cancelled, won't-fix, superseded, out-of-scope). `completed` remains the agent-set terminal state (derived from GitHub via the PD-165 poller). The `closed` lane is hidden by default but can be shown via the Lanes menu.
