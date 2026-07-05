@@ -5,6 +5,7 @@
     markNotificationRead,
     markAllNotificationsRead,
   } from '$lib/notifications-api';
+  import { refreshUnreadCount } from '$lib/notifications-store';
 
   let items = $state<AgentNotification[]>([]);
   let loading = $state(true);
@@ -29,6 +30,7 @@
       await markNotificationRead(n.id);
       items = items.map((x) => (x.id === n.id ? { ...x, readAt: Date.now() } : x));
       if (unreadOnly) items = items.filter((x) => x.id !== n.id);
+      await refreshUnreadCount(); // keep the nav bell badge in sync
     } catch {
       // navigation still proceeds
     }
@@ -42,6 +44,7 @@
         const now = Date.now();
         items = items.map((n) => ({ ...n, readAt: n.readAt ?? now }));
       }
+      await refreshUnreadCount(); // keep the nav bell badge in sync
     } catch {
       // ignore
     }

@@ -2,14 +2,9 @@
   import { onMount } from 'svelte';
   import { Bell } from 'lucide-svelte';
   import type { AgentNotification } from '@dashboard/shared';
-  import {
-    fetchNotifications,
-    fetchUnreadCount,
-    markNotificationRead,
-    markAllNotificationsRead,
-  } from './notifications-api';
+  import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from './notifications-api';
+  import { unreadCount, refreshUnreadCount } from './notifications-store';
 
-  let unread = $state(0);
   let open = $state(false);
   let items = $state<AgentNotification[]>([]);
   let loading = $state(false);
@@ -17,14 +12,6 @@
 
   // The dropdown shows only the most recent few; the full history lives at /notifications.
   const DROPDOWN_LIMIT = 10;
-
-  async function refreshCount() {
-    try {
-      unread = await fetchUnreadCount();
-    } catch {
-      // transient — leave the last known count
-    }
-  }
 
   async function loadList() {
     loading = true;
@@ -47,7 +34,7 @@
     try {
       await markNotificationRead(n.id);
       items = items.map((x) => (x.id === n.id ? { ...x, readAt: Date.now() } : x));
-      unread = Math.max(0, unread - 1);
+      await refreshUnreadCount();
     } catch {
       // ignore — navigation still proceeds
     }
@@ -58,7 +45,7 @@
       await markAllNotificationsRead();
       const now = Date.now();
       items = items.map((n) => ({ ...n, readAt: n.readAt ?? now }));
-      unread = 0;
+      await refreshUnreadCount();
     } catch {
       // ignore
     }
@@ -69,9 +56,15 @@
   }
 
   onMount(() => {
-    refreshCount();
-    const timer = setInterval(refreshCount, 60000);
-    return () => clearInterval(timer);
+    // Refresh on mount + when the tab regains focus, plus a slow poll as a backstop.
+    refreshUnreadCount();
+    const onFocus = () => refreshUnreadCount();
+    window.addEventListener('focus', onFocus);
+    const timer = setInterval(refreshUnreadCount, 60000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(timer);
+    };
   });
 </script>
 
@@ -80,14 +73,14 @@
 <div class="notif-root" bind:this={rootRef}>
   <button class="notif-bell" onclick={toggle} aria-label="Notifications" aria-expanded={open}>
     <Bell size={16} />
-    {#if unread > 0}<span class="notif-badge">{unread > 99 ? '99+' : unread}</span>{/if}
+    {#if $unreadCount > 0}<span class="notif-badge">{$unreadCount > 99 ? '99+' : $unreadCount}</span>{/if}
   </button>
 
   {#if open}
     <div class="notif-panel" role="dialog" aria-label="Notifications">
       <div class="notif-head">
         <span>Notifications</span>
-        <button class="notif-markall" onclick={markAll} disabled={unread === 0}>Mark all read</button>
+        <button class="notif-markall" onclick={markAll} disabled={$unreadCount === 0}>Mark all read</button>
       </div>
       {#if loading}
         <p class="notif-empty">Loading…</p>
