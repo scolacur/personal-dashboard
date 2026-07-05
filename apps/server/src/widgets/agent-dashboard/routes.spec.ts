@@ -340,6 +340,9 @@ describe('notifications endpoints (PD-250)', () => {
     const count = await app.inject({ method: 'GET', url: `${NBASE}/unread-count` });
     expect(count.json().count).toBe(2);
 
+    const capped = await app.inject({ method: 'GET', url: `${NBASE}?limit=1` });
+    expect(capped.json()).toHaveLength(1);
+
     const read = await app.inject({ method: 'POST', url: `${NBASE}/${n1.id}/read` });
     expect(read.statusCode).toBe(204);
 

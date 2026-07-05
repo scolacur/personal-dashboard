@@ -499,14 +499,20 @@ export function createNotification(
   return row ? rowToNotification(row) : null;
 }
 
-/** Newest first. `unreadOnly` limits to unread. */
+/** Newest first. `unreadOnly` limits to unread; `limit` caps the row count (for the
+ *  nav dropdown — the full-history page omits it). */
 export function listNotifications(
   db: Database.Database,
-  opts: { unreadOnly?: boolean } = {},
+  opts: { unreadOnly?: boolean; limit?: number } = {},
 ): AgentNotification[] {
   const where = opts.unreadOnly ? 'WHERE n.read_at IS NULL' : '';
+  // limit is coerced to a non-negative integer, so it's safe to inline.
+  const limit =
+    opts.limit != null && Number.isFinite(opts.limit)
+      ? ` LIMIT ${Math.max(0, Math.floor(opts.limit))}`
+      : '';
   const rows = db
-    .prepare(`${NOTIFICATION_SELECT} ${where} ORDER BY n.created_at DESC, n.id DESC`)
+    .prepare(`${NOTIFICATION_SELECT} ${where} ORDER BY n.created_at DESC, n.id DESC${limit}`)
     .all() as NotificationRow[];
   return rows.map(rowToNotification);
 }

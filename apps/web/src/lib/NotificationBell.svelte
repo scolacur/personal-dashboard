@@ -15,6 +15,9 @@
   let loading = $state(false);
   let rootRef = $state<HTMLElement | null>(null);
 
+  // The dropdown shows only the most recent few; the full history lives at /notifications.
+  const DROPDOWN_LIMIT = 10;
+
   async function refreshCount() {
     try {
       unread = await fetchUnreadCount();
@@ -26,7 +29,7 @@
   async function loadList() {
     loading = true;
     try {
-      items = await fetchNotifications();
+      items = await fetchNotifications({ limit: DROPDOWN_LIMIT });
     } catch {
       // leave the current list
     } finally {
@@ -113,6 +116,9 @@
           {/each}
         </ul>
       {/if}
+      <a class="notif-viewall" href="/notifications" onclick={() => (open = false)}>
+        View all notifications
+      </a>
     </div>
   {/if}
 </div>

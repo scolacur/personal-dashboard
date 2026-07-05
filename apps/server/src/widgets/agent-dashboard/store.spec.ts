@@ -338,3 +338,18 @@ describe('notifications (Notification Center, D-040)', () => {
     expect(unreadNotificationCount(db)).toBe(0);
   });
 });
+
+describe('listNotifications limit (dropdown cap)', () => {
+  it('caps the result count, newest first', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    for (let i = 0; i < 5; i++) {
+      const t = createTicket(db, { title: `t${i}`, projectId: pd });
+      createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: `n${i}` });
+    }
+    expect(listNotifications(db)).toHaveLength(5);
+    const capped = listNotifications(db, { limit: 2 });
+    expect(capped).toHaveLength(2);
+    expect(capped[0].title).toBe('n4'); // newest (highest id) first
+  });
+});

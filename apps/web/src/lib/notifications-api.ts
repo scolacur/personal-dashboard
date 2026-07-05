@@ -4,8 +4,14 @@ import type { AgentNotification } from '@dashboard/shared';
 // mounted in the app-wide top nav, not inside the task-monitor route.
 const BASE = '/api/widgets/agent-dashboard/notifications';
 
-export async function fetchNotifications(unreadOnly = false): Promise<AgentNotification[]> {
-  const res = await fetch(unreadOnly ? `${BASE}?unread=1` : BASE);
+export async function fetchNotifications(
+  opts: { unreadOnly?: boolean; limit?: number } = {},
+): Promise<AgentNotification[]> {
+  const params = new URLSearchParams();
+  if (opts.unreadOnly) params.set('unread', '1');
+  if (opts.limit != null) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  const res = await fetch(qs ? `${BASE}?${qs}` : BASE);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<AgentNotification[]>;
 }

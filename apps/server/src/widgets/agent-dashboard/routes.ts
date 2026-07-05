@@ -251,10 +251,13 @@ export function registerRoutes(
 
   /* ── Notifications (Notification Center, D-040) ─────────────── */
 
-  // List notifications, newest first. `?unread=1` limits to unread.
+  // List notifications, newest first. `?unread=1` limits to unread; `?limit=N` caps the
+  // count (the nav dropdown passes limit=10; the full-history page omits it).
   app.get(`${base}/notifications`, async (request) => {
-    const q = request.query as { unread?: string };
-    return listNotifications(db, { unreadOnly: q.unread === '1' || q.unread === 'true' });
+    const q = request.query as { unread?: string; limit?: string };
+    const parsed = q.limit != null ? Number(q.limit) : NaN;
+    const limit = Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+    return listNotifications(db, { unreadOnly: q.unread === '1' || q.unread === 'true', limit });
   });
 
   // Unread count — cheap poll for the nav bell badge.
