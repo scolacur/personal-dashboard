@@ -1,0 +1,20 @@
+.page-head {
+  margin-bottom: var(--space-lg);
+}
+
+.page-desc {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.page-empty {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-md);
+}
