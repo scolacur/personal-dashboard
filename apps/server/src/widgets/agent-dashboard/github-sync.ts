@@ -1,7 +1,14 @@
 import type Database from 'better-sqlite3';
 import type { AgentState, TicketAssignee, TicketStatus } from '@dashboard/shared';
 import type { CronLogger, CronRegistry } from '../../cron';
-import { applyDerivedState, listQueuedIssueTargets, listSyncTargets, updateTicket } from './store';
+import {
+  applyDerivedState,
+  createNotification,
+  getTicket,
+  listQueuedIssueTargets,
+  listSyncTargets,
+  updateTicket,
+} from './store';
 
 // PD-165: derive board status + agent state from a linked issue's `sortie:*` labels
 // by polling GitHub (D-020: labels are the state machine, not the Sortie :7678 API).
@@ -118,6 +125,29 @@ export async function runGithubSync({ db, token, log, fetchImpl = fetch }: Githu
           `github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> ${derived.status}/${derived.agentState ?? '-'}`,
         );
       }
+      // PD-250 Notification Center: when the ticket NEWLY enters an attention state
+      // (awaiting-human / needs-human), surface a notification with the agent's question.
+      // `t.agentState` is the pre-poll value, so this fires once per park (dedup in the
+      // store backstops it). Best-effort — the status write above has already landed.
+      const parkedKind =
+        derived?.agentState === 'awaiting-human'
+          ? 'agent_awaiting_human'
+          : derived?.agentState === 'needs-human'
+            ? 'agent_needs_human'
+            : null;
+      if (parkedKind && t.agentState !== derived!.agentState) {
+        const ticket = getTicket(db, t.id);
+        const question = await fetchLatestAskHuman(t.githubRepo, t.githubIssueNumber, token, fetchImpl);
+        const created = createNotification(db, {
+          kind: parkedKind,
+          ticketId: t.id,
+          title: `${ticket?.displayId ?? `#${t.githubIssueNumber}`} — agent needs you`,
+          body: question ?? 'The agent paused and needs your input. Open the ticket to reply.',
+        });
+        if (created) {
+          log.info(`github-sync: ${t.githubRepo}#${t.githubIssueNumber} -> notification (${parkedKind})`);
+        }
+      }
     } catch (err) {
       log.error(
         `github-sync: ${t.githubRepo}#${t.githubIssueNumber} failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -135,6 +165,60 @@ function ghHeaders(token: string, json = false): Record<string, string> {
   };
   if (json) h['Content-Type'] = 'application/json';
   return h;
+}
+
+/**
+ * Post a comment on an issue via the write token (PD-250 inline reply). Returns whether
+ * GitHub accepted it — best-effort at the call site. The caller adds the
+ * `<!-- sortie:human-reply -->` marker so the sortie-ask-human Action (PD-133) re-queues.
+ */
+export async function postIssueComment(
+  repo: string,
+  issueNumber: number,
+  body: string,
+  token: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  const res = await fetchImpl(`https://api.github.com/repos/${repo}/issues/${issueNumber}/comments`, {
+    method: 'POST',
+    headers: ghHeaders(token, true),
+    body: JSON.stringify({ body }),
+  });
+  return res.ok;
+}
+
+/** The marker line the agent's ask_human question opens with (WORKFLOW.md). */
+const ASK_HUMAN_MARKER = '### ❓ ask_human';
+
+/**
+ * Best-effort: fetch an issue's comments and return the latest `### ❓ ask_human`
+ * question body (with the marker line stripped). Returns null on any failure or when no
+ * such comment exists — the caller falls back to a generic notification body.
+ */
+async function fetchLatestAskHuman(
+  repo: string,
+  issueNumber: number,
+  token: string,
+  fetchImpl: typeof fetch,
+): Promise<string | null> {
+  try {
+    const res = await fetchImpl(
+      `https://api.github.com/repos/${repo}/issues/${issueNumber}/comments?per_page=100`,
+      { headers: ghHeaders(token) },
+    );
+    if (!res.ok) return null;
+    const comments = (await res.json()) as { body?: string }[];
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const body = comments[i]?.body ?? '';
+      if (body.startsWith(ASK_HUMAN_MARKER)) {
+        const stripped = body.slice(ASK_HUMAN_MARKER.length).trim();
+        return stripped || body.trim();
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // The `sortie:*` labels that keep an issue in Sortie's `query_filter` (WORKFLOW.md) and

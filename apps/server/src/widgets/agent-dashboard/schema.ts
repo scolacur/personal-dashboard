@@ -93,6 +93,21 @@ export function bootstrapSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_ticket_reminders_due
       ON agent_ticket_reminders (remind_at) WHERE sent_at IS NULL;
+
+    -- Notification Center (D-040): in-app inbox. MVP source is the agent-park poller
+    -- (awaiting-human / needs-human); widget notifications plug in later. A brand-new
+    -- table, so CREATE IF NOT EXISTS covers both fresh and existing DBs (no migrate step).
+    CREATE TABLE IF NOT EXISTS agent_notifications (
+      id         INTEGER PRIMARY KEY,
+      kind       TEXT    NOT NULL,                   -- NotificationKind (agent_awaiting_human, …)
+      ticket_id  INTEGER REFERENCES agent_tickets(id) ON DELETE CASCADE,  -- null = not ticket-scoped
+      title      TEXT    NOT NULL,
+      body       TEXT,                               -- e.g. the agent's ask_human question
+      read_at    INTEGER,                            -- NULL = unread
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_notifications_unread
+      ON agent_notifications (read_at, created_at);
   `);
 
   // Bring pre-existing tables (older dev DBs) up to the current schema. Each is a
