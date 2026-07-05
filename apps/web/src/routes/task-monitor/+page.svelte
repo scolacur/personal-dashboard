@@ -52,6 +52,7 @@
   let hiddenLanes = $state(loadHiddenLanes());
   let laneMenuOpen = $state(false);
   let laneMenuRef = $state<HTMLElement | null>(null);
+  let searchInputRef = $state<HTMLInputElement | null>(null);
 
   function toggleLane(status: TicketStatus) {
     if (hiddenLanes.has(status)) {
@@ -65,6 +66,18 @@
   function handleWindowClick(e: MouseEvent) {
     if (laneMenuOpen && laneMenuRef && !laneMenuRef.contains(e.target as Node)) {
       laneMenuOpen = false;
+    }
+  }
+
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.metaKey && e.key === 'k' && !formOpen && !legendOpen) {
+      e.preventDefault();
+      if (document.activeElement === searchInputRef) {
+        searchInputRef?.blur();
+      } else {
+        searchInputRef?.focus();
+        searchInputRef?.select();
+      }
     }
   }
 
@@ -170,11 +183,13 @@
   onMount(() => {
     load();
     window.addEventListener('click', handleWindowClick);
+    window.addEventListener('keydown', handleWindowKeydown);
     // Auto-refresh every 30 s so GitHub label changes (synced server-side every minute)
     // are reflected on the board without requiring a manual page reload.
     const refreshTimer = setInterval(() => load(true), 30_000);
     return () => {
       window.removeEventListener('click', handleWindowClick);
+      window.removeEventListener('keydown', handleWindowKeydown);
       clearInterval(refreshTimer);
     };
   });
@@ -433,7 +448,8 @@
     <h2 class="section-title">Tickets</h2>
     <label class="ticket-search">
       <span class="sr-label">Search tickets</span>
-      <input type="search" bind:value={search} placeholder="Search tickets…" />
+      <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
+      <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
     </label>
     <label class="project-filter">
       <span class="sr-label">Project</span>

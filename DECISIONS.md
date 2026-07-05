@@ -6,6 +6,16 @@ Newest decisions at the top.
 
 ---
 
+## D-041: Cmd+K shortcut uses metaKey-only (no Ctrl+K fallback) and toggles search focus (PD-126)
+
+**Decision:** The `⌘K` keyboard shortcut on the Task Monitor board only checks `e.metaKey` (Mac Command key), not `e.ctrlKey`. Focus is toggled: pressing again while the search is focused blurs it.
+
+**Reasoning:** The issue specifies "Mac(Command)+K". Ctrl+K is used by browsers on some platforms to focus the URL/search bar, so adding a Ctrl+K fallback could interfere. The toggle behavior (focus → blur on second press) is standard command-palette UX and avoids a second shortcut to dismiss.
+
+**Alternative:** Support `metaKey || ctrlKey` to cover Linux/Windows. Rejected for now since this is a personal Mac-only dashboard.
+
+---
+
 ## D-040: Agent + widget notifications go through a dashboard-native Notification Center with a pluggable delivery transport; web push is primary, Discord is demoted to an optional adapter (PD-6, PD-142, PD-242, PD-243)
 
 **Decision:** Notifications — agent `ask_human`/`needs-human` parks, PR-ready pings, reminders, and per-widget alerts — are handled by **two layers**, not a Discord integration:
