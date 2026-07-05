@@ -626,19 +626,45 @@
   border: 1px solid;
   white-space: nowrap;
 
-  &.agent-state-info {
-    color: #1d76db;
+  // Per-state colours (D-040 pills each carry their own hue).
+  &.agent-state-queued {
+    color: #1d76db; // blue
     border-color: #1d76db;
   }
 
-  &.agent-state-attention {
-    color: #d97706;
-    border-color: #d97706;
+  &.agent-state-working {
+    color: #b08800; // yellow
+    border-color: #b08800;
+  }
+
+  &.agent-state-in-review {
+    color: #8250df; // purple
+    border-color: #8250df;
+  }
+
+  &.agent-state-stuck {
+    color: #cf222e; // red
+    border-color: #cf222e;
+  }
+
+  &.agent-state-needs-human {
+    color: #c2410c; // dark orange
+    border-color: #c2410c;
+  }
+
+  &.agent-state-awaiting-human {
+    color: #f59e0b; // light orange
+    border-color: #f59e0b;
   }
 
   &.agent-state-wontfix {
-    color: var(--muted);
+    color: var(--muted); // gray
     border-color: var(--border);
+  }
+
+  &.agent-state-done {
+    color: #1a7f37; // green
+    border-color: #1a7f37;
   }
 }
 

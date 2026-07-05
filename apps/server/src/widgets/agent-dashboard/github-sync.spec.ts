@@ -40,7 +40,14 @@ describe('deriveState', () => {
       agentState: 'awaiting-human',
       assignee: 'robot',
     });
-    expect(deriveState(['sortie:done'], 'open')).toEqual({ status: 'completed', agentState: null });
+  });
+
+  it('maps sortie:done to completed with a `done` agentState (green pill), open or closed', () => {
+    // Terminal, but keeps agentState 'done' so the card shows a green pill. The closed
+    // case must be checked before the generic closed→completed fallback (done issues are
+    // usually closed on GitHub) — otherwise the agentState would be stripped to null.
+    expect(deriveState(['sortie:done'], 'open')).toEqual({ status: 'completed', agentState: 'done' });
+    expect(deriveState(['sortie:done'], 'closed')).toEqual({ status: 'completed', agentState: 'done' });
   });
 
   it('is case-insensitive on label names', () => {
