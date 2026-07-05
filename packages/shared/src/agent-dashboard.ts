@@ -39,7 +39,9 @@ export type TicketPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
 // sortie:* label maps to the single `robot_queue` status, so `agentState` is what
 // distinguishes them on the card (rendered as a status pill). Only 'working' drives the
 // active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are paused-need-attention;
-// 'queued'/'in-review' are informational. `null` = no agent state (manual / not worked).
+// 'queued'/'in-review' are informational; 'done' is terminal (the ticket sits in the
+// `completed` lane but keeps a green pill so a Sortie-completed issue is distinguishable
+// from a manually-closed one). `null` = no agent state (manual / not worked).
 export type AgentState =
   | 'queued'
   | 'working'
@@ -47,7 +49,8 @@ export type AgentState =
   | 'stuck'
   | 'needs-human'
   | 'awaiting-human'
-  | 'wontfix';
+  | 'wontfix'
+  | 'done';
 
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',

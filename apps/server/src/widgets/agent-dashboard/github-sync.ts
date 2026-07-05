@@ -28,7 +28,6 @@ const LABEL_RULES: readonly { label: string; status: TicketStatus; agentState: A
   { label: 'sortie:in-review', status: 'robot_queue', agentState: 'in-review' },
   { label: 'sortie:in-progress', status: 'robot_queue', agentState: 'working', assignee: 'robot' },
   { label: 'sortie:queued', status: 'robot_queue', agentState: 'queued', assignee: 'robot' },
-  { label: 'sortie:done', status: 'completed', agentState: null },
 ] as const;
 
 /**
@@ -41,6 +40,11 @@ export function deriveState(labels: string[], issueState: 'open' | 'closed'): De
   // whether the GitHub issue is still open or already closed — checked before the
   // generic closed→completed fallback so it is never swallowed by it.
   if (set.has('sortie:wontfix')) return { status: 'closed', agentState: null };
+  // sortie:done is terminal → the `completed` lane, but keeps the 'done' agentState so the
+  // card shows a green "done" pill. Checked before the generic closed→completed fallback
+  // because a Sortie-completed issue is usually ALSO closed on GitHub; without this the
+  // closed branch below would strip the agentState to null and the pill would vanish.
+  if (set.has('sortie:done')) return { status: 'completed', agentState: 'done' };
   // Closed is terminal and authoritative: a closed issue is completed regardless of
   // any stale non-terminal label still hanging on it (e.g. an issue closed while it
   // still wore sortie:in-review). Checked before LABEL_RULES so stale labels can't
