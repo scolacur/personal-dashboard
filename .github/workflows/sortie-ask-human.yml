@@ -11,10 +11,17 @@
 # phase only adds an INPUT ADAPTER (a Discord bot that posts the human's Discord reply as a
 # GitHub comment) — it triggers this exact same workflow, so detection stays unified here.
 #
-# AUTHORIZATION / LOOP SAFETY: only the repo owner's comment triggers a re-queue, and only
-# when the issue is currently in sortie:awaiting-human. The agent's own `### ❓ ask_human`
-# question is authored by the bot (sortie-bot-55), so it never triggers this. The
-# confirmation comment below is authored by github-actions, also not the owner — so no loop.
+# AUTHORIZATION / LOOP SAFETY: a re-queue fires only on an issue currently in
+# sortie:awaiting-human, and only from a TRUSTED reply that is not the agent's own question:
+#   - the repo OWNER (scolacur) commenting directly on GitHub, OR
+#   - a COLLABORATOR (the dashboard/Discord bot forwarding a human's reply) whose comment
+#     carries the marker `<!-- sortie:human-reply -->`.
+# We gate on author_association rather than a hardcoded login, so this works whichever
+# account GITHUB_WRITE_TOKEN posts as (D-040 Notification Center: the inline-reply endpoint
+# posts the forwarded reply WITH that marker). The agent's own `### ❓ ask_human` question is
+# excluded by the startsWith check; the github-actions confirmation below is neither OWNER nor
+# COLLABORATOR and carries no marker — so neither can loop. A stranger's comment on the public
+# repo is author_association NONE, so it can't trigger a re-queue even if it copies the marker.
 
 name: sortie-ask-human
 
@@ -33,12 +40,18 @@ concurrency:
 
 jobs:
   resume:
-    # Fire ONLY when the human owner replies on an issue Sortie parked awaiting an answer.
-    # github.event.issue.labels is present on issue_comment payloads, so we can gate cheaply
-    # here without an API call. (Owner login is hardcoded — single-maintainer repo.)
+    # Fire only on an awaiting-human issue, for a trusted reply that is NOT the agent's own
+    # ask_human question. issue.labels + comment.author_association are on the issue_comment
+    # payload, so this gates cheaply with no API call. OWNER = scolacur replying directly;
+    # COLLABORATOR + marker = a dashboard/Discord-forwarded human reply.
     if: >-
-      github.event.comment.user.login == 'scolacur' &&
-      contains(github.event.issue.labels.*.name, 'sortie:awaiting-human')
+      contains(github.event.issue.labels.*.name, 'sortie:awaiting-human') &&
+      !startsWith(github.event.comment.body, '### ❓ ask_human') &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        (github.event.comment.author_association == 'COLLABORATOR' &&
+          contains(github.event.comment.body, '<!-- sortie:human-reply -->'))
+      )
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}

@@ -3,10 +3,15 @@ import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import {
   archiveTicket,
+  createNotification,
   createTicket,
   getProjectBySlug,
+  listNotifications,
   listProjects,
   listTickets,
+  markAllNotificationsRead,
+  markNotificationRead,
+  unreadNotificationCount,
   updateTicket,
 } from './store';
 
@@ -256,5 +261,95 @@ describe('activity log', () => {
       .all(t.id) as { type: string; detail: string | null }[];
     expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
     expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'prioritized' });
+  });
+});
+
+describe('notifications (Notification Center, D-040)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('creates a notification and resolves the ticket display id', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    const n = createNotification(db, {
+      kind: 'agent_awaiting_human',
+      ticketId: t.id,
+      title: 'needs you',
+      body: 'Which color?',
+    });
+    expect(n).not.toBeNull();
+    expect(n!.ticketDisplayId).toBe(t.displayId);
+    expect(n!.body).toBe('Which color?');
+    expect(n!.readAt).toBeNull();
+    expect(unreadNotificationCount(db)).toBe(1);
+  });
+
+  it('dedups an unread notification of the same ticket+kind, but allows a different kind', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'a' })).not.toBeNull();
+    expect(createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'b' })).toBeNull();
+    expect(unreadNotificationCount(db)).toBe(1);
+    expect(createNotification(db, { kind: 'agent_needs_human', ticketId: t.id, title: 'c' })).not.toBeNull();
+    expect(unreadNotificationCount(db)).toBe(2);
+  });
+
+  it('allows a new notification of the same kind once the prior one is read', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    const n = createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'a' })!;
+    markNotificationRead(db, n.id);
+    expect(createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'b' })).not.toBeNull();
+  });
+
+  it('lists newest first and filters unread', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    const a = createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'a' })!;
+    const t2 = createTicket(db, { title: 'y', projectId: pd });
+    createNotification(db, { kind: 'agent_needs_human', ticketId: t2.id, title: 'b' });
+    markNotificationRead(db, a.id);
+    expect(listNotifications(db)).toHaveLength(2);
+    const unread = listNotifications(db, { unreadOnly: true });
+    expect(unread).toHaveLength(1);
+    expect(unread[0].title).toBe('b');
+  });
+
+  it('markAll flips all unread and returns the count', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'a' });
+    createNotification(db, { kind: 'agent_needs_human', ticketId: t.id, title: 'b' });
+    expect(markAllNotificationsRead(db)).toBe(2);
+    expect(unreadNotificationCount(db)).toBe(0);
+  });
+
+  it('markNotificationRead is idempotent and returns false for a missing id', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    const n = createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'a' })!;
+    expect(markNotificationRead(db, n.id)).toBe(true);
+    expect(markNotificationRead(db, n.id)).toBe(true); // already read → still true (row exists)
+    expect(markNotificationRead(db, 9999)).toBe(false);
+  });
+
+  it('cascades on ticket hard-delete (FK ON DELETE CASCADE)', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'a' });
+    db.prepare('DELETE FROM agent_tickets WHERE id = ?').run(t.id);
+    expect(unreadNotificationCount(db)).toBe(0);
+  });
+});
+
+describe('listNotifications limit (dropdown cap)', () => {
+  it('caps the result count, newest first', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+    for (let i = 0; i < 5; i++) {
+      const t = createTicket(db, { title: `t${i}`, projectId: pd });
+      createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: `n${i}` });
+    }
+    expect(listNotifications(db)).toHaveLength(5);
+    const capped = listNotifications(db, { limit: 2 });
+    expect(capped).toHaveLength(2);
+    expect(capped[0].title).toBe('n4'); // newest (highest id) first
   });
 });

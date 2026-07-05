@@ -2,8 +2,11 @@
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
   import { Sun, Moon } from 'lucide-svelte';
+  import { page } from '$app/state';
   import SideNav from '$lib/SideNav.svelte';
+  import NotificationBell from '$lib/NotificationBell.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
+  import { resolvePageTitle } from '$lib/nav-utils';
 
   let { children }: { children: Snippet } = $props();
 
@@ -15,6 +18,8 @@
   // Mobile-only: the side nav slides in as a drawer. Always false on desktop
   // where the rail is permanently visible (the toggle button is hidden there).
   let drawerOpen = $state(false);
+
+  const currentPageTitle = $derived(resolvePageTitle(page.url.pathname));
 
   onMount(() => {
     const t = document.documentElement.getAttribute('data-theme');
@@ -53,11 +58,12 @@
       <button class="nav-menu-btn" onclick={openDrawer} aria-label="Open navigation menu">
         <YinYang size={22} />
       </button>
-      <a href="/" class="nav-brand">Dashboard</a>
+      <a href="/" class="nav-brand">{currentPageTitle}</a>
       {#if isDev}
         <span class="env-badge" title="Local development — not production">DEV</span>
       {/if}
       <div class="nav-spacer"></div>
+      <NotificationBell />
       <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
         {#if theme === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
       </button>

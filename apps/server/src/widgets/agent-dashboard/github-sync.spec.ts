@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { createTicket, getProjectBySlug, getTicket, updateTicket } from './store';
+import { createTicket, getProjectBySlug, getTicket, listNotifications, updateTicket } from './store';
 import { closeIssueNotPlanned, deriveState, runGithubSync, runQueuedSync } from './github-sync';
 
 const noopLog = { info() {}, error() {} };
@@ -40,7 +40,14 @@ describe('deriveState', () => {
       agentState: 'awaiting-human',
       assignee: 'robot',
     });
-    expect(deriveState(['sortie:done'], 'open')).toEqual({ status: 'completed', agentState: null });
+  });
+
+  it('maps sortie:done to completed with a `done` agentState (green pill), open or closed', () => {
+    // Terminal, but keeps agentState 'done' so the card shows a green pill. The closed
+    // case must be checked before the generic closed→completed fallback (done issues are
+    // usually closed on GitHub) — otherwise the agentState would be stripped to null.
+    expect(deriveState(['sortie:done'], 'open')).toEqual({ status: 'completed', agentState: 'done' });
+    expect(deriveState(['sortie:done'], 'closed')).toEqual({ status: 'completed', agentState: 'done' });
   });
 
   it('is case-insensitive on label names', () => {
@@ -385,5 +392,63 @@ describe('closeIssueNotPlanned (PD-207 A)', () => {
     const { impl } = closeFetch({ labels: ['sortie:queued'], patchOk: false });
 
     expect(await closeIssueNotPlanned('o/r', 11, 'wtok', impl)).toBe(false);
+  });
+});
+
+describe('runGithubSync — park notifications (PD-250)', () => {
+  // Distinguishes the issue GET (labels) from the comments GET (ask_human question).
+  function parkFetch(question: string | null): typeof fetch {
+    return (async (url: string) => {
+      if (/\/comments/.test(url)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (question === null ? [] : [{ body: `### ❓ ask_human\n\n${question}` }]),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ state: 'open', labels: [{ name: 'sortie:awaiting-human' }] }),
+      };
+    }) as unknown as typeof fetch;
+  }
+
+  it('creates a notification with the ask_human question when a ticket newly parks', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'parking', projectId: pdProjectId(db), status: 'robot_queue' });
+    updateTicket(db, t.id, { githubIssueNumber: 80, githubIssueUrl: 'https://x/80' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: parkFetch('Which color — blue or green?') });
+
+    const notes = listNotifications(db);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].kind).toBe('agent_awaiting_human');
+    expect(notes[0].ticketId).toBe(t.id);
+    expect(notes[0].body).toBe('Which color — blue or green?');
+  });
+
+  it('does not create a second notification while still parked (dedup across polls)', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'parking', projectId: pdProjectId(db), status: 'robot_queue' });
+    updateTicket(db, t.id, { githubIssueNumber: 81, githubIssueUrl: 'https://x/81' });
+    const impl = parkFetch('Q?');
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: impl });
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: impl });
+
+    expect(listNotifications(db)).toHaveLength(1);
+  });
+
+  it('falls back to a generic body when no ask_human comment is found', async () => {
+    const db = freshDb();
+    const t = createTicket(db, { title: 'parking', projectId: pdProjectId(db), status: 'robot_queue' });
+    updateTicket(db, t.id, { githubIssueNumber: 82, githubIssueUrl: 'https://x/82' });
+
+    await runGithubSync({ db, token: 'tok', log: noopLog, fetchImpl: parkFetch(null) });
+
+    const notes = listNotifications(db);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].body).toContain('needs your input');
   });
 });

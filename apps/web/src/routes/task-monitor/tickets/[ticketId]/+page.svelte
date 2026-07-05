@@ -55,6 +55,30 @@
   function fmt(ts: number): string {
     return new Date(ts).toLocaleString();
   }
+
+  // PD-250 inline reply: shown when the agent has parked for input on a linked issue.
+  let replyText = $state('');
+  let replying = $state(false);
+  let replyMsg = $state<string | null>(null);
+
+  const isParked = $derived(
+    ticket?.agentState === 'awaiting-human' || ticket?.agentState === 'needs-human',
+  );
+
+  async function submitReply() {
+    if (!ticket || !replyText.trim()) return;
+    replying = true;
+    replyMsg = null;
+    try {
+      await api.replyToTicket(ticket.id, replyText.trim());
+      replyMsg = 'Reply sent — the agent will resume shortly.';
+      replyText = '';
+    } catch (e) {
+      replyMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      replying = false;
+    }
+  }
 </script>
 
 <nav class="detail-nav">
@@ -100,6 +124,28 @@
           >GitHub issue #{ticket.githubIssueNumber}</a
         >
       </p>
+    {/if}
+
+    {#if isParked && ticket.githubIssueNumber}
+      <section class="reply-box">
+        <h2>Reply to the agent</h2>
+        <p class="muted">
+          The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
+          reply is posted to the issue and re-queues it.
+        </p>
+        <textarea
+          bind:value={replyText}
+          rows="4"
+          placeholder="Type your answer…"
+          disabled={replying}
+        ></textarea>
+        <div class="reply-actions">
+          <button onclick={submitReply} disabled={replying || !replyText.trim()}>
+            {replying ? 'Sending…' : 'Send reply'}
+          </button>
+          {#if replyMsg}<span class="reply-msg">{replyMsg}</span>{/if}
+        </div>
+      </section>
     {/if}
 
     <dl class="detail-meta">

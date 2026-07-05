@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import DeployStatus from '../DeployStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
@@ -73,7 +74,7 @@
   const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
 
   // The card pill for a Robot's-Queue ticket: agentState carries the fine sortie:* state
-  // (D-040). Display label + which visual group it belongs to.
+  // (D-040). Display label + per-state colour class.
   const AGENT_STATE_LABELS: Record<AgentState, string> = {
     queued: 'queued',
     working: 'in progress',
@@ -82,11 +83,13 @@
     'needs-human': 'needs human',
     'awaiting-human': 'awaiting human',
     wontfix: 'wontfix',
+    done: 'done',
   };
+  // Each state gets its own colour (see .agent-state-badge in +page.scss):
+  // queued=blue, working=yellow, in-review=purple, stuck=red, needs-human=dark orange,
+  // awaiting-human=light orange, wontfix=gray, done=green.
   function agentStateClass(s: AgentState): string {
-    if (s === 'stuck' || s === 'needs-human' || s === 'awaiting-human') return 'agent-state-attention';
-    if (s === 'wontfix') return 'agent-state-wontfix';
-    return 'agent-state-info'; // queued / working / in-review
+    return `agent-state-${s}`;
   }
   function isStatusLocked(t: AgentTicket): boolean {
     return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
@@ -423,9 +426,7 @@
   }
 </script>
 
-<header class="page-head">
-  <h1>Task Monitor</h1>
-</header>
+<DeployStatus />
 
 <section class="tickets-section">
   <div class="section-head">

@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes, type AgentDashboardRouteDeps } from './routes';
-import { getProjectBySlug } from './store';
+import { createNotification, getProjectBySlug } from './store';
 
 function freshSetup(deps?: AgentDashboardRouteDeps) {
   const db = new Database(':memory:');
@@ -315,5 +315,146 @@ describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (P
     const del = await app.inject({ method: 'DELETE', url: '/api/widgets/agent-dashboard/tickets/99999' });
     expect(del.statusCode).toBe(404);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('notifications endpoints (PD-250)', () => {
+  const NBASE = '/api/widgets/agent-dashboard/notifications';
+
+  it('lists notifications, filters unread, and reports the unread count', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const t = db
+      .prepare(
+        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','robot_queue','none',?, 'manual', 1, 1)",
+      )
+      .run(pid);
+    const ticketId = Number(t.lastInsertRowid);
+    const n1 = createNotification(db, { kind: 'agent_awaiting_human', ticketId, title: 'a' })!;
+    createNotification(db, { kind: 'agent_needs_human', ticketId, title: 'b' });
+
+    const all = await app.inject({ method: 'GET', url: NBASE });
+    expect(all.json()).toHaveLength(2);
+    expect(all.json()[0].title).toBe('b'); // newest first
+
+    const count = await app.inject({ method: 'GET', url: `${NBASE}/unread-count` });
+    expect(count.json().count).toBe(2);
+
+    const capped = await app.inject({ method: 'GET', url: `${NBASE}?limit=1` });
+    expect(capped.json()).toHaveLength(1);
+
+    const read = await app.inject({ method: 'POST', url: `${NBASE}/${n1.id}/read` });
+    expect(read.statusCode).toBe(204);
+
+    const unread = await app.inject({ method: 'GET', url: `${NBASE}?unread=1` });
+    expect(unread.json()).toHaveLength(1);
+    expect(unread.json()[0].title).toBe('b');
+  });
+
+  it('404s marking a missing notification read; read-all reports the count', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const t = db
+      .prepare(
+        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','robot_queue','none',?, 'manual', 1, 1)",
+      )
+      .run(pid);
+    createNotification(db, { kind: 'agent_awaiting_human', ticketId: Number(t.lastInsertRowid), title: 'a' });
+
+    const missing = await app.inject({ method: 'POST', url: `${NBASE}/9999/read` });
+    expect(missing.statusCode).toBe(404);
+
+    const all = await app.inject({ method: 'POST', url: `${NBASE}/read-all` });
+    expect(all.json().marked).toBe(1);
+  });
+});
+
+describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
+  async function linkedTicket(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, issue: number) {
+    const pid = projectId(db, 'personal-dashboard');
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'parked', projectId: pid },
+    });
+    const id: number = create.json().id;
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      payload: { githubIssueNumber: issue, githubIssueUrl: `https://x/${issue}` },
+    });
+    return id;
+  }
+
+  it('posts a marked comment via the write token and returns 201', async () => {
+    const { impl, calls } = recordingFetch('ok');
+    const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
+    const id = await linkedTicket(app, db, 55);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      payload: { body: 'go with blue' },
+    });
+    expect(res.statusCode).toBe(201);
+    const post = calls.find((c) => c.method === 'POST' && /\/issues\/55\/comments$/.test(c.url));
+    expect(post).toBeDefined();
+    expect((post!.body as { body: string }).body).toContain('go with blue');
+    expect((post!.body as { body: string }).body).toContain('<!-- sortie:human-reply -->');
+  });
+
+  it('rejects an empty body with 400', async () => {
+    const { impl } = recordingFetch('ok');
+    const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
+    const id = await linkedTicket(app, db, 56);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      payload: { body: '   ' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('409s when the ticket has no linked issue', async () => {
+    const { impl } = recordingFetch('ok');
+    const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
+    const pid = projectId(db, 'personal-dashboard');
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/agent-dashboard/tickets',
+      payload: { title: 'unlinked', projectId: pid },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/agent-dashboard/tickets/${create.json().id}/reply`,
+      payload: { body: 'hi' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('NO_LINKED_ISSUE');
+  });
+
+  it('503s when no write token is configured', async () => {
+    const { impl } = recordingFetch('ok');
+    const { app, db } = freshSetup({ fetchImpl: impl }); // no token
+    const id = await linkedTicket(app, db, 57);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      payload: { body: 'hi' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().code).toBe('NO_WRITE_TOKEN');
+  });
+
+  it('502s when GitHub rejects the comment', async () => {
+    const { impl } = recordingFetch('notok');
+    const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
+    const id = await linkedTicket(app, db, 58);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      payload: { body: 'hi' },
+    });
+    expect(res.statusCode).toBe(502);
   });
 });

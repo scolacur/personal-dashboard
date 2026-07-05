@@ -10,6 +10,8 @@ export type {
   UpdateTicketInput,
   AgentProject,
   CreateProjectInput,
+  NotificationKind,
+  AgentNotification,
 } from './agent-dashboard';
 export {
   TICKET_STATUSES,
@@ -19,4 +21,6 @@ export {
   TICKET_ASSIGNEES,
   ASSIGNEE_LABELS,
   isSortieReady,
+  NOTIFICATION_KINDS,
+  HUMAN_REPLY_MARKER,
 } from './agent-dashboard';
