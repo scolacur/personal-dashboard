@@ -267,6 +267,52 @@ describe('processPendingRefines (orchestration)', () => {
     const count = db.prepare('SELECT COUNT(*) AS c FROM agent_notifications').get() as { c: number };
     expect(count.c).toBe(1); // first is still unread → deduped
   });
+
+  it('recovers from a stale resume session by retrying fresh (survives a rebuild)', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'the body' });
+    addEvent(db, 1, REFINE_EVENT_TYPE.agent, { text: 'earlier plan', sessionId: 'sess-DEAD' });
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'a follow-up' });
+
+    // A session that fails a resume (dead sessionId) but succeeds when opened fresh.
+    const opens: OpenSessionInput[] = [];
+    const open: OpenGrillSession = (input) => {
+      opens.push(input);
+      return {
+        get sessionId() {
+          return input.resumeSessionId ? 'sess-DEAD' : 'sess-NEW';
+        },
+        lastUsedAt: Date.now(),
+        async send(prompt: string): Promise<GrillTurnResult> {
+          if (input.resumeSessionId) {
+            return {
+              text: `No conversation found with session ID: ${input.resumeSessionId}`,
+              ok: false,
+              sessionId: input.resumeSessionId,
+            };
+          }
+          // Fresh session gets the full-thread replay (must include earlier turns).
+          expect(prompt).toContain('earlier plan');
+          expect(prompt).toContain('a follow-up');
+          return { text: 'fresh grounded plan', ok: true, sessionId: 'sess-NEW' };
+        },
+        async close() {},
+      };
+    };
+
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(open),
+      buildContext: noContext,
+      now: () => ++seq,
+    });
+
+    expect(handled).toBe(1);
+    // Opened twice: once resuming the dead id, then fresh (no resume).
+    expect(opens.map((o) => o.resumeSessionId)).toEqual(['sess-DEAD', undefined]);
+    const agentTurns = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
+    expect((agentTurns.at(-1)?.detail as { text: string }).text).toBe('fresh grounded plan');
+    expect((agentTurns.at(-1)?.detail as { sessionId: string }).sessionId).toBe('sess-NEW');
+  });
 });
 
 describe('WarmSessions', () => {
