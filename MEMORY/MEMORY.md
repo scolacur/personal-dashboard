@@ -4,6 +4,7 @@ One line per day. Load today's and yesterday's files at session start.
 
 **Index rule:** one line per day, a single sentence, ≤ ~200 chars, navigational only — points at the day file, never summarizes it. Detail lives in the day file; durable decisions in `DECISIONS.md`. (Governed by `~/.claude/commands/wrap-up.md` Step 5.)
 
+- [2026-07-06](2026-07-06.md) — PD-281 Ticket Audit grilled → **D-045** (autonomous agent-worker job; amends D-044: Refine from backlog+prioritized, griller→agent-worker); sliced PD-282–289 (P2), docs PR #161; dogfood audit run (206 tickets); prod API base is `task-monitor` not `agent-dashboard`.
 - [2026-07-05](2026-07-05.md) — PD-252 board hard-refresh fixed (on-demand GitHub sync, D-043); PD-256 Sortie review re-work fixed (`sortie-review-rework.yml` bridge, PR #143, D-042); grill auto-routing → **D-044** + epic PD-264 / slices PD-265–269; PD-265/266 shipped (PR #149/#150 merged), PD-267 started; NAS live-diag notes.
 - [2026-07-04](2026-07-04.md) — PD-235 shell scaffold shipped (side nav + mobile yin-yang drawer, 8 page & 14 widget stubs, Widget flip-button fix, hello removed); gotcha: `vite dev` in a worktree 403s the client entry → no hydration, fix is `npm install` in the worktree.
 - [2026-07-02](2026-07-02.md) — Mac Mini migration mechanics finalized (D-034, resolving D-031's open items); board reconciled — PD-188 enriched from stub, preview trio PD-15/16/44 superseded, created PD-198/199/200.
