@@ -783,6 +783,19 @@
   }
 }
 
+.status-legend-more {
+  margin: var(--space-md) 0 0;
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+
+  a {
+    color: var(--accent-2);
+    text-decoration: underline;
+  }
+}
+
 .card-title {
   margin: 0;
   font-size: var(--font-size-sm);

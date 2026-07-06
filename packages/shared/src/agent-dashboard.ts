@@ -113,8 +113,12 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
   done: 'done',
 };
 
-// TODO(#144): Once the Sortie integration wiki exists, update these descriptions to link to
-// the relevant entries (e.g. "watchdog" → wiki anchor). See also #145 (Karpathy memory model).
+// These stay PLAIN TEXT: the status-legend modal renders them via `{...}` interpolation
+// (apps/web/.../task-monitor/+page.svelte), so any inline markdown/HTML would show as literal
+// syntax. The concepts named below — the watchdog, the autonomous loop, ask_human, the
+// sortie:* state machine — are documented in docs/sortie.md, which the legend modal links to
+// via a "Sortie integration wiki" footer link rather than by embedding markup in these strings
+// (PD-262). See also #145 (Karpathy memory model).
 /** One-sentence descriptions for each agent state, shown in the status-legend modal. */
 export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
   queued: 'Picked up by Sortie and waiting in the autonomous loop to start.',

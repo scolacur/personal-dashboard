@@ -691,6 +691,13 @@
       </li>
     {/each}
   </ul>
+  <p class="status-legend-more">
+    See the <a
+      href="https://github.com/scolacur/personal-dashboard/blob/main/docs/sortie.md"
+      target="_blank"
+      rel="noreferrer">Sortie integration wiki</a
+    > for the full loop, the watchdog (stuck detection), and the ask_human flow.
+  </p>
 </Modal>
 
 {#if loading}
