@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { marked } from 'marked';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
   import { latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
   import {
@@ -24,9 +25,28 @@
   let sendMsg = $state<string | null>(null);
   let deciding = $state(false);
   let decideMsg = $state<string | null>(null);
+  let threadEl = $state<HTMLElement | null>(null);
 
   // True while we're waiting on the griller — the newest turn is Steve's.
   const awaitingAgent = $derived(messages.length > 0 && messages[messages.length - 1].role === 'human');
+
+  // Svelte action: renders markdown into a node's innerHTML without using {@html}.
+  function applyMarkdown(node: HTMLElement, text: string) {
+    node.innerHTML = marked.parse(text) as string;
+    return {
+      update(newText: string) {
+        node.innerHTML = marked.parse(newText) as string;
+      },
+    };
+  }
+
+  // Auto-scroll the thread to the latest message whenever messages update.
+  $effect(() => {
+    void messages;
+    if (threadEl) {
+      threadEl.scrollTop = threadEl.scrollHeight;
+    }
+  });
 
   async function load() {
     try {
@@ -85,32 +105,42 @@
 </script>
 
 <section class="refine-thread">
-  <h2>Refine</h2>
-
   {#if loading}
-    <p class="muted">Loading thread…</p>
+    <ul class="thread" bind:this={threadEl}>
+      <li class="muted loading-msg">Loading thread…</li>
+    </ul>
   {:else if error}
-    <p class="error" role="alert">{error}</p>
+    <ul class="thread" bind:this={threadEl}>
+      <li class="error" role="alert">{error}</li>
+    </ul>
   {:else if messages.length === 0}
-    <p class="muted">
-      No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
-      above) to start one — the griller's turns and your replies appear here.
-    </p>
+    <ul class="thread" bind:this={threadEl}>
+      <li class="muted empty-msg">
+        No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
+        above) to start one — the griller's turns and your replies appear here.
+      </li>
+    </ul>
   {:else}
-    <ul class="thread">
+    <ul class="thread" bind:this={threadEl}>
       {#each messages as m (m.id)}
         <li class="turn turn-{m.role}">
-          <div class="turn-head">
-            <span class="who">{m.role === 'agent' ? 'Refine agent' : 'You'}</span>
-            <span class="when">{fmt(m.createdAt)}</span>
+          <div class="bubble">
+            <div class="turn-head">
+              <span class="who">{m.role === 'agent' ? 'Refine agent' : 'You'}</span>
+              <span class="when">{fmt(m.createdAt)}</span>
+            </div>
+            {#if m.role === 'agent'}
+              <div class="turn-body prose" use:applyMarkdown={m.text}></div>
+            {:else}
+              <div class="turn-body">{m.text}</div>
+            {/if}
           </div>
-          <div class="turn-body">{m.text}</div>
         </li>
       {/each}
+      {#if awaitingAgent}
+        <li class="muted awaiting">Waiting for the Refine agent to reply…</li>
+      {/if}
     </ul>
-    {#if awaitingAgent}
-      <p class="muted awaiting">Waiting for the Refine agent to reply…</p>
-    {/if}
   {/if}
 
   {#if proposal}
