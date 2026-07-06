@@ -1,0 +1,381 @@
+/* ── Card ──────────────────────────────────────── */
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+  cursor: grab;
+
+  &:active {
+    cursor: grabbing;
+  }
+
+  &.done {
+    opacity: 0.7;
+  }
+
+  // The card being dragged fades out to show it's in flight.
+  &.dragging {
+    opacity: 0.4;
+  }
+
+  // Insertion line drawn above the card the drop would land before.
+  &.drop-before {
+    box-shadow: 0 -2px 0 0 var(--accent);
+  }
+
+  // Agent-controlled tickets can't be dragged or reassigned.
+  &.locked {
+    cursor: default;
+  }
+
+  // Actively being worked by an agent (PD-165: agentState === 'working').
+  // A subtle sheen sweeps across the card; paused states (stuck/needs-human/
+  // awaiting-human) deliberately do NOT shimmer.
+  &.shimmer {
+    position: relative;
+    overflow: hidden;
+
+    &::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        100deg,
+        transparent 30%,
+        color-mix(in srgb, var(--accent) 22%, transparent) 50%,
+        transparent 70%
+      );
+      transform: translateX(-100%);
+      animation: card-shimmer 2.2s ease-in-out infinite;
+      pointer-events: none;
+    }
+  }
+}
+
+@keyframes card-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xs);
+}
+
+.card-top-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.card-top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.card-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.card-body {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+
+  .spacer {
+    flex: 1;
+  }
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: var(--space-xs) var(--space-sm);
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      border-color: var(--accent);
+    }
+    &:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+  }
+
+  // The Refine action gets the accent hue so it reads as the primary triage entry point.
+  .action-refine {
+    color: var(--accent);
+    border-color: var(--accent);
+
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+  }
+}
+
+// Assignee circle — in-place <select> on each card.
+.assignee-pill {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  text-align-last: center;
+  line-height: 22px;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &.assignee-steve {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  &.assignee-robot {
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  &.assignee-none {
+    color: var(--muted);
+    border-style: dashed;
+  }
+}
+
+// Agent-state badge — mirrors .priority pill patterns. In Robot's Queue (D-040) it shows
+// the fine sortie:* state: info (queued/in progress/in review), attention
+// (stuck/needs-human/awaiting-human), or wontfix.
+// Rendered as a <button> so it opens the status-legend modal on click.
+.agent-state-badge {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid;
+  white-space: nowrap;
+  background: none;
+  cursor: pointer;
+  line-height: 1.6;
+
+  &:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+
+  // Per-state colours (D-040 pills each carry their own hue) — tokens in global.scss.
+  &.agent-state-queued {
+    color: var(--status-queued);
+    border-color: var(--status-queued);
+  }
+
+  &.agent-state-working {
+    color: var(--status-working);
+    border-color: var(--status-working);
+  }
+
+  &.agent-state-in-review {
+    color: var(--status-in-review);
+    border-color: var(--status-in-review);
+  }
+
+  &.agent-state-stuck {
+    color: var(--status-stuck);
+    border-color: var(--status-stuck);
+  }
+
+  &.agent-state-needs-human {
+    color: var(--status-needs-human);
+    border-color: var(--status-needs-human);
+  }
+
+  &.agent-state-awaiting-human {
+    color: var(--status-awaiting-human);
+    border-color: var(--status-awaiting-human);
+  }
+
+  &.agent-state-wontfix {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+
+  &.agent-state-done {
+    color: var(--status-done);
+    border-color: var(--status-done);
+  }
+}
+
+// Live Refine session pill on a card (D-044, PD-268). Mirrors .agent-state-badge shape.
+.refine-pill {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid;
+  white-space: nowrap;
+  line-height: 1.6;
+
+  &.refine-grilling {
+    color: var(--status-working);
+    border-color: var(--status-working);
+  }
+  &.refine-awaiting-human {
+    color: var(--status-needs-human);
+    border-color: var(--status-needs-human);
+  }
+}
+
+// Persistent "refined once" marker (D-044, PD-268).
+.refined-mark {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--status-working, #16a34a);
+  color: var(--status-working, #16a34a);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+// Priority pill. Used as a <select> on cards.
+.priority {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: center;
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover {
+    filter: brightness(1.15);
+  }
+
+  // P0 is filled (urgent); the rest are outlined; unset is dashed + muted.
+  &.priority-P0 {
+    color: #fff;
+    background: #dc2626;
+    border-color: #dc2626;
+  }
+  &.priority-P1 {
+    color: #ea580c;
+    border-color: #ea580c;
+  }
+  &.priority-P2 {
+    color: #d97706;
+    border-color: #d97706;
+  }
+  &.priority-P3 {
+    color: var(--accent-2);
+    border-color: var(--accent-2);
+  }
+  &.priority-P4 {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  &.priority-P5 {
+    color: var(--muted);
+    border-color: var(--border);
+  }
+  &.priority-none {
+    color: var(--muted);
+    border-style: dashed;
+  }
+}
+
+.issue-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+
+  &:hover {
+    color: var(--accent);
+  }
+}
+
+.ticket-id {
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--id-color, var(--muted));
+  cursor: pointer;
+
+  &:hover {
+    color: var(--muted);
+    text-decoration: underline;
+  }
+}
+
+/* ── Mobile responsive (≤640px) — card overrides ── */
+@media (max-width: 640px) {
+  /* Priority: comfortable tap target */
+  .priority {
+    min-height: 40px;
+    padding: var(--space-sm) var(--space-md);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Assignee circle: scale up but keep circular */
+  .assignee-pill {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    line-height: 40px;
+  }
+
+  /* Card action buttons: comfortable tap targets with larger icons */
+  .card-actions button {
+    min-height: 40px;
+    padding: var(--space-sm) var(--space-md);
+
+    /* SVG comes from lucide-svelte child components — must escape Svelte scoping */
+    :global(svg) {
+      width: 18px;
+      height: 18px;
+    }
+  }
+}
