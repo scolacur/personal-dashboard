@@ -218,8 +218,10 @@ and routes them. The whole feature; **Grill** is the interrogation activity insi
 
 **Grill**:
 The **pre-dispatch interrogation/decomposition activity** inside a Refine session, run on
-a Prioritized ticket. Produces one or more well-shaped tickets and proposes a lane for
-each. Runs *before* a Sortie worker is dispatched.
+a **backlog or prioritized** ticket (relaxed from prioritized-only; amends D-044 so the
+Ticket Audit's "Send to Refine" can escalate a backlog finding, PD-281). Produces one or
+more well-shaped tickets and proposes a lane for each. Runs *before* a Sortie worker is
+dispatched.
 _Avoid_: using "grill" for questions an agent asks mid-run (that is **ask_human**).
 
 **ask_human**:
@@ -249,7 +251,8 @@ waiting on PD-244.
 
 **Prioritized**:
 The pre-grill triage lane — "this matters, do it next." Renames the old `ready` lane.
-Refine runs on a Prioritized ticket.
+Refine may launch from a **backlog or prioritized** ticket (amends D-044); "Send to Refine"
+on an audit finding moves a backlog ticket here as part of the handoff.
 
 **Robot's Queue** (`robot_queue`, assignee `robot`):
 The single lane for all in-flight Sortie work (collapses queued + in_progress +
@@ -273,3 +276,21 @@ _Avoid_: conflating with **issue**.
 **Issue**:
 A GitHub issue minted from a ticket at dispatch — an *execution lease*, not the durable
 spec. Deletion is ticket-authoritative (D-039).
+
+### Agent execution
+
+**agent-worker**:
+The long-running process (`apps/agent-worker`, Agent SDK, out of the Fastify web process)
+that **hosts LLM-agent jobs**. Owns the shared read-only repo checkout, the egress proxy,
+the `ANTHROPIC_API_KEY`, and the cached project-context prefix — infrastructure every job
+reuses. Coordinated with the web process via **DB rows** (the DB is the queue), not HTTP.
+Renamed from "the griller worker" once it grew a second job type (PD-266 built it as
+`apps/griller`; PD-281 generalizes it).
+_Avoid_: calling it "the griller" — griller is one **job**, not the worker.
+
+**Job** (agent job):
+A distinct unit of agent work hosted by the **agent-worker**, e.g. **refine** (interactive,
+approval-gated; the Grill/Refine session, D-044) or **audit** (autonomous, recurring; the
+Ticket Audit, PD-281). Jobs share the worker's checkout/proxy/key/context-pack but have
+independent trigger sources and codepaths. **Autonomy mode is a per-job property, not a
+worker property** — the same worker safely hosts an interactive job and an autonomous one.
