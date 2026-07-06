@@ -259,11 +259,14 @@ export function isSortieReady(body: string | null): boolean {
 // ── Notification Center (D-040) ──────────────────────────────────────────────
 // A notification surfaced in the dashboard's in-app inbox. MVP kinds cover an agent
 // parking for a human (ask_human / needs-human); widget notifications plug in later.
-export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human';
+// 'agent_refine' (D-044, PD-267): the Refine/griller agent posted a turn (plan, questions,
+// or needs-full-grill) on a ticket's Refine thread and wants Steve's attention.
+export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_awaiting_human',
   'agent_needs_human',
+  'agent_refine',
 ] as const;
 
 export interface AgentNotification {
@@ -284,3 +287,77 @@ export interface AgentNotification {
 /** The HTML-comment marker the Notification Center puts on a forwarded human reply so
  *  the `sortie-ask-human` Action (PD-133) re-queues the parked agent. */
 export const HUMAN_REPLY_MARKER = '<!-- sortie:human-reply -->';
+
+// ── Ticket activity log + Refine thread (D-044, PD-267) ──────────────────────
+// The `agent_ticket_events` table is the generic per-ticket activity log (created /
+// status_changed / assignee_changed / archived / …). PD-267 adds two Refine event
+// types that together form the persistent Refine conversation; PD-255 will render
+// the rest of the log on the ticket-detail page over this same shape.
+
+/** A row from the ticket activity log. Generic substrate — `detail` shape depends on
+ *  `type` (the Refine subset uses `RefineDetail`). `GET /tickets/:id/events` returns these. */
+export interface TicketEvent {
+  id: number;
+  ticketId: number;
+  type: string;
+  /** Parsed JSON detail, or null. */
+  detail: unknown;
+  createdAt: number;
+}
+
+/** Who authored a Refine turn. `human` = Steve (kickoff = the ticket body, then replies);
+ *  `agent` = the griller (Claude Agent SDK / Opus) — a plan, clarifying questions, or a
+ *  needs-full-grill verdict. */
+export type RefineRole = 'human' | 'agent';
+
+/** The two `agent_ticket_events.type` values that carry the Refine thread. Referenced by
+ *  BOTH the server (read endpoint + reply write) and the griller (poll + post), so the
+ *  string literals live here to keep the two processes in lockstep. */
+export const REFINE_EVENT_TYPE: Record<RefineRole, string> = {
+  human: 'refine_human',
+  agent: 'refine_agent',
+} as const;
+
+/** JSON stored in a refine_* event's `detail`. Agent turns also persist the Claude Agent
+ *  SDK `sessionId` so the griller can `resume` the thread after a restart (rehydrated
+ *  from the newest refine_agent event — no separate session table). */
+export interface RefineDetail {
+  text: string;
+  /** Present only on refine_agent turns; the SDK session id to resume from. */
+  sessionId?: string;
+}
+
+/** A single Refine turn, projected from a refine_* `TicketEvent` for the thread UI. */
+export interface RefineMessage {
+  id: number;
+  ticketId: number;
+  role: RefineRole;
+  text: string;
+  createdAt: number;
+}
+
+/** True for the two Refine event types. */
+export function isRefineEventType(type: string): boolean {
+  return type === REFINE_EVENT_TYPE.human || type === REFINE_EVENT_TYPE.agent;
+}
+
+/** Project the Refine subset of a ticket's activity log into ordered thread messages.
+ *  Non-refine events are dropped; malformed detail falls back to empty text. Shared so the
+ *  web thread view and the griller's "what has been said so far" agree exactly. */
+export function refineThreadFromEvents(events: TicketEvent[]): RefineMessage[] {
+  const out: RefineMessage[] = [];
+  for (const e of events) {
+    const role: RefineRole | null =
+      e.type === REFINE_EVENT_TYPE.human ? 'human' : e.type === REFINE_EVENT_TYPE.agent ? 'agent' : null;
+    if (!role) continue;
+    const detail = (e.detail ?? {}) as Partial<RefineDetail>;
+    out.push({
+      id: e.id,
+      ticketId: e.ticketId,
+      role,
+      text: typeof detail.text === 'string' ? detail.text : '',
+      createdAt: e.createdAt,
+    });
+  }
+  return out;
+}

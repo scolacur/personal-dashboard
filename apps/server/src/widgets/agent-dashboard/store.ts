@@ -8,11 +8,12 @@ import type {
   CreateTicketInput,
   NotificationKind,
   TicketAssignee,
+  TicketEvent,
   TicketPriority,
   TicketStatus,
   UpdateTicketInput,
 } from '@dashboard/shared';
-import { laneForcedAssignee } from '@dashboard/shared';
+import { laneForcedAssignee, REFINE_EVENT_TYPE } from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
 // never see snake_case (PROJECT.md §5: typed helpers, no raw SQL in routes).
@@ -455,6 +456,62 @@ export function archiveTicket(db: Database.Database, id: number): boolean {
   });
   apply();
   return true;
+}
+
+/* ── Ticket activity log + Refine thread (D-044, PD-267) ─────────────── */
+
+interface TicketEventRow {
+  id: number;
+  ticket_id: number;
+  type: string;
+  detail: string | null;
+  created_at: number;
+}
+
+function rowToTicketEvent(row: TicketEventRow): TicketEvent {
+  let detail: unknown = null;
+  if (row.detail != null) {
+    try {
+      detail = JSON.parse(row.detail);
+    } catch {
+      // Legacy/plain-text detail — surface it raw rather than dropping the row.
+      detail = row.detail;
+    }
+  }
+  return { id: row.id, ticketId: row.ticket_id, type: row.type, detail, createdAt: row.created_at };
+}
+
+/** A ticket's full activity log, oldest first (the generic substrate PD-255 renders; the
+ *  Refine thread is the `refine_*` subset). Returns [] for an unknown ticket. */
+export function listTicketEvents(db: Database.Database, ticketId: number): TicketEvent[] {
+  const rows = db
+    .prepare(
+      'SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE ticket_id = ? ORDER BY created_at ASC, id ASC',
+    )
+    .all(ticketId) as TicketEventRow[];
+  return rows.map(rowToTicketEvent);
+}
+
+/**
+ * Append a human Refine turn (Steve's reply) as a `refine_human` event the griller
+ * consumes on its next poll. Returns the created event, or null if the ticket is unknown.
+ * This is the Refine reply path — distinct from the GitHub-issue `/reply` (PD-250), which
+ * re-queues a parked Sortie agent; a Refine reply stays entirely in the DB.
+ */
+export function appendRefineReply(
+  db: Database.Database,
+  ticketId: number,
+  text: string,
+): TicketEvent | null {
+  if (getTicket(db, ticketId) === null) return null;
+  const now = Date.now();
+  const res = db
+    .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+    .run(ticketId, REFINE_EVENT_TYPE.human, JSON.stringify({ text }), now);
+  const row = db
+    .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
+    .get(Number(res.lastInsertRowid)) as TicketEventRow | undefined;
+  return row ? rowToTicketEvent(row) : null;
 }
 
 /* ── Notifications (Notification Center, D-040) ─────────────────────── */

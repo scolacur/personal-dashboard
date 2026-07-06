@@ -1,0 +1,120 @@
+// Refine thread on the ticket-detail page (D-044, PD-267). Reuses the app's design tokens
+// so it sits with the rest of the detail view; PD-255 will render more event types here.
+.refine-thread {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  max-width: 760px;
+
+  h2 {
+    margin: 0 0 var(--space-md);
+    font-size: var(--font-size-md);
+  }
+}
+
+.muted {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.error {
+  color: #c0392b;
+  font-size: var(--font-size-sm);
+}
+
+.thread {
+  list-style: none;
+  margin: 0 0 var(--space-md);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.turn {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface, #fff);
+
+  // The agent's turns are the ones to read closely — tint + accent edge.
+  &.turn-agent {
+    background: var(--surface-2, rgba(29, 118, 219, 0.05));
+    border-left: 3px solid var(--accent);
+  }
+
+  &.turn-human {
+    border-left: 3px solid var(--border);
+  }
+}
+
+.turn-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+
+  .who {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+  }
+
+  .when {
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+  }
+}
+
+.turn-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  font-size: var(--font-size-base);
+  color: var(--text);
+}
+
+.awaiting {
+  font-style: italic;
+  margin: 0 0 var(--space-md);
+}
+
+.reply {
+  textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--surface, #fff);
+    color: inherit;
+    font: inherit;
+    resize: vertical;
+  }
+}
+
+.reply-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}
+
+.send-msg {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}

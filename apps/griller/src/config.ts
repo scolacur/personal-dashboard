@@ -18,6 +18,8 @@ export interface GrillerConfig {
   dataDir: string;
   /** How often to `git pull` the grounding checkout (ms). */
   pullIntervalMs: number;
+  /** How often to poll the shared DB for pending Refine turns (ms). */
+  refineIntervalMs: number;
   /** Squid proxy URL when egress-hardened; empty in local dev (direct egress). */
   httpsProxy: string;
 }
@@ -30,6 +32,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): GrillerConfig 
     checkoutDir: env.GRILLER_CHECKOUT_DIR ?? '/data/griller-checkout',
     dataDir: env.DATA_DIR ?? path.join(process.cwd(), 'data'),
     pullIntervalMs: Number(env.GRILLER_PULL_INTERVAL_MS ?? 5 * 60_000),
+    refineIntervalMs: Number(env.GRILLER_REFINE_INTERVAL_MS ?? 5_000),
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
   };
 }

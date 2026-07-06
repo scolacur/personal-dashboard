@@ -1,4 +1,10 @@
-import type { AgentProject, AgentTicket, CreateTicketInput, UpdateTicketInput } from '@dashboard/shared';
+import type {
+  AgentProject,
+  AgentTicket,
+  CreateTicketInput,
+  TicketEvent,
+  UpdateTicketInput,
+} from '@dashboard/shared';
 
 export function projectIdColor(project: AgentProject | undefined | null): string {
   switch (project?.key) {
@@ -84,4 +90,25 @@ export async function replyToTicket(id: number, body: string): Promise<void> {
     body: JSON.stringify({ body }),
   });
   if (!res.ok) return parseError(res);
+}
+
+/** A ticket's activity log — the generic substrate the Refine thread renders (PD-267). */
+export async function fetchTicketEvents(id: number): Promise<TicketEvent[]> {
+  const res = await fetch(`${BASE}/${id}/events`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketEvent[]>;
+}
+
+/**
+ * Post a human Refine reply (PD-267). Unlike replyToTicket, this stays in the DB: it writes
+ * a refine_human event the griller consumes and resumes on. Returns the created event.
+ */
+export async function postRefineReply(id: number, body: string): Promise<TicketEvent> {
+  const res = await fetch(`${BASE}/${id}/refine-reply`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketEvent>;
 }

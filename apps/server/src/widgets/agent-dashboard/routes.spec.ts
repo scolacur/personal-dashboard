@@ -488,3 +488,56 @@ describe('POST /api/widgets/agent-dashboard/sync — on-demand GitHub reconcilia
     expect(second.json().outcome).toBe('throttled');
   });
 });
+
+describe('ticket events + Refine reply (D-044, PD-267)', () => {
+  const base = '/api/widgets/agent-dashboard';
+
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number): Promise<number> {
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title: 't', projectId: pid } });
+    return res.json().id as number;
+  }
+
+  it('GET /tickets/:id/events returns the activity log (created event present)', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const res = await app.inject({ method: 'GET', url: `${base}/tickets/${id}/events` });
+    expect(res.statusCode).toBe(200);
+    const events = res.json() as { type: string }[];
+    expect(events.some((e) => e.type === 'created')).toBe(true);
+  });
+
+  it('GET /tickets/:id/events 400s on a non-numeric id', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({ method: 'GET', url: `${base}/tickets/abc/events` });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /tickets/:id/refine-reply writes a refine_human event and echoes it', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const res = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets/${id}/refine-reply`,
+      payload: { body: 'only the header, please' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().type).toBe('refine_human');
+    const events = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}/events` })).json() as {
+      type: string;
+    }[];
+    expect(events.filter((e) => e.type === 'refine_human')).toHaveLength(1);
+  });
+
+  it('POST /tickets/:id/refine-reply 400s on an empty body', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reply`, payload: { body: '  ' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('POST /tickets/:id/refine-reply 404s for an unknown ticket', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/9999/refine-reply`, payload: { body: 'hi' } });
+    expect(res.statusCode).toBe(404);
+  });
+});

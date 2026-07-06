@@ -12,6 +12,7 @@ import {
 } from '@dashboard/shared';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import {
+  appendRefineReply,
   archiveTicket,
   createProject,
   createTicket,
@@ -19,6 +20,7 @@ import {
   getTicketIssueRef,
   listNotifications,
   listProjects,
+  listTicketEvents,
   listTickets,
   markAllNotificationsRead,
   markNotificationRead,
@@ -347,5 +349,37 @@ export function registerRoutes(
     }
     app.log.info(`agent-dashboard: replied to ${ref.githubRepo}#${ref.githubIssueNumber} (ticket ${id})`);
     return reply.status(201).send({ ok: true });
+  });
+
+  /* ── Ticket activity log + Refine thread (D-044, PD-267) ─────────────── */
+
+  // The generic per-ticket activity log (created / status_changed / refine_* / …). The
+  // Refine thread is the refine_* subset the ticket-detail page renders; PD-255 will render
+  // the rest over this same endpoint. Read-only, no token needed.
+  app.get(`${base}/tickets/:id/events`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    return listTicketEvents(db, id);
+  });
+
+  // Post a human Refine reply. Unlike /reply (which forwards to a GitHub issue to re-queue a
+  // parked Sortie agent), this stays entirely in the DB: it writes a refine_human event the
+  // griller consumes on its next poll and resumes the grill on. No GitHub, no token.
+  app.post(`${base}/tickets/:id/refine-reply`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.body !== 'string' || body.body.trim() === '') {
+      return reply.status(400).send({ error: 'reply body is required', code: 'INVALID_BODY' });
+    }
+    const event = appendRefineReply(db, id, body.body.trim());
+    if (!event) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    return reply.status(201).send(event);
   });
 }
