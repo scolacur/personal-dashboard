@@ -22,7 +22,9 @@ Deploy + configuration runbook. Files in this dir:
    (`npm run verify`) → the agent, in its own turn, commits → pushes → opens the PR →
    writes `.sortie/scm.json` → relabels `sortie:in-review`** (see D-016 / WORKFLOW.md
    "Finish"). The `after_run` hook is only an idempotent safety-net that finishes a
-   hand-off a crashed turn left incomplete — it is no longer the primary path.
+   hand-off a crashed turn left incomplete — it is no longer the primary path. It fires
+   ONLY when the agent got as far as a green verify (the `.sortie/verify-ok` marker, D-046);
+   a turn that ended before verify passed is left for retry, never published as a red PR.
 3. The PR is authored by the **bot account** (non-admin). Branch protection requires
    **1 approval**, so the bot **cannot self-merge**. You review, approve, merge.
 4. You (admin) can still **push directly to main** because protection is set with

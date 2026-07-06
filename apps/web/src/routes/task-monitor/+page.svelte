@@ -9,7 +9,8 @@
   import Modal from '$lib/Modal.svelte';
   import TicketCard from './TicketCard.svelte';
   import * as api from './api';
-  import { ticketMatchesQuery } from './filter-logic';
+  import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
+  import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
 
@@ -159,6 +160,9 @@
   // Priority filter: 'all' (no filter), 'none' (unset), or a specific P-level.
   let filterPriority = $state<'all' | 'none' | TicketPriority>('all');
 
+  // Refinement filter: 'all' (no filter), or a specific refinement state.
+  let filterRefine = $state<RefineFilter>('all');
+
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
@@ -197,6 +201,7 @@
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
+      if (!ticketMatchesRefineFilter(t, filterRefine)) return false;
       if (!ticketMatchesQuery(t, search)) return false;
       return true;
     });
@@ -516,6 +521,16 @@
           <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
         {/each}
         <option value="none">— None</option>
+      </select>
+    </label>
+    <label class="refinement-filter">
+      <span class="sr-label">Refinement</span>
+      <select bind:value={filterRefine}>
+        <option value="all">All refinement</option>
+        <option value="refined">Refined</option>
+        <option value="grilling">Grilling</option>
+        <option value="awaiting-human">Needs you</option>
+        <option value="unrefined">Unrefined</option>
       </select>
     </label>
     <button

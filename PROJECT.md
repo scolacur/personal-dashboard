@@ -183,6 +183,17 @@ Exposes one port (default 8080). No external auth — relies on LAN-only access.
 - All endpoints return JSON; errors as `{ error: string, code?: string }` with appropriate HTTP status.
 - No tests required for MVP. Add them when something breaks twice.
 
+### Component design philosophy
+
+- Prefer small, focused components over large monolithic page files.
+- Any `.svelte` file exceeding **300 lines** is a good candidate for extraction — split out logical sub-units into named components.
+- Components **shared across routes** live in `apps/web/src/lib/`. Components **local to a route** sit alongside the route file (e.g. `TicketCard.svelte` next to `task-monitor/+page.svelte`).
+- New shared components follow the `Modal.svelte` / `Button.svelte` convention: `$props()` for inputs, `Snippet` for children, sibling `.scss` file for styles.
+
+**Known extraction candidates** (files currently exceeding 300 lines):
+
+- `apps/web/src/routes/task-monitor/+page.svelte` (~895 lines)
+
 ---
 
 ## 6. Build order (suggested)

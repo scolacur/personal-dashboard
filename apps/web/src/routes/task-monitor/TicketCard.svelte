@@ -116,14 +116,6 @@
           title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
         >{REFINE_STATE_LABELS[ticket.refineState]}</a>
       {/if}
-      {#if ticket.agentState}
-        <button
-          class="agent-state-badge {agentStateClass(ticket.agentState)}"
-          type="button"
-          aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
-          onclick={() => onOpenStatusLegend(ticket.agentState!)}
-        >{AGENT_STATE_LABELS[ticket.agentState]}</button>
-      {/if}
       {#if ticket.githubIssueUrl}
         <a
           class="issue-link"
@@ -153,6 +145,16 @@
   <p class="card-title">{ticket.title}</p>
   {#if ticket.body && !condensed}
     <p class="card-body">{ticket.body}</p>
+  {/if}
+  {#if ticket.agentState}
+    <div class="card-status-row">
+      <button
+        class="agent-state-badge {agentStateClass(ticket.agentState)}"
+        type="button"
+        aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
+        onclick={() => onOpenStatusLegend(ticket.agentState!)}
+      >{AGENT_STATE_LABELS[ticket.agentState]}</button>
+    </div>
   {/if}
   <div class="card-actions">
     <select

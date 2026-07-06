@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ticketMatchesQuery } from './filter-logic';
+import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
 import type { AgentTicket } from '@dashboard/shared';
 
 function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
@@ -69,5 +69,37 @@ describe('ticketMatchesQuery', () => {
   it('is case-insensitive', () => {
     const t = makeTicket({ title: 'Music Tracker' });
     expect(ticketMatchesQuery(t, 'MUSIC')).toBe(true);
+  });
+});
+
+describe('ticketMatchesRefineFilter', () => {
+  it('"all" matches every ticket regardless of refine state', () => {
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: null }), 'all')).toBe(true);
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: true, refineState: null }), 'all')).toBe(true);
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: 'grilling' }), 'all')).toBe(true);
+  });
+
+  it('"refined" matches only refined tickets', () => {
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: true }), 'refined')).toBe(true);
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: false }), 'refined')).toBe(false);
+  });
+
+  it('"grilling" matches only tickets with refineState grilling', () => {
+    expect(ticketMatchesRefineFilter(makeTicket({ refineState: 'grilling' }), 'grilling')).toBe(true);
+    expect(ticketMatchesRefineFilter(makeTicket({ refineState: 'awaiting-human' }), 'grilling')).toBe(false);
+    expect(ticketMatchesRefineFilter(makeTicket({ refineState: null }), 'grilling')).toBe(false);
+  });
+
+  it('"awaiting-human" matches only tickets with refineState awaiting-human', () => {
+    expect(ticketMatchesRefineFilter(makeTicket({ refineState: 'awaiting-human' }), 'awaiting-human')).toBe(true);
+    expect(ticketMatchesRefineFilter(makeTicket({ refineState: 'grilling' }), 'awaiting-human')).toBe(false);
+    expect(ticketMatchesRefineFilter(makeTicket({ refineState: null }), 'awaiting-human')).toBe(false);
+  });
+
+  it('"unrefined" matches tickets that are not refined and have no active refine session', () => {
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: null }), 'unrefined')).toBe(true);
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: true, refineState: null }), 'unrefined')).toBe(false);
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: 'grilling' }), 'unrefined')).toBe(false);
+    expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: 'awaiting-human' }), 'unrefined')).toBe(false);
   });
 });

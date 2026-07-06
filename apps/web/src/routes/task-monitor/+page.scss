@@ -89,6 +89,7 @@
 }
 
 .priority-filter,
+.refinement-filter,
 .project-filter {
   select {
     font-family: var(--font-sans);
@@ -699,18 +700,27 @@
     }
   }
 
-  .info-btn {
+  .refinement-filter {
     order: 6;
-    flex: 0 0 auto;
+    flex: 0 0 100%;
+
+    select {
+      width: 100%;
+    }
   }
 
-  .lanes-menu-wrap {
+  .info-btn {
     order: 7;
     flex: 0 0 auto;
   }
 
-  .condensed-toggle {
+  .lanes-menu-wrap {
     order: 8;
+    flex: 0 0 auto;
+  }
+
+  .condensed-toggle {
+    order: 9;
     flex: 0 0 100%;
   }
 

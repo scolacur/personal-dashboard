@@ -93,6 +93,12 @@
   overflow-wrap: anywhere;
 }
 
+.card-status-row {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-sm);
+}
+
 .card-actions {
   display: flex;
   align-items: center;
