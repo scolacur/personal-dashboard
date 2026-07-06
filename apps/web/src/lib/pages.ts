@@ -51,10 +51,8 @@ export const pages: PageMeta[] = [
     route: '/inboxes',
   },
   {
-    // The live board currently lives at /task-monitor (renamed from
-    // agent-dashboard). Nav points there rather than a duplicate stub.
-    id: 'agent-dashboard',
-    title: 'Agent Dashboard',
+    id: 'task-monitor',
+    title: 'Task Monitor',
     description: 'Monitor and control AI agent workflows.',
     route: '/task-monitor',
   },

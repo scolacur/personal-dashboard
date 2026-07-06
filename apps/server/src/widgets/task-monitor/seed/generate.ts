@@ -2,7 +2,7 @@
  * One-time seed generator: parses the repo's TODO.md files (+ core's META-TODOS.md)
  * into structured tickets and writes tickets.seed.json.
  *
- * Run from the repo root:  npx tsx apps/server/src/widgets/agent-dashboard/seed/generate.ts
+ * Run from the repo root:  npx tsx apps/server/src/widgets/task-monitor/seed/generate.ts
  *
  * This is a local dev tool (reads source files that get archived afterward). The
  * committed tickets.seed.json is the durable artifact; import.ts replays it into any DB.
@@ -224,70 +224,70 @@ if (existsSync(CORE_META)) {
 const FOLLOWUPS: Omit<SeedTicket, 'source'>[] = [
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Ticket relations UI (blocked-by / blocking)',
+    title: '[Task Monitor] Ticket relations UI (blocked-by / blocking)',
     body: 'Overflow menu → "Mark as" → "Blocked by…" / "Blocking…"; search modal that filters tickets as you type; blocker/blocked badges on cards. Schema exists: agent_ticket_relations (blocks/relates/duplicates).',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Tags UI (assign / create / filter)',
+    title: '[Task Monitor] Tags UI (assign / create / filter)',
     body: 'Assign, create, and recolor tags on a ticket; filter the board by tag. Schema exists: agent_tags + agent_ticket_tags (seeded UI, Infra).',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Reminders — UI + delivery job',
+    title: '[Task Monitor] Reminders — UI + delivery job',
     body: 'Add/remove reminders on a ticket (remind_at + note); a scheduled job sends when due (ties into Discord / inbox notifications). Schema exists: agent_ticket_reminders.',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Recurring tickets — recur logic',
+    title: '[Task Monitor] Recurring tickets — recur logic',
     body: 'On completing a ticket with recur_interval set (e.g. weekly maintenance), spawn the next occurrence. Schema exists: agent_tickets.recur_interval.',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Assignee UI',
+    title: '[Task Monitor] Assignee UI',
     body: 'Set/clear a ticket assignee (human or agent, e.g. "sortie"); filter by assignee. Schema exists: agent_tickets.assignee.',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Drag-and-drop reordering within a lane',
+    title: '[Task Monitor] Drag-and-drop reordering within a lane',
     body: 'Reorder tickets within a column via drag-and-drop, writing a fractional sort_order between neighbours. Schema already supports it (sort_order REAL); today moves append.',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Activity Feed',
+    title: '[Task Monitor] Activity Feed',
     body: 'Chronological feed of ticket events (created / status_changed / archived / converted). Schema exists: agent_ticket_events (populated from day one).',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Archived view + restore',
+    title: '[Task Monitor] Archived view + restore',
     body: 'View soft-deleted (archived) tickets and restore them. Schema exists: agent_tickets.archived_at; delete already soft-deletes.',
     priority: 'medium',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Phase 3 — Convert ticket to Sortie issue',
+    title: '[Task Monitor] Phase 3 — Convert ticket to Sortie issue',
     body: 'Per-ticket "Convert to Sortie issue": Claude API formats the ticket into the Sortie issue format (goal/acceptance-criteria/scope) → draft-then-approve → creates a sortie:queued GitHub issue in the project\'s repo → links issue back to the ticket. Needs ANTHROPIC_API_KEY + write-scoped GH token on the NAS. Only for sortie_enabled projects.',
     priority: 'high',
     status: 'backlog',
   },
   {
     project: 'personal-dashboard',
-    title: '[Agent Dashboard] Derived status sync from GitHub labels',
+    title: '[Task Monitor] Derived status sync from GitHub labels',
     body: 'node-cron job polls GitHub for each converted ticket\'s sortie:* label + PR merge-state and writes in_progress / in_review / completed onto the row (the derived columns). Avoids coupling to Sortie\'s internal :7678 API.',
     priority: 'medium',
     status: 'backlog',
@@ -295,13 +295,13 @@ const FOLLOWUPS: Omit<SeedTicket, 'source'>[] = [
   {
     project: 'core',
     title: 'Fetch Core TODOs from the dashboard ticket API instead of META-TODOS.md',
-    body: "META-TODOS.md stays canonical/Markdown for now (it's load-bearing — referenced across core's README/PROJECT/DECISIONS/MEMORY, and PROJECT.md §42 mandates Markdown). But core's tickets now also live in the dashboard board. Migrate core's references (session-start, /project-maintenance, /project-status) to read Core's tickets from the Agent Dashboard ticket API (GET /api/widgets/agent-dashboard/tickets filtered to project=core) so there's one source of truth. Requires the dashboard API reachable from core sessions + a sync/authoring path back. Ties into the META-TODOS 'memory-library'/'replicate Core dev tooling' items.",
+    body: "META-TODOS.md stays canonical/Markdown for now (it's load-bearing — referenced across core's README/PROJECT/DECISIONS/MEMORY, and PROJECT.md §42 mandates Markdown). But core's tickets now also live in the dashboard board. Migrate core's references (session-start, /project-maintenance, /project-status) to read Core's tickets from the Task Monitor ticket API (GET /api/widgets/task-monitor/tickets filtered to project=core) so there's one source of truth. Requires the dashboard API reachable from core sessions + a sync/authoring path back. Ties into the META-TODOS 'memory-library'/'replicate Core dev tooling' items.",
     priority: 'high',
     status: 'backlog',
   },
 ];
 for (const f of FOLLOWUPS) {
-  tickets.push({ ...f, source: 'seed:agent-dashboard/followups' });
+  tickets.push({ ...f, source: 'seed:task-monitor/followups' });
 }
 
 // ── write ────────────────────────────────────────────────

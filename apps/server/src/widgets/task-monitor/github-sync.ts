@@ -382,7 +382,7 @@ const SYNC_SCHEDULE = '* * * * *';
 export function registerGithubSyncJob(cron: CronRegistry, log: CronLogger, db: Database.Database): void {
   const readToken = process.env[GITHUB_READ_TOKEN_ENV];
   if (readToken) {
-    cron.register('agent-dashboard:github-sync', SYNC_SCHEDULE, () =>
+    cron.register('task-monitor:github-sync', SYNC_SCHEDULE, () =>
       runGithubSync({ db, token: readToken, log }),
     );
   } else {
@@ -393,7 +393,7 @@ export function registerGithubSyncJob(cron: CronRegistry, log: CronLogger, db: D
 
   const writeToken = process.env[GITHUB_WRITE_TOKEN_ENV];
   if (writeToken) {
-    cron.register('agent-dashboard:queued-sync', SYNC_SCHEDULE, () =>
+    cron.register('task-monitor:queued-sync', SYNC_SCHEDULE, () =>
       runQueuedSync({ db, token: writeToken, log }),
     );
   } else {

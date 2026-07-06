@@ -18,7 +18,7 @@ export function seedIfEmpty(db: Database.Database): void {
   if (c > 0) return;
 
   const { created, skipped, missingProjects } = seedTickets(db, seeds as SeedTicket[]);
-  console.log(`[agent-dashboard] SEED_ON_BOOT: agent_tickets was empty — seeded ${created}, skipped ${skipped}.`);
+  console.log(`[task-monitor] SEED_ON_BOOT: agent_tickets was empty — seeded ${created}, skipped ${skipped}.`);
   if (missingProjects.length) {
     console.log(`  WARNING unknown projects (skipped): ${missingProjects.join(', ')}`);
   }
