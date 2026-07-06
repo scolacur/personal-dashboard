@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { loadConfig } from './config';
-import { proxyGitArgs, cloneUrl } from './checkout';
+import { proxyGitArgs, cloneUrl, authArgs, authHeaderValue } from './checkout';
 
 describe('proxyGitArgs', () => {
   it('is empty without a proxy (dev)', () => {
@@ -19,13 +19,27 @@ describe('proxyGitArgs', () => {
 });
 
 describe('cloneUrl', () => {
-  it('inlines the read token when present', () => {
-    const c = loadConfig({ GITHUB_READ_TOKEN: 'ghp_x', GRILLER_GITHUB_REPO: 'me/repo' });
-    expect(cloneUrl(c)).toBe('https://x-access-token:ghp_x@github.com/me/repo.git');
+  it('is a plain token-free URL (auth goes via a header, never the URL / .git/config)', () => {
+    const withTok = loadConfig({ GITHUB_READ_TOKEN: 'ghp_x', GRILLER_GITHUB_REPO: 'me/repo' });
+    const noTok = loadConfig({ GRILLER_GITHUB_REPO: 'me/repo' });
+    expect(cloneUrl(withTok)).toBe('https://github.com/me/repo.git');
+    expect(cloneUrl(noTok)).toBe('https://github.com/me/repo.git');
+    expect(cloneUrl(withTok)).not.toContain('ghp_x');
+  });
+});
+
+describe('authArgs / authHeaderValue', () => {
+  it('attaches the token as a base64 Authorization header override (not persisted to config)', () => {
+    const c = loadConfig({ GITHUB_READ_TOKEN: 'ghp_secret', GRILLER_GITHUB_REPO: 'me/repo' });
+    const b64 = Buffer.from('x-access-token:ghp_secret').toString('base64');
+    expect(authHeaderValue('ghp_secret')).toBe(b64);
+    expect(authArgs(c)).toEqual(['-c', `http.extraHeader=Authorization: Basic ${b64}`]);
+    // The raw token itself never appears in the args (only its base64 header form).
+    expect(authArgs(c).join(' ')).not.toContain('ghp_secret');
   });
 
-  it('omits auth when no token (public clone)', () => {
-    const c = loadConfig({ GRILLER_GITHUB_REPO: 'me/repo' });
-    expect(cloneUrl(c)).toBe('https://github.com/me/repo.git');
+  it('is empty with no token (public clone)', () => {
+    expect(authArgs(loadConfig({ GRILLER_GITHUB_REPO: 'me/repo' }))).toEqual([]);
+    expect(authHeaderValue('')).toBe('');
   });
 });
