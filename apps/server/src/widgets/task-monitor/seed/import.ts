@@ -1,7 +1,7 @@
 /**
  * Idempotent seed importer: replays tickets.seed.json into the dashboard DB.
  *
- * Run:  npx tsx apps/server/src/widgets/agent-dashboard/seed/import.ts
+ * Run:  npx tsx apps/server/src/widgets/task-monitor/seed/import.ts
  * Uses DATA_DIR (defaults to cwd/data) like the server, so point it at whichever DB
  * (local dev or, on the NAS, production). Safe to re-run — skips tickets already
  * imported (matched on source + title).

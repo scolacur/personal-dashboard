@@ -2,11 +2,11 @@ import { describe, it, expect } from 'vitest';
 import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { registerRoutes, type AgentDashboardRouteDeps } from './routes';
+import { registerRoutes, type TaskMonitorRouteDeps } from './routes';
 import { createNotification, getProjectBySlug } from './store';
 import { __resetOnDemandSyncGuard } from './github-sync';
 
-function freshSetup(deps?: AgentDashboardRouteDeps) {
+function freshSetup(deps?: TaskMonitorRouteDeps) {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   bootstrapSchema(db);
@@ -32,13 +32,13 @@ function projectId(db: Database.Database, slug: string): number {
   return p.id;
 }
 
-describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
+describe('POST /api/widgets/task-monitor/tickets — status', () => {
   it('defaults to backlog when status is omitted', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid },
     });
     expect(res.statusCode).toBe(201);
@@ -50,7 +50,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid, status: 'prioritized' },
     });
     expect(res.statusCode).toBe(201);
@@ -62,7 +62,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid, status: 'closed' },
     });
     expect(res.statusCode).toBe(201);
@@ -74,7 +74,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid, status: 'banana' },
     });
     expect(res.statusCode).toBe(400);
@@ -86,7 +86,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'cancelled', projectId: pid, status: 'closed' },
     });
     expect(res.statusCode).toBe(201);
@@ -94,20 +94,20 @@ describe('POST /api/widgets/agent-dashboard/tickets — status', () => {
   });
 });
 
-describe('PATCH /api/widgets/agent-dashboard/tickets/:id — status closed', () => {
+describe('PATCH /api/widgets/task-monitor/tickets/:id — status closed', () => {
   it('can patch a ticket status to closed', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid },
     });
     const id: number = create.json().id;
 
     const res = await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { status: 'closed' },
     });
     expect(res.statusCode).toBe(200);
@@ -119,14 +119,14 @@ describe('PATCH /api/widgets/agent-dashboard/tickets/:id — status closed', () 
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid },
     });
     const id: number = create.json().id;
 
     const res = await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { status: 'banana' },
     });
     expect(res.statusCode).toBe(400);
@@ -134,13 +134,13 @@ describe('PATCH /api/widgets/agent-dashboard/tickets/:id — status closed', () 
   });
 });
 
-describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
+describe('POST /api/widgets/task-monitor/tickets — assignee', () => {
   it('defaults to null when assignee is omitted', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid },
     });
     expect(res.statusCode).toBe(201);
@@ -152,7 +152,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid, assignee: 'robot' },
     });
     expect(res.statusCode).toBe(201);
@@ -164,7 +164,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid, assignee: null },
     });
     expect(res.statusCode).toBe(201);
@@ -176,7 +176,7 @@ describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
     const pid = projectId(db, 'personal-dashboard');
     const res = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid, assignee: 'bob' },
     });
     expect(res.statusCode).toBe(400);
@@ -184,20 +184,20 @@ describe('POST /api/widgets/agent-dashboard/tickets — assignee', () => {
   });
 });
 
-describe('PATCH /api/widgets/agent-dashboard/tickets/:id — assignee', () => {
+describe('PATCH /api/widgets/task-monitor/tickets/:id — assignee', () => {
   it('can patch assignee null → robot → null and round-trips on GET', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid },
     });
     const id: number = create.json().id;
 
     const toRobot = await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { assignee: 'robot' },
     });
     expect(toRobot.statusCode).toBe(200);
@@ -205,13 +205,13 @@ describe('PATCH /api/widgets/agent-dashboard/tickets/:id — assignee', () => {
 
     const toNull = await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { assignee: null },
     });
     expect(toNull.statusCode).toBe(200);
     expect(toNull.json().assignee).toBeNull();
 
-    const list = await app.inject({ method: 'GET', url: '/api/widgets/agent-dashboard/tickets' });
+    const list = await app.inject({ method: 'GET', url: '/api/widgets/task-monitor/tickets' });
     const ticket = list.json().find((t: { id: number }) => t.id === id);
     expect(ticket.assignee).toBeNull();
   });
@@ -221,14 +221,14 @@ describe('PATCH /api/widgets/agent-dashboard/tickets/:id — assignee', () => {
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'test', projectId: pid },
     });
     const id: number = create.json().id;
 
     const res = await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { assignee: 'bob' },
     });
     expect(res.statusCode).toBe(400);
@@ -236,18 +236,18 @@ describe('PATCH /api/widgets/agent-dashboard/tickets/:id — assignee', () => {
   });
 });
 
-describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (PD-207 A)', () => {
+describe('DELETE /api/widgets/task-monitor/tickets/:id — close-on-delete (PD-207 A)', () => {
   async function makeLinkedTicket(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, issue: number) {
     const pid = projectId(db, 'personal-dashboard'); // seeded with a github_repo
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'linked', projectId: pid },
     });
     const id: number = create.json().id;
     await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { githubIssueNumber: issue, githubIssueUrl: `https://x/${issue}` },
     });
     return id;
@@ -258,7 +258,7 @@ describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (P
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await makeLinkedTicket(app, db, 42);
 
-    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/agent-dashboard/tickets/${id}` });
+    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/task-monitor/tickets/${id}` });
     expect(del.statusCode).toBe(204);
 
     const patch = calls.find((c) => c.method === 'PATCH' && /\/issues\/42$/.test(c.url));
@@ -272,12 +272,12 @@ describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (P
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'unlinked', projectId: pid },
     });
     const id: number = create.json().id;
 
-    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/agent-dashboard/tickets/${id}` });
+    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/task-monitor/tickets/${id}` });
     expect(del.statusCode).toBe(204);
     expect(calls).toHaveLength(0);
   });
@@ -287,7 +287,7 @@ describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (P
     const { app, db } = freshSetup({ fetchImpl: impl }); // no githubWriteToken
     const id = await makeLinkedTicket(app, db, 43);
 
-    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/agent-dashboard/tickets/${id}` });
+    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/task-monitor/tickets/${id}` });
     expect(del.statusCode).toBe(204);
     expect(calls.some((c) => /\/issues\/43$/.test(c.url) && c.method === 'PATCH')).toBe(false);
   });
@@ -297,7 +297,7 @@ describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (P
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await makeLinkedTicket(app, db, 99);
 
-    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/agent-dashboard/tickets/${id}` });
+    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/task-monitor/tickets/${id}` });
     expect(del.statusCode).toBe(204);
   });
 
@@ -306,21 +306,21 @@ describe('DELETE /api/widgets/agent-dashboard/tickets/:id — close-on-delete (P
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await makeLinkedTicket(app, db, 77);
 
-    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/agent-dashboard/tickets/${id}` });
+    const del = await app.inject({ method: 'DELETE', url: `/api/widgets/task-monitor/tickets/${id}` });
     expect(del.statusCode).toBe(204);
   });
 
   it('returns 404 for a non-existent ticket and never calls GitHub', async () => {
     const { impl, calls } = recordingFetch('ok');
     const { app } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
-    const del = await app.inject({ method: 'DELETE', url: '/api/widgets/agent-dashboard/tickets/99999' });
+    const del = await app.inject({ method: 'DELETE', url: '/api/widgets/task-monitor/tickets/99999' });
     expect(del.statusCode).toBe(404);
     expect(calls).toHaveLength(0);
   });
 });
 
 describe('notifications endpoints (PD-250)', () => {
-  const NBASE = '/api/widgets/agent-dashboard/notifications';
+  const NBASE = '/api/widgets/task-monitor/notifications';
 
   it('lists notifications, filters unread, and reports the unread count', async () => {
     const { app, db } = freshSetup();
@@ -375,13 +375,13 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'parked', projectId: pid },
     });
     const id: number = create.json().id;
     await app.inject({
       method: 'PATCH',
-      url: `/api/widgets/agent-dashboard/tickets/${id}`,
+      url: `/api/widgets/task-monitor/tickets/${id}`,
       payload: { githubIssueNumber: issue, githubIssueUrl: `https://x/${issue}` },
     });
     return id;
@@ -394,7 +394,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
 
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'go with blue' },
     });
     expect(res.statusCode).toBe(201);
@@ -410,7 +410,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const id = await linkedTicket(app, db, 56);
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: '   ' },
     });
     expect(res.statusCode).toBe(400);
@@ -422,12 +422,12 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const pid = projectId(db, 'personal-dashboard');
     const create = await app.inject({
       method: 'POST',
-      url: '/api/widgets/agent-dashboard/tickets',
+      url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'unlinked', projectId: pid },
     });
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/agent-dashboard/tickets/${create.json().id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${create.json().id}/reply`,
       payload: { body: 'hi' },
     });
     expect(res.statusCode).toBe(409);
@@ -440,7 +440,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const id = await linkedTicket(app, db, 57);
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
     expect(res.statusCode).toBe(503);
@@ -453,18 +453,18 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const id = await linkedTicket(app, db, 58);
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/agent-dashboard/tickets/${id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
     expect(res.statusCode).toBe(502);
   });
 });
 
-describe('POST /api/widgets/agent-dashboard/sync — on-demand GitHub reconciliation (PD-252)', () => {
+describe('POST /api/widgets/task-monitor/sync — on-demand GitHub reconciliation (PD-252)', () => {
   it('503s when no read token is configured', async () => {
     __resetOnDemandSyncGuard();
     const { app } = freshSetup(); // no githubReadToken, and env token not injected
-    const res = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
     expect(res.statusCode).toBe(503);
     expect(res.json().code).toBe('NO_READ_TOKEN');
   });
@@ -473,7 +473,7 @@ describe('POST /api/widgets/agent-dashboard/sync — on-demand GitHub reconcilia
     __resetOnDemandSyncGuard();
     const { impl } = recordingFetch('ok');
     const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
-    const res = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
     expect(res.statusCode).toBe(200);
     expect(res.json().outcome).toBe('ran');
   });
@@ -482,15 +482,15 @@ describe('POST /api/widgets/agent-dashboard/sync — on-demand GitHub reconcilia
     __resetOnDemandSyncGuard();
     const { impl } = recordingFetch('ok');
     const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
-    const first = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
-    const second = await app.inject({ method: 'POST', url: '/api/widgets/agent-dashboard/sync' });
+    const first = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
+    const second = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
     expect(first.json().outcome).toBe('ran');
     expect(second.json().outcome).toBe('throttled');
   });
 });
 
 describe('ticket events + Refine reply (D-044, PD-267)', () => {
-  const base = '/api/widgets/agent-dashboard';
+  const base = '/api/widgets/task-monitor';
 
   async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number): Promise<number> {
     const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title: 't', projectId: pid } });

@@ -6,7 +6,7 @@ import { registerRoutes } from './routes';
 import { registerGithubSyncJob } from './github-sync';
 
 export const widget: BackendWidget = {
-  name: 'agent-dashboard',
+  name: 'task-monitor',
   bootstrapSchema(database) {
     bootstrapSchema(database);
     seedIfEmpty(database);

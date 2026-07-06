@@ -137,7 +137,7 @@
   {
     "project": "personal-dashboard",
     "title": "[Sortie] Run half (~2 hrs):",
-    "body": "one `preview` container, modeled on `docker/docker-compose.nas.yml`.\nParametrize the image tag (`PR_TAG=pr-17`) + a host port (e.g. **8089**, since 8080=gluetun,\n  8088=prod app). Mount its **own** `/data` (a throwaway preview SQLite dir — NOT the prod\n  volume) and share the DJ library `:ro` (`/volume1/music/dj-library/tracks`). An empty library\n  is fine for everything except music-tracker's real-library matching. `up -d` to swap which PR\n  occupies the slot.\n\n*GUI (follow-on) — agent-dashboard \"Sortie observability\" section:*\n- A control to **build/launch a preview from a given PR #** (button or PR picker) — sets the tag,\n  recreates the preview container, surfaces the LAN URL (`http://<nas>:8089`).\n- A **\"currently previewing\" panel**: which PR / branch / short-SHA occupies the slot right now,\n  when it was launched, health, and a link to open it. Empty state when the slot is free.\n- *Wiring note:* the dashboard backend (Fastify) would need to drive Docker to start/stop the\n  preview container — i.e. host Docker socket access or a small NAS-side control endpoint. This\n  is the same \"dashboard reaches NAS infra\" question as Mission Control reaching `sortie:7678`\n  (see the Mission Control TODO item) and should reuse whatever mechanism that lands on. Keep the\n  control on the NAS — never give a cloud surface Docker access.\n\n*Graduate to an auto-reconciling controller (N concurrent previews, per-PR ports, optional\n`pr-17.dash.lan` routing via Caddy/nginx) only if one-slot-at-a-time becomes the bottleneck —\nthat's ~1 day + ongoing weak-NAS RAM cost.* GUI lives in [agent-dashboard](pages/agent-dashboard/TODO.md).",
+    "body": "one `preview` container, modeled on `docker/docker-compose.nas.yml`.\nParametrize the image tag (`PR_TAG=pr-17`) + a host port (e.g. **8089**, since 8080=gluetun,\n  8088=prod app). Mount its **own** `/data` (a throwaway preview SQLite dir — NOT the prod\n  volume) and share the DJ library `:ro` (`/volume1/music/dj-library/tracks`). An empty library\n  is fine for everything except music-tracker's real-library matching. `up -d` to swap which PR\n  occupies the slot.\n\n*GUI (follow-on) — task-monitor \"Sortie observability\" section:*\n- A control to **build/launch a preview from a given PR #** (button or PR picker) — sets the tag,\n  recreates the preview container, surfaces the LAN URL (`http://<nas>:8089`).\n- A **\"currently previewing\" panel**: which PR / branch / short-SHA occupies the slot right now,\n  when it was launched, health, and a link to open it. Empty state when the slot is free.\n- *Wiring note:* the dashboard backend (Fastify) would need to drive Docker to start/stop the\n  preview container — i.e. host Docker socket access or a small NAS-side control endpoint. This\n  is the same \"dashboard reaches NAS infra\" question as Mission Control reaching `sortie:7678`\n  (see the Mission Control TODO item) and should reuse whatever mechanism that lands on. Keep the\n  control on the NAS — never give a cloud surface Docker access.\n\n*Graduate to an auto-reconciling controller (N concurrent previews, per-PR ports, optional\n`pr-17.dash.lan` routing via Caddy/nginx) only if one-slot-at-a-time becomes the bottleneck —\nthat's ~1 day + ongoing weak-NAS RAM cost.* GUI lives in [task-monitor](pages/task-monitor/TODO.md).",
     "priority": null,
     "status": "backlog",
     "source": "seed:TODO.md",
@@ -353,7 +353,7 @@
   {
     "project": "personal-dashboard",
     "title": "[Dashboard Shell] Additional widgets (in roughly the order I want them)",
-    "body": "- Acute Strategies Generator\n- Agent Dashboard / Mission Control (in pages/agent-dashboard)\n- Pomodoro timer\n- Music Picker (in widgets/music-picker)\n- Music Tracker\n- Habit log\n- Morning routine todo-list\n- Concert Diary (in widgets/concert-diary)\n- Concert Discovery (in widgets/concert-discovery)\n- Vision Board (in widgets/vision-board)\n- Festival Follower (in widgets/festival-follower)\n- Reminders (in widgets/reminders)\n- ---Below this line, not sure if i will build:----\n- Diary\n- Workout log\n- Chat (in widgets/chat)",
+    "body": "- Acute Strategies Generator\n- Task Monitor / Mission Control (in pages/task-monitor)\n- Pomodoro timer\n- Music Picker (in widgets/music-picker)\n- Music Tracker\n- Habit log\n- Morning routine todo-list\n- Concert Diary (in widgets/concert-diary)\n- Concert Discovery (in widgets/concert-discovery)\n- Vision Board (in widgets/vision-board)\n- Festival Follower (in widgets/festival-follower)\n- Reminders (in widgets/reminders)\n- ---Below this line, not sure if i will build:----\n- Diary\n- Workout log\n- Chat (in widgets/chat)",
     "priority": null,
     "status": "backlog",
     "source": "seed:shell/TODO.md",
@@ -388,38 +388,38 @@
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard (Mission Control)] Sortie observability — PR preview control",
+    "title": "[Task Monitor (Mission Control)] Sortie observability — PR preview control",
     "body": "GUI half of the \"Preview branches\" item (full details + NAS infra in the root [TODO.md](../../TODO.md) Sortie Integration section). In this page's Sortie observability area: a control to **build/launch a preview from a given PR #** (surfaces the LAN URL), plus a **\"currently previewing\" panel** showing which PR / branch / short-SHA occupies the single preview slot, when it launched, health, and an open link. Backend needs NAS-side Docker control — reuse whatever the Mission Control → `sortie:7678` access mechanism lands on.",
     "priority": null,
     "status": "backlog",
-    "source": "seed:pages/agent-dashboard/TODO.md",
+    "source": "seed:pages/task-monitor/TODO.md",
     "displayId": "PD-44"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard (Mission Control)] scheduled jobs:",
+    "title": "[Task Monitor (Mission Control)] scheduled jobs:",
     "body": "- first one: a token audit",
     "priority": null,
     "status": "backlog",
-    "source": "seed:pages/agent-dashboard/TODO.md",
+    "source": "seed:pages/task-monitor/TODO.md",
     "displayId": "PD-45"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard (Mission Control)] Kanban board",
+    "title": "[Task Monitor (Mission Control)] Kanban board",
     "body": "- Button to convert to github issue, and when in that view, there's a button to edit the issue template. if issues are sub-issues of a larger project/initiative (and decide on a name), that context should be shared with the sortie agent",
     "priority": null,
     "status": "backlog",
-    "source": "seed:pages/agent-dashboard/TODO.md",
+    "source": "seed:pages/task-monitor/TODO.md",
     "displayId": "PD-46"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard (Mission Control)] Automated Site Maintenance",
+    "title": "[Task Monitor (Mission Control)] Automated Site Maintenance",
     "body": "- Weekly Privacy Checkup: A weekly automated job scan all my apps, dependencies, plugins, and chrome extensions on both pc, nas, and the ai server itself and the web to see if anything is a security risk",
     "priority": null,
     "status": "backlog",
-    "source": "seed:pages/agent-dashboard/TODO.md",
+    "source": "seed:pages/task-monitor/TODO.md",
     "displayId": "PD-47"
   },
   {
@@ -641,7 +641,7 @@
   {
     "project": "personal-dashboard",
     "title": "[Chat Widget] Bug Reporting Mode",
-    "body": "- `/bug` command or \"Report a bug\" button switches to a structured bug-capture flow\n- LLM extracts: title, description, steps to reproduce, affected widget\n- Backend writes a task markdown file to `tasks/` for the agent workflow to pick up\n- Requires Agent Dashboard (Mission Control) to be built first",
+    "body": "- `/bug` command or \"Report a bug\" button switches to a structured bug-capture flow\n- LLM extracts: title, description, steps to reproduce, affected widget\n- Backend writes a task markdown file to `tasks/` for the agent workflow to pick up\n- Requires Task Monitor (Mission Control) to be built first",
     "priority": null,
     "status": "backlog",
     "source": "seed:widgets/chat/TODO.md",
@@ -2116,92 +2116,92 @@
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Ticket relations UI (blocked-by / blocking)",
+    "title": "[Task Monitor] Ticket relations UI (blocked-by / blocking)",
     "body": "Overflow menu → \"Mark as\" → \"Blocked by…\" / \"Blocking…\"; search modal that filters tickets as you type; blocker/blocked badges on cards. Schema exists: agent_ticket_relations (blocks/relates/duplicates).",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-156"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Tags UI (assign / create / filter)",
+    "title": "[Task Monitor] Tags UI (assign / create / filter)",
     "body": "Assign, create, and recolor tags on a ticket; filter the board by tag. Schema exists: agent_tags + agent_ticket_tags (seeded UI, Infra).",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-157"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Reminders — UI + delivery job",
+    "title": "[Task Monitor] Reminders — UI + delivery job",
     "body": "Add/remove reminders on a ticket (remind_at + note); a scheduled job sends when due (ties into Discord / inbox notifications). Schema exists: agent_ticket_reminders.",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-158"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Recurring tickets — recur logic",
+    "title": "[Task Monitor] Recurring tickets — recur logic",
     "body": "On completing a ticket with recur_interval set (e.g. weekly maintenance), spawn the next occurrence. Schema exists: agent_tickets.recur_interval.",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-159"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Assignee UI",
+    "title": "[Task Monitor] Assignee UI",
     "body": "Set/clear a ticket assignee (human or agent, e.g. \"sortie\"); filter by assignee. Schema exists: agent_tickets.assignee.",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-160"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Activity Feed",
+    "title": "[Task Monitor] Activity Feed",
     "body": "Chronological feed of ticket events (created / status_changed / archived / converted). Schema exists: agent_ticket_events (populated from day one).",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-162"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Archived view + restore",
+    "title": "[Task Monitor] Archived view + restore",
     "body": "View soft-deleted (archived) tickets and restore them. Schema exists: agent_tickets.archived_at; delete already soft-deletes.",
     "priority": null,
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-163"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Phase 3 — Convert ticket to Sortie issue",
+    "title": "[Task Monitor] Phase 3 — Convert ticket to Sortie issue",
     "body": "Per-ticket \"Convert to Sortie issue\": Claude API formats the ticket into the Sortie issue format (goal/acceptance-criteria/scope) → draft-then-approve → creates a sortie:queued GitHub issue in the project's repo → links issue back to the ticket. Needs ANTHROPIC_API_KEY + write-scoped GH token on the NAS. Only for sortie_enabled projects.\n\n--- Added 2026-07-01 (queued-status polling automation) ---\nPoll for tickets in the Queued status; when one is found that has no associated GitHub issue, create a GitHub issue for it and tag it `sortie:queued`. Ticket cards in Queued (and any status after it) show a link to the GitHub issue — just the GitHub icon.",
     "priority": "P1",
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-164"
   },
   {
     "project": "personal-dashboard",
-    "title": "[Agent Dashboard] Derived status sync from GitHub labels",
+    "title": "[Task Monitor] Derived status sync from GitHub labels",
     "body": "node-cron job polls GitHub for each converted ticket's sortie:* label + PR merge-state and writes in_progress / in_review / completed onto the row (the derived columns). Avoids coupling to Sortie's internal :7678 API.\n\nWhen a ticket is being actively worked on by an agent, a subtle shimmer effect should be applied to the card.",
     "priority": "P1",
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "PD-165"
   },
   {
     "project": "core",
     "title": "Fetch Core TODOs from the dashboard ticket API instead of META-TODOS.md",
-    "body": "META-TODOS.md stays canonical/Markdown for now (it's load-bearing — referenced across core's README/PROJECT/DECISIONS/MEMORY, and PROJECT.md §42 mandates Markdown). But core's tickets now also live in the dashboard board. Migrate core's references (session-start, /project-maintenance, /project-status) to read Core's tickets from the Agent Dashboard ticket API (GET /api/widgets/agent-dashboard/tickets filtered to project=core) so there's one source of truth. Requires the dashboard API reachable from core sessions + a sync/authoring path back. Ties into the META-TODOS 'memory-library'/'replicate Core dev tooling' items.",
+    "body": "META-TODOS.md stays canonical/Markdown for now (it's load-bearing — referenced across core's README/PROJECT/DECISIONS/MEMORY, and PROJECT.md §42 mandates Markdown). But core's tickets now also live in the dashboard board. Migrate core's references (session-start, /project-maintenance, /project-status) to read Core's tickets from the Task Monitor ticket API (GET /api/widgets/task-monitor/tickets filtered to project=core) so there's one source of truth. Requires the dashboard API reachable from core sessions + a sync/authoring path back. Ties into the META-TODOS 'memory-library'/'replicate Core dev tooling' items.",
     "priority": "P1",
     "status": "backlog",
-    "source": "seed:agent-dashboard/followups",
+    "source": "seed:task-monitor/followups",
     "displayId": "C-81"
   },
   {

@@ -49,7 +49,7 @@ function isAssignee(v: unknown): v is TicketAssignee {
 }
 
 /** Injectable deps for the routes — defaults resolve from the environment / global fetch. */
-export interface AgentDashboardRouteDeps {
+export interface TaskMonitorRouteDeps {
   /** Write-scoped GitHub token for close-on-delete (PD-207 A). Defaults to `GITHUB_WRITE_TOKEN`. */
   githubWriteToken?: string;
   /** Read-scoped GitHub token for the on-demand sync endpoint (PD-252). Defaults to `GITHUB_READ_TOKEN`. */
@@ -61,9 +61,9 @@ export interface AgentDashboardRouteDeps {
 export function registerRoutes(
   app: FastifyInstance,
   db: Database.Database,
-  deps: AgentDashboardRouteDeps = {},
+  deps: TaskMonitorRouteDeps = {},
 ): void {
-  const base = '/api/widgets/agent-dashboard';
+  const base = '/api/widgets/task-monitor';
 
   /* ── Projects ─────────────────────────────── */
 
@@ -265,16 +265,16 @@ export function registerRoutes(
         );
         if (ok) {
           app.log.info(
-            `agent-dashboard: closed ${ref.githubRepo}#${ref.githubIssueNumber} not_planned (ticket ${id} archived)`,
+            `task-monitor: closed ${ref.githubRepo}#${ref.githubIssueNumber} not_planned (ticket ${id} archived)`,
           );
         } else {
           app.log.error(
-            `agent-dashboard: close ${ref.githubRepo}#${ref.githubIssueNumber} failed (ticket ${id} archived)`,
+            `task-monitor: close ${ref.githubRepo}#${ref.githubIssueNumber} failed (ticket ${id} archived)`,
           );
         }
       } catch (err) {
         app.log.error(
-          `agent-dashboard: close ${ref.githubRepo}#${ref.githubIssueNumber} threw: ${err instanceof Error ? err.message : String(err)}`,
+          `task-monitor: close ${ref.githubRepo}#${ref.githubIssueNumber} threw: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -344,10 +344,10 @@ export function registerRoutes(
       deps.fetchImpl ?? fetch,
     );
     if (!ok) {
-      app.log.error(`agent-dashboard: reply to ${ref.githubRepo}#${ref.githubIssueNumber} failed`);
+      app.log.error(`task-monitor: reply to ${ref.githubRepo}#${ref.githubIssueNumber} failed`);
       return reply.status(502).send({ error: 'GitHub rejected the reply', code: 'GITHUB_ERROR' });
     }
-    app.log.info(`agent-dashboard: replied to ${ref.githubRepo}#${ref.githubIssueNumber} (ticket ${id})`);
+    app.log.info(`task-monitor: replied to ${ref.githubRepo}#${ref.githubIssueNumber} (ticket ${id})`);
     return reply.status(201).send({ ok: true });
   });
 

@@ -13,8 +13,8 @@ Everything here is grounded in the real config/code:
 - Sortie runtime config + agent prompt: [`ops/sortie/WORKFLOW.md`](../ops/sortie/WORKFLOW.md)
 - Deployment/ops notes: [`ops/sortie/README.md`](../ops/sortie/README.md)
 - In-repo GitHub Actions bridges: [`.github/workflows/sortie-*.yml`](../.github/workflows/)
-- Board ↔ GitHub sync + label rules: [`apps/server/src/widgets/agent-dashboard/github-sync.ts`](../apps/server/src/widgets/agent-dashboard/github-sync.ts)
-- State/label types + descriptions: [`packages/shared/src/agent-dashboard.ts`](../packages/shared/src/agent-dashboard.ts)
+- Board ↔ GitHub sync + label rules: [`apps/server/src/widgets/task-monitor/github-sync.ts`](../apps/server/src/widgets/task-monitor/github-sync.ts)
+- State/label types + descriptions: [`packages/shared/src/task-monitor.ts`](../packages/shared/src/task-monitor.ts)
 - Architectural decisions cited below live in [`DECISIONS.md`](../DECISIONS.md).
 
 > Terminology follows `PROJECT.md` §8 (Glossary): **ticket** = the durable spec owned by the
@@ -29,7 +29,7 @@ The GitHub issue label **is** the state machine — not the Sortie `:7678` API (
 the agent, the watchdog, and the Actions bridges all coordinate purely by adding/removing a
 single `sortie:*` label. The dashboard is a **read-mostly mirror**: a once-a-minute cron plus
 an on-demand pull (D-043) reads each linked issue's labels and derives the board `status` +
-`agentState` in [`deriveState()`](../apps/server/src/widgets/agent-dashboard/github-sync.ts).
+`agentState` in [`deriveState()`](../apps/server/src/widgets/task-monitor/github-sync.ts).
 
 Under the D-040 board redesign, **every non-terminal `sortie:*` label maps to the single
 `robot_queue` lane** ("Robot's Queue"); the fine-grained state is carried by `agentState` and
@@ -54,7 +54,7 @@ in `deriveState()`.
 | _(no `sortie:*` label)_ | _(unchanged)_ | _(unchanged)_ | — | `deriveState()` returns `null` → "leave the ticket alone." |
 
 `AgentState`, `AGENT_STATE_LABELS`, and `AGENT_STATE_DESCRIPTIONS` are defined in
-[`packages/shared/src/agent-dashboard.ts`](../packages/shared/src/agent-dashboard.ts). The
+[`packages/shared/src/task-monitor.ts`](../packages/shared/src/task-monitor.ts). The
 board never writes these fine states — it derives them from labels (PD-165).
 
 ### State transition sketch
@@ -84,7 +84,7 @@ board never writes these fine states — it derives them from labels (PD-165).
 
 1. **Dispatch (board → GitHub, write).** Dragging/routing a ticket into **Robot's Queue**
    (`robot_queue`) is the dispatch trigger. `runQueuedSync()`
-   ([`github-sync.ts`](../apps/server/src/widgets/agent-dashboard/github-sync.ts), PD-164)
+   ([`github-sync.ts`](../apps/server/src/widgets/task-monitor/github-sync.ts), PD-164)
    mints a GitHub issue (title+body verbatim) with `sortie:queued`, or adds `sortie:queued` to
    an already-linked issue that has no `sortie:*` label yet. A soft `isSortieReady()` warning
    fires if the ticket body lacks the four Sortie sections, but it does not block (D-038).

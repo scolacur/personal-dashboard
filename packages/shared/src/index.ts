@@ -16,7 +16,7 @@ export type {
   RefineRole,
   RefineDetail,
   RefineMessage,
-} from './agent-dashboard';
+} from './task-monitor';
 export {
   TICKET_STATUSES,
   TICKET_PRIORITIES,
@@ -33,4 +33,4 @@ export {
   REFINE_EVENT_TYPE,
   isRefineEventType,
   refineThreadFromEvents,
-} from './agent-dashboard';
+} from './task-monitor';

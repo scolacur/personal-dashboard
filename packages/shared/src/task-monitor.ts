@@ -1,4 +1,4 @@
-// Types for the Agent Dashboard "Tasks" Kanban — the project's Ticket backlog.
+// Types for the Task Monitor "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
 // Who the ticket is assigned to. 'steve' = human owner; 'robot' = agent/Sortie.

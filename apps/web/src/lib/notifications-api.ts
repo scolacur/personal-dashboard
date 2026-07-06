@@ -2,7 +2,7 @@ import type { AgentNotification } from '@dashboard/shared';
 
 // Notification Center API client (D-040 / PD-250). Lives in $lib because the bell is
 // mounted in the app-wide top nav, not inside the task-monitor route.
-const BASE = '/api/widgets/agent-dashboard/notifications';
+const BASE = '/api/widgets/task-monitor/notifications';
 
 export async function fetchNotifications(
   opts: { unreadOnly?: boolean; limit?: number } = {},

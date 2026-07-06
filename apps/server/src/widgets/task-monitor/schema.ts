@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { migrate, addColumn } from '../../migrate';
 
-// Agent Dashboard schema: a cross-project Ticket backlog (Kanban), the projects those
+// Task Monitor schema: a cross-project Ticket backlog (Kanban), the projects those
 // Tickets belong to, plus relations / tags / events / reminders. All evolution goes
 // through the migration framework so we never drop/recreate a populated table (D-021).
 //

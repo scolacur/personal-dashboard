@@ -1,4 +1,4 @@
-# Agent Dashboard (Mission Control) — Project Context
+# Task Monitor — Project Context
 
 ## What this is
 

@@ -25,20 +25,20 @@ describe('buildContextPack', () => {
       ['# PROJECT', '## 7. Other', 'x', '## 8. Glossary', '**Refine**: the session.', '## 9. End', 'y'].join('\n'),
     );
     mkdirSync(path.join(dir, 'apps/server/src/widgets/music-tracker'), { recursive: true });
-    mkdirSync(path.join(dir, 'apps/server/src/widgets/agent-dashboard'), { recursive: true });
+    mkdirSync(path.join(dir, 'apps/server/src/widgets/task-monitor'), { recursive: true });
     mkdirSync(path.join(dir, 'apps/web/src/routes/widgets/pomodoro'), { recursive: true });
     mkdirSync(path.join(dir, 'packages/shared/src'), { recursive: true });
     writeFileSync(path.join(dir, 'packages/shared/src/index.ts'), '');
-    writeFileSync(path.join(dir, 'packages/shared/src/agent-dashboard.ts'), '');
+    writeFileSync(path.join(dir, 'packages/shared/src/task-monitor.ts'), '');
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
   it('includes the glossary and a de-duplicated building-block index', () => {
     const pack = buildContextPack(dir);
     expect(pack).toContain('**Refine**: the session.');
-    expect(pack).toContain('agent-dashboard, music-tracker'); // sorted server widgets
+    expect(pack).toContain('music-tracker, task-monitor'); // sorted server widgets
     expect(pack).toContain('pomodoro'); // web widget route
-    expect(pack).toContain('agent-dashboard.ts'); // shared module, index.ts excluded
+    expect(pack).toContain('task-monitor.ts'); // shared module, index.ts excluded
     expect(pack).not.toContain('index.ts');
   });
 

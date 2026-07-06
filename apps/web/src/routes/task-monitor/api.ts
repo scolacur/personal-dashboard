@@ -19,9 +19,9 @@ export function projectIdColor(project: AgentProject | undefined | null): string
   }
 }
 
-const BASE = '/api/widgets/agent-dashboard/tickets';
-const PROJECTS = '/api/widgets/agent-dashboard/projects';
-const SYNC = '/api/widgets/agent-dashboard/sync';
+const BASE = '/api/widgets/task-monitor/tickets';
+const PROJECTS = '/api/widgets/task-monitor/projects';
+const SYNC = '/api/widgets/task-monitor/sync';
 
 async function parseError(res: Response): Promise<never> {
   let message = `${res.status} ${res.statusText}`;

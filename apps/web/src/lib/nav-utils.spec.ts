@@ -13,7 +13,7 @@ describe('resolvePageTitle', () => {
   });
 
   it('matches the nav page when the pathname is a sub-path', () => {
-    expect(resolvePageTitle('/task-monitor/tickets/PD-1')).toBe('Agent Dashboard');
+    expect(resolvePageTitle('/task-monitor/tickets/PD-1')).toBe('Task Monitor');
     expect(resolvePageTitle('/productivity/some-subpage')).toBe('Productivity');
   });
 
