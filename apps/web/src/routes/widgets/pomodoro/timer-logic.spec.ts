@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from './timer-logic';
+import { formatTime, advancePhase, clampRoundsBeforeLongBreak, computeRemainingLegs } from './timer-logic';
 
 describe('formatTime', () => {
   it('formats zero seconds', () => {
@@ -78,6 +78,66 @@ describe('advancePhase — break phases', () => {
     expect(result.phase).toBe('work');
     expect(result.currentRound).toBe(3);
     expect(result.secondsForPhase).toBe(40 * 60);
+  });
+});
+
+describe('computeRemainingLegs', () => {
+  const base = {
+    workMinutes: 40,
+    shortBreakMinutes: 10,
+    longBreakMinutes: 20,
+  };
+
+  it('counts all legs from the start with 1 round (just work → done)', () => {
+    const result = computeRemainingLegs(
+      { phase: 'work', currentRound: 1 },
+      { ...base, totalRounds: 1, roundsBeforeLongBreak: 1 },
+    );
+    expect(result).toEqual({ work: 1, shortBreak: 0, longBreak: 0 });
+  });
+
+  it('counts all legs for N=4, R=2 from the start', () => {
+    // Sequence: work1 → short-break → work2 → long-break → work3 → short-break → work4 → done
+    const result = computeRemainingLegs(
+      { phase: 'work', currentRound: 1 },
+      { ...base, totalRounds: 4, roundsBeforeLongBreak: 2 },
+    );
+    expect(result).toEqual({ work: 4, shortBreak: 2, longBreak: 1 });
+  });
+
+  it('counts remaining legs mid-session (in short-break at round 1)', () => {
+    // From short-break at round 1: → work2 → long-break → work3 → short-break → work4 → done
+    const result = computeRemainingLegs(
+      { phase: 'short-break', currentRound: 1 },
+      { ...base, totalRounds: 4, roundsBeforeLongBreak: 2 },
+    );
+    expect(result).toEqual({ work: 3, shortBreak: 2, longBreak: 1 });
+  });
+
+  it('returns all zeros when already done', () => {
+    const result = computeRemainingLegs(
+      { phase: 'done', currentRound: 1 },
+      { ...base, totalRounds: 1, roundsBeforeLongBreak: 1 },
+    );
+    expect(result).toEqual({ work: 0, shortBreak: 0, longBreak: 0 });
+  });
+
+  it('counts a long break when roundsBeforeLongBreak=1', () => {
+    // Sequence: work1 → long-break → work2 → done
+    const result = computeRemainingLegs(
+      { phase: 'work', currentRound: 1 },
+      { ...base, totalRounds: 2, roundsBeforeLongBreak: 1 },
+    );
+    expect(result).toEqual({ work: 2, shortBreak: 0, longBreak: 1 });
+  });
+
+  it('counts from a long-break phase mid-session', () => {
+    // From long-break at round 2: → work3 → done
+    const result = computeRemainingLegs(
+      { phase: 'long-break', currentRound: 2 },
+      { ...base, totalRounds: 3, roundsBeforeLongBreak: 2 },
+    );
+    expect(result).toEqual({ work: 1, shortBreak: 0, longBreak: 1 });
   });
 });
 

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { widgets } from '$lib/widgets';
   import Widget from '$lib/Widget.svelte';
-  import PomodoroTimer from './widgets/pomodoro/PomodoroTimer.svelte';
 </script>
 
 {#if widgets.length === 0}
@@ -11,13 +10,7 @@
 {:else}
   <div class="grid">
     {#each widgets as w (w.route)}
-      {#if w.id === 'pomodoro'}
-        <div class="pomodoro-tile">
-          <PomodoroTimer />
-        </div>
-      {:else}
-        <Widget title={w.title} description={w.description} route={w.route} />
-      {/if}
+      <Widget title={w.title} description={w.description} route={w.route} />
     {/each}
   </div>
 {/if}

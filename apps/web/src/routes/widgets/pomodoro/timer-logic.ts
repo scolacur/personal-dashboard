@@ -48,3 +48,28 @@ export function advancePhase(
 export function clampRoundsBeforeLongBreak(value: number, totalRounds: number): number {
   return Math.max(1, Math.min(value, totalRounds));
 }
+
+export interface RemainingLegs {
+  work: number;
+  shortBreak: number;
+  longBreak: number;
+}
+
+export function computeRemainingLegs(
+  current: { phase: PomodoroPhase; currentRound: number },
+  config: PomodoroConfig,
+): RemainingLegs {
+  const legs: RemainingLegs = { work: 0, shortBreak: 0, longBreak: 0 };
+  let state = { phase: current.phase, currentRound: current.currentRound };
+
+  while (state.phase !== 'done') {
+    if (state.phase === 'work') legs.work++;
+    else if (state.phase === 'short-break') legs.shortBreak++;
+    else if (state.phase === 'long-break') legs.longBreak++;
+
+    const next = advancePhase(state, config);
+    state = { phase: next.phase, currentRound: next.currentRound };
+  }
+
+  return legs;
+}
