@@ -7,6 +7,7 @@
   import NotificationBell from '$lib/NotificationBell.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
   import { resolvePageTitle } from '$lib/nav-utils';
+  import FloatingPomodoro from './widgets/pomodoro/FloatingPomodoro.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -73,5 +74,7 @@
     </main>
   </div>
 </div>
+
+<FloatingPomodoro />
 
 <style lang="scss" src="./+layout.scss"></style>
