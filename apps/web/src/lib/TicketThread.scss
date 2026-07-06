@@ -104,7 +104,7 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm, 6px);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
 
     &:disabled {
@@ -116,5 +116,118 @@
 
 .send-msg {
   color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+// Commit proposal panel (D-044, PD-269) — the approval gate before any ticket writes.
+.proposal {
+  margin: var(--space-md) 0;
+  padding: var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2, rgba(29, 118, 219, 0.05));
+}
+
+.proposal-badge {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.proposal-rationale {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.proposal-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-xs) var(--space-md);
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-sm);
+
+  div {
+    display: contents;
+  }
+  dt {
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: var(--font-size-xs);
+  }
+  dd {
+    margin: 0;
+  }
+}
+
+.proposal-body {
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.proposal-children {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+
+  .child-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+  }
+  .child-lane,
+  .child-assignee {
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0 var(--space-sm);
+    white-space: nowrap;
+  }
+  .child-title {
+    font-weight: 600;
+  }
+}
+
+.proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+  .approve {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  .reject {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+}
+
+.decide-msg {
+  color: #c0392b;
   font-size: var(--font-size-sm);
 }

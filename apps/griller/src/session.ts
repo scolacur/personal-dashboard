@@ -1,6 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { RefineProposal } from '@dashboard/shared';
 import type { GrillerConfig } from './config';
+import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
 
 /** Read-only built-in tools — the griller grounds against the checkout, never edits. */
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
@@ -13,6 +15,8 @@ export interface GrillTurnInput {
   prompt: string;
   /** Resume a prior grill session (async follow-up); omit to start fresh. */
   resumeSessionId?: string;
+  /** Called when the agent invokes propose_commit (PD-269); records the commit proposal. */
+  onProposal?: (proposal: RefineProposal) => void;
 }
 
 export interface GrillTurnResult {
@@ -38,20 +42,32 @@ function systemPrompt(contextPack: string): string {
     'large features (many files, front-end AND back-end, or anything touching critical infra)',
     'warrant a full grill.',
     '',
+    'When you and Steve have converged on a concrete plan, call the propose_commit tool to',
+    'record it (refine-in-place or decompose). You never write tickets yourself — the proposal',
+    'is what Steve approves on the board. Anything routed to robot_queue MUST have the four',
+    'sections (## Context, ## Task, ## Done When, ## Out of scope). Do not propose prematurely.',
+    '',
     'Project context:',
     contextPack,
   ].join('\n');
 }
 
-/** The SDK options shared by the one-shot and warm-streaming paths. */
-function grillOptions(config: GrillerConfig, contextPack: string, resumeSessionId?: string) {
+/** The SDK options shared by the one-shot and warm-streaming paths. When `onProposal` is
+ *  given, the propose_commit tool (PD-269) is exposed and allowed alongside the read-only set. */
+function grillOptions(
+  config: GrillerConfig,
+  contextPack: string,
+  resumeSessionId?: string,
+  onProposal?: (proposal: RefineProposal) => void,
+) {
   return {
     model: config.model,
     cwd: config.checkoutDir,
     systemPrompt: systemPrompt(contextPack),
-    allowedTools: READ_ONLY_TOOLS,
+    allowedTools: onProposal ? [...READ_ONLY_TOOLS, PROPOSE_TOOL_NAME] : READ_ONLY_TOOLS,
     // Headless: deny any tool outside the allowlist without prompting (would hang).
     permissionMode: 'dontAsk' as const,
+    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal) } } : {}),
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 }
@@ -71,7 +87,7 @@ export async function runGrillTurn(input: GrillTurnInput): Promise<GrillTurnResu
 
   for await (const message of query({
     prompt: input.prompt,
-    options: grillOptions(input.config, input.contextPack, input.resumeSessionId),
+    options: grillOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
   })) {
     if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
     if (message.type === 'result') {
@@ -113,6 +129,8 @@ export interface OpenSessionInput {
   contextPack: string;
   /** Rehydrate a prior session (cold start after a restart); omit for a brand-new thread. */
   resumeSessionId?: string;
+  /** Called when the agent invokes propose_commit (PD-269); records the commit proposal. */
+  onProposal?: (proposal: RefineProposal) => void;
 }
 
 /** Factory type so the warm-session manager and its tests can swap the real SDK out. */
@@ -188,7 +206,7 @@ export const openWarmSession: OpenGrillSession = (input) => {
 
   const q = query({
     prompt: input$.stream,
-    options: grillOptions(input.config, input.contextPack, input.resumeSessionId),
+    options: grillOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
   });
 
   // Drain the query in the background, routing each completed turn back to its `send` caller.

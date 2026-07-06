@@ -7,13 +7,23 @@ import type {
   CreateProjectInput,
   CreateTicketInput,
   NotificationKind,
+  RefineCommitMode,
+  RelationType,
   TicketAssignee,
   TicketEvent,
+  TicketLineage,
   TicketPriority,
   TicketStatus,
   UpdateTicketInput,
 } from '@dashboard/shared';
-import { laneForcedAssignee, refineStateFromLatestType, REFINE_EVENT_TYPE } from '@dashboard/shared';
+import {
+  isSortieReady,
+  laneForcedAssignee,
+  latestActionableProposal,
+  refineStateFromLatestType,
+  REFINE_EVENT_TYPE,
+  REFINE_PROPOSAL_EVENT,
+} from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
 // never see snake_case (PROJECT.md §5: typed helpers, no raw SQL in routes).
@@ -563,6 +573,140 @@ export function appendRefineReply(
     .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
     .get(Number(res.lastInsertRowid)) as TicketEventRow | undefined;
   return row ? rowToTicketEvent(row) : null;
+}
+
+/* ── Ticket relations + Refine commit (D-020 table, D-044/PD-269) ────── */
+
+/** Link two tickets (idempotent via the UNIQUE(from,to,type) constraint). */
+export function addRelation(
+  db: Database.Database,
+  fromTicketId: number,
+  toTicketId: number,
+  type: RelationType,
+): void {
+  db.prepare(
+    'INSERT OR IGNORE INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (?, ?, ?, ?)',
+  ).run(fromTicketId, toTicketId, type, Date.now());
+}
+
+/** A ticket's split lineage for the read-only display (PD-269); PD-156 owns the full UI. */
+export function getLineage(db: Database.Database, ticketId: number): TicketLineage {
+  const intoRows = db
+    .prepare(
+      `SELECT t.id, t.display_id, t.title, t.status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.to_ticket_id
+        WHERE r.from_ticket_id = ? AND r.type = 'split'
+        ORDER BY t.id ASC`,
+    )
+    .all(ticketId) as { id: number; display_id: string | null; title: string; status: string }[];
+  const fromRows = db
+    .prepare(
+      `SELECT t.id, t.display_id, t.title, t.status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.from_ticket_id
+        WHERE r.to_ticket_id = ? AND r.type = 'split'
+        ORDER BY t.id ASC`,
+    )
+    .all(ticketId) as { id: number; display_id: string | null; title: string; status: string }[];
+  const map = (r: { id: number; display_id: string | null; title: string; status: string }) => ({
+    ticketId: r.id,
+    displayId: r.display_id,
+    title: r.title,
+    status: r.status as TicketStatus,
+  });
+  return { splitInto: intoRows.map(map), splitFrom: fromRows.map(map) };
+}
+
+/** Write a proposal-lifecycle event (committed / rejected). */
+function logProposalEvent(db: Database.Database, ticketId: number, type: string, detail: unknown): void {
+  db.prepare(
+    'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+  ).run(ticketId, type, JSON.stringify(detail), Date.now());
+}
+
+export type ApproveRefineResult =
+  | { ok: true; mode: RefineCommitMode; refinedTicketId?: number; childIds?: number[] }
+  | {
+      ok: false;
+      reason: 'not_found' | 'no_proposal' | 'invalid_proposal' | 'child_not_sortie_ready';
+      detail?: string;
+    };
+
+/**
+ * Execute the latest actionable commit proposal on Steve's approval (D-044, PD-269). The
+ * griller only proposes; this is the single place tickets are written, so the lane→assignee
+ * invariant + isSortieReady gate are enforced here. Refine-in-place rewrites the ticket and
+ * marks it refined; decompose creates routed children, closes the parent (D-036), and links
+ * each child via a `split` relation. All-or-nothing (one transaction); validation runs first.
+ */
+export function approveRefine(db: Database.Database, ticketId: number): ApproveRefineResult {
+  const parent = getTicket(db, ticketId);
+  if (!parent) return { ok: false, reason: 'not_found' };
+
+  const found = latestActionableProposal(listTicketEvents(db, ticketId));
+  if (!found) return { ok: false, reason: 'no_proposal' };
+  const p = found.proposal;
+
+  if (p.mode === 'refine_in_place') {
+    const status = p.status ?? parent.status;
+    const body = p.body ?? parent.body;
+    if (status === 'robot_queue' && !isSortieReady(body)) {
+      return { ok: false, reason: 'child_not_sortie_ready', detail: parent.displayId ?? String(ticketId) };
+    }
+    const run = db.transaction(() => {
+      updateTicket(db, ticketId, {
+        body,
+        status,
+        assignee: p.assignee === undefined ? parent.assignee : p.assignee,
+        refined: true,
+      });
+      logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode });
+    });
+    run();
+    return { ok: true, mode: p.mode, refinedTicketId: ticketId };
+  }
+
+  // decompose
+  const children = p.children ?? [];
+  if (children.length === 0) return { ok: false, reason: 'invalid_proposal', detail: 'no children' };
+  if (parent.projectId === null) {
+    return { ok: false, reason: 'invalid_proposal', detail: 'parent has no project' };
+  }
+  const projectId = parent.projectId;
+  // Validate ALL robot-bound children before any write.
+  for (const c of children) {
+    if (c.status === 'robot_queue' && !isSortieReady(c.body)) {
+      return { ok: false, reason: 'child_not_sortie_ready', detail: c.title };
+    }
+  }
+  const childIds: number[] = [];
+  const run = db.transaction(() => {
+    for (const c of children) {
+      const child = createTicket(db, {
+        title: c.title,
+        body: c.body,
+        status: c.status,
+        assignee: c.assignee ?? undefined,
+        projectId,
+      });
+      addRelation(db, ticketId, child.id, 'split');
+      childIds.push(child.id);
+    }
+    updateTicket(db, ticketId, { status: 'closed' });
+    logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, childIds });
+  });
+  run();
+  return { ok: true, mode: p.mode, childIds };
+}
+
+export type RejectRefineResult = { ok: true } | { ok: false; reason: 'not_found' | 'no_proposal' };
+
+/** Drop the latest actionable proposal (Steve rejected); the grill can propose again. */
+export function rejectRefine(db: Database.Database, ticketId: number): RejectRefineResult {
+  if (getTicket(db, ticketId) === null) return { ok: false, reason: 'not_found' };
+  const found = latestActionableProposal(listTicketEvents(db, ticketId));
+  if (!found) return { ok: false, reason: 'no_proposal' };
+  logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.rejected, { eventId: found.eventId });
+  return { ok: true };
 }
 
 /* ── Notifications (Notification Center, D-040) ─────────────────────── */

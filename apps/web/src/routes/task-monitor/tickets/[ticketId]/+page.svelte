@@ -1,6 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import type { AgentProject, AgentTicket, TicketStatus } from '@dashboard/shared';
+  import type { AgentProject, AgentTicket, TicketLineage, TicketStatus } from '@dashboard/shared';
   import { PRIORITY_LABELS } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
@@ -11,6 +11,7 @@
 
   let ticket = $state<AgentTicket | null>(null);
   let project = $state<AgentProject | null>(null);
+  let lineage = $state<TicketLineage | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let notFound = $state(false);
@@ -42,6 +43,7 @@
       ticket = found;
       project =
         found.projectId !== null ? (projects.find((p) => p.id === found.projectId) ?? null) : null;
+      lineage = await api.fetchLineage(found.id);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -203,7 +205,38 @@
       {/if}
     </div>
 
-    <TicketThread ticketId={ticket.id} />
+    {#if lineage && (lineage.splitInto.length > 0 || lineage.splitFrom.length > 0)}
+      <section class="lineage">
+        <h2>Lineage</h2>
+        {#if lineage.splitFrom.length > 0}
+          <p class="lineage-group">
+            <span class="lineage-label">Split from</span>
+            {#each lineage.splitFrom as ref (ref.ticketId)}
+              <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
+                >{ref.displayId} — {ref.title}</a
+              >
+            {/each}
+          </p>
+        {/if}
+        {#if lineage.splitInto.length > 0}
+          <div class="lineage-group">
+            <span class="lineage-label">Split into</span>
+            <ul>
+              {#each lineage.splitInto as ref (ref.ticketId)}
+                <li>
+                  <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
+                    >{ref.displayId} — {ref.title}</a
+                  >
+                  <span class="lineage-status">{STATUS_LABELS[ref.status] ?? ref.status}</span>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+      </section>
+    {/if}
+
+    <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
   </article>
 {/if}
 

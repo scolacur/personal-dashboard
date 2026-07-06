@@ -3,6 +3,7 @@ import type {
   AgentTicket,
   CreateTicketInput,
   TicketEvent,
+  TicketLineage,
   UpdateTicketInput,
 } from '@dashboard/shared';
 
@@ -121,4 +122,24 @@ export async function postRefineReply(id: number, body: string): Promise<TicketE
   });
   if (!res.ok) return parseError(res);
   return res.json() as Promise<TicketEvent>;
+}
+
+/** Approve the latest Refine commit proposal (PD-269): the server refines-in-place or
+ *  decomposes. Throws on 409 (no proposal) / 422 (a robot child isn't Sortie-ready). */
+export async function approveRefine(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/refine-approve`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+}
+
+/** Reject the latest Refine commit proposal (PD-269); the grill can propose again. */
+export async function rejectRefine(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/refine-reject`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+}
+
+/** A ticket's read-only split lineage (PD-269). */
+export async function fetchLineage(id: number): Promise<TicketLineage> {
+  const res = await fetch(`${BASE}/${id}/relations`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketLineage>;
 }

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { TicketEvent } from '@dashboard/shared';
-import { REFINE_EVENT_TYPE, refineThreadFromEvents } from '@dashboard/shared';
+import type { RefineProposal, TicketEvent } from '@dashboard/shared';
+import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT, refineThreadFromEvents } from '@dashboard/shared';
 import type { GrillerConfig } from './config';
 import { buildContextPack } from './context-pack';
 import {
@@ -140,6 +140,32 @@ export function writeRefineAgentTurn(
 }
 
 /**
+ * Persist a commit proposal the agent emitted via propose_commit (PD-269) as a
+ * `refine_proposal` event + notify Steve. Written from the tool handler (synchronously,
+ * mid-turn); the server executes it on approval. A fresh proposal supersedes any earlier
+ * un-actioned one (latestActionableProposal picks the newest).
+ */
+export function writeRefineProposal(
+  db: Database.Database,
+  ticketId: number,
+  proposal: RefineProposal,
+  now: number = Date.now(),
+): void {
+  db.prepare(
+    'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+  ).run(ticketId, REFINE_PROPOSAL_EVENT.proposal, JSON.stringify(proposal), now);
+
+  const t = db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(ticketId) as
+    | { display_id: string | null }
+    | undefined;
+  const verb = proposal.mode === 'decompose' ? 'proposed a split' : 'proposed changes';
+  const title = `Refine agent ${verb}${t?.display_id ? ` on ${t.display_id}` : ''}`;
+  db.prepare(
+    'INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run('agent_refine', ticketId, title, proposal.rationale ?? null, now);
+}
+
+/**
  * Raise an `agent_refine` notification that the griller posted. Uses the same unread-dedup
  * guard the server's createNotification does — one unread notification per ticket at a time,
  * so a back-and-forth doesn't flood the inbox until Steve reads it.
@@ -266,7 +292,13 @@ export async function processPendingRefines(
     try {
       const result = await sessions.turn(
         ticketId,
-        { config, contextPack, resumeSessionId: work.resumeSessionId },
+        {
+          config,
+          contextPack,
+          resumeSessionId: work.resumeSessionId,
+          // The agent calls propose_commit → we persist the proposal for Steve to approve.
+          onProposal: (proposal) => writeRefineProposal(db, ticketId, proposal, now()),
+        },
         work.prompt,
       );
       if (result.text.trim() === '') {

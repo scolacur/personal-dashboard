@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import type { TicketEvent } from '@dashboard/shared';
-import { REFINE_EVENT_TYPE } from '@dashboard/shared';
+import type { RefineProposal, TicketEvent } from '@dashboard/shared';
+import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
 import type { GrillerConfig } from './config';
 import type { GrillSession, GrillTurnResult, OpenGrillSession, OpenSessionInput } from './session';
 import {
@@ -9,6 +9,7 @@ import {
   findPendingRefineTicketIds,
   listTicketEvents,
   processPendingRefines,
+  writeRefineProposal,
   WarmSessions,
 } from './refine';
 
@@ -254,5 +255,56 @@ describe('WarmSessions', () => {
     expect(sessions.sweep(Date.now() + 10_000)).toBe(1); // well past the 1s idle window
     expect(sessions.size()).toBe(0);
     expect(fake.closedCount()).toBe(1);
+  });
+});
+
+describe('propose_commit path (D-044, PD-269)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+    seq = 0;
+  });
+
+  it('writeRefineProposal persists a refine_proposal event + an agent_refine notification', () => {
+    addTicket(db, 1, 'PD-1');
+    const proposal: RefineProposal = { mode: 'decompose', rationale: 'too big', children: [] };
+    writeRefineProposal(db, 1, proposal, ++seq);
+    const events = listTicketEvents(db, 1).filter((e) => e.type === REFINE_PROPOSAL_EVENT.proposal);
+    expect(events).toHaveLength(1);
+    expect((events[0].detail as RefineProposal).mode).toBe('decompose');
+    const notif = db.prepare('SELECT kind, title FROM agent_notifications').get() as {
+      kind: string;
+      title: string;
+    };
+    expect(notif.kind).toBe('agent_refine');
+    expect(notif.title).toContain('split');
+  });
+
+  it('processPendingRefines wires onProposal so a tool call records a proposal', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'grill me' });
+    // Fake session that "calls propose_commit" mid-turn via the injected onProposal.
+    const proposal: RefineProposal = { mode: 'refine_in_place', body: 'tightened' };
+    const open: OpenGrillSession = (input: OpenSessionInput) => ({
+      get sessionId() {
+        return 'sess-1';
+      },
+      lastUsedAt: Date.now(),
+      async send(): Promise<GrillTurnResult> {
+        input.onProposal?.(proposal); // agent invoked the tool
+        return { text: 'here is my proposal', sessionId: 'sess-1' };
+      },
+      async close() {},
+    });
+
+    await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(open),
+      buildContext: noContext,
+      now: () => ++seq,
+    });
+
+    const proposals = listTicketEvents(db, 1).filter((e) => e.type === REFINE_PROPOSAL_EVENT.proposal);
+    expect(proposals).toHaveLength(1);
+    expect((proposals[0].detail as RefineProposal).body).toBe('tightened');
   });
 });

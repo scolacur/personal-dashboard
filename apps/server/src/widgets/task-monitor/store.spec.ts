@@ -2,10 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import {
+  addRelation,
   appendRefineReply,
+  approveRefine,
   archiveTicket,
   createNotification,
   createTicket,
+  getLineage,
   getProjectBySlug,
   getTicket,
   listNotifications,
@@ -14,10 +17,20 @@ import {
   listTickets,
   markAllNotificationsRead,
   markNotificationRead,
+  rejectRefine,
   startRefine,
   unreadNotificationCount,
   updateTicket,
 } from './store';
+
+const SORTIE_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
+
+/** Write a refine_proposal event directly (stands in for the griller's propose_commit). */
+function seedProposal(db: Database.Database, ticketId: number, proposal: unknown): void {
+  db.prepare(
+    'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+  ).run(ticketId, 'refine_proposal', JSON.stringify(proposal), Date.now());
+}
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -539,5 +552,92 @@ describe('startRefine + refineState (D-044, PD-268)', () => {
       'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
     ).run(t.id, 'refine_agent', JSON.stringify({ text: 'plan', sessionId: 's' }), Date.now() + 1000);
     expect(getTicket(db, t.id)?.refineState).toBe('awaiting-human');
+  });
+});
+
+describe('relations + Refine commit (D-044, PD-269)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('addRelation is idempotent and getLineage resolves both directions', () => {
+    const parent = createTicket(db, { title: 'parent', projectId: pd });
+    const child = createTicket(db, { title: 'child', projectId: pd });
+    addRelation(db, parent.id, child.id, 'split');
+    addRelation(db, parent.id, child.id, 'split'); // dup ignored
+    expect(getLineage(db, parent.id).splitInto.map((r) => r.ticketId)).toEqual([child.id]);
+    expect(getLineage(db, child.id).splitFrom.map((r) => r.ticketId)).toEqual([parent.id]);
+  });
+
+  it('approveRefine refine_in_place rewrites, routes, and marks refined', () => {
+    const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'new body', status: 'steve_queue' });
+    const res = approveRefine(db, t.id);
+    expect(res.ok).toBe(true);
+    const after = getTicket(db, t.id)!;
+    expect(after.body).toBe('new body');
+    expect(after.status).toBe('steve_queue');
+    expect(after.assignee).toBe('steve'); // lane invariant
+    expect(after.refined).toBe(true);
+    expect(listTicketEvents(db, t.id).some((e) => e.type === 'refine_committed')).toBe(true);
+  });
+
+  it('approveRefine refine_in_place into robot_queue requires a Sortie-ready body', () => {
+    const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'not shaped', status: 'robot_queue' });
+    const res = approveRefine(db, t.id);
+    expect(res).toMatchObject({ ok: false, reason: 'child_not_sortie_ready' });
+    expect(getTicket(db, t.id)!.status).toBe('backlog'); // unchanged
+  });
+
+  it('approveRefine decompose creates routed children, closes+links the parent', () => {
+    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [
+        { title: 'robot part', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot' },
+        { title: 'steve part', body: 'loose is fine', status: 'steve_queue', assignee: 'steve' },
+      ],
+    });
+    const res = approveRefine(db, parent.id);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.childIds).toHaveLength(2);
+    expect(getTicket(db, parent.id)!.status).toBe('closed'); // D-036
+    const lineage = getLineage(db, parent.id);
+    expect(lineage.splitInto.map((r) => r.title).sort()).toEqual(['robot part', 'steve part']);
+    const robotChild = listTickets(db).find((t) => t.title === 'robot part')!;
+    expect(robotChild.status).toBe('robot_queue');
+    expect(robotChild.assignee).toBe('robot');
+  });
+
+  it('approveRefine decompose rejects a non-Sortie-ready robot child (no writes)', () => {
+    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [{ title: 'bad robot', body: 'no sections', status: 'robot_queue', assignee: 'robot' }],
+    });
+    const res = approveRefine(db, parent.id);
+    expect(res).toMatchObject({ ok: false, reason: 'child_not_sortie_ready', detail: 'bad robot' });
+    expect(getTicket(db, parent.id)!.status).toBe('prioritized'); // unchanged
+    expect(getLineage(db, parent.id).splitInto).toHaveLength(0);
+  });
+
+  it('approveRefine returns no_proposal when nothing is pending, not_found for unknown', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(approveRefine(db, t.id)).toMatchObject({ ok: false, reason: 'no_proposal' });
+    expect(approveRefine(db, 9999)).toMatchObject({ ok: false, reason: 'not_found' });
+  });
+
+  it('rejectRefine drops the proposal so it is no longer actionable', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'b' });
+    expect(rejectRefine(db, t.id)).toEqual({ ok: true });
+    expect(listTicketEvents(db, t.id).some((e) => e.type === 'refine_rejected')).toBe(true);
+    // A second approve now finds nothing pending.
+    expect(approveRefine(db, t.id)).toMatchObject({ ok: false, reason: 'no_proposal' });
   });
 });

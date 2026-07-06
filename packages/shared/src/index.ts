@@ -17,6 +17,13 @@ export type {
   RefineDetail,
   RefineMessage,
   RefineState,
+  RelationType,
+  TicketRelation,
+  LineageRef,
+  TicketLineage,
+  RefineCommitMode,
+  RefineChildProposal,
+  RefineProposal,
 } from './task-monitor';
 export {
   TICKET_STATUSES,
@@ -35,4 +42,6 @@ export {
   isRefineEventType,
   refineThreadFromEvents,
   refineStateFromLatestType,
+  REFINE_PROPOSAL_EVENT,
+  latestActionableProposal,
 } from './task-monitor';

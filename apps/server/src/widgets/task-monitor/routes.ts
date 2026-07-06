@@ -13,9 +13,11 @@ import {
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import {
   appendRefineReply,
+  approveRefine,
   archiveTicket,
   createProject,
   createTicket,
+  getLineage,
   getProjectBySlug,
   getTicketIssueRef,
   listNotifications,
@@ -25,6 +27,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   projectExists,
+  rejectRefine,
   startRefine,
   unreadNotificationCount,
   updateTicket,
@@ -405,5 +408,57 @@ export function registerRoutes(
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return reply.status(201).send(event);
+  });
+
+  /* ── Refine commit step (D-044, PD-269) ──────────────────────────────── */
+
+  // Approve the latest actionable commit proposal. The server (not the griller) does the
+  // writes: refine-in-place rewrites+routes+marks refined; decompose creates routed children,
+  // closes the parent (D-036), and links them via `split` relations. Robot-bound targets must
+  // be isSortieReady or the approval is rejected (422) with no writes.
+  app.post(`${base}/tickets/:id/refine-approve`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const result = approveRefine(db, id);
+    if (result.ok) return reply.status(201).send(result);
+    switch (result.reason) {
+      case 'not_found':
+        return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+      case 'no_proposal':
+        return reply.status(409).send({ error: 'no proposal to approve', code: 'NO_PROPOSAL' });
+      case 'child_not_sortie_ready':
+        return reply.status(422).send({
+          error: `not Sortie-ready for robot_queue: ${result.detail}`,
+          code: 'NOT_SORTIE_READY',
+        });
+      default:
+        return reply
+          .status(422)
+          .send({ error: `invalid proposal: ${result.detail}`, code: 'INVALID_PROPOSAL' });
+    }
+  });
+
+  // Reject the latest actionable proposal; the grill can propose again.
+  app.post(`${base}/tickets/:id/refine-reject`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const result = rejectRefine(db, id);
+    if (result.ok) return reply.status(201).send(result);
+    return result.reason === 'not_found'
+      ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
+      : reply.status(409).send({ error: 'no proposal to reject', code: 'NO_PROPOSAL' });
+  });
+
+  // Read-only split lineage for the ticket-detail display (PD-269); full relations UI is PD-156.
+  app.get(`${base}/tickets/:id/relations`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    return getLineage(db, id);
   });
 }

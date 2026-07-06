@@ -588,3 +588,67 @@ describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', 
     expect(tickets.find((t) => t.id === id)?.refineState).toBe('grilling');
   });
 });
+
+describe('Refine commit endpoints (D-044, PD-269)', () => {
+  const base = '/api/widgets/task-monitor';
+  const SORTIE_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
+
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, status = 'prioritized') {
+    const res = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets`,
+      payload: { title: 't', body: 'b', projectId: pid, status },
+    });
+    return res.json().id as number;
+  }
+  function seedProposal(db: Database.Database, ticketId: number, proposal: unknown) {
+    db.prepare(
+      'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+    ).run(ticketId, 'refine_proposal', JSON.stringify(proposal), Date.now());
+  }
+
+  it('POST /refine-approve executes a decompose (201) and lineage reflects the split', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    seedProposal(db, id, {
+      mode: 'decompose',
+      children: [{ title: 'robot', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot' }],
+    });
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
+    expect(res.statusCode).toBe(201);
+    const lineage = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}/relations` })).json();
+    expect(lineage.splitInto).toHaveLength(1);
+  });
+
+  it('POST /refine-approve 422s a non-Sortie-ready robot child', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    seedProposal(db, id, {
+      mode: 'decompose',
+      children: [{ title: 'bad', body: 'no sections', status: 'robot_queue', assignee: 'robot' }],
+    });
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().code).toBe('NOT_SORTIE_READY');
+  });
+
+  it('POST /refine-approve 409s with no proposal', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
+    expect(res.statusCode).toBe(409);
+  });
+
+  it('POST /refine-reject 201s and drops the proposal', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    seedProposal(db, id, { mode: 'refine_in_place', body: 'x' });
+    expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reject` })).statusCode).toBe(201);
+    expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` })).statusCode).toBe(409);
+  });
+
+  it('GET /relations 400s on a bad id', async () => {
+    const { app } = freshSetup();
+    expect((await app.inject({ method: 'GET', url: `${base}/tickets/abc/relations` })).statusCode).toBe(400);
+  });
+});
