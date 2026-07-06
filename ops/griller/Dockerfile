@@ -60,10 +60,12 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/griller/node_modules ./apps/griller/node_modules
 COPY --from=build /app/apps/griller/dist ./apps/griller/dist
 
-# uid 1002 — node base uses 1000, Sortie uses 1001; avoid collisions. Must be able
-# to write the mounted /data (checkout + SQLite WAL); host data dir is world-writable.
-RUN useradd --create-home --uid 1002 griller
-USER griller
+# Run as root (the node base default — no USER drop). The griller shares dashboard.db with
+# the web app, which runs as root and OWNS that file plus its WAL/-shm sidecars; it also
+# creates the grounding checkout under the mounted /data. A non-root uid (1002) can't write
+# root-owned WAL files or create dirs in a root-owned /data, so it must match the web app's
+# uid to share the DB read+write. The security boundary for this container is the
+# egress-hardened network (squid allowlist), not the in-container uid.
 
 ENV NODE_ENV=production
 # Make Node's global fetch honor HTTP(S)_PROXY (Node 24+); the compose sets the proxy.
