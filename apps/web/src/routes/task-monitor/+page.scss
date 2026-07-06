@@ -107,26 +107,6 @@
   }
 }
 
-.add-btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius);
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  cursor: pointer;
-
-  &:hover {
-    filter: brightness(1.05);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-}
 
 .error {
   color: #c0392b;
@@ -185,32 +165,6 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--space-sm);
-
-  button {
-    font-family: var(--font-sans);
-    font-size: var(--font-size-sm);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius);
-    cursor: pointer;
-    border: 1px solid var(--border);
-  }
-
-  .ghost {
-    background: transparent;
-    color: var(--text);
-  }
-
-  .primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
-    font-weight: 600;
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-  }
 }
 
 /* ── Board ─────────────────────────────────────── */
@@ -521,43 +475,6 @@
   position: relative;
 }
 
-.lanes-btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-
-  &:hover,
-  &[aria-expanded='true'] {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-}
-
-.sync-btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  &:disabled {
-    cursor: progress;
-    opacity: 0.6;
-  }
-}
 
 .lanes-menu {
   position: absolute;
@@ -820,36 +737,6 @@
   .spacer {
     flex: 1;
   }
-
-  button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    padding: var(--space-xs) var(--space-sm);
-    cursor: pointer;
-
-    &:hover:not(:disabled) {
-      border-color: var(--accent);
-    }
-    &:disabled {
-      opacity: 0.3;
-      cursor: not-allowed;
-    }
-  }
-
-  // The Refine action gets the accent hue so it reads as the primary triage entry point.
-  .action-refine {
-    color: var(--accent);
-    border-color: var(--accent);
-
-    &:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--accent) 12%, transparent);
-    }
-  }
 }
 
 // Live Refine session pill on a card (D-044, PD-268). Mirrors .agent-state-badge shape.
@@ -903,7 +790,7 @@
     margin-right: auto;
   }
 
-  .add-btn {
+  .add-ticket-wrap {
     order: 2;
   }
 
@@ -987,14 +874,4 @@
     min-height: 60px;
   }
 
-  /* Card action buttons: comfortable tap targets with larger icons */
-  .card-actions button {
-    min-height: 40px;
-    padding: var(--space-sm) var(--space-md);
-
-    svg {
-      width: 18px;
-      height: 18px;
-    }
-  }
 }
