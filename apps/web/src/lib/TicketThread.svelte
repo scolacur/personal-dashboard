@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { marked } from 'marked';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
   import { latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
@@ -40,13 +40,13 @@
     };
   }
 
-  // Auto-scroll the thread to the latest message whenever messages update.
-  $effect(() => {
-    void messages;
-    if (threadEl) {
-      threadEl.scrollTop = threadEl.scrollHeight;
-    }
-  });
+  // Scroll the thread to the latest message. Called explicitly on initial load and after
+  // sending — NOT on every poll: a reactive $effect on `messages` re-scrolled every 5s (load
+  // rebuilds the array each poll), which fought the user trying to scroll back up the history.
+  async function scrollToBottom() {
+    await tick(); // let the DOM paint the new messages before measuring scrollHeight
+    if (threadEl) threadEl.scrollTop = threadEl.scrollHeight;
+  }
 
   async function load() {
     try {
@@ -85,6 +85,7 @@
       await postRefineReply(ticketId, body);
       replyText = '';
       await load(); // reflect the just-posted human turn immediately
+      await scrollToBottom(); // jump to the message the user just sent
     } catch (e) {
       sendMsg = e instanceof Error ? e.message : String(e);
     } finally {
@@ -97,8 +98,10 @@
   }
 
   onMount(() => {
-    load();
+    // Scroll to the newest message once, after the initial load paints.
+    load().then(scrollToBottom);
     // Poll so a griller reply (async, via the shared DB) appears without a manual refresh.
+    // Deliberately does NOT scroll — see scrollToBottom.
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
   });
