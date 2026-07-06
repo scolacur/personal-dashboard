@@ -11,7 +11,8 @@
   import { Pencil, Copy, Trash2, ClipboardCopy, Sparkles } from 'lucide-svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
-  import { ticketMatchesQuery } from './filter-logic';
+  import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
+  import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
 
@@ -161,6 +162,9 @@
   // Priority filter: 'all' (no filter), 'none' (unset), or a specific P-level.
   let filterPriority = $state<'all' | 'none' | TicketPriority>('all');
 
+  // Refinement filter: 'all' (no filter), or a specific refinement state.
+  let filterRefine = $state<RefineFilter>('all');
+
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
@@ -199,6 +203,7 @@
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
+      if (!ticketMatchesRefineFilter(t, filterRefine)) return false;
       if (!ticketMatchesQuery(t, search)) return false;
       return true;
     });
@@ -555,6 +560,16 @@
         <option value="none">— None</option>
       </select>
     </label>
+    <label class="refinement-filter">
+      <span class="sr-label">Refinement</span>
+      <select bind:value={filterRefine}>
+        <option value="all">All refinement</option>
+        <option value="refined">Refined</option>
+        <option value="grilling">Grilling</option>
+        <option value="awaiting-human">Needs you</option>
+        <option value="unrefined">Unrefined</option>
+      </select>
+    </label>
     <button
       class="info-btn"
       type="button"
@@ -780,17 +795,6 @@
                       title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
                     >{REFINE_STATE_LABELS[ticket.refineState]}</a>
                   {/if}
-                  {#if ticket.agentState}
-                    <button
-                      class="agent-state-badge {agentStateClass(ticket.agentState)}"
-                      type="button"
-                      aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
-                      onclick={() => {
-                        statusLegendState = ticket.agentState;
-                        statusLegendOpen = true;
-                      }}
-                    >{AGENT_STATE_LABELS[ticket.agentState]}</button>
-                  {/if}
                   {#if ticket.githubIssueUrl}
                     <a
                       class="issue-link"
@@ -821,6 +825,19 @@
               <p class="card-title">{ticket.title}</p>
               {#if ticket.body && !condensed}
                 <p class="card-body">{ticket.body}</p>
+              {/if}
+              {#if ticket.agentState}
+                <div class="card-status-row">
+                  <button
+                    class="agent-state-badge {agentStateClass(ticket.agentState)}"
+                    type="button"
+                    aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
+                    onclick={() => {
+                      statusLegendState = ticket.agentState;
+                      statusLegendOpen = true;
+                    }}
+                  >{AGENT_STATE_LABELS[ticket.agentState]}</button>
+                </div>
               {/if}
               <div class="card-actions">
                 <select
