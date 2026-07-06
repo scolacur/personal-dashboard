@@ -14,9 +14,11 @@
 # Apply (repo checked out on the host):
 #   sudo docker compose -f ops/griller/docker-compose.egress.yml up -d
 #
-# DEPLOY NOTE: the /data mount below MUST be the SAME host directory the web app
-# mounts as /data, so both share dashboard.db. Adjust the /volume1/... host paths
-# for the Mac Mini (Colima) layout per DECISIONS D-035.
+# DEPLOY NOTE: the /data mount below MUST be the SAME host directory the web app mounts as
+# /data, so both share dashboard.db. The web app mounts `../data` run from docker/, i.e. the
+# repo-root data/ at /volume1/docker/personal-dashboard/personal-dashboard/data (note the
+# nested repo dir — NOT the base /volume1/docker/personal-dashboard/data). Adjust the
+# /volume1/... host paths for the Mac Mini (Colima) layout per DECISIONS D-035.
 
 networks:
   egress_out:
@@ -55,5 +57,6 @@ services:
       - DATA_DIR=/data
       - GRILLER_CHECKOUT_DIR=/data/griller-checkout
     volumes:
-      # MUST match the web app's /data host dir so dashboard.db is shared.
-      - /volume1/docker/personal-dashboard/data:/data
+      # MUST match the web app's /data host dir (repo-root data/, note the nested repo path)
+      # so dashboard.db is shared — else the griller opens an empty DB and sees no tickets.
+      - /volume1/docker/personal-dashboard/personal-dashboard/data:/data

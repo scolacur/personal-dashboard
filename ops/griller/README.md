@@ -86,8 +86,12 @@ sudo docker compose -f ops/griller/docker-compose.egress.yml up -d   # recreates
 - **Turns hang / API errors** — the griller reaches `api.anthropic.com` only through the squid
   sidecar (reuses Sortie's `ops/sortie/squid.conf`, which allowlists `.anthropic.com` +
   `.github.com`). Check the proxy env vars in the compose and the squid allowlist.
-- **Griller sees no tickets** — the `/data` mount isn't the web app's DB dir; confirm both
-  containers mount `/volume1/docker/personal-dashboard/data` as `/data`.
+- **`no such table` / griller sees no tickets** — the `/data` mount isn't the web app's DB
+  dir, so the griller opened an empty DB (it doesn't run schema bootstrap). Both must mount the
+  **repo-root** `data/`: `/volume1/docker/personal-dashboard/personal-dashboard/data` (note the
+  nested repo dir — the web app's `../data` from `docker/`), NOT the base
+  `/volume1/docker/personal-dashboard/data`. `find /volume1/docker/personal-dashboard -name
+dashboard.db` shows the real one (large) vs a stray empty one.
 - **Clone fails** — the `GITHUB_READ_TOKEN` lacks Contents: Read (see above).
 - **`Permission denied` creating `/data/griller-checkout` or writing the DB** — the griller runs
   as **root**, matching the web app that owns the shared `dashboard.db` (+ its WAL/-shm). If you
