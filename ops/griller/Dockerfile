@@ -53,7 +53,11 @@ COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY apps/griller/package.json ./apps/griller/
 
+# Both node_modules trees: most deps hoist to the root, but any that can't (e.g. pino,
+# whose version conflicts with another package's) stay in the workspace's own node_modules.
+# Node resolves from apps/griller/dist upward, so it needs BOTH present at runtime.
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/griller/node_modules ./apps/griller/node_modules
 COPY --from=build /app/apps/griller/dist ./apps/griller/dist
 
 # uid 1002 — node base uses 1000, Sortie uses 1001; avoid collisions. Must be able
