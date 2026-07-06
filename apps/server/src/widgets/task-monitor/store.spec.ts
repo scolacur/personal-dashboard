@@ -7,12 +7,14 @@ import {
   createNotification,
   createTicket,
   getProjectBySlug,
+  getTicket,
   listNotifications,
   listProjects,
   listTicketEvents,
   listTickets,
   markAllNotificationsRead,
   markNotificationRead,
+  startRefine,
   unreadNotificationCount,
   updateTicket,
 } from './store';
@@ -491,5 +493,51 @@ describe('ticket events + Refine thread (D-044, PD-267)', () => {
     const agentEvents = listTicketEvents(db, t.id).filter((e) => e.type === 'refine_agent');
     expect(agentEvents).toHaveLength(1);
     expect((agentEvents[0].detail as { sessionId?: string }).sessionId).toBe('sess-42');
+  });
+});
+
+describe('startRefine + refineState (D-044, PD-268)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('writes a kickoff refine_human event (title + body) and returns it', () => {
+    const t = createTicket(db, { title: 'Add a widget', body: 'It should show X', projectId: pd });
+    const result = startRefine(db, t.id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.event.type).toBe('refine_human');
+    expect((result.event.detail as { text: string }).text).toBe('Add a widget\n\nIt should show X');
+    const humanTurns = listTicketEvents(db, t.id).filter((e) => e.type === 'refine_human');
+    expect(humanTurns).toHaveLength(1);
+  });
+
+  it('is no-op-safe: a second start returns already_started (no second thread)', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(startRefine(db, t.id).ok).toBe(true);
+    const again = startRefine(db, t.id);
+    expect(again).toEqual({ ok: false, reason: 'already_started' });
+    expect(listTicketEvents(db, t.id).filter((e) => e.type === 'refine_human')).toHaveLength(1);
+  });
+
+  it('returns not_found for an unknown ticket', () => {
+    expect(startRefine(db, 9999)).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it('derives refineState: null → grilling (after start) → awaiting-human (after agent turn)', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(getTicket(db, t.id)?.refineState).toBeNull();
+
+    startRefine(db, t.id);
+    expect(getTicket(db, t.id)?.refineState).toBe('grilling');
+    expect(listTickets(db).find((x) => x.id === t.id)?.refineState).toBe('grilling');
+
+    db.prepare(
+      'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+    ).run(t.id, 'refine_agent', JSON.stringify({ text: 'plan', sessionId: 's' }), Date.now() + 1000);
+    expect(getTicket(db, t.id)?.refineState).toBe('awaiting-human');
   });
 });

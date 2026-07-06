@@ -194,3 +194,34 @@
 }
 
 .reply-msg { color: var(--muted); font-size: var(--font-size-sm); }
+
+// Refine controls (D-044, PD-268) — start / mark-refined / refined badge.
+.refine-controls {
+  margin-top: var(--space-lg);
+}
+
+.start-refine,
+.mark-refined {
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+
+  &:disabled { opacity: 0.5; cursor: default; }
+}
+
+.mark-refined {
+  background: transparent;
+  color: var(--accent);
+}
+
+.refined-badge {
+  display: inline-block;
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--status-working, #16a34a);
+  border-radius: 999px;
+  color: var(--status-working, #16a34a);
+  font-size: var(--font-size-sm);
+}

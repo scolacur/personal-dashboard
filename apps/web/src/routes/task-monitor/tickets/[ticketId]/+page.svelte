@@ -80,6 +80,40 @@
       replying = false;
     }
   }
+
+  // Start a Refine session (D-044, PD-268) from the detail page. The TicketThread below
+  // polls, so the kickoff turn appears shortly after; reload to flip refineState now.
+  let starting = $state(false);
+  async function startRefine() {
+    if (!ticket || starting || !ticketId) return;
+    starting = true;
+    error = null;
+    try {
+      await api.startRefine(ticket.id);
+      await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      starting = false;
+    }
+  }
+
+  // Mark the ticket refined (D-044, PD-268). PD-269's commit step will also set this; until
+  // then it's a manual "I'm satisfied with this refinement" action.
+  let markingRefined = $state(false);
+  async function markRefined() {
+    if (!ticket || markingRefined || !ticketId) return;
+    markingRefined = true;
+    error = null;
+    try {
+      await api.updateTicket(ticket.id, { refined: true });
+      await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      markingRefined = false;
+    }
+  }
 </script>
 
 <nav class="detail-nav">
@@ -154,6 +188,20 @@
       <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
       <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
     </dl>
+
+    <div class="refine-controls">
+      {#if ticket.refined}
+        <span class="refined-badge" title="This ticket has been refined">✓ Refined</span>
+      {:else if ticket.refineState === null}
+        <button class="start-refine" type="button" onclick={startRefine} disabled={starting}>
+          {starting ? 'Starting…' : '✦ Start Refine'}
+        </button>
+      {:else}
+        <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
+          {markingRefined ? 'Marking…' : '✓ Mark refined'}
+        </button>
+      {/if}
+    </div>
 
     <TicketThread ticketId={ticket.id} />
   </article>

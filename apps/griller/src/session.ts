@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { GrillerConfig } from './config';
 
 /** Read-only built-in tools — the griller grounds against the checkout, never edits. */
@@ -17,6 +18,10 @@ export interface GrillTurnInput {
 export interface GrillTurnResult {
   text: string;
   sessionId: string | undefined;
+  /** Cached input tokens the turn read — the warmth signal (D-044, PD-268 Done-When #2). */
+  cacheReadTokens?: number;
+  /** End-to-end turn latency reported by the SDK. */
+  durationMs?: number;
 }
 
 function systemPrompt(contextPack: string): string {
@@ -38,35 +43,195 @@ function systemPrompt(contextPack: string): string {
   ].join('\n');
 }
 
+/** The SDK options shared by the one-shot and warm-streaming paths. */
+function grillOptions(config: GrillerConfig, contextPack: string, resumeSessionId?: string) {
+  return {
+    model: config.model,
+    cwd: config.checkoutDir,
+    systemPrompt: systemPrompt(contextPack),
+    allowedTools: READ_ONLY_TOOLS,
+    // Headless: deny any tool outside the allowlist without prompting (would hang).
+    permissionMode: 'dontAsk' as const,
+    ...(resumeSessionId ? { resume: resumeSessionId } : {}),
+  };
+}
+
+function userMessage(text: string): SDKUserMessage {
+  return { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null };
+}
+
 /**
- * Run one grill turn via the Claude Agent SDK (D-044). Opus, grounded in the
- * read-only checkout (`cwd`), read-only tools only. Returns the assistant text plus
- * the session id so the caller can persist it and `resume` on the next async turn.
+ * Run ONE grill turn via a fresh Agent SDK query (D-044). Opus, grounded in the read-only
+ * checkout, read-only tools. Spawns a subprocess per call — used for cold one-shots and the
+ * smoke script. The warm path (openWarmSession) keeps the process resident between turns.
  */
 export async function runGrillTurn(input: GrillTurnInput): Promise<GrillTurnResult> {
   let sessionId: string | undefined;
-  let text = '';
+  let result: GrillTurnResult = { text: '', sessionId: undefined };
 
   for await (const message of query({
     prompt: input.prompt,
-    options: {
-      model: input.config.model,
-      cwd: input.config.checkoutDir,
-      systemPrompt: systemPrompt(input.contextPack),
-      allowedTools: READ_ONLY_TOOLS,
-      // Headless: deny any tool outside the allowlist without prompting (would hang).
-      permissionMode: 'dontAsk',
-      ...(input.resumeSessionId ? { resume: input.resumeSessionId } : {}),
-    },
+    options: grillOptions(input.config, input.contextPack, input.resumeSessionId),
   })) {
-    if (message.type === 'system' && message.subtype === 'init') {
-      sessionId = message.session_id;
-    }
+    if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
     if (message.type === 'result') {
       sessionId = message.session_id;
-      if (message.subtype === 'success') text = message.result;
+      result = {
+        text: message.subtype === 'success' ? message.result : '',
+        sessionId,
+        cacheReadTokens: message.usage?.cache_read_input_tokens,
+        durationMs: message.duration_ms,
+      };
     }
   }
 
-  return { text, sessionId };
+  return result;
 }
+
+// ── Warm streaming session (D-044, PD-268) ───────────────────────────────────
+
+/**
+ * A live grill session held resident between turns. Backed by a single streaming-input
+ * `query()`: the `claude` subprocess and the model's in-session context stay warm, so
+ * back-and-forth turns skip subprocess re-spawn and full-history re-send — snappier than
+ * a cold `runGrillTurn` per turn. Created cold from a persisted `resumeSessionId` after a
+ * worker restart, then warm for the rest of the conversation.
+ */
+export interface GrillSession {
+  /** Send one human turn; resolves with the agent's reply on the next result message. */
+  send(prompt: string): Promise<GrillTurnResult>;
+  /** End the input stream and interrupt the query. */
+  close(): Promise<void>;
+  /** The SDK session id (known after the first turn). */
+  readonly sessionId: string | undefined;
+  /** Unix ms of the last send — the idle-evict clock. */
+  lastUsedAt: number;
+}
+
+export interface OpenSessionInput {
+  config: GrillerConfig;
+  contextPack: string;
+  /** Rehydrate a prior session (cold start after a restart); omit for a brand-new thread. */
+  resumeSessionId?: string;
+}
+
+/** Factory type so the warm-session manager and its tests can swap the real SDK out. */
+export type OpenGrillSession = (input: OpenSessionInput) => GrillSession;
+
+/** A push-driven AsyncIterable of user messages that stays open until `end()`. */
+function createInputStream() {
+  const queued: SDKUserMessage[] = [];
+  let pending: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
+  let ended = false;
+
+  const stream: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next(): Promise<IteratorResult<SDKUserMessage>> {
+          if (queued.length > 0) return Promise.resolve({ value: queued.shift()!, done: false });
+          if (ended) return Promise.resolve({ value: undefined as never, done: true });
+          return new Promise((resolve) => (pending = resolve));
+        },
+      };
+    },
+  };
+
+  return {
+    stream,
+    push(msg: SDKUserMessage) {
+      if (pending) {
+        const resolve = pending;
+        pending = null;
+        resolve({ value: msg, done: false });
+      } else {
+        queued.push(msg);
+      }
+    },
+    end() {
+      ended = true;
+      if (pending) {
+        const resolve = pending;
+        pending = null;
+        resolve({ value: undefined as never, done: true });
+      }
+    },
+  };
+}
+
+/**
+ * Open a warm streaming grill session. Turns are strictly sequential (Steve replies one at a
+ * time), so a single in-flight `send` is tracked; the background consumer resolves it on the
+ * next `result` message and accumulates that turn's assistant text.
+ */
+interface PendingTurn {
+  resolve: (r: GrillTurnResult) => void;
+  reject: (e: unknown) => void;
+}
+
+export const openWarmSession: OpenGrillSession = (input) => {
+  const input$ = createInputStream();
+  let sessionId: string | undefined = input.resumeSessionId;
+  // The single in-flight turn (turns are strictly sequential), or null when idle. Consumed
+  // via the helpers below so the read happens at the declared union type (TS would otherwise
+  // narrow it to `null` inside the drain loop, since `send` reassigns it further down).
+  let pending: PendingTurn | null = null;
+  const settleTurn = (result: GrillTurnResult) => {
+    const turn = pending;
+    pending = null;
+    turn?.resolve(result);
+  };
+  const failTurn = (err: unknown) => {
+    const turn = pending;
+    pending = null;
+    turn?.reject(err);
+  };
+
+  const q = query({
+    prompt: input$.stream,
+    options: grillOptions(input.config, input.contextPack, input.resumeSessionId),
+  });
+
+  // Drain the query in the background, routing each completed turn back to its `send` caller.
+  void (async () => {
+    try {
+      for await (const message of q) {
+        if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
+        if (message.type === 'result') {
+          sessionId = message.session_id;
+          settleTurn({
+            text: message.subtype === 'success' ? message.result : '',
+            sessionId,
+            cacheReadTokens: message.usage?.cache_read_input_tokens,
+            durationMs: message.duration_ms,
+          });
+        }
+      }
+    } catch (err) {
+      failTurn(err);
+    }
+  })();
+
+  const session: GrillSession = {
+    get sessionId() {
+      return sessionId;
+    },
+    lastUsedAt: Date.now(),
+    send(prompt: string): Promise<GrillTurnResult> {
+      session.lastUsedAt = Date.now();
+      return new Promise<GrillTurnResult>((resolve, reject) => {
+        pending = { resolve, reject };
+        input$.push(userMessage(prompt));
+      });
+    },
+    async close(): Promise<void> {
+      input$.end();
+      try {
+        await q.interrupt();
+      } catch {
+        // already finished / not in streaming state — nothing to interrupt
+      }
+    },
+  };
+
+  return session;
+};

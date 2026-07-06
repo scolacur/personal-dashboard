@@ -16,6 +16,7 @@ export type {
   RefineRole,
   RefineDetail,
   RefineMessage,
+  RefineState,
 } from './task-monitor';
 export {
   TICKET_STATUSES,
@@ -33,4 +34,5 @@ export {
   REFINE_EVENT_TYPE,
   isRefineEventType,
   refineThreadFromEvents,
+  refineStateFromLatestType,
 } from './task-monitor';

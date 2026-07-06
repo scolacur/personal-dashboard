@@ -25,6 +25,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   projectExists,
+  startRefine,
   unreadNotificationCount,
   updateTicket,
 } from './store';
@@ -232,6 +233,12 @@ export function registerRoutes(
       }
       patch.githubIssueUrl = body.githubIssueUrl as string | null;
     }
+    if (body.refined !== undefined) {
+      if (typeof body.refined !== 'boolean') {
+        return reply.status(400).send({ error: 'refined must be a boolean', code: 'INVALID_REFINED' });
+      }
+      patch.refined = body.refined;
+    }
 
     const updated = updateTicket(db, id, patch);
     if (!updated) {
@@ -362,6 +369,23 @@ export function registerRoutes(
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
     return listTicketEvents(db, id);
+  });
+
+  // Start a Refine session (D-044, PD-268): the Refine button POSTs here. Writes the kickoff
+  // refine_human event (ticket title + body) the griller worker polls to open a grounded
+  // session. 409 if a thread already exists so a double-click can't spawn a second.
+  app.post(`${base}/tickets/:id/refine`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const result = startRefine(db, id);
+    if (!result.ok) {
+      return result.reason === 'not_found'
+        ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
+        : reply.status(409).send({ error: 'refine already started', code: 'ALREADY_STARTED' });
+    }
+    return reply.status(201).send(result.event);
   });
 
   // Post a human Refine reply. Unlike /reply (which forwards to a GitHub issue to re-queue a

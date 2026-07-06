@@ -194,6 +194,13 @@ export interface AgentTicket {
   githubIssueUrl: string | null;
   /** Fine-grained agent state derived from the linked issue's `sortie:*` label (PD-165); null = none. */
   agentState: AgentState | null;
+  /** Live Refine session state derived from the ticket's refine_* thread (D-044, PD-268);
+   *  null = no Refine session started. */
+  refineState: RefineState | null;
+  /** Whether this ticket has been refined to completion at least once (D-044, PD-268).
+   *  Persistent marker: gates the Refine button (hidden once true) and shows a ✓. Flipped
+   *  by the commit/approval step (PD-269) or the manual "Mark refined" control. */
+  refined: boolean;
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -236,6 +243,8 @@ export interface UpdateTicketInput {
   /** Link (or unlink, via `null`) a GitHub issue. Set together. Omit to leave unchanged. */
   githubIssueNumber?: number | null;
   githubIssueUrl?: string | null;
+  /** Mark the ticket refined (D-044, PD-268). Omit to leave unchanged. */
+  refined?: boolean;
 }
 
 /**
@@ -343,6 +352,19 @@ export interface RefineMessage {
 /** True for the two Refine event types. */
 export function isRefineEventType(type: string): boolean {
   return type === REFINE_EVENT_TYPE.human || type === REFINE_EVENT_TYPE.agent;
+}
+
+/** Live Refine session state, for the card/detail pill (D-044, PD-268). Derived from the
+ *  newest refine_* turn: `grilling` = the agent is working / about to (Steve's turn is
+ *  newest); `awaiting-human` = the agent replied and is waiting on Steve. (`done` arrives
+ *  with the commit step, PD-269.) */
+export type RefineState = 'grilling' | 'awaiting-human';
+
+/** Map the newest refine_* event type to a session state, or null if none. */
+export function refineStateFromLatestType(latestRefineType: string | null | undefined): RefineState | null {
+  if (latestRefineType === REFINE_EVENT_TYPE.agent) return 'awaiting-human';
+  if (latestRefineType === REFINE_EVENT_TYPE.human) return 'grilling';
+  return null;
 }
 
 /** Project the Refine subset of a ticket's activity log into ordered thread messages.
