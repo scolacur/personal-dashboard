@@ -76,7 +76,7 @@ function fakeSessions(reply: string, sessionId = 'sess-1') {
       async send(prompt: string): Promise<GrillTurnResult> {
         sends.push({ prompt, resumeSessionId: input.resumeSessionId });
         sid = sessionId;
-        return { text: reply, sessionId: sid, cacheReadTokens: 1234, durationMs: 42 };
+        return { text: reply, ok: true, sessionId: sid, cacheReadTokens: 1234, durationMs: 42 };
       },
       async close() {
         closed++;
@@ -232,6 +232,31 @@ describe('processPendingRefines (orchestration)', () => {
     expect(findPendingRefineTicketIds(db)).toEqual([1]); // still pending → will retry
   });
 
+  it('does NOT persist an API-error result as a turn (billing/auth) — leaves it pending', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'grill me' });
+    // ok:false with error text (what the SDK returns for "credit balance too low" etc.).
+    const erroring: OpenGrillSession = () => ({
+      get sessionId() {
+        return 'sess-1';
+      },
+      lastUsedAt: Date.now(),
+      async send(): Promise<GrillTurnResult> {
+        return { text: 'Credit balance is too low', ok: false, sessionId: 'sess-1' };
+      },
+      async close() {},
+    });
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(erroring),
+      buildContext: noContext,
+    });
+    expect(handled).toBe(0);
+    // The error text must NOT appear as an agent turn, and the ticket stays pending.
+    expect(listTicketEvents(db, 1).some((e) => e.type === REFINE_EVENT_TYPE.agent)).toBe(false);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM agent_notifications').get()).toEqual({ c: 0 });
+    expect(findPendingRefineTicketIds(db)).toEqual([1]);
+  });
+
   it('does not raise a second unread notification for a follow-up turn', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q1' });
@@ -292,7 +317,7 @@ describe('propose_commit path (D-044, PD-269)', () => {
       lastUsedAt: Date.now(),
       async send(): Promise<GrillTurnResult> {
         input.onProposal?.(proposal); // agent invoked the tool
-        return { text: 'here is my proposal', sessionId: 'sess-1' };
+        return { text: 'here is my proposal', ok: true, sessionId: 'sess-1' };
       },
       async close() {},
     });

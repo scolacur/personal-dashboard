@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal } from '@dashboard/shared';
 import type { GrillerConfig } from './config';
 import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
@@ -20,12 +20,32 @@ export interface GrillTurnInput {
 }
 
 export interface GrillTurnResult {
+  /** The assistant reply on success, or the error text when `ok` is false (for logging). */
   text: string;
+  /** True only for a clean turn (result subtype 'success' AND not is_error). False for API
+   *  errors — billing ("credit balance too low"), rate limits, max-turns, etc. — which the SDK
+   *  reports as an error result the caller must NOT persist as an agent turn (D-044). */
+  ok: boolean;
   sessionId: string | undefined;
   /** Cached input tokens the turn read — the warmth signal (D-044, PD-268 Done-When #2). */
   cacheReadTokens?: number;
   /** End-to-end turn latency reported by the SDK. */
   durationMs?: number;
+}
+
+/** Project an SDK result message into our turn shape, distinguishing a clean reply from an
+ *  error result (billing/rate-limit/max-turns). On error `ok` is false and `text` carries the
+ *  error(s) so the loop can log why without persisting it as the agent's words. */
+function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): GrillTurnResult {
+  const ok = message.subtype === 'success' && !message.is_error;
+  const text = message.subtype === 'success' ? message.result : (message.errors ?? []).join('; ');
+  return {
+    text,
+    ok,
+    sessionId: message.session_id,
+    cacheReadTokens: message.usage?.cache_read_input_tokens,
+    durationMs: message.duration_ms,
+  };
 }
 
 function systemPrompt(contextPack: string): string {
@@ -82,23 +102,15 @@ function userMessage(text: string): SDKUserMessage {
  * smoke script. The warm path (openWarmSession) keeps the process resident between turns.
  */
 export async function runGrillTurn(input: GrillTurnInput): Promise<GrillTurnResult> {
-  let sessionId: string | undefined;
-  let result: GrillTurnResult = { text: '', sessionId: undefined };
+  // Defaults to a non-ok, empty result — so if no result message ever arrives (a hard
+  // failure), the caller treats it as an errored turn rather than a bogus empty success.
+  let result: GrillTurnResult = { text: '', ok: false, sessionId: undefined };
 
   for await (const message of query({
     prompt: input.prompt,
     options: grillOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
   })) {
-    if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
-    if (message.type === 'result') {
-      sessionId = message.session_id;
-      result = {
-        text: message.subtype === 'success' ? message.result : '',
-        sessionId,
-        cacheReadTokens: message.usage?.cache_read_input_tokens,
-        durationMs: message.duration_ms,
-      };
-    }
+    if (message.type === 'result') result = resultFrom(message);
   }
 
   return result;
@@ -215,13 +227,9 @@ export const openWarmSession: OpenGrillSession = (input) => {
       for await (const message of q) {
         if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
         if (message.type === 'result') {
-          sessionId = message.session_id;
-          settleTurn({
-            text: message.subtype === 'success' ? message.result : '',
-            sessionId,
-            cacheReadTokens: message.usage?.cache_read_input_tokens,
-            durationMs: message.duration_ms,
-          });
+          const turn = resultFrom(message);
+          sessionId = turn.sessionId;
+          settleTurn(turn);
         }
       }
     } catch (err) {
