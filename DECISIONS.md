@@ -6,6 +6,18 @@ Newest decisions at the top.
 
 ---
 
+## D-046: Sortie's `after_run` safety-net publishes a hand-off ONLY when the agent earned it (a green-verify marker), never a mid-work tree (PD-299)
+
+**Decision:** The `after_run` hook (WORKFLOW.md) gates PR-creation on a positive **hand-off-earned signal**: the agent writes `.sortie/verify-ok` the instant `npm run verify` goes green (Finish step 1), and the hook completes a cut-off hand-off (commit stragglers → push → `gh pr create` → `scm.json`) **only if that marker exists**. With no marker, a turn that ended before a green verify leaves uncommitted WIP; the hook does **not** sweep it into a commit/PR — it leaves the work for a retry and (if a WIP tree is present) drops one explanatory issue comment. `.sortie/` is now gitignored so neither the marker nor `scm.json` can leak into a commit.
+
+**Why:** The hook's firing condition was **"changes present + no `scm.json` ⇒ finish the hand-off"**, which is *equally true* for "agent finished but the hand-off plumbing got cut off" **and** "the turn ended mid-work." So `git add -A && git commit` swept an unfinished tree into a generic `sortie(N): automated changes` PR that failed CI — bypassing the agent's own Finish contract, which explicitly says *"prefer `ask_human` over shipping a red PR."* PD-290 (issue #170, PR #174) proved it: the agent's turn ended before it could resolve a single `svelte/no-at-html-tags` lint error, the issue was even labeled `sortie:stuck`, yet the safety-net published the broken PR anyway. The marker is the one signal that distinguishes *earned* from *unfinished*, and it is written early (right after verify) so it survives a context-cancel that kills the later push/PR/relabel steps — exactly the crash window the hook exists to cover.
+
+**Trade-off:** If a future agent forgets to write the marker on a genuinely-complete run, the backstop won't fire and the work needs a re-queue — accepted, because that failure mode is strictly safer (a missing PR the human re-queues) than the one we're removing (a broken PR that looks review-ready). The marker is a convention the prompt must keep writing; it is not enforced by the SDK.
+
+**Implications:** WORKFLOW.md `after_run` + Finish step 1 changed; README safety-net description updated; `.gitignore` adds `.sortie/`. **The Sortie host must be redeployed** (WORKFLOW.md is read at dispatch, so the fix only takes effect after the host's workflow file is updated). Does not change the normal path (the agent still does its own durable hand-off in-turn per [[D-044]]/D-016); this only narrows when the backstop acts.
+
+---
+
 ## D-045: The Ticket Audit is an autonomous, recurring **agent-worker** job that produces sticky, human-approved recommendations over the backlog — read-only run, human-gated apply, verify-and-confidence-gated for trust (PD-281)
 
 **Decision:** A recurring backlog review, implemented as a **second job on the agent-worker** (the griller worker generalized — see D-044 and PROJECT.md §8; refine + audit share the checkout / egress proxy / API key / cached context-pack). Key choices:

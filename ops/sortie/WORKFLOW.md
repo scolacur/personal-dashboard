@@ -179,18 +179,43 @@ hooks:
   # transition (`context canceled`), so a hook-authored PR landed with no scm.json and
   # the issue with no label. Doing it in-turn runs under a stable context + full env.
   #
-  # This hook is now a BACKSTOP for a turn that died after committing but before
+  # This hook is now a BACKSTOP for a turn that died after a GREEN VERIFY but before
   # finishing push/PR/scm.json. It MUST be fully idempotent and MUST NOT fail the run:
   # on the normal path (agent already pushed + wrote scm.json) it detects that and
   # exits 0 without doing anything. It does NOT relabel — the agent self-relabels and
   # the in-repo sortie-watchdog "label-rescue" job backstops the label specifically.
+  #
+  # HAND-OFF-EARNED GATE (D-046): it publishes ONLY if the agent left the .sortie/verify-ok
+  # marker (written the instant `npm run verify` went green). No marker => the turn ended
+  # before a green verify => it leaves the WIP for retry instead of opening a red PR. This
+  # closes the failure where a turn that ran out mid-work got its unfinished tree swept into
+  # a broken "sortie(N): automated changes" PR that failed CI (e.g. #174 / PD-290).
   after_run: |
     cd "$SORTIE_WORKSPACE"
     PX=http://egress-proxy:3128
     BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
     git config user.name  "sortie-bot-55"
     git config user.email "297784052+sortie-bot-55@users.noreply.github.com"
-    # Commit any stragglers the agent left uncommitted (no-op if the tree is clean).
+    # ─── HAND-OFF-EARNED GATE (D-046) ───────────────────────────────────────────────
+    # Only complete a hand-off the agent actually EARNED. The agent writes .sortie/verify-ok
+    # the instant `npm run verify` goes green (Finish step 1). NO marker => the turn ended
+    # before a green verify => the tree is unfinished WIP. Do NOT sweep that into a commit +
+    # PR: doing so bypasses the agent's own "no red PR" rule and drops a broken PR on review
+    # (the failure mode this gate exists to stop). Leave the work for a retry instead.
+    if [ ! -f "$SORTIE_WORKSPACE/.sortie/verify-ok" ]; then
+      if [ -n "$(git status --porcelain)" ]; then
+        echo "safety-net: no verify-ok marker but tree has WIP — NOT opening a PR; leaving for retry"
+        GH_TOKEN="$SORTIE_GITHUB_TOKEN" HTTPS_PROXY=$PX HTTP_PROXY=$PX gh issue comment "$SORTIE_ISSUE_IDENTIFIER" \
+          --repo scolacur/personal-dashboard \
+          --body "Sortie's turn ended before \`npm run verify\` passed, so the after_run safety-net left the partial work uncommitted rather than open a red PR. Re-queue (\`sortie:queued\`) to retry." 2>/dev/null || true
+      else
+        echo "safety-net: no verify-ok marker and clean tree — nothing to hand off"
+      fi
+      exit 0
+    fi
+    # Marker present: verify was green, so any straggler below is finished work whose hand-off
+    # (push/PR/scm.json) got cut off — the legitimate backstop case. Commit stragglers, then
+    # complete the hand-off. (No-op if the agent already pushed + wrote scm.json — see below.)
     git add -A
     git commit -m "sortie(${SORTIE_ISSUE_IDENTIFIER}): automated changes" 2>/dev/null || echo "nothing new to commit"
     # If there is no commit at all on this branch beyond main, there is nothing to hand off.
@@ -417,10 +442,15 @@ cd "$SORTIE_WORKSPACE"
    ```sh
    npm ci            # reaches registry.npmjs.org via the egress proxy (already allowlisted)
    npm run verify    # build + typecheck + lint + test
+   # verify is GREEN → record the hand-off-intent marker. This is the ONE positive signal the
+   # after_run safety-net trusts (D-046): it completes a cut-off hand-off ONLY if this exists.
+   # Without it, a turn that ended before a green verify is left for retry, never published.
+   mkdir -p "$SORTIE_WORKSPACE/.sortie" && touch "$SORTIE_WORKSPACE/.sortie/verify-ok"
    ```
    Make `verify` pass. Do NOT weaken or delete tests to get there. If it cannot pass and you
-   cannot fix it within scope, prefer `ask_human` over shipping a red PR. (`npm` honors the
-   `HTTPS_PROXY` already set in your env — no extra proxy config needed.)
+   cannot fix it within scope, prefer `ask_human` over shipping a red PR — and do NOT write the
+   `verify-ok` marker, so the safety-net leaves your partial work for retry instead of opening a
+   red PR. (`npm` honors the `HTTPS_PROXY` already set in your env — no extra proxy config needed.)
 
 2. **Commit everything** with a clear, descriptive message in conventional-commit style (the
    same summary you'll use for the PR title — e.g. `feat(music-tracker): add Spotify playlist
