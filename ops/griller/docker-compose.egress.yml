@@ -1,0 +1,59 @@
+# Egress-HARDENED griller deployment (DECISIONS D-044, PD-266).
+#
+# The griller runs on an INTERNAL Docker network with no route to the internet; its
+# only way out is the squid sidecar, which permits just the domains in squid.conf
+# (.anthropic.com for the Claude API + .github.com/.githubusercontent.com for the
+# grounding checkout). This contains token exfiltration: the agent can read
+# ANTHROPIC_API_KEY / GITHUB_READ_TOKEN but can't send them off-allowlist.
+#
+# Self-contained (own proxy + networks) rather than sharing Sortie's proxy container,
+# to avoid cross-compose network/ordering coupling — but it REUSES the same
+# squid.conf, so there's no allowlist duplication. (Trade-off: one extra lightweight
+# squid container.)
+#
+# Apply (repo checked out on the host):
+#   sudo docker compose -f ops/griller/docker-compose.egress.yml up -d
+#
+# DEPLOY NOTE: the /data mount below MUST be the SAME host directory the web app
+# mounts as /data, so both share dashboard.db. Adjust the /volume1/... host paths
+# for the Mac Mini (Colima) layout per DECISIONS D-035.
+
+networks:
+  egress_out:
+    driver: bridge        # has internet — only the proxy attaches here
+  egress_internal:
+    internal: true        # NO internet route — the griller lives here
+
+services:
+  griller-proxy:
+    image: ubuntu/squid:latest
+    container_name: griller-proxy
+    restart: unless-stopped
+    networks: [egress_out, egress_internal]
+    volumes:
+      # Reuse Sortie's allowlist (.anthropic.com + .github.com already permitted).
+      - /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/squid.conf:/etc/squid/squid.conf:ro
+
+  griller:
+    image: griller-dashboard
+    container_name: griller
+    restart: unless-stopped
+    depends_on: [griller-proxy]
+    networks: [egress_internal]          # internal ONLY — no direct egress
+    env_file:
+      - /volume1/docker/personal-dashboard/griller.env
+    environment:
+      # upper + lower case so the Agent SDK's binary, git, and Node's fetch all use it
+      - HTTP_PROXY=http://griller-proxy:3128
+      - HTTPS_PROXY=http://griller-proxy:3128
+      - http_proxy=http://griller-proxy:3128
+      - https_proxy=http://griller-proxy:3128
+      - NO_PROXY=localhost,127.0.0.1,griller-proxy
+      - no_proxy=localhost,127.0.0.1,griller-proxy
+      # Make Node 24's global fetch honor the proxy env (also set in the image).
+      - NODE_USE_ENV_PROXY=1
+      - DATA_DIR=/data
+      - GRILLER_CHECKOUT_DIR=/data/griller-checkout
+    volumes:
+      # MUST match the web app's /data host dir so dashboard.db is shared.
+      - /volume1/docker/personal-dashboard/data:/data
