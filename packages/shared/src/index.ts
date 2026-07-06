@@ -12,6 +12,10 @@ export type {
   CreateProjectInput,
   NotificationKind,
   AgentNotification,
+  TicketEvent,
+  RefineRole,
+  RefineDetail,
+  RefineMessage,
 } from './agent-dashboard';
 export {
   TICKET_STATUSES,
@@ -26,4 +30,7 @@ export {
   isSortieReady,
   NOTIFICATION_KINDS,
   HUMAN_REPLY_MARKER,
+  REFINE_EVENT_TYPE,
+  isRefineEventType,
+  refineThreadFromEvents,
 } from './agent-dashboard';

@@ -4,6 +4,7 @@
   import { PRIORITY_LABELS } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
+  import TicketThread from '$lib/TicketThread.svelte';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
@@ -153,6 +154,8 @@
       <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
       <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
     </dl>
+
+    <TicketThread ticketId={ticket.id} />
   </article>
 {/if}
 

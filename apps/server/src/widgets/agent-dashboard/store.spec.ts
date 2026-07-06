@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import {
+  appendRefineReply,
   archiveTicket,
   createNotification,
   createTicket,
   getProjectBySlug,
   listNotifications,
   listProjects,
+  listTicketEvents,
   listTickets,
   markAllNotificationsRead,
   markNotificationRead,
@@ -441,5 +443,53 @@ describe('listNotifications limit (dropdown cap)', () => {
     const capped = listNotifications(db, { limit: 2 });
     expect(capped).toHaveLength(2);
     expect(capped[0].title).toBe('n4'); // newest (highest id) first
+  });
+});
+
+describe('ticket events + Refine thread (D-044, PD-267)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('listTicketEvents returns the activity log oldest-first with parsed JSON detail', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    updateTicket(db, t.id, { status: 'prioritized' }); // logs status_changed
+    const events = listTicketEvents(db, t.id);
+    expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
+    expect(events[1].detail).toEqual({ from: 'backlog', to: 'prioritized' });
+    expect(events[0].createdAt).toBeLessThanOrEqual(events[1].createdAt);
+  });
+
+  it('listTicketEvents is [] for an unknown ticket', () => {
+    expect(listTicketEvents(db, 9999)).toEqual([]);
+  });
+
+  it('appendRefineReply writes a refine_human event and returns it', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    const ev = appendRefineReply(db, t.id, '  scope it to the widget only  ');
+    expect(ev).not.toBeNull();
+    expect(ev?.type).toBe('refine_human');
+    expect(ev?.detail).toEqual({ text: '  scope it to the widget only  ' });
+    const thread = listTicketEvents(db, t.id).filter((e) => e.type === 'refine_human');
+    expect(thread).toHaveLength(1);
+  });
+
+  it('appendRefineReply returns null for an unknown ticket (no row written)', () => {
+    expect(appendRefineReply(db, 9999, 'hi')).toBeNull();
+    expect(listTicketEvents(db, 9999)).toEqual([]);
+  });
+
+  it('a refine_agent turn round-trips its sessionId through the event detail', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    // Simulate a griller post (the griller writes the same row shape).
+    db.prepare(
+      'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+    ).run(t.id, 'refine_agent', JSON.stringify({ text: 'here is my plan', sessionId: 'sess-42' }), Date.now());
+    const agentEvents = listTicketEvents(db, t.id).filter((e) => e.type === 'refine_agent');
+    expect(agentEvents).toHaveLength(1);
+    expect((agentEvents[0].detail as { sessionId?: string }).sessionId).toBe('sess-42');
   });
 });
