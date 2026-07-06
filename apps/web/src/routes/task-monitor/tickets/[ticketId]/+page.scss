@@ -186,7 +186,7 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm, 6px);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
 
     &:disabled { opacity: 0.5; cursor: default; }
@@ -206,7 +206,7 @@
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm, 6px);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   cursor: pointer;
 
   &:disabled { opacity: 0.5; cursor: default; }
@@ -224,4 +224,51 @@
   border-radius: 999px;
   color: var(--status-working, #16a34a);
   font-size: var(--font-size-sm);
+}
+
+// Read-only split lineage (D-044, PD-269); full relations UI is PD-156.
+.lineage {
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+  max-width: 760px;
+
+  h2 {
+    margin: 0 0 var(--space-sm);
+    font-size: var(--font-size-md);
+  }
+
+  ul {
+    margin: var(--space-xs) 0 0;
+    padding-left: var(--space-lg);
+  }
+
+  li {
+    margin-bottom: var(--space-xs);
+  }
+}
+
+.lineage-group {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-sm);
+}
+
+.lineage-label {
+  display: inline-block;
+  margin-right: var(--space-sm);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: var(--font-size-xs);
+}
+
+.lineage-ref {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.lineage-status {
+  margin-left: var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
 }

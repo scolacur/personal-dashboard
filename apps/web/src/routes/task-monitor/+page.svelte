@@ -839,7 +839,7 @@
                   {/each}
                 </select>
                 <span class="spacer"></span>
-                {#if ticket.status === 'prioritized' && ticket.refineState === null && !ticket.refined}
+                {#if (ticket.status === 'prioritized' || ticket.status === 'backlog') && ticket.refineState === null && !ticket.refined}
                   <button
                     class="action-refine"
                     type="button"

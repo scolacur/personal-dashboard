@@ -367,6 +367,90 @@ export function refineStateFromLatestType(latestRefineType: string | null | unde
   return null;
 }
 
+// ── Ticket relations (D-020 table, first used by PD-269) ─────────────────────
+// `blocks` (the table default, for the future blocked-by/blocking UI, PD-156) and `split`
+// (parent → child, written when a Refine decompose closes the parent into children, D-036).
+export type RelationType = 'blocks' | 'split';
+
+export interface TicketRelation {
+  id: number;
+  fromTicketId: number;
+  toTicketId: number;
+  type: RelationType;
+  createdAt: number;
+}
+
+/** One end of a split lineage, resolved for the read-only display on ticket-detail. */
+export interface LineageRef {
+  ticketId: number;
+  displayId: string | null;
+  title: string;
+  status: TicketStatus;
+}
+
+/** A ticket's split lineage: what it was split into (as a parent) and what it was split
+ *  from (as a child). Full relations management is PD-156; PD-269 renders this read-only. */
+export interface TicketLineage {
+  splitInto: LineageRef[];
+  splitFrom: LineageRef[];
+}
+
+// ── Refine commit / decompose proposal (D-044, PD-269) ───────────────────────
+// On approval the griller commits. It never writes tickets directly — it PROPOSES via the
+// `propose_commit` SDK tool, which writes a `refine_proposal` event; the server executes on
+// Steve's approval (`refine_committed`) or drops it on reject (`refine_rejected`).
+
+/** Lifecycle event types for a commit proposal (stored in agent_ticket_events). */
+export const REFINE_PROPOSAL_EVENT = {
+  proposal: 'refine_proposal',
+  committed: 'refine_committed',
+  rejected: 'refine_rejected',
+} as const;
+
+export type RefineCommitMode = 'refine_in_place' | 'decompose';
+
+/** A proposed child ticket in a decompose. Robot-bound children MUST be isSortieReady-shaped
+ *  (four sections, PD-177) — the server rejects the approval otherwise. */
+export interface RefineChildProposal {
+  title: string;
+  body: string;
+  status: TicketStatus;
+  assignee: TicketAssignee | null;
+}
+
+/** The structured commit proposal, stored as the detail of a `refine_proposal` event. */
+export interface RefineProposal {
+  mode: RefineCommitMode;
+  /** refine_in_place: the rewritten body + routing for the SAME ticket. */
+  body?: string;
+  status?: TicketStatus;
+  assignee?: TicketAssignee | null;
+  /** decompose: the children to create; the parent is then closed + linked (split). */
+  children?: RefineChildProposal[];
+  /** Short why, shown in the approval panel. */
+  rationale?: string;
+}
+
+/**
+ * The latest proposal still awaiting a decision, or null. "Actionable" = a `refine_proposal`
+ * event with no `refine_committed`/`refine_rejected` event after it (a later proposal or a
+ * decision supersedes it). Shared so the web panel and the server's approve path agree.
+ */
+export function latestActionableProposal(
+  events: TicketEvent[],
+): { eventId: number; proposal: RefineProposal } | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === REFINE_PROPOSAL_EVENT.committed || e.type === REFINE_PROPOSAL_EVENT.rejected) {
+      return null; // newest lifecycle event is a decision → nothing pending
+    }
+    if (e.type === REFINE_PROPOSAL_EVENT.proposal) {
+      return { eventId: e.id, proposal: (e.detail ?? {}) as RefineProposal };
+    }
+  }
+  return null;
+}
+
 /** Project the Refine subset of a ticket's activity log into ordered thread messages.
  *  Non-refine events are dropped; malformed detail falls back to empty text. Shared so the
  *  web thread view and the griller's "what has been said so far" agree exactly. */
