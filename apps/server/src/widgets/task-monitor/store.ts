@@ -13,7 +13,7 @@ import type {
   TicketStatus,
   UpdateTicketInput,
 } from '@dashboard/shared';
-import { laneForcedAssignee, REFINE_EVENT_TYPE } from '@dashboard/shared';
+import { laneForcedAssignee, refineStateFromLatestType, REFINE_EVENT_TYPE } from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
 // never see snake_case (PROJECT.md §5: typed helpers, no raw SQL in routes).
@@ -32,9 +32,13 @@ interface TicketRow {
   github_issue_number: number | null;
   github_issue_url: string | null;
   agent_state: string | null;
+  refined: number;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
+  /** Newest refine_* event type for this ticket, joined in by the list/get queries
+   *  (absent on create/update returns → refineState is null there). */
+  latest_refine_type?: string | null;
 }
 
 interface ProjectRow {
@@ -76,6 +80,8 @@ function rowToTicket(row: TicketRow): AgentTicket {
     githubIssueNumber: row.github_issue_number,
     githubIssueUrl: row.github_issue_url,
     agentState: row.agent_state as AgentTicket['agentState'],
+    refineState: refineStateFromLatestType(row.latest_refine_type),
+    refined: row.refined === 1,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -148,10 +154,18 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
 
 /* ── Tickets ────────────────────────────────────── */
 
+// Newest refine_* event type per ticket, so rowToTicket can derive refineState (D-044,
+// PD-268) for the card/detail pill without an N+1 fetch. `t` is the agent_tickets alias.
+const LATEST_REFINE_TYPE_SELECT = `(
+  SELECT e.type FROM agent_ticket_events e
+   WHERE e.ticket_id = t.id AND e.type IN ('refine_human', 'refine_agent')
+   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) AS latest_refine_type`;
+
 export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
-      `SELECT * FROM agent_tickets
+      `SELECT t.*, ${LATEST_REFINE_TYPE_SELECT} FROM agent_tickets t
        WHERE archived_at IS NULL
        ORDER BY
          CASE status
@@ -171,7 +185,9 @@ export function listTickets(db: Database.Database): AgentTicket[] {
 }
 
 export function getTicket(db: Database.Database, id: number): AgentTicket | null {
-  const row = db.prepare('SELECT * FROM agent_tickets WHERE id = ?').get(id) as TicketRow | undefined;
+  const row = db
+    .prepare(`SELECT t.*, ${LATEST_REFINE_TYPE_SELECT} FROM agent_tickets t WHERE t.id = ?`)
+    .get(id) as TicketRow | undefined;
   return row ? rowToTicket(row) : null;
 }
 
@@ -264,6 +280,7 @@ export function updateTicket(
       patch.githubIssueNumber === undefined ? existing.githubIssueNumber : patch.githubIssueNumber,
     githubIssueUrl:
       patch.githubIssueUrl === undefined ? existing.githubIssueUrl : patch.githubIssueUrl,
+    refined: patch.refined === undefined ? existing.refined : patch.refined,
     updatedAt: Date.now(),
   };
 
@@ -278,7 +295,7 @@ export function updateTicket(
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -290,6 +307,7 @@ export function updateTicket(
       next.assignee,
       next.githubIssueNumber,
       next.githubIssueUrl,
+      next.refined ? 1 : 0,
       next.updatedAt,
       id,
     );
@@ -490,6 +508,39 @@ export function listTicketEvents(db: Database.Database, ticketId: number): Ticke
     )
     .all(ticketId) as TicketEventRow[];
   return rows.map(rowToTicketEvent);
+}
+
+/** Outcome of a startRefine attempt: the kickoff event, or a reason it didn't start. */
+export type StartRefineResult =
+  | { ok: true; event: TicketEvent }
+  | { ok: false; reason: 'not_found' | 'already_started' };
+
+/**
+ * Start a Refine session on a ticket (D-044, PD-268). The DB is the queue: this writes the
+ * KICKOFF `refine_human` event (the ticket's title + body) that the griller's poll loop
+ * consumes to open a grounded session. No-op-safe: returns `already_started` if the ticket
+ * already has any refine_* turn, so a double-click can't spawn a second thread.
+ */
+export function startRefine(db: Database.Database, ticketId: number): StartRefineResult {
+  const ticket = getTicket(db, ticketId);
+  if (ticket === null) return { ok: false, reason: 'not_found' };
+
+  const existing = db
+    .prepare(
+      `SELECT 1 FROM agent_ticket_events WHERE ticket_id = ? AND type IN (?, ?) LIMIT 1`,
+    )
+    .get(ticketId, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent);
+  if (existing) return { ok: false, reason: 'already_started' };
+
+  const kickoff = [ticket.title, ticket.body ?? ''].join('\n\n').trim();
+  const now = Date.now();
+  const res = db
+    .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+    .run(ticketId, REFINE_EVENT_TYPE.human, JSON.stringify({ text: kickoff }), now);
+  const row = db
+    .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
+    .get(Number(res.lastInsertRowid)) as TicketEventRow;
+  return { ok: true, event: rowToTicketEvent(row) };
 }
 
 /**

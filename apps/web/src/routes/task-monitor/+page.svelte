@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
+  import { goto } from '$app/navigation';
   import DeployStatus from '../DeployStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, RefineState, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, AGENT_STATE_LABELS, AGENT_STATE_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GithubMark from '$lib/icons/GithubMark.svelte';
-  import { Pencil, Copy, Trash2, ClipboardCopy } from 'lucide-svelte';
+  import { Pencil, Copy, Trash2, ClipboardCopy, Sparkles } from 'lucide-svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
   import { ticketMatchesQuery } from './filter-logic';
@@ -480,6 +481,23 @@
     return '—';
   }
 
+  const REFINE_STATE_LABELS: Record<RefineState, string> = {
+    grilling: 'Grilling…',
+    'awaiting-human': 'Needs you',
+  };
+
+  // Start a Refine session (D-044, PD-268), then open the ticket to watch the thread.
+  async function refine(ticket: AgentTicket) {
+    error = null;
+    try {
+      await api.startRefine(ticket.id);
+      if (ticket.displayId) await goto(`/task-monitor/tickets/${ticket.displayId}`);
+      else await load(true);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function remove(ticket: AgentTicket) {
     if (!confirm(`Delete "${ticket.title}"?`)) return;
     error = null;
@@ -752,6 +770,16 @@
                   {/if}
                 </div>
                 <span class="card-top-right">
+                  {#if ticket.refined}
+                    <span class="refined-mark" title="Refined">✓ Refined</span>
+                  {:else if ticket.refineState}
+                    <a
+                      class="refine-pill refine-{ticket.refineState}"
+                      href={ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined}
+                      draggable="false"
+                      title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
+                    >{REFINE_STATE_LABELS[ticket.refineState]}</a>
+                  {/if}
                   {#if ticket.agentState}
                     <button
                       class="agent-state-badge {agentStateClass(ticket.agentState)}"
@@ -811,6 +839,15 @@
                   {/each}
                 </select>
                 <span class="spacer"></span>
+                {#if ticket.status === 'prioritized' && ticket.refineState === null && !ticket.refined}
+                  <button
+                    class="action-refine"
+                    type="button"
+                    title="Refine — start a grounded triage session"
+                    aria-label="Refine"
+                    onclick={() => refine(ticket)}><Sparkles size={13} /></button
+                  >
+                {/if}
                 <button class="action-edit" type="button" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
                   ><Pencil size={13} /></button
                 >

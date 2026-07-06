@@ -2,7 +2,7 @@ import { loadConfig } from './config';
 import { installProxy } from './proxy';
 import { ensureCheckout, pullLatest } from './checkout';
 import { openDb } from './db';
-import { processPendingRefines } from './refine';
+import { processPendingRefines, WarmSessions } from './refine';
 import { logger } from './logger';
 
 /**
@@ -26,18 +26,25 @@ async function main(): Promise<void> {
   const db = openDb(config);
   db.prepare('SELECT 1').get();
 
+  // Warm sessions persist across poll cycles (survive web redeploys — this is a separate
+  // process), so active back-and-forth reuses a resident session; idle ones are swept.
+  const sessions = new WarmSessions();
+
   // Refine poll loop. A grill turn can run for many seconds, so an in-flight guard skips
   // overlapping ticks rather than double-processing a ticket.
   let running = false;
   setInterval(() => {
     if (running) return;
     running = true;
-    void processPendingRefines(db, config)
+    void processPendingRefines(db, config, { sessions })
       .catch((err) => logger.error({ err }, 'refine: poll cycle failed'))
       .finally(() => {
         running = false;
       });
   }, config.refineIntervalMs);
+
+  // Idle-evict sweep — cheap; runs on the pull cadence.
+  setInterval(() => sessions.sweep(), config.pullIntervalMs);
 
   logger.info({ refineIntervalMs: config.refineIntervalMs }, 'griller ready — polling for Refine turns');
 }

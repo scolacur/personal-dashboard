@@ -3,7 +3,13 @@ import type { TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE, refineThreadFromEvents } from '@dashboard/shared';
 import type { GrillerConfig } from './config';
 import { buildContextPack } from './context-pack';
-import { runGrillTurn, type GrillTurnResult, type GrillTurnInput } from './session';
+import {
+  openWarmSession,
+  type GrillSession,
+  type GrillTurnResult,
+  type OpenGrillSession,
+  type OpenSessionInput,
+} from './session';
 import { logger } from './logger';
 
 /**
@@ -126,10 +132,11 @@ export function writeRefineAgentTurn(
   ticketId: number,
   text: string,
   sessionId: string | undefined,
+  now: number = Date.now(),
 ): void {
   db.prepare(
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
-  ).run(ticketId, REFINE_EVENT_TYPE.agent, JSON.stringify({ text, sessionId }), Date.now());
+  ).run(ticketId, REFINE_EVENT_TYPE.agent, JSON.stringify({ text, sessionId }), now);
 }
 
 /**
@@ -137,7 +144,12 @@ export function writeRefineAgentTurn(
  * guard the server's createNotification does — one unread notification per ticket at a time,
  * so a back-and-forth doesn't flood the inbox until Steve reads it.
  */
-export function notifyRefinePosted(db: Database.Database, ticketId: number, text: string): void {
+export function notifyRefinePosted(
+  db: Database.Database,
+  ticketId: number,
+  text: string,
+  now: number = Date.now(),
+): void {
   const dup = db
     .prepare('SELECT 1 FROM agent_notifications WHERE ticket_id = ? AND kind = ? AND read_at IS NULL')
     .get(ticketId, 'agent_refine');
@@ -150,31 +162,96 @@ export function notifyRefinePosted(db: Database.Database, ticketId: number, text
   const body = text.length > 280 ? `${text.slice(0, 279)}…` : text;
   db.prepare(
     'INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run('agent_refine', ticketId, title, body, Date.now());
+  ).run('agent_refine', ticketId, title, body, now);
+}
+
+// ── Warm session manager (D-044, PD-268) ─────────────────────────────────────
+
+/**
+ * Holds the resident warm grill sessions, one per active ticket (Map<ticketId, session>).
+ * A turn reuses the live session (snappy — no subprocess re-spawn / history re-send); the
+ * first turn after a restart opens cold, rehydrating the persisted resumeSessionId from the
+ * DB. Idle sessions are swept so the worker doesn't hoard subprocesses; a cold turn later
+ * simply rehydrates again.
+ */
+export class WarmSessions {
+  private readonly map = new Map<number, GrillSession>();
+
+  constructor(
+    private readonly open: OpenGrillSession = openWarmSession,
+    /** Evict a session after this long without a turn (default 15 min). */
+    private readonly idleMs = 15 * 60_000,
+  ) {}
+
+  /** Whether a warm session is already resident for this ticket. */
+  has(ticketId: number): boolean {
+    return this.map.has(ticketId);
+  }
+
+  size(): number {
+    return this.map.size;
+  }
+
+  /**
+   * Run a turn, opening a session cold (rehydrating `resumeSessionId`) if none is resident.
+   * `resumeSessionId` is honoured ONLY on a cold open — a live session already holds context.
+   */
+  async turn(ticketId: number, input: OpenSessionInput, prompt: string): Promise<GrillTurnResult> {
+    let session = this.map.get(ticketId);
+    if (!session) {
+      session = this.open(input);
+      this.map.set(ticketId, session);
+    }
+    return session.send(prompt);
+  }
+
+  /** Close + drop sessions idle longer than `idleMs`. Returns the count evicted. */
+  sweep(now = Date.now()): number {
+    let evicted = 0;
+    for (const [ticketId, session] of this.map) {
+      if (now - session.lastUsedAt > this.idleMs) {
+        void session.close();
+        this.map.delete(ticketId);
+        evicted++;
+      }
+    }
+    if (evicted > 0) logger.info({ evicted, remaining: this.map.size }, 'refine: swept idle sessions');
+    return evicted;
+  }
+
+  async closeAll(): Promise<void> {
+    await Promise.all([...this.map.values()].map((s) => s.close()));
+    this.map.clear();
+  }
 }
 
 // ── Orchestration ────────────────────────────────────────────────────────────
 
 export interface ProcessDeps {
-  /** Injectable for tests; defaults to the real Agent SDK turn. */
-  runTurn?: (input: GrillTurnInput) => Promise<GrillTurnResult>;
+  /** The warm-session pool. Pass a long-lived instance so warmth survives across cycles;
+   *  a fresh (cold-every-time) one is created if omitted. */
+  sessions?: WarmSessions;
   /** Injectable for tests; defaults to reading the grounding checkout. */
   buildContext?: (checkoutDir: string) => string;
+  /** Injectable clock for the written event/notification timestamps (tests want it monotonic). */
+  now?: () => number;
 }
 
 /**
- * One poll cycle: find tickets awaiting the agent, run a grill turn for each, and write
- * the reply + notification back to the shared DB. Returns how many turns were posted.
- * A failed or empty turn is logged and left pending (retried next cycle) rather than
- * writing a bogus agent turn.
+ * One poll cycle: find tickets awaiting the agent, run a (warm-if-resident) grill turn for
+ * each, and write the reply + notification back to the shared DB. Returns how many turns were
+ * posted. A failed or empty turn is logged and left pending (retried next cycle) rather than
+ * writing a bogus agent turn. Tickets are processed sequentially, so a session never has two
+ * concurrent turns in flight.
  */
 export async function processPendingRefines(
   db: Database.Database,
   config: GrillerConfig,
   deps: ProcessDeps = {},
 ): Promise<number> {
-  const runTurn = deps.runTurn ?? runGrillTurn;
+  const sessions = deps.sessions ?? new WarmSessions();
   const buildContext = deps.buildContext ?? buildContextPack;
+  const now = deps.now ?? Date.now;
 
   const ticketIds = findPendingRefineTicketIds(db);
   if (ticketIds.length === 0) return 0;
@@ -185,21 +262,25 @@ export async function processPendingRefines(
   for (const ticketId of ticketIds) {
     const work = nextRefineWork(listTicketEvents(db, ticketId));
     if (!work) continue;
+    const warm = sessions.has(ticketId);
     try {
-      const result = await runTurn({
-        config,
-        contextPack,
-        prompt: work.prompt,
-        resumeSessionId: work.resumeSessionId,
-      });
+      const result = await sessions.turn(
+        ticketId,
+        { config, contextPack, resumeSessionId: work.resumeSessionId },
+        work.prompt,
+      );
       if (result.text.trim() === '') {
         logger.warn({ ticketId }, 'refine: empty turn — leaving pending, will retry');
         continue;
       }
-      writeRefineAgentTurn(db, ticketId, result.text, result.sessionId);
-      notifyRefinePosted(db, ticketId, result.text);
+      const ts = now();
+      writeRefineAgentTurn(db, ticketId, result.text, result.sessionId, ts);
+      notifyRefinePosted(db, ticketId, result.text, ts);
       handled++;
-      logger.info({ ticketId, resumed: Boolean(work.resumeSessionId) }, 'refine: posted turn');
+      logger.info(
+        { ticketId, warm, cacheReadTokens: result.cacheReadTokens, durationMs: result.durationMs },
+        'refine: posted turn',
+      );
     } catch (err) {
       logger.error({ err, ticketId }, 'refine: turn failed — leaving pending');
     }

@@ -3,12 +3,13 @@ import Database from 'better-sqlite3';
 import type { TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE } from '@dashboard/shared';
 import type { GrillerConfig } from './config';
-import type { GrillTurnInput, GrillTurnResult } from './session';
+import type { GrillSession, GrillTurnResult, OpenGrillSession, OpenSessionInput } from './session';
 import {
   nextRefineWork,
   findPendingRefineTicketIds,
   listTicketEvents,
   processPendingRefines,
+  WarmSessions,
 } from './refine';
 
 // Minimal slice of the shared dashboard schema the griller touches (the web app owns the
@@ -57,14 +58,32 @@ const CONFIG: GrillerConfig = {
   httpsProxy: '',
 };
 
-/** A fake runTurn that records inputs and returns a canned reply + session id. */
-function fakeTurn(reply: string, sessionId: string | undefined = 'sess-1') {
-  const calls: GrillTurnInput[] = [];
-  const runTurn = async (input: GrillTurnInput): Promise<GrillTurnResult> => {
-    calls.push(input);
-    return { text: reply, sessionId };
+/** A fake session factory: records every open() + send(), returns canned replies. Each open
+ *  models a fresh subprocess; a warm reuse sends into an existing fake session (no new open). */
+function fakeSessions(reply: string, sessionId = 'sess-1') {
+  const opens: OpenSessionInput[] = [];
+  const sends: { prompt: string; resumeSessionId?: string }[] = [];
+  let closed = 0;
+  const open: OpenGrillSession = (input) => {
+    opens.push(input);
+    let sid = input.resumeSessionId ?? sessionId;
+    const session: GrillSession = {
+      get sessionId() {
+        return sid;
+      },
+      lastUsedAt: Date.now(),
+      async send(prompt: string): Promise<GrillTurnResult> {
+        sends.push({ prompt, resumeSessionId: input.resumeSessionId });
+        sid = sessionId;
+        return { text: reply, sessionId: sid, cacheReadTokens: 1234, durationMs: 42 };
+      },
+      async close() {
+        closed++;
+      },
+    };
+    return session;
   };
-  return { runTurn, calls };
+  return { open, opens, sends, closedCount: () => closed };
 }
 
 const noContext = () => '';
@@ -144,12 +163,16 @@ describe('processPendingRefines (orchestration)', () => {
   it('answers a pending ticket: writes a refine_agent turn + an agent_refine notification', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'grill this' });
-    const { runTurn, calls } = fakeTurn('here is my plan', 'sess-1');
+    const fake = fakeSessions('here is my plan', 'sess-1');
 
-    const handled = await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext });
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fake.open),
+      buildContext: noContext,
+      now: () => ++seq,
+    });
 
     expect(handled).toBe(1);
-    expect(calls[0].prompt).toBe('grill this');
+    expect(fake.sends[0].prompt).toBe('grill this');
     const agentTurns = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
     expect(agentTurns).toHaveLength(1);
     expect((agentTurns[0].detail as { sessionId?: string }).sessionId).toBe('sess-1');
@@ -158,34 +181,51 @@ describe('processPendingRefines (orchestration)', () => {
     expect(notif.title).toContain('PD-1');
   });
 
-  it('resumes from the persisted session id (survives a worker restart)', async () => {
-    // Simulate a thread that already had one agent turn BEFORE this process started —
-    // exactly the post-restart state, rehydrated purely from the DB.
+  it('opens cold with the persisted session id (survives a worker restart)', async () => {
+    // A thread that already had one agent turn BEFORE this process started — the post-restart
+    // state, rehydrated purely from the DB.
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'body' });
     addEvent(db, 1, REFINE_EVENT_TYPE.agent, { text: 'plan', sessionId: 'sess-OLD' });
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'a follow-up' });
-    const { runTurn, calls } = fakeTurn('answer', 'sess-OLD');
+    const fake = fakeSessions('answer', 'sess-OLD');
 
-    await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext });
+    await processPendingRefines(db, CONFIG, { sessions: new WarmSessions(fake.open), buildContext: noContext, now: () => ++seq });
 
-    expect(calls[0].resumeSessionId).toBe('sess-OLD');
-    expect(calls[0].prompt).toBe('a follow-up');
+    expect(fake.opens[0].resumeSessionId).toBe('sess-OLD'); // cold open rehydrated
+    expect(fake.sends[0].prompt).toBe('a follow-up');
+  });
+
+  it('reuses the WARM session across turns — one open, no per-turn resume', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q1' });
+    const fake = fakeSessions('a1', 'sess-1');
+    const sessions = new WarmSessions(fake.open);
+
+    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q2' });
+    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+
+    expect(fake.opens).toHaveLength(1); // opened once, reused for the 2nd turn
+    expect(fake.sends.map((s) => s.prompt)).toEqual(['q1', 'q2']);
+    expect(sessions.has(1)).toBe(true);
   });
 
   it('is idempotent — a second cycle with no new human turn does nothing', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q' });
-    const { runTurn } = fakeTurn('a');
-    expect(await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext })).toBe(1);
-    expect(await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext })).toBe(0);
+    const sessions = new WarmSessions(fakeSessions('a').open);
+    expect(await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq })).toBe(1);
+    expect(await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq })).toBe(0);
   });
 
   it('leaves the ticket pending when the turn returns empty text (no bogus agent turn)', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q' });
-    const { runTurn } = fakeTurn('   ');
-    const handled = await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext });
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fakeSessions('   ').open),
+      buildContext: noContext,
+    });
     expect(handled).toBe(0);
     expect(listTicketEvents(db, 1).some((e) => e.type === REFINE_EVENT_TYPE.agent)).toBe(false);
     expect(findPendingRefineTicketIds(db)).toEqual([1]); // still pending → will retry
@@ -194,11 +234,25 @@ describe('processPendingRefines (orchestration)', () => {
   it('does not raise a second unread notification for a follow-up turn', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q1' });
-    const { runTurn } = fakeTurn('a1');
-    await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext });
+    const sessions = new WarmSessions(fakeSessions('a1').open);
+    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q2' });
-    await processPendingRefines(db, CONFIG, { runTurn, buildContext: noContext });
+    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
     const count = db.prepare('SELECT COUNT(*) AS c FROM agent_notifications').get() as { c: number };
     expect(count.c).toBe(1); // first is still unread → deduped
+  });
+});
+
+describe('WarmSessions', () => {
+  it('sweeps sessions idle past the timeout and closes them (cold rehydrate next time)', () => {
+    const fake = fakeSessions('a');
+    const sessions = new WarmSessions(fake.open, 1000);
+    void sessions.turn(1, { config: CONFIG, contextPack: '' }, 'hi'); // opens synchronously
+    expect(sessions.size()).toBe(1);
+    expect(sessions.sweep(0)).toBe(0); // "now" before lastUsedAt → not idle
+    expect(sessions.size()).toBe(1);
+    expect(sessions.sweep(Date.now() + 10_000)).toBe(1); // well past the 1s idle window
+    expect(sessions.size()).toBe(0);
+    expect(fake.closedCount()).toBe(1);
   });
 });

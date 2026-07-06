@@ -840,6 +840,48 @@
       cursor: not-allowed;
     }
   }
+
+  // The Refine action gets the accent hue so it reads as the primary triage entry point.
+  .action-refine {
+    color: var(--accent);
+    border-color: var(--accent);
+
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+  }
+}
+
+// Live Refine session pill on a card (D-044, PD-268). Mirrors .agent-state-badge shape.
+.refine-pill {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid;
+  white-space: nowrap;
+  line-height: 1.6;
+
+  &.refine-grilling {
+    color: var(--status-working);
+    border-color: var(--status-working);
+  }
+  &.refine-awaiting-human {
+    color: var(--status-needs-human);
+    border-color: var(--status-needs-human);
+  }
+}
+
+// Persistent "refined once" marker (D-044, PD-268).
+.refined-mark {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--status-working, #16a34a);
+  color: var(--status-working, #16a34a);
+  white-space: nowrap;
+  line-height: 1.6;
 }
 
 /* ── Mobile responsive (≤640px) ─────────────────── */

@@ -541,3 +541,50 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', () => {
+  const base = '/api/widgets/task-monitor';
+
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, title = 't', body?: string) {
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title, body, projectId: pid } });
+    return res.json().id as number;
+  }
+
+  it('writes the kickoff refine_human event and 201s', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'), 'Add widget', 'shows X');
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().type).toBe('refine_human');
+    const events = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}/events` })).json() as {
+      type: string;
+    }[];
+    expect(events.filter((e) => e.type === 'refine_human')).toHaveLength(1);
+  });
+
+  it('409s on a double-start (no second thread)', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` })).statusCode).toBe(201);
+    const again = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().code).toBe('ALREADY_STARTED');
+  });
+
+  it('404s for an unknown ticket', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/9999/refine` });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('reflects refineState in the tickets list after starting', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` });
+    const tickets = (await app.inject({ method: 'GET', url: `${base}/tickets` })).json() as {
+      id: number;
+      refineState: string | null;
+    }[];
+    expect(tickets.find((t) => t.id === id)?.refineState).toBe('grilling');
+  });
+});

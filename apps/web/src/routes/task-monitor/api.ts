@@ -92,6 +92,16 @@ export async function replyToTicket(id: number, body: string): Promise<void> {
   if (!res.ok) return parseError(res);
 }
 
+/**
+ * Start a Refine session on a ticket (D-044, PD-268). Writes the kickoff turn the griller
+ * picks up. Returns the created event, or throws (409 if a session is already running).
+ */
+export async function startRefine(id: number): Promise<TicketEvent> {
+  const res = await fetch(`${BASE}/${id}/refine`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketEvent>;
+}
+
 /** A ticket's activity log — the generic substrate the Refine thread renders (PD-267). */
 export async function fetchTicketEvents(id: number): Promise<TicketEvent[]> {
   const res = await fetch(`${BASE}/${id}/events`);

@@ -68,8 +68,8 @@
     <p class="error" role="alert">{error}</p>
   {:else if messages.length === 0}
     <p class="muted">
-      No Refine conversation yet. Start one with the Refine button on the board (coming in
-      PD-268), then the thread appears here.
+      No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
+      above) to start one — the griller's turns and your replies appear here.
     </p>
   {:else}
     <ul class="thread">
