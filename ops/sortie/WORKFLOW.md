@@ -445,7 +445,11 @@ cd "$SORTIE_WORKSPACE"
    # verify is GREEN → record the hand-off-intent marker. This is the ONE positive signal the
    # after_run safety-net trusts (D-046): it completes a cut-off hand-off ONLY if this exists.
    # Without it, a turn that ended before a green verify is left for retry, never published.
-   mkdir -p "$SORTIE_WORKSPACE/.sortie" && touch "$SORTIE_WORKSPACE/.sortie/verify-ok"
+   # WORKSPACE-RELATIVE on purpose: $SORTIE_WORKSPACE is NOT set in the agent's Bash tool (only in
+   # the hooks), so an absolute "$SORTIE_WORKSPACE/.sortie" resolves to /.sortie and dies with
+   # "Permission denied". Your cwd is the workspace root, so `.sortie/` is the right target — and
+   # the after_run hook `cd`s into $SORTIE_WORKSPACE, so it reads back the very same file.
+   mkdir -p .sortie && touch .sortie/verify-ok
    ```
    Make `verify` pass. Do NOT weaken or delete tests to get there. If it cannot pass and you
    cannot fix it within scope, prefer `ask_human` over shipping a red PR — and do NOT write the
