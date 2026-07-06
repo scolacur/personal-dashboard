@@ -301,6 +301,13 @@ export async function processPendingRefines(
         },
         work.prompt,
       );
+      if (!result.ok) {
+        // An API/agent error (billing, rate limit, auth, max-turns) — NOT the agent's words.
+        // Log the real reason and leave the ticket pending so it self-heals on a later poll
+        // (e.g. once credits are topped up) without needing a fresh human reply.
+        logger.warn({ ticketId, error: result.text.slice(0, 300) }, 'refine: turn errored — leaving pending, will retry');
+        continue;
+      }
       if (result.text.trim() === '') {
         logger.warn({ ticketId }, 'refine: empty turn — leaving pending, will retry');
         continue;

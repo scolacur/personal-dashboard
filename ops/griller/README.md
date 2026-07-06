@@ -16,8 +16,9 @@ as `/data`, or it opens a different DB and never sees your tickets.
   Colima, adjust the host paths per DECISIONS **D-035**.)
 - The repo is checked out on the host at
   `/volume1/docker/personal-dashboard/personal-dashboard/`.
-- Two secrets (see [Secrets & tokens](#secrets--tokens)): an Anthropic API key and a GitHub
-  token with **Contents: Read** on `scolacur/personal-dashboard`.
+- Two secrets (see [Secrets & tokens](#secrets--tokens)): a Claude credential (a metered
+  `ANTHROPIC_API_KEY` **or** a Pro `CLAUDE_CODE_OAUTH_TOKEN`) and a GitHub token with
+  **Contents: Read** on `scolacur/personal-dashboard`.
 - `docker` on the host needs `sudo` (interactive — the NAS sudo is password-gated).
 
 ## Deploy
@@ -60,15 +61,27 @@ Then click **Refine** on a prod ticket. When the agent replies you should see:
 
 ## Secrets & tokens
 
-Both live ONLY in `griller.env` (mounted as the container's `env_file`) — never in the web
-app's `.env`. The `ANTHROPIC_API_KEY` must never reach the user-facing web process.
+All live ONLY in `griller.env` (mounted as the container's `env_file`) — never in the web
+app's `.env`. The Claude credential must never reach the user-facing web process.
 
-- **`ANTHROPIC_API_KEY`** — any valid key works; a dedicated key gives separate cost tracking,
-  its own rate-limit budget, and a revocation blast-radius limited to the griller.
-- **`GITHUB_READ_TOKEN`** — used only to clone/pull the grounding checkout, so it needs
-  **Contents: Read** on `scolacur/personal-dashboard`. Note the dashboard's _existing_ read
-  token (PD-165) is scoped for **Issues: Read** — a fine-grained Issues-only PAT **cannot
-  clone**. Use a classic `repo`/`public_repo` PAT, or a fine-grained PAT with Contents: Read.
+**Claude auth — pick ONE** (if both are set, the API key wins):
+
+- **`ANTHROPIC_API_KEY`** — metered pay-as-you-go, billed **separately from any Claude
+  subscription**. A fresh key starts at **$0**, so add credits in the Console → Billing or the
+  griller logs a turn error `Credit balance is too low`. Cost-isolated; no shared quota. A
+  dedicated key also gives its own rate-limit budget + a revocation blast-radius limited to the
+  griller.
+- **`CLAUDE_CODE_OAUTH_TOKEN`** — your Claude Pro/Max subscription token (the same one Sortie
+  uses; copy from `sortie.env` or run `claude setup-token`). No extra billing, but it **shares
+  the Pro session quota with Sortie** — and the griller defaults to **Opus**, which is heavy on
+  that quota, so set `GRILLER_MODEL=claude-sonnet-4-6` to ease it. An exhausted quota surfaces
+  as an errored turn (left pending + logged, not written to the thread).
+
+**`GITHUB_READ_TOKEN`** — used only to clone/pull the grounding checkout, so it needs
+**Contents: Read** on `scolacur/personal-dashboard` (+ the auto-added Metadata: Read). Note the
+dashboard's _existing_ read token (PD-165) is scoped for **Issues: Read** — a fine-grained
+Issues-only PAT **cannot clone**. Use a classic `repo`/`public_repo` PAT, or a fine-grained PAT
+with Contents: Read.
 
 ## Redeploy after a code change
 
