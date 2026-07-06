@@ -73,6 +73,33 @@ export function nextRefineWork(events: TicketEvent[]): RefineWork | null {
   return { prompt, resumeSessionId };
 }
 
+/**
+ * True when a turn failed because the resume target no longer exists. The SDK's session store
+ * is per-container and not on a persistent volume, so a rebuild/restart invalidates every
+ * persisted sessionId — resuming one then fails with "No conversation found with session ID".
+ */
+export function isStaleSessionError(errorText: string): boolean {
+  return /no conversation found with session id/i.test(errorText);
+}
+
+/**
+ * Rebuild the whole Refine conversation as a single prompt for a FRESH session — used when a
+ * resume fails (the prior SDK session was lost). The DB thread is the source of truth, so we
+ * replay it and ask the agent to continue from the latest message.
+ */
+export function fullThreadPrompt(events: TicketEvent[]): string {
+  const lines = refineThreadFromEvents(events)
+    .filter((m) => m.text.trim() !== '')
+    .map((m) => `${m.role === 'human' ? 'Steve' : 'You (earlier)'}: ${m.text}`);
+  return [
+    'Continuing an earlier Refine conversation whose live session was lost; the transcript so far:',
+    '',
+    ...lines,
+    '',
+    'Continue from here — respond to the latest message.',
+  ].join('\n');
+}
+
 // ── Shared-DB access (mirrors the server's agent_ticket_events row shape) ─────
 
 interface EventRow {
@@ -231,6 +258,16 @@ export class WarmSessions {
     return session.send(prompt);
   }
 
+  /** Close + forget a ticket's session so the next turn opens a fresh one (used when a
+   *  resume target is stale — the old session is dead anyway). */
+  reset(ticketId: number): void {
+    const session = this.map.get(ticketId);
+    if (session) {
+      void session.close();
+      this.map.delete(ticketId);
+    }
+  }
+
   /** Close + drop sessions idle longer than `idleMs`. Returns the count evicted. */
   sweep(now = Date.now()): number {
     let evicted = 0;
@@ -286,21 +323,30 @@ export async function processPendingRefines(
   let handled = 0;
 
   for (const ticketId of ticketIds) {
-    const work = nextRefineWork(listTicketEvents(db, ticketId));
+    const events = listTicketEvents(db, ticketId);
+    const work = nextRefineWork(events);
     if (!work) continue;
     const warm = sessions.has(ticketId);
+    // The agent calls propose_commit → we persist the proposal for Steve to approve.
+    const onProposal = (proposal: RefineProposal) => writeRefineProposal(db, ticketId, proposal, now());
     try {
-      const result = await sessions.turn(
+      let result = await sessions.turn(
         ticketId,
-        {
-          config,
-          contextPack,
-          resumeSessionId: work.resumeSessionId,
-          // The agent calls propose_commit → we persist the proposal for Steve to approve.
-          onProposal: (proposal) => writeRefineProposal(db, ticketId, proposal, now()),
-        },
+        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal },
         work.prompt,
       );
+      // Stale resume: the SDK's session store is per-container and not persisted, so a rebuild
+      // invalidates the sessionId we saved. Drop the dead session and retry ONCE fresh, replaying
+      // the whole thread as context — self-healing instead of wedging the ticket forever.
+      if (!result.ok && work.resumeSessionId && isStaleSessionError(result.text)) {
+        logger.warn({ ticketId, staleSessionId: work.resumeSessionId }, 'refine: resume session gone — retrying fresh');
+        sessions.reset(ticketId);
+        result = await sessions.turn(
+          ticketId,
+          { config, contextPack, resumeSessionId: undefined, onProposal },
+          fullThreadPrompt(events),
+        );
+      }
       if (!result.ok) {
         // An API/agent error (billing, rate limit, auth, max-turns) — NOT the agent's words.
         // Log the real reason and leave the ticket pending so it self-heals on a later poll
