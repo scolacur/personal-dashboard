@@ -89,5 +89,7 @@ sudo docker compose -f ops/griller/docker-compose.egress.yml up -d   # recreates
 - **Griller sees no tickets** — the `/data` mount isn't the web app's DB dir; confirm both
   containers mount `/volume1/docker/personal-dashboard/data` as `/data`.
 - **Clone fails** — the `GITHUB_READ_TOKEN` lacks Contents: Read (see above).
-- **Container can't write `/data`** — the griller runs as uid 1002; the host `data` dir must be
-  writable by it (it's world-writable in the standard layout).
+- **`Permission denied` creating `/data/griller-checkout` or writing the DB** — the griller runs
+  as **root**, matching the web app that owns the shared `dashboard.db` (+ its WAL/-shm). If you
+  see this, the container isn't running as root (stale image) — rebuild, or confirm the
+  Dockerfile has no `USER` drop.
