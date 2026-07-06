@@ -1,15 +1,12 @@
 // Refine thread on the ticket-detail page (D-044, PD-267). Reuses the app's design tokens
 // so it sits with the rest of the detail view; PD-255 will render more event types here.
 .refine-thread {
-  margin-top: var(--space-lg);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--border);
-  max-width: 760px;
-
-  h2 {
-    margin: 0 0 var(--space-md);
-    font-size: var(--font-size-md);
-  }
+  display: flex;
+  flex-direction: column;
+  max-height: 600px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  overflow: hidden;
 }
 
 .muted {
@@ -17,34 +14,56 @@
   font-size: var(--font-size-sm);
 }
 
+.empty-state {
+  padding: var(--space-md);
+}
+
 .error {
   color: #c0392b;
   font-size: var(--font-size-sm);
+  padding: var(--space-md);
 }
 
 .thread {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: var(--space-md) var(--space-sm);
   list-style: none;
-  margin: 0 0 var(--space-md);
-  padding: 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
 .turn {
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
-  background: var(--surface, #fff);
+  display: flex;
 
-  // The agent's turns are the ones to read closely — tint + accent edge.
   &.turn-agent {
-    background: var(--surface-2, rgba(29, 118, 219, 0.05));
-    border-left: 3px solid var(--accent);
+    justify-content: flex-start;
   }
 
   &.turn-human {
-    border-left: 3px solid var(--border);
+    justify-content: flex-end;
+  }
+}
+
+.bubble {
+  max-width: 80%;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 18px;
+  line-height: 1.55;
+
+  .turn-agent & {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+
+  .turn-human & {
+    background: var(--accent);
+    color: var(--on-accent);
+    border-bottom-right-radius: 4px;
   }
 }
 
@@ -63,23 +82,43 @@
   .when {
     color: var(--muted);
     font-size: var(--font-size-xs);
+
+    .turn-human & {
+      color: var(--on-accent);
+      opacity: 0.75;
+    }
   }
 }
 
 .turn-body {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: 1.55;
   font-size: var(--font-size-base);
-  color: var(--text);
+}
+
+// Markdown output from agent turns.
+.prose {
+  p { margin: 0 0 var(--space-xs); }
+  p:last-child { margin-bottom: 0; }
+  ul, ol { margin: var(--space-xs) 0; padding-left: var(--space-lg); }
+  code {
+    font-family: monospace;
+    font-size: 0.9em;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 3px;
+    padding: 0 3px;
+  }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 
 .awaiting {
   font-style: italic;
-  margin: 0 0 var(--space-md);
+  padding: 0 var(--space-md) var(--space-sm);
 }
 
 .reply {
+  border-top: 1px solid var(--border);
+  padding: var(--space-sm);
+
   textarea {
     width: 100%;
     box-sizing: border-box;
@@ -121,7 +160,7 @@
 
 // Commit proposal panel (D-044, PD-269) — the approval gate before any ticket writes.
 .proposal {
-  margin: var(--space-md) 0;
+  margin: var(--space-md) var(--space-sm);
   padding: var(--space-md);
   border: 1px solid var(--accent);
   border-radius: var(--radius-md, 8px);

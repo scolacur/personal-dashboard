@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { marked } from 'marked';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
   import { latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
   import {
@@ -25,8 +26,23 @@
   let deciding = $state(false);
   let decideMsg = $state<string | null>(null);
 
+  let threadEl: HTMLUListElement | null = null;
+
   // True while we're waiting on the griller — the newest turn is Steve's.
   const awaitingAgent = $derived(messages.length > 0 && messages[messages.length - 1].role === 'human');
+
+  // Scroll to bottom whenever messages update.
+  $effect(() => {
+    const _ = messages.length;
+    if (threadEl) {
+      threadEl.scrollTop = threadEl.scrollHeight;
+    }
+  });
+
+  function renderMarkdown(text: string): string {
+    const result = marked.parse(text);
+    return typeof result === 'string' ? result : '';
+  }
 
   async function load() {
     try {
@@ -85,26 +101,30 @@
 </script>
 
 <section class="refine-thread">
-  <h2>Refine</h2>
-
   {#if loading}
     <p class="muted">Loading thread…</p>
   {:else if error}
     <p class="error" role="alert">{error}</p>
   {:else if messages.length === 0}
-    <p class="muted">
-      No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
-      above) to start one — the griller's turns and your replies appear here.
+    <p class="muted empty-state">
+      No Refine conversation yet. Use <strong>Start Refine</strong> above to begin — the
+      agent's turns and your replies appear here.
     </p>
   {:else}
-    <ul class="thread">
+    <ul class="thread" bind:this={threadEl}>
       {#each messages as m (m.id)}
         <li class="turn turn-{m.role}">
-          <div class="turn-head">
-            <span class="who">{m.role === 'agent' ? 'Refine agent' : 'You'}</span>
-            <span class="when">{fmt(m.createdAt)}</span>
+          <div class="bubble">
+            <div class="turn-head">
+              <span class="who">{m.role === 'agent' ? 'Refine agent' : 'You'}</span>
+              <span class="when">{fmt(m.createdAt)}</span>
+            </div>
+            {#if m.role === 'agent'}
+              <div class="turn-body prose">{@html renderMarkdown(m.text)}</div>
+            {:else}
+              <div class="turn-body">{m.text}</div>
+            {/if}
           </div>
-          <div class="turn-body">{m.text}</div>
         </li>
       {/each}
     </ul>

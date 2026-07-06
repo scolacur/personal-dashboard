@@ -133,110 +133,114 @@
   </div>
 {:else if ticket}
   <article class="ticket-detail">
-    <header class="detail-head">
-      <span class="detail-id">{ticket.displayId}</span>
-      <span class="priority priority-{ticket.priority ?? 'none'}">{ticket.priority ?? '—'}</span>
-      {#if ticket.priority}
-        <span class="priority-name">{PRIORITY_LABELS[ticket.priority]}</span>
-      {/if}
-      <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
-      {#if project}
-        <span class="project-chip" style="--chip: {projectIdColor(project)}"
-          >{project.name}</span
-        >
-      {/if}
-    </header>
+    <div class="ticket-left">
+      <header class="detail-head">
+        <span class="detail-id">{ticket.displayId}</span>
+        <span class="priority priority-{ticket.priority ?? 'none'}">{ticket.priority ?? '—'}</span>
+        {#if ticket.priority}
+          <span class="priority-name">{PRIORITY_LABELS[ticket.priority]}</span>
+        {/if}
+        <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
+        {#if project}
+          <span class="project-chip" style="--chip: {projectIdColor(project)}"
+            >{project.name}</span
+          >
+        {/if}
+      </header>
 
-    <h1 class="detail-title">{ticket.title}</h1>
+      <h1 class="detail-title">{ticket.title}</h1>
 
-    {#if ticket.body}
-      <p class="detail-body">{ticket.body}</p>
-    {:else}
-      <p class="muted">No description.</p>
-    {/if}
-
-    {#if ticket.githubIssueUrl}
-      <p>
-        <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer"
-          >GitHub issue #{ticket.githubIssueNumber}</a
-        >
-      </p>
-    {/if}
-
-    {#if isParked && ticket.githubIssueNumber}
-      <section class="reply-box">
-        <h2>Reply to the agent</h2>
-        <p class="muted">
-          The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
-          reply is posted to the issue and re-queues it.
-        </p>
-        <textarea
-          bind:value={replyText}
-          rows="4"
-          placeholder="Type your answer…"
-          disabled={replying}
-        ></textarea>
-        <div class="reply-actions">
-          <button onclick={submitReply} disabled={replying || !replyText.trim()}>
-            {replying ? 'Sending…' : 'Send reply'}
-          </button>
-          {#if replyMsg}<span class="reply-msg">{replyMsg}</span>{/if}
-        </div>
-      </section>
-    {/if}
-
-    <dl class="detail-meta">
-      <div><dt>Source</dt><dd>{ticket.source}</dd></div>
-      <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
-      <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
-    </dl>
-
-    <div class="refine-controls">
-      {#if ticket.refined}
-        <span class="refined-badge" title="This ticket has been refined">✓ Refined</span>
-      {:else if ticket.refineState === null}
-        <button class="start-refine" type="button" onclick={startRefine} disabled={starting}>
-          {starting ? 'Starting…' : '✦ Start Refine'}
-        </button>
+      {#if ticket.body}
+        <p class="detail-body">{ticket.body}</p>
       {:else}
-        <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
-          {markingRefined ? 'Marking…' : '✓ Mark refined'}
-        </button>
+        <p class="muted">No description.</p>
+      {/if}
+
+      {#if ticket.githubIssueUrl}
+        <p>
+          <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer"
+            >GitHub issue #{ticket.githubIssueNumber}</a
+          >
+        </p>
+      {/if}
+
+      {#if isParked && ticket.githubIssueNumber}
+        <section class="reply-box">
+          <h2>Reply to the agent</h2>
+          <p class="muted">
+            The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
+            reply is posted to the issue and re-queues it.
+          </p>
+          <textarea
+            bind:value={replyText}
+            rows="4"
+            placeholder="Type your answer…"
+            disabled={replying}
+          ></textarea>
+          <div class="reply-actions">
+            <button onclick={submitReply} disabled={replying || !replyText.trim()}>
+              {replying ? 'Sending…' : 'Send reply'}
+            </button>
+            {#if replyMsg}<span class="reply-msg">{replyMsg}</span>{/if}
+          </div>
+        </section>
+      {/if}
+
+      <dl class="detail-meta">
+        <div><dt>Source</dt><dd>{ticket.source}</dd></div>
+        <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
+        <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
+      </dl>
+
+      {#if lineage && (lineage.splitInto.length > 0 || lineage.splitFrom.length > 0)}
+        <section class="lineage">
+          <h2>Lineage</h2>
+          {#if lineage.splitFrom.length > 0}
+            <p class="lineage-group">
+              <span class="lineage-label">Split from</span>
+              {#each lineage.splitFrom as ref (ref.ticketId)}
+                <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
+                  >{ref.displayId} — {ref.title}</a
+                >
+              {/each}
+            </p>
+          {/if}
+          {#if lineage.splitInto.length > 0}
+            <div class="lineage-group">
+              <span class="lineage-label">Split into</span>
+              <ul>
+                {#each lineage.splitInto as ref (ref.ticketId)}
+                  <li>
+                    <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
+                      >{ref.displayId} — {ref.title}</a
+                    >
+                    <span class="lineage-status">{STATUS_LABELS[ref.status] ?? ref.status}</span>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+        </section>
       {/if}
     </div>
 
-    {#if lineage && (lineage.splitInto.length > 0 || lineage.splitFrom.length > 0)}
-      <section class="lineage">
-        <h2>Lineage</h2>
-        {#if lineage.splitFrom.length > 0}
-          <p class="lineage-group">
-            <span class="lineage-label">Split from</span>
-            {#each lineage.splitFrom as ref (ref.ticketId)}
-              <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
-                >{ref.displayId} — {ref.title}</a
-              >
-            {/each}
-          </p>
+    <div class="ticket-right">
+      <div class="refine-controls">
+        {#if ticket.refined}
+          <span class="refined-badge" title="This ticket has been refined">✓ Refined</span>
+        {:else if ticket.refineState === null}
+          <button class="start-refine" type="button" onclick={startRefine} disabled={starting}>
+            {starting ? 'Starting…' : '✦ Start Refine'}
+          </button>
+        {:else}
+          <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
+            {markingRefined ? 'Marking…' : '✓ Mark refined'}
+          </button>
         {/if}
-        {#if lineage.splitInto.length > 0}
-          <div class="lineage-group">
-            <span class="lineage-label">Split into</span>
-            <ul>
-              {#each lineage.splitInto as ref (ref.ticketId)}
-                <li>
-                  <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
-                    >{ref.displayId} — {ref.title}</a
-                  >
-                  <span class="lineage-status">{STATUS_LABELS[ref.status] ?? ref.status}</span>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
-      </section>
-    {/if}
+      </div>
 
-    <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
+      <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
+    </div>
   </article>
 {/if}
 
