@@ -89,6 +89,7 @@
 }
 
 .priority-filter,
+.refinement-filter,
 .project-filter {
   select {
     font-family: var(--font-sans);
@@ -811,6 +812,12 @@
   overflow-wrap: anywhere;
 }
 
+.card-status-row {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-sm);
+}
+
 .card-actions {
   display: flex;
   align-items: center;
@@ -878,8 +885,8 @@
   font-size: var(--font-size-xs);
   border-radius: 999px;
   padding: 0 var(--space-sm);
-  border: 1px solid var(--status-working, #16a34a);
-  color: var(--status-working, #16a34a);
+  border: 1px solid var(--accent);
+  color: var(--accent);
   white-space: nowrap;
   line-height: 1.6;
 }
@@ -937,18 +944,27 @@
     }
   }
 
-  .info-btn {
+  .refinement-filter {
     order: 6;
-    flex: 0 0 auto;
+    flex: 0 0 100%;
+
+    select {
+      width: 100%;
+    }
   }
 
-  .lanes-menu-wrap {
+  .info-btn {
     order: 7;
     flex: 0 0 auto;
   }
 
-  .condensed-toggle {
+  .lanes-menu-wrap {
     order: 8;
+    flex: 0 0 auto;
+  }
+
+  .condensed-toggle {
+    order: 9;
     flex: 0 0 100%;
   }
 
