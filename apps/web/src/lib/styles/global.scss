@@ -20,6 +20,9 @@
   --status-awaiting-human: #f59e0b; /* light orange */
   --status-done: #1a7f37; /* green */
   /* wontfix reuses the neutral --muted / --border tokens. */
+  /* Refine "Needs you" — the agent asked for your input. Pink: wants attention,
+     but less urgent than a red stuck/needs-human Sortie job. */
+  --status-refine-needs: #d6336c; /* pink */
 
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
