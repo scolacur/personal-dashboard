@@ -140,48 +140,52 @@
           </div>
         </li>
       {/each}
+
+      {#if proposal}
+        <li class="turn turn-agent turn-proposal">
+          <div class="bubble proposal" role="group" aria-label="Proposed commit">
+            <div class="turn-head">
+              <span class="who">Refine agent</span>
+              <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? 'Split' : 'Refine in place'}</span>
+            </div>
+            {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
+
+            {#if proposal.mode === 'refine_in_place'}
+              <dl class="proposal-fields">
+                {#if proposal.status}<div><dt>Lane</dt><dd>{proposal.status}</dd></div>{/if}
+                {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
+              </dl>
+              {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
+            {:else}
+              <ul class="proposal-children">
+                {#each proposal.children ?? [] as child, i (i)}
+                  <li>
+                    <div class="child-head">
+                      <span class="child-lane">{child.status}</span>
+                      <span class="child-assignee">{child.assignee ?? '—'}</span>
+                      <span class="child-title">{child.title}</span>
+                    </div>
+                    <pre class="proposal-body">{child.body}</pre>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+
+            <div class="proposal-actions">
+              <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
+                {deciding ? 'Working…' : 'Approve'}
+              </button>
+              <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
+              {#if decideMsg}<span class="decide-msg" role="alert">{decideMsg}</span>{/if}
+            </div>
+          </div>
+        </li>
+      {/if}
+
       {#if awaitingAgent}
         <li class="muted awaiting">Waiting for the Refine agent to reply…</li>
       {/if}
     </ul>
-  {/if}
-
-  {#if proposal}
-    <div class="proposal" role="group" aria-label="Proposed commit">
-      <div class="proposal-head">
-        <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? 'Split' : 'Refine in place'}</span>
-      </div>
-      {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
-
-      {#if proposal.mode === 'refine_in_place'}
-        <dl class="proposal-fields">
-          {#if proposal.status}<div><dt>Lane</dt><dd>{proposal.status}</dd></div>{/if}
-          {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
-        </dl>
-        {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
-      {:else}
-        <ul class="proposal-children">
-          {#each proposal.children ?? [] as child, i (i)}
-            <li>
-              <div class="child-head">
-                <span class="child-lane">{child.status}</span>
-                <span class="child-assignee">{child.assignee ?? '—'}</span>
-                <span class="child-title">{child.title}</span>
-              </div>
-              <pre class="proposal-body">{child.body}</pre>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      <div class="proposal-actions">
-        <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
-          {deciding ? 'Working…' : 'Approve'}
-        </button>
-        <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
-        {#if decideMsg}<span class="decide-msg" role="alert">{decideMsg}</span>{/if}
-      </div>
-    </div>
   {/if}
 
   {#if !loading && !error}

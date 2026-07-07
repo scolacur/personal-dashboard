@@ -166,14 +166,15 @@
   font-size: var(--font-size-sm);
 }
 
-// Commit proposal panel (D-044, PD-269) — the approval gate before any ticket writes.
-.proposal {
-  margin: var(--space-md) var(--space-sm);
-  padding: var(--space-md);
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-md, 8px);
-  background: var(--surface-2, rgba(29, 118, 219, 0.05));
-  flex-shrink: 0;
+// Commit proposal (D-044, PD-269) — the approval gate before any ticket writes. Rendered
+// inline as an interactive agent bubble (.turn-proposal) so a long proposal scrolls WITH the
+// thread and its Approve/Reject actions stay reachable. Previously a fixed-height panel below
+// the scroll area, which clipped under .refine-thread's max-height. Full-width + accent border
+// so it still reads as the distinct approval gate, not a plain message.
+.turn-proposal .bubble {
+  max-width: 100%;
+  width: 100%;
+  border-color: var(--accent);
 }
 
 .proposal-badge {
