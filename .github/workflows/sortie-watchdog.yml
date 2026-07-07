@@ -145,7 +145,7 @@ jobs:
               gh issue edit "$N" --repo "$REPO" --remove-label "$LABEL" 2>/dev/null || true
               gh issue edit "$N" --repo "$REPO" --add-label "sortie:stuck"
 
-              BODY="$(printf '@%s ⚠️ **Sortie watchdog**: issue #%s %s\n\nMoved to `sortie:stuck` (dropped from Sortie'\''s candidate set). Re-label `sortie:queued` to retry, or `sortie:wontfix` to drop it. _(threshold: %s min)_' \
+              BODY="$(printf '@%s ⚠️ **Sortie watchdog**: issue #%s %s\n\nMoved to `sortie:stuck` (dropped from Sortie'\''s candidate set). Re-label `sortie:queued` to retry, or `sortie:wontfix` to drop it. _(threshold: %s min)_\n\n-Sortie Watchdog' \
                 "$MENTION" "$N" "$REASON" "$THRESHOLD_MIN")"
               gh issue comment "$N" --repo "$REPO" --body "$BODY"
             done
@@ -195,5 +195,5 @@ jobs:
                 echo "  dry_run: would add sortie:in-review to #$N"; continue
               fi
               gh issue edit "$N" --repo "$REPO" --add-label "sortie:in-review"
-              gh issue comment "$N" --repo "$REPO" --body "$(printf '🔁 **Sortie label-rescue**: this issue had an open PR (\`%s\`) but no `sortie:*` state label — the hand-off transition was lost to a canceled worker context. Restored to `sortie:in-review`.' "$BRANCH")"
+              gh issue comment "$N" --repo "$REPO" --body "$(printf '🔁 **Sortie label-rescue**: this issue had an open PR (\`%s\`) but no `sortie:*` state label — the hand-off transition was lost to a canceled worker context. Restored to `sortie:in-review`.\n\n-Sortie Watchdog' "$BRANCH")"
             done
