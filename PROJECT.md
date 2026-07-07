@@ -208,13 +208,26 @@ Exposes one port (default 8080). No external auth — relies on LAN-only access.
 
 ---
 
-## 7. Open questions / things to revisit
+## 7. Dev Tooling
+
+Custom shell commands for operating the NAS deployment are defined in
+`scripts/pd-aliases.sh`. Source that file in your shell profile to get:
+
+- `sortie-uptime`, `sortie-healthcheck`, `sortie-refresh`, `sortie-refresh-proxy`,
+  `sortie-refresh-no-proxy`, `sortie-reset <issue-id>`
+- `pd-help` — prints a formatted table of all available commands with descriptions
+
+See the migration comments at the top of `scripts/pd-aliases.sh` for NAS and Mac setup.
+
+---
+
+## 8. Open questions / things to revisit
 
 - Whether `node-cron` is sufficient or if a real job queue (BullMQ) is needed — defer until a second widget with scheduling is added.
 
 ---
 
-## 8. Glossary / Domain Language
+## 9. Glossary / Domain Language
 
 Definitions of the domain language used across the board and the Sortie agent pipeline.
 Definitions only — no implementation detail. Decisions live in `DECISIONS.md` (`D-NNN`).
