@@ -4,6 +4,7 @@ import { ensureCheckout, pullLatest } from './shared/checkout';
 import { openDb } from './shared/db';
 import { logger } from './shared/logger';
 import { startRefineJob } from './jobs/refine';
+import { startAuditJob } from './jobs/audit';
 
 /**
  * agent-worker entrypoint (D-044 scaffold → D-045 multi-job host). Boots the long-lived
@@ -12,7 +13,7 @@ import { startRefineJob } from './jobs/refine';
  * the registered jobs. Each job owns its own poll loop and tables; they share the
  * checkout, proxy, config, and DB set up here.
  *
- * Jobs: `refine` (interactive, D-044) today; `audit` (autonomous, D-045) lands in PD-283.
+ * Jobs: `refine` (interactive, D-044) and `audit` (autonomous, weekly, D-045/PD-283).
  */
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
 
   // Job dispatch — start each agent-worker job over the shared infra above.
   startRefineJob(db, config);
+  startAuditJob(db, config);
 
   logger.info('agent-worker ready');
 }
