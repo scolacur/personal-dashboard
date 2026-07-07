@@ -27,7 +27,7 @@
   let decideMsg = $state<string | null>(null);
   let threadEl = $state<HTMLElement | null>(null);
 
-  // True while we're waiting on the griller — the newest turn is Steve's.
+  // True while we're waiting on the agent-worker — the newest turn is Steve's.
   const awaitingAgent = $derived(messages.length > 0 && messages[messages.length - 1].role === 'human');
 
   // Svelte action: renders markdown into a node's innerHTML without using {@html}.
@@ -100,7 +100,7 @@
   onMount(() => {
     // Scroll to the newest message once, after the initial load paints.
     load().then(scrollToBottom);
-    // Poll so a griller reply (async, via the shared DB) appears without a manual refresh.
+    // Poll so a agent-worker reply (async, via the shared DB) appears without a manual refresh.
     // Deliberately does NOT scroll — see scrollToBottom.
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
@@ -120,7 +120,7 @@
     <ul class="thread" bind:this={threadEl}>
       <li class="muted empty-msg">
         No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
-        above) to start one — the griller's turns and your replies appear here.
+        above) to start one — the agent-worker's turns and your replies appear here.
       </li>
     </ul>
   {:else}

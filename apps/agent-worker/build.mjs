@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Bundle the griller worker into a single CJS file, mirroring apps/server/build.mjs:
+// Bundle the agent-worker worker into a single CJS file, mirroring apps/server/build.mjs:
 //
 //  - `packages: 'external'` keeps every npm dependency out of the bundle — most
 //    importantly `better-sqlite3` (native .node binary) and the Claude Agent SDK,

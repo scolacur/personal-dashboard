@@ -94,7 +94,7 @@ export async function replyToTicket(id: number, body: string): Promise<void> {
 }
 
 /**
- * Start a Refine session on a ticket (D-044, PD-268). Writes the kickoff turn the griller
+ * Start a Refine session on a ticket (D-044, PD-268). Writes the kickoff turn the agent-worker
  * picks up. Returns the created event, or throws (409 if a session is already running).
  */
 export async function startRefine(id: number): Promise<TicketEvent> {
@@ -112,7 +112,7 @@ export async function fetchTicketEvents(id: number): Promise<TicketEvent[]> {
 
 /**
  * Post a human Refine reply (PD-267). Unlike replyToTicket, this stays in the DB: it writes
- * a refine_human event the griller consumes and resumes on. Returns the created event.
+ * a refine_human event the agent-worker consumes and resumes on. Returns the created event.
  */
 export async function postRefineReply(id: number, body: string): Promise<TicketEvent> {
   const res = await fetch(`${BASE}/${id}/refine-reply`, {

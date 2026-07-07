@@ -25,7 +25,7 @@ import {
 
 const SORTIE_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
-/** Write a refine_proposal event directly (stands in for the griller's propose_commit). */
+/** Write a refine_proposal event directly (stands in for the agent-worker's propose_commit). */
 function seedProposal(db: Database.Database, ticketId: number, proposal: unknown): void {
   db.prepare(
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
@@ -499,7 +499,7 @@ describe('ticket events + Refine thread (D-044, PD-267)', () => {
 
   it('a refine_agent turn round-trips its sessionId through the event detail', () => {
     const t = createTicket(db, { title: 'x', projectId: pd });
-    // Simulate a griller post (the griller writes the same row shape).
+    // Simulate a agent-worker post (the agent-worker writes the same row shape).
     db.prepare(
       'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
     ).run(t.id, 'refine_agent', JSON.stringify({ text: 'here is my plan', sessionId: 'sess-42' }), Date.now());

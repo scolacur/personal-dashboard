@@ -1,6 +1,6 @@
-# Egress-HARDENED griller deployment (DECISIONS D-044, PD-266).
+# Egress-HARDENED agent-worker deployment (DECISIONS D-044, PD-266).
 #
-# The griller runs on an INTERNAL Docker network with no route to the internet; its
+# The agent-worker runs on an INTERNAL Docker network with no route to the internet; its
 # only way out is the squid sidecar, which permits just the domains in squid.conf
 # (.anthropic.com for the Claude API + .github.com/.githubusercontent.com for the
 # grounding checkout). This contains token exfiltration: the agent can read
@@ -12,7 +12,7 @@
 # squid container.)
 #
 # Apply (repo checked out on the host):
-#   sudo docker compose -f ops/griller/docker-compose.egress.yml up -d
+#   sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d
 #
 # DEPLOY NOTE: the /data mount below MUST be the SAME host directory the web app mounts as
 # /data, so both share dashboard.db. The web app mounts `../data` run from docker/, i.e. the
@@ -24,39 +24,39 @@ networks:
   egress_out:
     driver: bridge        # has internet — only the proxy attaches here
   egress_internal:
-    internal: true        # NO internet route — the griller lives here
+    internal: true        # NO internet route — the agent-worker lives here
 
 services:
-  griller-proxy:
+  agent-worker-proxy:
     image: ubuntu/squid:latest
-    container_name: griller-proxy
+    container_name: agent-worker-proxy
     restart: unless-stopped
     networks: [egress_out, egress_internal]
     volumes:
       # Reuse Sortie's allowlist (.anthropic.com + .github.com already permitted).
       - /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/squid.conf:/etc/squid/squid.conf:ro
 
-  griller:
-    image: griller-dashboard
-    container_name: griller
+  agent-worker:
+    image: agent-worker-dashboard
+    container_name: agent-worker
     restart: unless-stopped
-    depends_on: [griller-proxy]
+    depends_on: [agent-worker-proxy]
     networks: [egress_internal]          # internal ONLY — no direct egress
     env_file:
-      - /volume1/docker/personal-dashboard/griller.env
+      - /volume1/docker/personal-dashboard/agent-worker.env
     environment:
       # upper + lower case so the Agent SDK's binary, git, and Node's fetch all use it
-      - HTTP_PROXY=http://griller-proxy:3128
-      - HTTPS_PROXY=http://griller-proxy:3128
-      - http_proxy=http://griller-proxy:3128
-      - https_proxy=http://griller-proxy:3128
-      - NO_PROXY=localhost,127.0.0.1,griller-proxy
-      - no_proxy=localhost,127.0.0.1,griller-proxy
+      - HTTP_PROXY=http://agent-worker-proxy:3128
+      - HTTPS_PROXY=http://agent-worker-proxy:3128
+      - http_proxy=http://agent-worker-proxy:3128
+      - https_proxy=http://agent-worker-proxy:3128
+      - NO_PROXY=localhost,127.0.0.1,agent-worker-proxy
+      - no_proxy=localhost,127.0.0.1,agent-worker-proxy
       # Make Node 24's global fetch honor the proxy env (also set in the image).
       - NODE_USE_ENV_PROXY=1
       - DATA_DIR=/data
-      - GRILLER_CHECKOUT_DIR=/data/griller-checkout
+      - AGENT_WORKER_CHECKOUT_DIR=/data/agent-worker-checkout
     volumes:
       # MUST match the web app's /data host dir (repo-root data/, note the nested repo path)
-      # so dashboard.db is shared — else the griller opens an empty DB and sees no tickets.
+      # so dashboard.db is shared — else the agent-worker opens an empty DB and sees no tickets.
       - /volume1/docker/personal-dashboard/personal-dashboard/data:/data

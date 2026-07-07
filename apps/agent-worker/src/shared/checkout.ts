@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { GrillerConfig } from './config';
+import type { AgentWorkerConfig } from './config';
 import { logger } from './logger';
 
 const run = promisify(execFile);
@@ -12,7 +12,7 @@ const run = promisify(execFile);
  * WORKFLOW.md hook: the proxy is passed INLINE (not just via env) so it applies
  * even in restricted execution contexts. Empty when there's no proxy (dev).
  */
-export function proxyGitArgs(config: GrillerConfig): string[] {
+export function proxyGitArgs(config: AgentWorkerConfig): string[] {
   return config.httpsProxy
     ? ['-c', `http.proxy=${config.httpsProxy}`, '-c', `https.proxy=${config.httpsProxy}`]
     : [];
@@ -20,7 +20,7 @@ export function proxyGitArgs(config: GrillerConfig): string[] {
 
 /** Plain HTTPS remote — NO token. Auth is supplied out-of-band via authArgs() so the token
  *  never lands in the URL (and thus never in `.git/config`, which sits on a shared volume). */
-export function cloneUrl(config: GrillerConfig): string {
+export function cloneUrl(config: AgentWorkerConfig): string {
   return `https://github.com/${config.githubRepo}.git`;
 }
 
@@ -35,13 +35,13 @@ export function authHeaderValue(token: string): string {
  * token-in-URL, an `http.extraHeader` override is per-invocation — git never writes it to
  * `.git/config`, so the token isn't persisted on the shared /data volume.
  */
-export function authArgs(config: GrillerConfig): string[] {
+export function authArgs(config: AgentWorkerConfig): string[] {
   const b64 = authHeaderValue(config.githubReadToken);
   return b64 ? ['-c', `http.extraHeader=Authorization: Basic ${b64}`] : [];
 }
 
 /** Strip both the raw token and its base64 header form from a string before it's logged. */
-function redactSecrets(text: string, config: GrillerConfig): string {
+function redactSecrets(text: string, config: AgentWorkerConfig): string {
   let out = text;
   for (const secret of [config.githubReadToken, authHeaderValue(config.githubReadToken)]) {
     if (secret) out = out.split(secret).join('***');
@@ -55,7 +55,7 @@ function redactSecrets(text: string, config: GrillerConfig): string {
  * drop the original (whose .cmd/.stack also carry the secret). `GIT_TERMINAL_PROMPT=0` fails
  * fast on an auth error instead of blocking on a prompt.
  */
-async function runGit(args: string[], config: GrillerConfig): Promise<void> {
+async function runGit(args: string[], config: AgentWorkerConfig): Promise<void> {
   try {
     await run('git', args, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
   } catch (err) {
@@ -64,13 +64,13 @@ async function runGit(args: string[], config: GrillerConfig): Promise<void> {
 }
 
 /** Ensure the read-only grounding checkout exists and is reasonably current. */
-export async function ensureCheckout(config: GrillerConfig): Promise<void> {
+export async function ensureCheckout(config: AgentWorkerConfig): Promise<void> {
   if (existsSync(path.join(config.checkoutDir, '.git'))) {
     await pullLatest(config);
     return;
   }
   logger.info({ dir: config.checkoutDir }, 'cloning grounding checkout');
-  // Shallow: the griller only grounds against the current tree, never needs history.
+  // Shallow: the agent-worker only grounds against the current tree, never needs history.
   await runGit(
     [...authArgs(config), ...proxyGitArgs(config), 'clone', '--depth', '1', cloneUrl(config), config.checkoutDir],
     config,
@@ -79,7 +79,7 @@ export async function ensureCheckout(config: GrillerConfig): Promise<void> {
 }
 
 /** Fast-forward the checkout; a failure is logged, not fatal (grounding is best-effort). */
-export async function pullLatest(config: GrillerConfig): Promise<void> {
+export async function pullLatest(config: AgentWorkerConfig): Promise<void> {
   try {
     await runGit(['-C', config.checkoutDir, ...authArgs(config), ...proxyGitArgs(config), 'pull', '--ff-only'], config);
     logger.debug('grounding checkout pulled');

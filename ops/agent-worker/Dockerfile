@@ -1,9 +1,9 @@
-# Griller worker image (DECISIONS D-044, PD-266).
+# agent-worker image (DECISIONS D-044, PD-266; generalized D-045, PD-282).
 #
 # A dashboard-owned interactive triage agent (Claude Agent SDK / Opus). Runs as a
 # SEPARATE container from the web app — it holds ANTHROPIC_API_KEY and does long LLM
 # turns, so it must be isolated from the user-facing Fastify process. Deployed on the
-# egress-hardened network (see ops/griller/docker-compose.egress.yml): its only route
+# egress-hardened network (see ops/agent-worker/docker-compose.egress.yml): its only route
 # out is the shared squid proxy.
 #
 # node:24-slim (not the app's node:20): the Agent SDK wants Node 22.15+ for the OS
@@ -11,7 +11,7 @@
 # Node 24+. Mirrors the multi-stage build of docker/Dockerfile.
 #
 # Build (from the repo root):
-#   docker build -f ops/griller/Dockerfile -t griller-dashboard .
+#   docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
 
 # ── Build stage ───────────────────────────────────────────────────────────────
 # glibc (not alpine): the compiled better-sqlite3 binary must match the runtime.
@@ -23,19 +23,19 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Install deps (layer-cached until package files change). npm ci tolerates the
-# other workspace folders being absent, so we copy only what the griller build
-# needs: the root manifest/lock, shared (inlined from source), and griller itself.
+# other workspace folders being absent, so we copy only what the agent-worker build
+# needs: the root manifest/lock, shared (inlined from source), and agent-worker itself.
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
-COPY apps/griller/package.json ./apps/griller/
+COPY apps/agent-worker/package.json ./apps/agent-worker/
 RUN npm ci
 
 # Source. shared is consumed from SOURCE (esbuild inlines it — DECISIONS D-024).
 COPY tsconfig.base.json ./
 COPY packages/shared/ ./packages/shared/
-COPY apps/griller/ ./apps/griller/
+COPY apps/agent-worker/ ./apps/agent-worker/
 
-RUN npm run build -w apps/griller
+RUN npm run build -w apps/agent-worker
 
 # Strip dev deps, keeping the compiled better-sqlite3 binary + the Agent SDK.
 RUN npm prune --omit=dev
@@ -51,16 +51,16 @@ RUN apt-get update \
 
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
-COPY apps/griller/package.json ./apps/griller/
+COPY apps/agent-worker/package.json ./apps/agent-worker/
 
 # Both node_modules trees: most deps hoist to the root, but any that can't (e.g. pino,
 # whose version conflicts with another package's) stay in the workspace's own node_modules.
-# Node resolves from apps/griller/dist upward, so it needs BOTH present at runtime.
+# Node resolves from apps/agent-worker/dist upward, so it needs BOTH present at runtime.
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/apps/griller/node_modules ./apps/griller/node_modules
-COPY --from=build /app/apps/griller/dist ./apps/griller/dist
+COPY --from=build /app/apps/agent-worker/node_modules ./apps/agent-worker/node_modules
+COPY --from=build /app/apps/agent-worker/dist ./apps/agent-worker/dist
 
-# Run as root (the node base default — no USER drop). The griller shares dashboard.db with
+# Run as root (the node base default — no USER drop). The agent-worker shares dashboard.db with
 # the web app, which runs as root and OWNS that file plus its WAL/-shm sidecars; it also
 # creates the grounding checkout under the mounted /data. A non-root uid (1002) can't write
 # root-owned WAL files or create dirs in a root-owned /data, so it must match the web app's
@@ -71,4 +71,4 @@ ENV NODE_ENV=production
 # Make Node's global fetch honor HTTP(S)_PROXY (Node 24+); the compose sets the proxy.
 ENV NODE_USE_ENV_PROXY=1
 
-CMD ["node", "apps/griller/dist/index.js"]
+CMD ["node", "apps/agent-worker/dist/index.js"]

@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3';
 import type { RefineProposal, TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT, refineThreadFromEvents } from '@dashboard/shared';
-import type { GrillerConfig } from './config';
-import { buildContextPack } from './context-pack';
+import type { AgentWorkerConfig } from '../../shared/config';
+import { buildContextPack } from '../../shared/context-pack';
 import {
   openWarmSession,
   type GrillSession,
@@ -10,10 +10,10 @@ import {
   type OpenGrillSession,
   type OpenSessionInput,
 } from './session';
-import { logger } from './logger';
+import { logger } from '../../shared/logger';
 
 /**
- * The griller's Refine loop (D-044, PD-267). Transport between the web app and this
+ * The agent-worker's Refine loop (D-044, PD-267). Transport between the web app and this
  * worker is the SHARED SQLite DB — not HTTP: the web writes human turns as
  * `refine_human` events (POST /tickets/:id/refine-reply), this worker polls for them,
  * runs a grill turn, and writes the reply back as a `refine_agent` event plus an
@@ -35,7 +35,7 @@ export interface RefineWork {
 }
 
 /**
- * Decide the next griller turn for a ticket from its full activity log, or `null` if the
+ * Decide the next agent-worker turn for a ticket from its full activity log, or `null` if the
  * agent is already caught up (newest refine event is an agent turn, or there are no human
  * turns at all). The prompt is every human turn AFTER the last agent turn, joined — so a
  * burst of replies before the worker wakes is handled in one turn; resume is the newest
@@ -153,7 +153,7 @@ export function findPendingRefineTicketIds(db: Database.Database): number[] {
   return rows.map((r) => r.ticket_id);
 }
 
-/** Persist a griller turn as a `refine_agent` event, carrying the SDK session id for resume. */
+/** Persist a agent-worker turn as a `refine_agent` event, carrying the SDK session id for resume. */
 export function writeRefineAgentTurn(
   db: Database.Database,
   ticketId: number,
@@ -193,7 +193,7 @@ export function writeRefineProposal(
 }
 
 /**
- * Raise an `agent_refine` notification that the griller posted. Uses the same unread-dedup
+ * Raise an `agent_refine` notification that the agent-worker posted. Uses the same unread-dedup
  * guard the server's createNotification does — one unread notification per ticket at a time,
  * so a back-and-forth doesn't flood the inbox until Steve reads it.
  */
@@ -309,7 +309,7 @@ export interface ProcessDeps {
  */
 export async function processPendingRefines(
   db: Database.Database,
-  config: GrillerConfig,
+  config: AgentWorkerConfig,
   deps: ProcessDeps = {},
 ): Promise<number> {
   const sessions = deps.sessions ?? new WarmSessions();

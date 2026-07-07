@@ -1,5 +1,5 @@
 import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
-import type { GrillerConfig } from './config';
+import type { AgentWorkerConfig } from './config';
 import { logger } from './logger';
 
 /**
@@ -15,7 +15,7 @@ import { logger } from './logger';
  *
  * In local dev (no HTTPS_PROXY) this is a no-op and egress is direct.
  */
-export function installProxy(config: GrillerConfig): void {
+export function installProxy(config: AgentWorkerConfig): void {
   if (!config.httpsProxy) {
     logger.info('no HTTPS_PROXY set — direct egress (local dev)');
     return;
