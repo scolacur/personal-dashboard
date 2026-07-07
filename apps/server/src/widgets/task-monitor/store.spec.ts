@@ -641,3 +641,107 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(approveRefine(db, t.id)).toMatchObject({ ok: false, reason: 'no_proposal' });
   });
 });
+
+describe('recurring tickets', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('spawns a next occurrence in backlog when a recurring ticket is completed', () => {
+    const t = createTicket(db, {
+      title: 'Weekly maintenance',
+      body: 'Clean up logs',
+      priority: 'P3',
+      projectId: pd,
+      assignee: 'steve',
+      recurInterval: 'weekly',
+    });
+    updateTicket(db, t.id, { status: 'completed' });
+
+    const all = listTickets(db);
+    const spawned = all.find((x) => x.id !== t.id);
+    expect(spawned).toBeDefined();
+    expect(spawned!.title).toBe('Weekly maintenance');
+    expect(spawned!.body).toBe('Clean up logs');
+    expect(spawned!.priority).toBe('P3');
+    expect(spawned!.projectId).toBe(pd);
+    expect(spawned!.assignee).toBe('steve');
+    expect(spawned!.recurInterval).toBe('weekly');
+    expect(spawned!.status).toBe('backlog');
+    expect(spawned!.source).toBe('recur');
+  });
+
+  it('logs a recurred event on the completed ticket referencing the spawned id', () => {
+    const t = createTicket(db, {
+      title: 'Weekly maintenance',
+      projectId: pd,
+      recurInterval: 'weekly',
+    });
+    updateTicket(db, t.id, { status: 'completed' });
+
+    const events = listTicketEvents(db, t.id);
+    const recurredEvent = events.find((e) => e.type === 'recurred');
+    expect(recurredEvent).toBeDefined();
+    const detail = recurredEvent!.detail as { spawnedId: number; spawnedDisplayId: string };
+    expect(typeof detail.spawnedId).toBe('number');
+    expect(detail.spawnedDisplayId).toMatch(/^PD-/);
+  });
+
+  it('does not spawn when recur_interval is null', () => {
+    const t = createTicket(db, { title: 'one-off task', projectId: pd });
+    expect(t.recurInterval).toBeNull();
+    updateTicket(db, t.id, { status: 'completed' });
+    expect(listTickets(db)).toHaveLength(1);
+  });
+
+  it('does not spawn when transitioning to a non-completed status', () => {
+    const t = createTicket(db, {
+      title: 'Weekly maintenance',
+      projectId: pd,
+      recurInterval: 'weekly',
+    });
+    updateTicket(db, t.id, { status: 'prioritized' });
+    expect(listTickets(db)).toHaveLength(1);
+  });
+
+  it('does not spawn a second time when already completed', () => {
+    const t = createTicket(db, {
+      title: 'Weekly maintenance',
+      projectId: pd,
+      recurInterval: 'weekly',
+    });
+    updateTicket(db, t.id, { status: 'completed' });
+    // Patching an already-completed ticket to completed again should not spawn another.
+    updateTicket(db, t.id, { status: 'completed' });
+    // One original + one spawned occurrence = 2 total.
+    expect(listTickets(db)).toHaveLength(2);
+  });
+
+  it('spawned ticket gets its own sequential display id', () => {
+    const t = createTicket(db, {
+      title: 'Weekly maintenance',
+      projectId: pd,
+      recurInterval: 'weekly',
+    });
+    expect(t.displayId).toBe('PD-1');
+    updateTicket(db, t.id, { status: 'completed' });
+
+    const all = listTickets(db);
+    const spawned = all.find((x) => x.id !== t.id)!;
+    expect(spawned.displayId).toBe('PD-2');
+  });
+
+  it('persists recurInterval on createTicket when provided', () => {
+    const t = createTicket(db, {
+      title: 'Daily standup',
+      projectId: pd,
+      recurInterval: 'daily',
+    });
+    expect(t.recurInterval).toBe('daily');
+    // Verify it roundtrips through getTicket.
+    expect(getTicket(db, t.id)!.recurInterval).toBe('daily');
+  });
+});

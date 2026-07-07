@@ -246,10 +246,10 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     const assignee: TicketAssignee | null = laneForcedAssignee(status) ?? requestedAssignee;
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, source, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, source, now, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     return id;
@@ -327,6 +327,25 @@ export function updateTicket(
     // Covers both an explicit assignee change and a lane-forced one (D-044).
     if (next.assignee !== existing.assignee) {
       logEvent(db, id, 'assignee_changed', { from: existing.assignee, to: next.assignee });
+    }
+    // Recurrence: completing a ticket with a recur_interval spawns the next occurrence.
+    if (
+      next.status === 'completed' &&
+      existing.status !== 'completed' &&
+      existing.recurInterval != null &&
+      existing.projectId !== null
+    ) {
+      const spawned = createTicket(db, {
+        title: existing.title,
+        body: existing.body,
+        priority: existing.priority,
+        projectId: existing.projectId,
+        assignee: existing.assignee,
+        recurInterval: existing.recurInterval,
+        source: 'recur',
+        status: 'backlog',
+      });
+      logEvent(db, id, 'recurred', { spawnedId: spawned.id, spawnedDisplayId: spawned.displayId });
     }
   });
   apply();

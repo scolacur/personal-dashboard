@@ -227,6 +227,8 @@ export interface CreateTicketInput {
   displayId?: string | null;
   /** Who the ticket is assigned to. Defaults to `null` when omitted. */
   assignee?: TicketAssignee | null;
+  /** Recurrence hint, e.g. 'weekly'. Carried forward to the spawned next occurrence. */
+  recurInterval?: string | null;
 }
 
 /** Partial update — any subset of these fields. */
