@@ -5,6 +5,7 @@
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
   import TicketThread from '$lib/TicketThread.svelte';
+  import GlossaryModal from '$lib/GlossaryModal.svelte';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
@@ -103,6 +104,8 @@
   // Mark the ticket refined (D-044, PD-268). PD-269's commit step will also set this; until
   // then it's a manual "I'm satisfied with this refinement" action.
   let markingRefined = $state(false);
+
+  let glossaryOpen = $state(false);
   async function markRefined() {
     if (!ticket || markingRefined || !ticketId) return;
     markingRefined = true;
@@ -225,22 +228,37 @@
     </div>
 
     <div class="ticket-right">
-      <div class="refine-controls">
-        {#if ticket.refined}
-          <span class="refined-badge" title="This ticket has been refined">✓ Refined</span>
-        {:else if ticket.refineState === null}
-          <button class="start-refine" type="button" onclick={startRefine} disabled={starting}>
-            {starting ? 'Starting…' : '✦ Start Refine'}
-          </button>
-        {:else}
+      {#if ticket.refined || ticket.refineState === null}
+        <div class="refine-controls">
+          {#if ticket.refined}
+            <span class="refined-badge" title="This ticket has been refined">✓ Refined</span>
+          {:else}
+            <button class="start-refine" type="button" onclick={startRefine} disabled={starting}>
+              {starting ? 'Starting…' : '✦ Start Refine'}
+            </button>
+          {/if}
+        </div>
+      {/if}
+
+      <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
+
+      <div class="refine-footer">
+        <button
+          class="info-btn"
+          type="button"
+          title="Refinement statuses"
+          aria-label="Refinement statuses"
+          onclick={() => (glossaryOpen = true)}>i</button
+        >
+        {#if !ticket.refined && ticket.refineState !== null}
           <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
             {markingRefined ? 'Marking…' : '✓ Mark refined'}
           </button>
         {/if}
       </div>
-
-      <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
     </div>
+
+    <GlossaryModal open={glossaryOpen} tab="refinement" onClose={() => (glossaryOpen = false)} />
   </article>
 {/if}
 

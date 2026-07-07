@@ -240,6 +240,35 @@
   font-size: var(--font-size-sm);
 }
 
+// Row below TicketThread: info button + mark-refined button.
+.refine-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-sm);
+}
+
+.info-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
 // Read-only split lineage (D-044, PD-269); full relations UI is PD-156.
 .lineage {
   margin-top: var(--space-lg);

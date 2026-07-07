@@ -44,4 +44,6 @@ export {
   refineStateFromLatestType,
   REFINE_PROPOSAL_EVENT,
   latestActionableProposal,
+  REFINE_STATE_LABELS,
+  REFINE_STATE_DESCRIPTIONS,
 } from './task-monitor';
