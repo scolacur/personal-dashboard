@@ -101,35 +101,6 @@
     flex: 1;
   }
 
-  button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--text);
-    padding: var(--space-xs) var(--space-sm);
-    cursor: pointer;
-
-    &:hover:not(:disabled) {
-      border-color: var(--accent);
-    }
-    &:disabled {
-      opacity: 0.3;
-      cursor: not-allowed;
-    }
-  }
-
-  // The Refine action gets the accent hue so it reads as the primary triage entry point.
-  .action-refine {
-    color: var(--accent);
-    border-color: var(--accent);
-
-    &:hover:not(:disabled) {
-      background: color-mix(in srgb, var(--accent) 12%, transparent);
-    }
-  }
 }
 
 // Assignee circle — in-place <select> on each card.
@@ -365,15 +336,4 @@
     line-height: 40px;
   }
 
-  /* Card action buttons: comfortable tap targets with larger icons */
-  .card-actions button {
-    min-height: 40px;
-    padding: var(--space-sm) var(--space-md);
-
-    /* SVG comes from lucide-svelte child components — must escape Svelte scoping */
-    :global(svg) {
-      width: 18px;
-      height: 18px;
-    }
-  }
 }

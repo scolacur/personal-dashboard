@@ -14,6 +14,7 @@
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
   import { isStatusLocked, computeSortOrder } from './board-logic';
+  import Button from '$lib/Button.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -509,22 +510,21 @@
       aria-label="Priority levels"
       onclick={() => (legendOpen = true)}>i</button
     >
-    <button
-      class="sync-btn"
-      type="button"
+    <Button
+      variant="ghost"
       title="Fetch the latest issue status &amp; labels from GitHub now"
       onclick={() => syncThenLoad(true)}
       disabled={syncing}
-    >{syncing ? 'Syncing…' : 'Sync now'}</button>
+      style={syncing ? 'cursor: progress; opacity: 0.6' : undefined}
+    >{syncing ? 'Syncing…' : 'Sync now'}</Button>
     <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
-      <button
-        class="lanes-btn"
-        type="button"
+      <Button
+        variant="ghost"
         title="Show/hide lanes"
         aria-label="Show/hide lanes"
         aria-expanded={laneMenuOpen}
         onclick={() => (laneMenuOpen = !laneMenuOpen)}
-      >Lanes</button>
+      >Lanes</Button>
       {#if laneMenuOpen}
         <div class="lanes-menu">
           {#each COLUMNS as col (col.status)}
@@ -540,9 +540,11 @@
         </div>
       {/if}
     </div>
-    <button class="add-btn" type="button" onclick={() => openAdd()} disabled={projects.length === 0}>
-      + Add Ticket
-    </button>
+    <div class="add-ticket-wrap">
+      <Button variant="primary" onclick={() => openAdd()} disabled={projects.length === 0}>
+        + Add Ticket
+      </Button>
+    </div>
   </div>
 
 {#if error}
@@ -600,15 +602,14 @@
       {/if}
     </label>
     <div class="form-actions">
-      <button type="button" class="ghost" onclick={closeForm}>Cancel</button>
-      <button
-        type="button"
-        class="primary"
+      <Button variant="ghost" onclick={closeForm}>Cancel</Button>
+      <Button
+        variant="primary"
         onclick={submitForm}
         disabled={!formTitle.trim() || formProjectId === null}
       >
         {editingId === null ? 'Add' : 'Save'}
-      </button>
+      </Button>
     </div>
   </div>
 </Modal>
