@@ -48,9 +48,13 @@ sudo docker logs -f agent-worker
 
 Healthy boot logs, in order:
 
-- `agent-worker worker starting`
+- `agent-worker starting`
+- `routing egress through squid proxy`
 - `cloning grounding checkout` (first run only; later runs `git pull` the existing checkout)
-- `agent-worker ready — polling for Refine turns`
+- `grounding checkout ready`
+- `refine job ready — polling for Refine turns`
+- `audit job ready — polling for runs` (the autonomous audit job, D-045/PD-283)
+- `agent-worker ready`
 
 Then click **Refine** on a prod ticket. When the agent replies you should see:
 
