@@ -26,7 +26,20 @@
 }
 
 .ticket-detail {
-  max-width: 760px;
+  display: grid;
+  grid-template-columns: 60fr 40fr;
+  gap: var(--space-xl);
+  align-items: start;
+  max-width: 1400px;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ticket-left,
+.ticket-right {
+  min-width: 0;
 }
 
 .detail-head {
@@ -196,8 +209,9 @@
 .reply-msg { color: var(--muted); font-size: var(--font-size-sm); }
 
 // Refine controls (D-044, PD-268) — start / mark-refined / refined badge.
+// Sits at top of right panel; no margin-top needed.
 .refine-controls {
-  margin-top: var(--space-lg);
+  margin-bottom: var(--space-md);
 }
 
 .start-refine,
@@ -231,7 +245,6 @@
   margin-top: var(--space-lg);
   padding-top: var(--space-md);
   border-top: 1px solid var(--border);
-  max-width: 760px;
 
   h2 {
     margin: 0 0 var(--space-sm);

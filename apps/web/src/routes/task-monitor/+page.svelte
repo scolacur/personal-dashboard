@@ -4,14 +4,13 @@
   import { goto } from '$app/navigation';
   import DeployStatus from '../DeployStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, RefineState, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, PRIORITY_DESCRIPTIONS, AGENT_STATE_LABELS, AGENT_STATE_DESCRIPTIONS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
-  import GithubMark from '$lib/icons/GithubMark.svelte';
-  import { Pencil, Copy, Trash2, ClipboardCopy, Sparkles } from 'lucide-svelte';
+  import TicketCard from './TicketCard.svelte';
   import * as api from './api';
-  import { projectIdColor } from './api';
-  import { ticketMatchesQuery } from './filter-logic';
+  import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
+  import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
   import Button from '$lib/Button.svelte';
@@ -162,6 +161,9 @@
   // Priority filter: 'all' (no filter), 'none' (unset), or a specific P-level.
   let filterPriority = $state<'all' | 'none' | TicketPriority>('all');
 
+  // Refinement filter: 'all' (no filter), or a specific refinement state.
+  let filterRefine = $state<RefineFilter>('all');
+
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
@@ -200,6 +202,7 @@
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
+      if (!ticketMatchesRefineFilter(t, filterRefine)) return false;
       if (!ticketMatchesQuery(t, search)) return false;
       return true;
     });
@@ -452,41 +455,6 @@
     }
   }
 
-  // Set a ticket's priority (null = unset) from the in-place dropdown.
-  async function setPriority(ticket: AgentTicket, priority: TicketPriority | null) {
-    if (ticket.priority === priority) return;
-    error = null;
-    try {
-      await api.updateTicket(ticket.id, { priority });
-      await load(true);
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  // Set a ticket's assignee from the in-place dropdown.
-  async function setAssignee(ticket: AgentTicket, assignee: TicketAssignee | null) {
-    if (ticket.assignee === assignee) return;
-    error = null;
-    try {
-      await api.updateTicket(ticket.id, { assignee });
-      await load(true);
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  function assigneeLabel(assignee: TicketAssignee | null): string {
-    if (assignee === 'steve') return 'S';
-    if (assignee === 'robot') return '🤖';
-    return '—';
-  }
-
-  const REFINE_STATE_LABELS: Record<RefineState, string> = {
-    grilling: 'Grilling…',
-    'awaiting-human': 'Needs you',
-  };
-
   // Start a Refine session (D-044, PD-268), then open the ticket to watch the thread.
   async function refine(ticket: AgentTicket) {
     error = null;
@@ -554,6 +522,16 @@
           <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
         {/each}
         <option value="none">— None</option>
+      </select>
+    </label>
+    <label class="refinement-filter">
+      <span class="sr-label">Refinement</span>
+      <select bind:value={filterRefine}>
+        <option value="all">All refinement</option>
+        <option value="refined">Refined</option>
+        <option value="grilling">Grilling</option>
+        <option value="awaiting-human">Needs you</option>
+        <option value="unrefined">Unrefined</option>
       </select>
     </label>
     <button
@@ -745,132 +723,26 @@
         >
           {#each items as ticket (ticket.id)}
             {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
-            <article
-              class="card"
-              class:done={ticket.status === 'completed'}
-              class:dragging={draggingId === ticket.id}
-              class:drop-before={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
-              class:locked={isStatusLocked(ticket)}
-              class:shimmer={ticket.agentState === 'working'}
-              data-id={ticket.id}
-              data-priority={bandKey(ticket.priority)}
-              draggable={true}
-              ondragstart={(e) => onDragStart(e, ticket)}
-              ondragend={onDragEnd}
-            >
-              <div class="card-top">
-                <div class="card-top-left">
-                  {#if ticket.displayId}
-                    <a
-                      class="ticket-id"
-                      style="--id-color: {projectIdColor(project)}"
-                      href="/task-monitor/tickets/{ticket.displayId}"
-                      title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
-                      draggable="false">{ticket.displayId}</a
-                    >
-                  {/if}
-                </div>
-                <span class="card-top-right">
-                  {#if ticket.refined}
-                    <span class="refined-mark" title="Refined">✓ Refined</span>
-                  {:else if ticket.refineState}
-                    <a
-                      class="refine-pill refine-{ticket.refineState}"
-                      href={ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined}
-                      draggable="false"
-                      title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
-                    >{REFINE_STATE_LABELS[ticket.refineState]}</a>
-                  {/if}
-                  {#if ticket.agentState}
-                    <button
-                      class="agent-state-badge {agentStateClass(ticket.agentState)}"
-                      type="button"
-                      aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
-                      onclick={() => {
-                        statusLegendState = ticket.agentState;
-                        statusLegendOpen = true;
-                      }}
-                    >{AGENT_STATE_LABELS[ticket.agentState]}</button>
-                  {/if}
-                  {#if ticket.githubIssueUrl}
-                    <a
-                      class="issue-link"
-                      href={ticket.githubIssueUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      draggable="false"
-                      title="GitHub issue #{ticket.githubIssueNumber}"
-                      aria-label="GitHub issue #{ticket.githubIssueNumber}"
-                    >
-                      <GithubMark size={14} />
-                    </a>
-                  {/if}
-                  <select
-                    class="priority priority-{bandKey(ticket.priority)}"
-                    title="Set priority"
-                    value={ticket.priority ?? ''}
-                    onchange={(e) =>
-                      setPriority(ticket, (e.currentTarget.value || null) as TicketPriority | null)}
-                  >
-                    <option value="">—</option>
-                    {#each TICKET_PRIORITIES as p (p)}
-                      <option value={p}>{p}</option>
-                    {/each}
-                  </select>
-                </span>
-              </div>
-              <p class="card-title">{ticket.title}</p>
-              {#if ticket.body && !condensed}
-                <p class="card-body">{ticket.body}</p>
-              {/if}
-              <div class="card-actions">
-                <select
-                  class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
-                  title={isStatusLocked(ticket)
-                    ? 'Agent-controlled — cannot reassign'
-                    : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
-                  value={ticket.assignee ?? ''}
-                  disabled={isStatusLocked(ticket)}
-                  onchange={(e) =>
-                    setAssignee(ticket, (e.currentTarget.value || null) as TicketAssignee | null)}
-                >
-                  <option value="">—</option>
-                  {#each TICKET_ASSIGNEES as a (a)}
-                    <option value={a}>{assigneeLabel(a)}</option>
-                  {/each}
-                </select>
-                <span class="spacer"></span>
-                {#if (ticket.status === 'prioritized' || ticket.status === 'backlog') && ticket.refineState === null && !ticket.refined}
-                  <Button
-                    variant="icon"
-                    accent={true}
-                    title="Refine — start a grounded triage session"
-                    aria-label="Refine"
-                    onclick={() => refine(ticket)}
-                  ><Sparkles size={13} /></Button>
-                {/if}
-                <Button variant="icon" title="Edit" aria-label="Edit" onclick={() => openEdit(ticket)}
-                  ><Pencil size={13} /></Button>
-                <Button
-                  variant="icon"
-                  title="Duplicate"
-                  aria-label="Duplicate"
-                  onclick={() => duplicate(ticket)}
-                ><Copy size={13} /></Button>
-                <Button
-                  variant="icon"
-                  title="Copy issue text"
-                  aria-label="Copy issue text"
-                  onclick={() => copyIssue(ticket, project)}
-                ><ClipboardCopy size={13} /></Button>
-                <Button
-                  variant="icon"
-                  title="Delete"
-                  aria-label="Delete"
-                  onclick={() => remove(ticket)}
-                ><Trash2 size={13} /></Button>
-              </div>
-            </article>
+            <TicketCard
+              {ticket}
+              {project}
+              {condensed}
+              dragging={draggingId === ticket.id}
+              dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+              isLocked={isStatusLocked(ticket)}
+              onDragStart={(e) => onDragStart(e, ticket)}
+              {onDragEnd}
+              onEdit={() => openEdit(ticket)}
+              onDuplicate={() => duplicate(ticket)}
+              onCopy={() => copyIssue(ticket, project)}
+              onDelete={() => remove(ticket)}
+              onRefine={() => refine(ticket)}
+              onOpenStatusLegend={(state) => {
+                statusLegendState = state;
+                statusLegendOpen = true;
+              }}
+              onUpdate={() => load(true)}
+            />
           {/each}
           {#if draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
             <div class="drop-end"></div>
