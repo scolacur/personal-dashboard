@@ -24,8 +24,15 @@ export type {
   RefineCommitMode,
   RefineChildProposal,
   RefineProposal,
+  AuditRunStatus,
+  FindingDecision,
+  AuditRunCounts,
+  AuditRun,
+  AuditFinding,
 } from './task-monitor';
 export {
+  AUDIT_RUN_STATUSES,
+  FINDING_DECISIONS,
   TICKET_STATUSES,
   TICKET_PRIORITIES,
   PRIORITY_LABELS,

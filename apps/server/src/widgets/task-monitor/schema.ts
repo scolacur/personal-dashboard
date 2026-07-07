@@ -8,6 +8,42 @@ import { migrate, addColumn } from '../../migrate';
 // CREATE statements reflect the full current schema (fresh DBs are complete in one shot);
 // the addColumn migrations bring pre-existing tables up to date (no-ops on a fresh DB).
 export function bootstrapSchema(db: Database.Database): void {
+  // Ticket Audit engine (D-045, PD-283). Advisory only — findings never mutate a ticket;
+  // the human applies decisions later (PD-287). CREATE IF NOT EXISTS is no-op-safe on both
+  // fresh and existing DBs, so these need no addColumn migration.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS audit_run (
+      id           INTEGER PRIMARY KEY,
+      status       TEXT    NOT NULL DEFAULT 'requested',  -- requested|running|done|error
+      scope        TEXT,                                   -- e.g. 'single:PD'
+      model        TEXT,
+      counts       TEXT,                                   -- JSON AuditRunCounts, set on finish
+      started_at   INTEGER,
+      finished_at  INTEGER,
+      created_at   INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_run_status ON audit_run (status);
+
+    CREATE TABLE IF NOT EXISTS audit_finding (
+      id              INTEGER PRIMARY KEY,
+      run_id          INTEGER NOT NULL REFERENCES audit_run(id) ON DELETE CASCADE,
+      project_id      INTEGER,
+      ticket_id       INTEGER,
+      type            TEXT    NOT NULL,                    -- recommendation bucket
+      recommendation  TEXT,
+      reason          TEXT,
+      evidence        TEXT,
+      proposed_change TEXT,
+      confidence      TEXT,                                -- high|medium|low (PD-284); nullable here
+      decision        TEXT    NOT NULL DEFAULT 'undecided',-- undecided|accepted|rejected|other
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_finding_run ON audit_finding (run_id);
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_projects (
       id             INTEGER PRIMARY KEY,
