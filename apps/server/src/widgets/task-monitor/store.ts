@@ -9,6 +9,7 @@ import type {
   NotificationKind,
   RefineCommitMode,
   RelationType,
+  ResolvedRelation,
   TicketAssignee,
   TicketEvent,
   TicketLineage,
@@ -606,6 +607,63 @@ export function addRelation(
   db.prepare(
     'INSERT OR IGNORE INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (?, ?, ?, ?)',
   ).run(fromTicketId, toTicketId, type, Date.now());
+}
+
+interface RelationJoinRow {
+  id: number;
+  type: string;
+  created_at: number;
+  oid: number;
+  display_id: string | null;
+  title: string;
+  status: string;
+}
+
+/** Remove a link (the UNLINK primitive; PD-288's audit Reject/undo path). No-op if absent. */
+export function removeRelation(
+  db: Database.Database,
+  fromTicketId: number,
+  toTicketId: number,
+  type: RelationType,
+): void {
+  db.prepare(
+    'DELETE FROM agent_ticket_relations WHERE from_ticket_id = ? AND to_ticket_id = ? AND type = ?',
+  ).run(fromTicketId, toTicketId, type);
+}
+
+/** Every relation touching a ticket, both directions, resolved to the other end. Consumers that
+ *  treat relations as truth (the Ticket Audit, PD-288) read this to avoid re-proposing existing
+ *  links. Unlike getLineage this is type-agnostic (blocks/split/relates/duplicates). */
+export function listRelations(db: Database.Database, ticketId: number): ResolvedRelation[] {
+  const outgoing = db
+    .prepare(
+      `SELECT r.id, r.type, r.created_at, t.id AS oid, t.display_id, t.title, t.status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.to_ticket_id
+        WHERE r.from_ticket_id = ?`,
+    )
+    .all(ticketId) as RelationJoinRow[];
+  const incoming = db
+    .prepare(
+      `SELECT r.id, r.type, r.created_at, t.id AS oid, t.display_id, t.title, t.status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.from_ticket_id
+        WHERE r.to_ticket_id = ?`,
+    )
+    .all(ticketId) as RelationJoinRow[];
+  const rel = (row: RelationJoinRow, direction: 'from' | 'to'): ResolvedRelation => ({
+    id: row.id,
+    type: row.type as RelationType,
+    direction,
+    other: {
+      ticketId: row.oid,
+      displayId: row.display_id,
+      title: row.title,
+      status: row.status as TicketStatus,
+    },
+    createdAt: row.created_at,
+  });
+  return [...outgoing.map((r) => rel(r, 'from')), ...incoming.map((r) => rel(r, 'to'))].sort(
+    (a, b) => a.createdAt - b.createdAt || a.id - b.id,
+  );
 }
 
 /** A ticket's split lineage for the read-only display (PD-269); PD-156 owns the full UI. */

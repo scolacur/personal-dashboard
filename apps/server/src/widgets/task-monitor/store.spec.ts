@@ -9,6 +9,8 @@ import {
   createNotification,
   createTicket,
   getLineage,
+  listRelations,
+  removeRelation,
   getProjectBySlug,
   getTicket,
   listNotifications,
@@ -570,6 +572,43 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     addRelation(db, parent.id, child.id, 'split'); // dup ignored
     expect(getLineage(db, parent.id).splitInto.map((r) => r.ticketId)).toEqual([child.id]);
     expect(getLineage(db, child.id).splitFrom.map((r) => r.ticketId)).toEqual([parent.id]);
+  });
+
+  it('addRelation persists relates / duplicates types', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    addRelation(db, a.id, b.id, 'relates');
+    addRelation(db, a.id, b.id, 'duplicates');
+    const types = listRelations(db, a.id).map((r) => r.type).sort();
+    expect(types).toEqual(['duplicates', 'relates']);
+  });
+
+  it('listRelations resolves both directions and is type-agnostic', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    const c = createTicket(db, { title: 'c', projectId: pd });
+    addRelation(db, a.id, b.id, 'relates'); // a → b (outgoing from a)
+    addRelation(db, c.id, a.id, 'blocks'); // c → a (incoming to a)
+
+    const rels = listRelations(db, a.id);
+    expect(rels).toHaveLength(2);
+    const outgoing = rels.find((r) => r.direction === 'from')!;
+    expect(outgoing.type).toBe('relates');
+    expect(outgoing.other.ticketId).toBe(b.id);
+    const incoming = rels.find((r) => r.direction === 'to')!;
+    expect(incoming.type).toBe('blocks');
+    expect(incoming.other.ticketId).toBe(c.id);
+  });
+
+  it('removeRelation deletes exactly the matching link and no-ops when absent', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    addRelation(db, a.id, b.id, 'relates');
+    addRelation(db, a.id, b.id, 'duplicates');
+    removeRelation(db, a.id, b.id, 'relates');
+    expect(listRelations(db, a.id).map((r) => r.type)).toEqual(['duplicates']);
+    removeRelation(db, a.id, b.id, 'relates'); // already gone — no throw
+    expect(listRelations(db, a.id).map((r) => r.type)).toEqual(['duplicates']);
   });
 
   it('approveRefine refine_in_place rewrites, routes, and marks refined', () => {

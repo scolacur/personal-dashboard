@@ -21,6 +21,7 @@ export type {
   TicketRelation,
   LineageRef,
   TicketLineage,
+  ResolvedRelation,
   RefineCommitMode,
   RefineChildProposal,
   RefineProposal,
