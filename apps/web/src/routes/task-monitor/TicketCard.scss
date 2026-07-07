@@ -85,14 +85,6 @@
   color: var(--text);
 }
 
-.card-body {
-  margin: var(--space-xs) 0 0;
-  font-size: var(--font-size-xs);
-  color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .card-status-row {
   display: flex;
   // Refine-agent state sits left, Sortie state sits right (PD card status row).

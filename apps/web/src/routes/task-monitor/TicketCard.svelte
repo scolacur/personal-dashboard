@@ -10,7 +10,6 @@
   let {
     ticket,
     project,
-    condensed,
     dragging,
     dropBefore,
     isLocked,
@@ -26,7 +25,6 @@
   }: {
     ticket: AgentTicket;
     project: AgentProject | undefined;
-    condensed: boolean;
     dragging: boolean;
     dropBefore: boolean;
     isLocked: boolean;
@@ -134,9 +132,6 @@
     </span>
   </div>
   <p class="card-title">{ticket.title}</p>
-  {#if ticket.body && !condensed}
-    <p class="card-body">{ticket.body}</p>
-  {/if}
   {#if ticket.refined || ticket.refineState || ticket.agentState || ticket.status === 'prioritized' || ticket.status === 'backlog'}
     <div class="card-status-row">
       <!-- Left: Refine-agent state (outlined pill). Always occupies the left slot so the

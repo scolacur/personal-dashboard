@@ -144,6 +144,18 @@ export const PRIORITY_DESCRIPTIONS: Record<TicketPriority, string> = {
   P5: 'Window dressing.',
 };
 
+/** Short labels for each refinement session state (shown in pills and the glossary modal). */
+export const REFINE_STATE_LABELS: Record<RefineState, string> = {
+  grilling: 'Grilling…',
+  'awaiting-human': 'Needs you',
+};
+
+/** One-sentence descriptions for each refinement session state, shown in the glossary modal. */
+export const REFINE_STATE_DESCRIPTIONS: Record<RefineState, string> = {
+  grilling: 'A refinement session is active — the agent is currently grilling the ticket.',
+  'awaiting-human': 'The agent replied and is waiting for your feedback or approval to continue.',
+};
+
 // A project the Tickets belong to (personal-dashboard, core, nervous-system-website, …).
 // The dashboard tracks Tickets across all projects, not just itself.
 export interface AgentProject {
