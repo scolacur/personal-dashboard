@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { marked } from 'marked';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
   import { latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
@@ -40,13 +40,13 @@
     };
   }
 
-  // Auto-scroll the thread to the latest message whenever messages update.
-  $effect(() => {
-    void messages;
-    if (threadEl) {
-      threadEl.scrollTop = threadEl.scrollHeight;
-    }
-  });
+  // Scroll the thread to the latest message. Called explicitly on initial load and after
+  // sending — NOT on every poll: a reactive $effect on `messages` re-scrolled every 5s (load
+  // rebuilds the array each poll), which fought the user trying to scroll back up the history.
+  async function scrollToBottom() {
+    await tick(); // let the DOM paint the new messages before measuring scrollHeight
+    if (threadEl) threadEl.scrollTop = threadEl.scrollHeight;
+  }
 
   async function load() {
     try {
@@ -85,6 +85,7 @@
       await postRefineReply(ticketId, body);
       replyText = '';
       await load(); // reflect the just-posted human turn immediately
+      await scrollToBottom(); // jump to the message the user just sent
     } catch (e) {
       sendMsg = e instanceof Error ? e.message : String(e);
     } finally {
@@ -97,8 +98,10 @@
   }
 
   onMount(() => {
-    load();
+    // Scroll to the newest message once, after the initial load paints.
+    load().then(scrollToBottom);
     // Poll so a griller reply (async, via the shared DB) appears without a manual refresh.
+    // Deliberately does NOT scroll — see scrollToBottom.
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
   });
@@ -137,48 +140,52 @@
           </div>
         </li>
       {/each}
+
+      {#if proposal}
+        <li class="turn turn-agent turn-proposal">
+          <div class="bubble proposal" role="group" aria-label="Proposed commit">
+            <div class="turn-head">
+              <span class="who">Refine agent</span>
+              <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? 'Split' : 'Refine in place'}</span>
+            </div>
+            {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
+
+            {#if proposal.mode === 'refine_in_place'}
+              <dl class="proposal-fields">
+                {#if proposal.status}<div><dt>Lane</dt><dd>{proposal.status}</dd></div>{/if}
+                {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
+              </dl>
+              {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
+            {:else}
+              <ul class="proposal-children">
+                {#each proposal.children ?? [] as child, i (i)}
+                  <li>
+                    <div class="child-head">
+                      <span class="child-lane">{child.status}</span>
+                      <span class="child-assignee">{child.assignee ?? '—'}</span>
+                      <span class="child-title">{child.title}</span>
+                    </div>
+                    <pre class="proposal-body">{child.body}</pre>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+
+            <div class="proposal-actions">
+              <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
+                {deciding ? 'Working…' : 'Approve'}
+              </button>
+              <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
+              {#if decideMsg}<span class="decide-msg" role="alert">{decideMsg}</span>{/if}
+            </div>
+          </div>
+        </li>
+      {/if}
+
       {#if awaitingAgent}
         <li class="muted awaiting">Waiting for the Refine agent to reply…</li>
       {/if}
     </ul>
-  {/if}
-
-  {#if proposal}
-    <div class="proposal" role="group" aria-label="Proposed commit">
-      <div class="proposal-head">
-        <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? 'Split' : 'Refine in place'}</span>
-      </div>
-      {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
-
-      {#if proposal.mode === 'refine_in_place'}
-        <dl class="proposal-fields">
-          {#if proposal.status}<div><dt>Lane</dt><dd>{proposal.status}</dd></div>{/if}
-          {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
-        </dl>
-        {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
-      {:else}
-        <ul class="proposal-children">
-          {#each proposal.children ?? [] as child, i (i)}
-            <li>
-              <div class="child-head">
-                <span class="child-lane">{child.status}</span>
-                <span class="child-assignee">{child.assignee ?? '—'}</span>
-                <span class="child-title">{child.title}</span>
-              </div>
-              <pre class="proposal-body">{child.body}</pre>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-
-      <div class="proposal-actions">
-        <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
-          {deciding ? 'Working…' : 'Approve'}
-        </button>
-        <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
-        {#if decideMsg}<span class="decide-msg" role="alert">{decideMsg}</span>{/if}
-      </div>
-    </div>
   {/if}
 
   {#if !loading && !error}

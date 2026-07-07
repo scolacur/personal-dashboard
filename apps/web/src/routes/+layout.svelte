@@ -22,6 +22,10 @@
 
   const currentPageTitle = $derived(resolvePageTitle(page.url.pathname));
 
+  // The pomodoro floats over the whole app, but on the ticket-detail page it overlaps the
+  // Refine chat window on mobile — hide it there. Match on route id (exact) not pathname.
+  const showPomodoro = $derived(page.route.id !== '/task-monitor/tickets/[ticketId]');
+
   onMount(() => {
     const t = document.documentElement.getAttribute('data-theme');
     theme = t === 'light' ? 'light' : 'dark';
@@ -75,6 +79,8 @@
   </div>
 </div>
 
-<FloatingPomodoro />
+{#if showPomodoro}
+  <FloatingPomodoro />
+{/if}
 
 <style lang="scss" src="./+layout.scss"></style>
