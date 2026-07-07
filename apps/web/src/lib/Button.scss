@@ -1,0 +1,75 @@
+.btn {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+  padding: var(--space-sm) var(--space-md);
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: var(--space-xs) var(--space-md);
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+.btn-icon {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  &:disabled {
+    opacity: 0.3;
+  }
+
+  // Accent tint for the Refine action — primary triage entry point.
+  &.accent {
+    color: var(--accent);
+    border-color: var(--accent);
+
+    &:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+  }
+}
+
+@media (max-width: 640px) {
+  .btn-icon {
+    min-height: 40px;
+    padding: var(--space-sm) var(--space-md);
+
+    :global(svg) {
+      width: 18px;
+      height: 18px;
+    }
+  }
+}

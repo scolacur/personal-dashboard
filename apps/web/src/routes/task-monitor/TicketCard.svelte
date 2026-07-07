@@ -3,6 +3,7 @@
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, AGENT_STATE_LABELS } from '@dashboard/shared';
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import { Pencil, Copy, Trash2, ClipboardCopy, Sparkles } from 'lucide-svelte';
+  import Button from '$lib/Button.svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
 
@@ -173,38 +174,18 @@
     </select>
     <span class="spacer"></span>
     {#if (ticket.status === 'prioritized' || ticket.status === 'backlog') && ticket.refineState === null && !ticket.refined}
-      <button
-        class="action-refine"
-        type="button"
+      <Button
+        variant="icon"
+        accent={true}
         title="Refine — start a grounded triage session"
         aria-label="Refine"
-        onclick={onRefine}><Sparkles size={13} /></button
-      >
+        onclick={onRefine}
+      ><Sparkles size={13} /></Button>
     {/if}
-    <button class="action-edit" type="button" title="Edit" aria-label="Edit" onclick={onEdit}
-      ><Pencil size={13} /></button
-    >
-    <button
-      class="action-dup"
-      type="button"
-      title="Duplicate"
-      aria-label="Duplicate"
-      onclick={onDuplicate}><Copy size={13} /></button
-    >
-    <button
-      class="action-copy"
-      type="button"
-      title="Copy issue text"
-      aria-label="Copy issue text"
-      onclick={onCopy}><ClipboardCopy size={13} /></button
-    >
-    <button
-      type="button"
-      title="Delete"
-      aria-label="Delete"
-      onclick={onDelete}
-    ><Trash2 size={13} /></button
-    >
+    <Button variant="icon" title="Edit" aria-label="Edit" onclick={onEdit}><Pencil size={13} /></Button>
+    <Button variant="icon" title="Duplicate" aria-label="Duplicate" onclick={onDuplicate}><Copy size={13} /></Button>
+    <Button variant="icon" title="Copy issue text" aria-label="Copy issue text" onclick={onCopy}><ClipboardCopy size={13} /></Button>
+    <Button variant="icon" title="Delete" aria-label="Delete" onclick={onDelete}><Trash2 size={13} /></Button>
   </div>
 </article>
 

@@ -108,26 +108,6 @@
   }
 }
 
-.add-btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius);
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  cursor: pointer;
-
-  &:hover {
-    filter: brightness(1.05);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-}
 
 .error {
   color: #c0392b;
@@ -186,32 +166,6 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--space-sm);
-
-  button {
-    font-family: var(--font-sans);
-    font-size: var(--font-size-sm);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius);
-    cursor: pointer;
-    border: 1px solid var(--border);
-  }
-
-  .ghost {
-    background: transparent;
-    color: var(--text);
-  }
-
-  .primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--on-accent);
-    font-weight: 600;
-
-    &:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-  }
 }
 
 /* ── Board ─────────────────────────────────────── */
@@ -404,43 +358,6 @@
   position: relative;
 }
 
-.lanes-btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-
-  &:hover,
-  &[aria-expanded='true'] {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-}
-
-.sync-btn {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-sm);
-  padding: var(--space-xs) var(--space-md);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  &:disabled {
-    cursor: progress;
-    opacity: 0.6;
-  }
-}
 
 .lanes-menu {
   position: absolute;
@@ -666,7 +583,7 @@
     margin-right: auto;
   }
 
-  .add-btn {
+  .add-ticket-wrap {
     order: 2;
   }
 
