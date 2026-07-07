@@ -32,6 +32,7 @@ import {
   unreadNotificationCount,
   updateTicket,
 } from './store';
+import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import {
   GITHUB_READ_TOKEN_ENV,
   GITHUB_WRITE_TOKEN_ENV,
@@ -460,5 +461,29 @@ export function registerRoutes(
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
     return getLineage(db, id);
+  });
+
+  // ── Ticket Audit (D-045, PD-283) ─────────────────────────────────────────────
+  // Read-only run/finding views. Apply mechanics (Accept/Reject) land in PD-287.
+
+  app.get(`${base}/audit/runs`, async () => listRuns(db));
+
+  app.get(`${base}/audit/runs/:id/findings`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const run = getRun(db, id);
+    if (!run) {
+      return reply.status(404).send({ error: 'run not found', code: 'NOT_FOUND' });
+    }
+    return { run, findings: listFindings(db, id) };
+  });
+
+  // Enqueue a run on demand (coalesces onto any pending/running run). The agent-worker
+  // executes it; 202 whether created or coalesced, with `created` telling which happened.
+  app.post(`${base}/audit/runs`, async (_request, reply) => {
+    const { run, created } = insertRequestedRunIfNone(db, null);
+    return reply.status(202).send({ run, created });
   });
 }

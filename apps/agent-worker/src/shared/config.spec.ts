@@ -10,6 +10,8 @@ describe('loadConfig', () => {
     expect(c.githubReadToken).toBe('');
     expect(c.httpsProxy).toBe('');
     expect(c.pullIntervalMs).toBe(5 * 60_000);
+    expect(c.refineIntervalMs).toBe(5_000);
+    expect(c.auditIntervalMs).toBe(30_000);
   });
 
   it('reads overrides from env', () => {
@@ -20,6 +22,7 @@ describe('loadConfig', () => {
       AGENT_WORKER_CHECKOUT_DIR: '/co',
       DATA_DIR: '/d',
       AGENT_WORKER_PULL_INTERVAL_MS: '1000',
+      AGENT_WORKER_AUDIT_INTERVAL_MS: '2000',
       HTTPS_PROXY: 'http://egress-proxy:3128',
     });
     expect(c.model).toBe('claude-sonnet-4-6');
@@ -27,6 +30,7 @@ describe('loadConfig', () => {
     expect(c.githubReadToken).toBe('tok');
     expect(c.checkoutDir).toBe('/co');
     expect(c.pullIntervalMs).toBe(1000);
+    expect(c.auditIntervalMs).toBe(2000);
     expect(c.httpsProxy).toBe('http://egress-proxy:3128');
     expect(dbPathFor(c)).toBe('/d/dashboard.db');
   });

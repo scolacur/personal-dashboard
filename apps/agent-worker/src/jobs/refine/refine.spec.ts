@@ -56,6 +56,7 @@ const CONFIG: AgentWorkerConfig = {
   dataDir: '/data',
   pullIntervalMs: 1,
   refineIntervalMs: 1,
+  auditIntervalMs: 1,
   httpsProxy: '',
 };
 
