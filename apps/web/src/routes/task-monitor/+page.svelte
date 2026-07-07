@@ -13,6 +13,7 @@
   import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
+  import { isStatusLocked, computeSortOrder } from './board-logic';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -81,11 +82,6 @@
     }
   }
 
-  // Once a ticket is picked up by an agent, its status is controlled externally,
-  // so manual editing (field + drag) is locked for these statuses when assigned.
-  // D-040: the agent lanes collapsed into robot_queue; steve_queue is manual (never locked).
-  const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
-
   // The card pill for a Robot's-Queue ticket: agentState carries the fine sortie:* state
   // (D-040). Display label + per-state colour class. Labels come from @dashboard/shared.
   // Each state gets its own colour (see .agent-state-badge in +page.scss):
@@ -144,9 +140,6 @@
     }, 50);
     return () => clearTimeout(timer);
   });
-  function isStatusLocked(t: AgentTicket): boolean {
-    return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
-  }
 
   let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
@@ -409,27 +402,6 @@
     dropTarget = { status, beforeId };
   }
 
-  // sort_order is a REAL column, so we can slot a card between neighbours by averaging their
-  // orders (or stepping ±1 past the ends). Computed within the dragged card's priority band so
-  // the new order keeps it inside that band.
-  function computeSortOrder(
-    status: TicketStatus,
-    priority: TicketPriority | null,
-    beforeId: number | null,
-    draggedId: number,
-  ): number {
-    const band = byStatus(status).filter((t) => t.priority === priority && t.id !== draggedId);
-    // beforeId may point at a card outside the band (the boundary) or be null → append to band end.
-    let idx = beforeId === null ? band.length : band.findIndex((t) => t.id === beforeId);
-    if (idx === -1) idx = band.length;
-    const prev = band[idx - 1];
-    const next = band[idx];
-    if (!prev && !next) return 0;
-    if (!prev) return next.sortOrder - 1;
-    if (!next) return prev.sortOrder + 1;
-    return (prev.sortOrder + next.sortOrder) / 2;
-  }
-
   async function onDrop(e: DragEvent, status: TicketStatus) {
     e.preventDefault();
     const id = draggingId;
@@ -439,7 +411,7 @@
     if (id === null) return;
     const ticket = tickets.find((t) => t.id === id);
     if (!ticket) return;
-    const sortOrder = computeSortOrder(status, ticket.priority, target?.beforeId ?? null, id);
+    const sortOrder = computeSortOrder(byStatus(status), ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
     if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isSortieReady(ticket.body)) {
