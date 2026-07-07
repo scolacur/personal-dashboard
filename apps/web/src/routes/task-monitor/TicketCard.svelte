@@ -2,7 +2,7 @@
   import type { AgentProject, AgentState, AgentTicket, RefineState, TicketAssignee, TicketPriority } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, AGENT_STATE_LABELS } from '@dashboard/shared';
   import GithubMark from '$lib/icons/GithubMark.svelte';
-  import { Pencil, Copy, Trash2, ClipboardCopy, Sparkles } from 'lucide-svelte';
+  import { Pencil, Copy, Trash2, ClipboardCopy } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
@@ -107,16 +107,6 @@
       {/if}
     </div>
     <span class="card-top-right">
-      {#if ticket.refined}
-        <span class="refined-mark" title="Refined">✓ Refined</span>
-      {:else if ticket.refineState}
-        <a
-          class="refine-pill refine-{ticket.refineState}"
-          href={ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined}
-          draggable="false"
-          title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
-        >{REFINE_STATE_LABELS[ticket.refineState]}</a>
-      {/if}
       {#if ticket.githubIssueUrl}
         <a
           class="issue-link"
@@ -147,14 +137,38 @@
   {#if ticket.body && !condensed}
     <p class="card-body">{ticket.body}</p>
   {/if}
-  {#if ticket.agentState}
+  {#if ticket.refined || ticket.refineState || ticket.agentState || ticket.status === 'prioritized' || ticket.status === 'backlog'}
     <div class="card-status-row">
-      <button
-        class="agent-state-badge {agentStateClass(ticket.agentState)}"
-        type="button"
-        aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
-        onclick={() => onOpenStatusLegend(ticket.agentState!)}
-      >{AGENT_STATE_LABELS[ticket.agentState]}</button>
+      <!-- Left: Refine-agent state (outlined pill). Always occupies the left slot so the
+           Sortie badge stays right-aligned even when there's no refine state. -->
+      <span class="status-left">
+        {#if ticket.refined}
+          <span class="refined-mark" title="Refined">✓ Refined</span>
+        {:else if ticket.refineState}
+          <a
+            class="refine-pill refine-{ticket.refineState}"
+            href={ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined}
+            draggable="false"
+            title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
+          >{REFINE_STATE_LABELS[ticket.refineState]}</a>
+        {:else if ticket.status === 'prioritized' || ticket.status === 'backlog'}
+          <button
+            class="refine-pill refine-start"
+            type="button"
+            title="Refine — start a grounded triage session"
+            onclick={onRefine}
+          >Not refined</button>
+        {/if}
+      </span>
+      <!-- Right: Sortie agent state (filled pill). -->
+      {#if ticket.agentState}
+        <button
+          class="agent-state-badge {agentStateClass(ticket.agentState)}"
+          type="button"
+          aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
+          onclick={() => onOpenStatusLegend(ticket.agentState!)}
+        >{AGENT_STATE_LABELS[ticket.agentState]}</button>
+      {/if}
     </div>
   {/if}
   <div class="card-actions">
@@ -173,15 +187,6 @@
       {/each}
     </select>
     <span class="spacer"></span>
-    {#if (ticket.status === 'prioritized' || ticket.status === 'backlog') && ticket.refineState === null && !ticket.refined}
-      <Button
-        variant="icon"
-        accent={true}
-        title="Refine — start a grounded triage session"
-        aria-label="Refine"
-        onclick={onRefine}
-      ><Sparkles size={13} /></Button>
-    {/if}
     <Button variant="icon" title="Edit" aria-label="Edit" onclick={onEdit}><Pencil size={13} /></Button>
     <Button variant="icon" title="Duplicate" aria-label="Duplicate" onclick={onDuplicate}><Copy size={13} /></Button>
     <Button variant="icon" title="Copy issue text" aria-label="Copy issue text" onclick={onCopy}><ClipboardCopy size={13} /></Button>
