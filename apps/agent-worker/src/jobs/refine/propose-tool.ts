@@ -3,7 +3,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal } from '@dashboard/shared';
 
 /**
- * The `propose_commit` SDK tool (D-044, PD-269). The griller NEVER writes tickets — when a
+ * The `propose_commit` SDK tool (D-044, PD-269). The agent-worker NEVER writes tickets — when a
  * grill has converged it calls this tool with a structured plan, which hands the proposal to
  * the `onProposal` callback (the refine loop persists it as a `refine_proposal` event). Steve
  * then approves on the board and the SERVER does the writes. Two modes:
@@ -54,7 +54,7 @@ export const PROPOSE_TOOL_NAME = 'mcp__refine__propose_commit';
 
 /**
  * Build the in-process MCP server exposing `propose_commit`. `onProposal` runs synchronously
- * in the griller when the agent calls the tool (it persists the proposal to the shared DB).
+ * in the agent-worker when the agent calls the tool (it persists the proposal to the shared DB).
  */
 export function buildProposeToolServer(onProposal: (proposal: RefineProposal) => void) {
   const proposeCommit = tool(

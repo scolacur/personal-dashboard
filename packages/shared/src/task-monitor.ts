@@ -18,7 +18,7 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
  *
  * D-044: entering a queue lane makes "queued = assigned" true in the data layer —
  * `robot_queue` ⇒ `robot`, `steve_queue` ⇒ `steve` — overriding any prior value or
- * hint, so the invariant holds no matter who writes (the griller, a manual board
+ * hint, so the invariant holds no matter who writes (the agent-worker, a manual board
  * drag, or the API). In `backlog`/`prioritized`/`completed`/`closed`, assignee is a
  * free optional hint and this returns `null` (leave it as provided). The store layer
  * (createTicket/updateTicket) is the single enforcement point.
@@ -286,7 +286,7 @@ export function isSortieReady(body: string | null): boolean {
 // ── Notification Center (D-040) ──────────────────────────────────────────────
 // A notification surfaced in the dashboard's in-app inbox. MVP kinds cover an agent
 // parking for a human (ask_human / needs-human); widget notifications plug in later.
-// 'agent_refine' (D-044, PD-267): the Refine/griller agent posted a turn (plan, questions,
+// 'agent_refine' (D-044, PD-267): the Refine/agent-worker agent posted a turn (plan, questions,
 // or needs-full-grill) on a ticket's Refine thread and wants Steve's attention.
 export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine';
 
@@ -333,12 +333,12 @@ export interface TicketEvent {
 }
 
 /** Who authored a Refine turn. `human` = Steve (kickoff = the ticket body, then replies);
- *  `agent` = the griller (Claude Agent SDK / Opus) — a plan, clarifying questions, or a
+ *  `agent` = the agent-worker (Claude Agent SDK / Opus) — a plan, clarifying questions, or a
  *  needs-full-grill verdict. */
 export type RefineRole = 'human' | 'agent';
 
 /** The two `agent_ticket_events.type` values that carry the Refine thread. Referenced by
- *  BOTH the server (read endpoint + reply write) and the griller (poll + post), so the
+ *  BOTH the server (read endpoint + reply write) and the agent-worker (poll + post), so the
  *  string literals live here to keep the two processes in lockstep. */
 export const REFINE_EVENT_TYPE: Record<RefineRole, string> = {
   human: 'refine_human',
@@ -346,7 +346,7 @@ export const REFINE_EVENT_TYPE: Record<RefineRole, string> = {
 } as const;
 
 /** JSON stored in a refine_* event's `detail`. Agent turns also persist the Claude Agent
- *  SDK `sessionId` so the griller can `resume` the thread after a restart (rehydrated
+ *  SDK `sessionId` so the agent-worker can `resume` the thread after a restart (rehydrated
  *  from the newest refine_agent event — no separate session table). */
 export interface RefineDetail {
   text: string;
@@ -410,7 +410,7 @@ export interface TicketLineage {
 }
 
 // ── Refine commit / decompose proposal (D-044, PD-269) ───────────────────────
-// On approval the griller commits. It never writes tickets directly — it PROPOSES via the
+// On approval the agent-worker commits. It never writes tickets directly — it PROPOSES via the
 // `propose_commit` SDK tool, which writes a `refine_proposal` event; the server executes on
 // Steve's approval (`refine_committed`) or drops it on reject (`refine_rejected`).
 
@@ -467,7 +467,7 @@ export function latestActionableProposal(
 
 /** Project the Refine subset of a ticket's activity log into ordered thread messages.
  *  Non-refine events are dropped; malformed detail falls back to empty text. Shared so the
- *  web thread view and the griller's "what has been said so far" agree exactly. */
+ *  web thread view and the agent-worker's "what has been said so far" agree exactly. */
 export function refineThreadFromEvents(events: TicketEvent[]): RefineMessage[] {
   const out: RefineMessage[] = [];
   for (const e of events) {

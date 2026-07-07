@@ -375,7 +375,7 @@ export function registerRoutes(
   });
 
   // Start a Refine session (D-044, PD-268): the Refine button POSTs here. Writes the kickoff
-  // refine_human event (ticket title + body) the griller worker polls to open a grounded
+  // refine_human event (ticket title + body) the agent-worker worker polls to open a grounded
   // session. 409 if a thread already exists so a double-click can't spawn a second.
   app.post(`${base}/tickets/:id/refine`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
@@ -393,7 +393,7 @@ export function registerRoutes(
 
   // Post a human Refine reply. Unlike /reply (which forwards to a GitHub issue to re-queue a
   // parked Sortie agent), this stays entirely in the DB: it writes a refine_human event the
-  // griller consumes on its next poll and resumes the grill on. No GitHub, no token.
+  // agent-worker consumes on its next poll and resumes the grill on. No GitHub, no token.
   app.post(`${base}/tickets/:id/refine-reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -412,7 +412,7 @@ export function registerRoutes(
 
   /* ── Refine commit step (D-044, PD-269) ──────────────────────────────── */
 
-  // Approve the latest actionable commit proposal. The server (not the griller) does the
+  // Approve the latest actionable commit proposal. The server (not the agent-worker) does the
   // writes: refine-in-place rewrites+routes+marks refined; decompose creates routed children,
   // closes the parent (D-036), and links them via `split` relations. Robot-bound targets must
   // be isSortieReady or the approval is rejected (422) with no writes.

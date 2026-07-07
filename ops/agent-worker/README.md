@@ -1,13 +1,13 @@
-# Griller worker — deploy checklist
+# agent-worker — deploy checklist
 
-The **griller** is the dashboard-owned interactive triage agent (DECISIONS **D-044**): a
+The **agent-worker** is the dashboard-owned interactive triage agent (DECISIONS **D-044**): a
 Claude Agent SDK / Opus worker that grills a ticket with Steve, then proposes a commit
 (refine-in-place or decompose) for approval. It runs as a **separate, egress-hardened
 container** from the web app — it holds `ANTHROPIC_API_KEY` and does long LLM turns, so it is
 deliberately **NOT** part of the web app's CI/CD. Deploy it by hand with the steps below.
 
-Transport between the web app and the griller is the **shared SQLite DB** (`dashboard.db`),
-not HTTP — so the griller's `/data` mount MUST be the same host directory the web app mounts
+Transport between the web app and the agent-worker is the **shared SQLite DB** (`dashboard.db`),
+not HTTP — so the agent-worker's `/data` mount MUST be the same host directory the web app mounts
 as `/data`, or it opens a different DB and never sees your tickets.
 
 ## Prerequisites
@@ -30,27 +30,27 @@ Run on the NAS over SSH:
 cd /volume1/docker/personal-dashboard/personal-dashboard
 git checkout main && git pull --ff-only
 
-# 2. Create the griller's OWN env file — NOT the web app's .env
-cp ops/griller/griller.env.example /volume1/docker/personal-dashboard/griller.env
+# 2. Create the agent-worker's OWN env file — NOT the web app's .env
+cp ops/agent-worker/agent-worker.env.example /volume1/docker/personal-dashboard/agent-worker.env
 #    edit it and fill in ANTHROPIC_API_KEY and GITHUB_READ_TOKEN
 
 # 3. Build the image (build context = repo root)
-sudo docker build -f ops/griller/Dockerfile -t griller-dashboard .
+sudo docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
 
 # 4. Bring it up on the egress-hardened network (proxy sidecar + internal net)
-sudo docker compose -f ops/griller/docker-compose.egress.yml up -d
+sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d
 
 # 5. Watch it boot and take a turn
-sudo docker logs -f griller
+sudo docker logs -f agent-worker
 ```
 
 ## Verify
 
 Healthy boot logs, in order:
 
-- `griller worker starting`
+- `agent-worker worker starting`
 - `cloning grounding checkout` (first run only; later runs `git pull` the existing checkout)
-- `griller ready — polling for Refine turns`
+- `agent-worker ready — polling for Refine turns`
 
 Then click **Refine** on a prod ticket. When the agent replies you should see:
 
@@ -61,20 +61,20 @@ Then click **Refine** on a prod ticket. When the agent replies you should see:
 
 ## Secrets & tokens
 
-All live ONLY in `griller.env` (mounted as the container's `env_file`) — never in the web
+All live ONLY in `agent-worker.env` (mounted as the container's `env_file`) — never in the web
 app's `.env`. The Claude credential must never reach the user-facing web process.
 
 **Claude auth — pick ONE** (if both are set, the API key wins):
 
 - **`ANTHROPIC_API_KEY`** — metered pay-as-you-go, billed **separately from any Claude
   subscription**. A fresh key starts at **$0**, so add credits in the Console → Billing or the
-  griller logs a turn error `Credit balance is too low`. Cost-isolated; no shared quota. A
+  agent-worker logs a turn error `Credit balance is too low`. Cost-isolated; no shared quota. A
   dedicated key also gives its own rate-limit budget + a revocation blast-radius limited to the
-  griller.
+  agent-worker.
 - **`CLAUDE_CODE_OAUTH_TOKEN`** — your Claude Pro/Max subscription token (the same one Sortie
   uses; copy from `sortie.env` or run `claude setup-token`). No extra billing, but it **shares
-  the Pro session quota with Sortie** — and the griller defaults to **Opus**, which is heavy on
-  that quota, so set `GRILLER_MODEL=claude-sonnet-4-6` to ease it. An exhausted quota surfaces
+  the Pro session quota with Sortie** — and the agent-worker defaults to **Opus**, which is heavy on
+  that quota, so set `AGENT_WORKER_MODEL=claude-sonnet-4-6` to ease it. An exhausted quota surfaces
   as an errored turn (left pending + logged, not written to the thread).
 
 **`GITHUB_READ_TOKEN`** — used only to clone/pull the grounding checkout, so it needs
@@ -85,28 +85,28 @@ with Contents: Read.
 
 ## Redeploy after a code change
 
-The griller image is a build artifact — merging griller changes to `main` does **not** update
+The agent-worker image is a build artifact — merging agent-worker changes to `main` does **not** update
 the running container. Rebuild and recreate:
 
 ```bash
 cd /volume1/docker/personal-dashboard/personal-dashboard && git pull --ff-only
-sudo docker build -f ops/griller/Dockerfile -t griller-dashboard .
-sudo docker compose -f ops/griller/docker-compose.egress.yml up -d   # recreates from the new image
+sudo docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
+sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d   # recreates from the new image
 ```
 
 ## Troubleshooting
 
-- **Turns hang / API errors** — the griller reaches `api.anthropic.com` only through the squid
+- **Turns hang / API errors** — the agent-worker reaches `api.anthropic.com` only through the squid
   sidecar (reuses Sortie's `ops/sortie/squid.conf`, which allowlists `.anthropic.com` +
   `.github.com`). Check the proxy env vars in the compose and the squid allowlist.
-- **`no such table` / griller sees no tickets** — the `/data` mount isn't the web app's DB
-  dir, so the griller opened an empty DB (it doesn't run schema bootstrap). Both must mount the
+- **`no such table` / agent-worker sees no tickets** — the `/data` mount isn't the web app's DB
+  dir, so the agent-worker opened an empty DB (it doesn't run schema bootstrap). Both must mount the
   **repo-root** `data/`: `/volume1/docker/personal-dashboard/personal-dashboard/data` (note the
   nested repo dir — the web app's `../data` from `docker/`), NOT the base
   `/volume1/docker/personal-dashboard/data`. `find /volume1/docker/personal-dashboard -name
 dashboard.db` shows the real one (large) vs a stray empty one.
 - **Clone fails** — the `GITHUB_READ_TOKEN` lacks Contents: Read (see above).
-- **`Permission denied` creating `/data/griller-checkout` or writing the DB** — the griller runs
+- **`Permission denied` creating `/data/agent-worker-checkout` or writing the DB** — the agent-worker runs
   as **root**, matching the web app that owns the shared `dashboard.db` (+ its WAL/-shm). If you
   see this, the container isn't running as root (stale image) — rebuild, or confirm the
   Dockerfile has no `USER` drop.

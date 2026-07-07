@@ -296,7 +296,7 @@ export function updateTicket(
 
   // D-044: entering a queue lane forces the matching assignee, overriding any prior
   // value or hint — so "queued = assigned" holds regardless of who writes (the
-  // griller, a manual board drag, the API). Non-queue lanes leave assignee as set above.
+  // agent-worker, a manual board drag, the API). Non-queue lanes leave assignee as set above.
   const forcedAssignee = laneForcedAssignee(next.status);
   if (forcedAssignee !== null) {
     next.assignee = forcedAssignee;
@@ -546,7 +546,7 @@ export type StartRefineResult =
 
 /**
  * Start a Refine session on a ticket (D-044, PD-268). The DB is the queue: this writes the
- * KICKOFF `refine_human` event (the ticket's title + body) that the griller's poll loop
+ * KICKOFF `refine_human` event (the ticket's title + body) that the agent-worker's poll loop
  * consumes to open a grounded session. No-op-safe: returns `already_started` if the ticket
  * already has any refine_* turn, so a double-click can't spawn a second thread.
  */
@@ -573,7 +573,7 @@ export function startRefine(db: Database.Database, ticketId: number): StartRefin
 }
 
 /**
- * Append a human Refine turn (Steve's reply) as a `refine_human` event the griller
+ * Append a human Refine turn (Steve's reply) as a `refine_human` event the agent-worker
  * consumes on its next poll. Returns the created event, or null if the ticket is unknown.
  * This is the Refine reply path — distinct from the GitHub-issue `/reply` (PD-250), which
  * re-queues a parked Sortie agent; a Refine reply stays entirely in the DB.
@@ -652,7 +652,7 @@ export type ApproveRefineResult =
 
 /**
  * Execute the latest actionable commit proposal on Steve's approval (D-044, PD-269). The
- * griller only proposes; this is the single place tickets are written, so the lane→assignee
+ * agent-worker only proposes; this is the single place tickets are written, so the lane→assignee
  * invariant + isSortieReady gate are enforced here. Refine-in-place rewrites the ticket and
  * marks it refined; decompose creates routed children, closes the parent (D-036), and links
  * each child via a `split` relation. All-or-nothing (one transaction); validation runs first.

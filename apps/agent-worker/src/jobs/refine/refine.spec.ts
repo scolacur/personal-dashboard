@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import type { RefineProposal, TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
-import type { GrillerConfig } from './config';
+import type { AgentWorkerConfig } from '../../shared/config';
 import type { GrillSession, GrillTurnResult, OpenGrillSession, OpenSessionInput } from './session';
 import {
   nextRefineWork,
@@ -13,8 +13,8 @@ import {
   WarmSessions,
 } from './refine';
 
-// Minimal slice of the shared dashboard schema the griller touches (the web app owns the
-// canonical schema; the griller only reads/writes these three tables).
+// Minimal slice of the shared dashboard schema the agent-worker touches (the web app owns the
+// canonical schema; the agent-worker only reads/writes these three tables).
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
@@ -48,7 +48,7 @@ function addEvent(db: Database.Database, ticketId: number, type: string, detail:
   );
 }
 
-const CONFIG: GrillerConfig = {
+const CONFIG: AgentWorkerConfig = {
   model: 'claude-opus-4-8',
   githubRepo: 'x/y',
   githubReadToken: '',

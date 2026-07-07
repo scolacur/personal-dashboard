@@ -1,14 +1,14 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal } from '@dashboard/shared';
-import type { GrillerConfig } from './config';
+import type { AgentWorkerConfig } from '../../shared/config';
 import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
 
-/** Read-only built-in tools — the griller grounds against the checkout, never edits. */
+/** Read-only built-in tools — the agent-worker grounds against the checkout, never edits. */
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 
 export interface GrillTurnInput {
-  config: GrillerConfig;
+  config: AgentWorkerConfig;
   /** Compact, cached project-context prefix (glossary + building-block index). */
   contextPack: string;
   /** The human turn: the ticket body on the first turn, or a reply afterwards. */
@@ -75,7 +75,7 @@ function systemPrompt(contextPack: string): string {
 /** The SDK options shared by the one-shot and warm-streaming paths. When `onProposal` is
  *  given, the propose_commit tool (PD-269) is exposed and allowed alongside the read-only set. */
 function grillOptions(
-  config: GrillerConfig,
+  config: AgentWorkerConfig,
   contextPack: string,
   resumeSessionId?: string,
   onProposal?: (proposal: RefineProposal) => void,
@@ -137,7 +137,7 @@ export interface GrillSession {
 }
 
 export interface OpenSessionInput {
-  config: GrillerConfig;
+  config: AgentWorkerConfig;
   contextPack: string;
   /** Rehydrate a prior session (cold start after a restart); omit for a brand-new thread. */
   resumeSessionId?: string;

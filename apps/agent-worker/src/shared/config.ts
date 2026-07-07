@@ -1,12 +1,14 @@
 import path from 'node:path';
 
 /**
- * Griller worker configuration (D-044). All env-driven so the same image runs in
+ * agent-worker configuration (D-044, D-045). All env-driven so the same image runs in
  * the egress-hardened container and locally in dev. Secrets (ANTHROPIC_API_KEY,
- * GITHUB_READ_TOKEN) live in the griller's OWN env file — never the web process.
+ * GITHUB_READ_TOKEN) live in the agent-worker's OWN env file — never the web process.
+ *
+ * Shared across all jobs (refine, audit, …); per-job knobs live alongside each job.
  */
-export interface GrillerConfig {
-  /** Opus by default — the griller plans well and asks the right questions (D-044). */
+export interface AgentWorkerConfig {
+  /** Opus by default — the worker plans well and asks the right questions (D-044). */
   model: string;
   /** `owner/repo` for the read-only grounding checkout. */
   githubRepo: string;
@@ -24,19 +26,19 @@ export interface GrillerConfig {
   httpsProxy: string;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): GrillerConfig {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerConfig {
   return {
-    model: env.GRILLER_MODEL ?? 'claude-opus-4-8',
-    githubRepo: env.GRILLER_GITHUB_REPO ?? 'scolacur/personal-dashboard',
+    model: env.AGENT_WORKER_MODEL ?? 'claude-opus-4-8',
+    githubRepo: env.AGENT_WORKER_GITHUB_REPO ?? 'scolacur/personal-dashboard',
     githubReadToken: env.GITHUB_READ_TOKEN ?? '',
-    checkoutDir: env.GRILLER_CHECKOUT_DIR ?? '/data/griller-checkout',
+    checkoutDir: env.AGENT_WORKER_CHECKOUT_DIR ?? '/data/agent-worker-checkout',
     dataDir: env.DATA_DIR ?? path.join(process.cwd(), 'data'),
-    pullIntervalMs: Number(env.GRILLER_PULL_INTERVAL_MS ?? 5 * 60_000),
-    refineIntervalMs: Number(env.GRILLER_REFINE_INTERVAL_MS ?? 5_000),
+    pullIntervalMs: Number(env.AGENT_WORKER_PULL_INTERVAL_MS ?? 5 * 60_000),
+    refineIntervalMs: Number(env.AGENT_WORKER_REFINE_INTERVAL_MS ?? 5_000),
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
   };
 }
 
-export function dbPathFor(config: GrillerConfig): string {
+export function dbPathFor(config: AgentWorkerConfig): string {
   return path.join(config.dataDir, 'dashboard.db');
 }

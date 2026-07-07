@@ -6,12 +6,12 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w apps/web && npm run build -w apps/server && npm run build -w apps/griller",
-    "typecheck": "npm run typecheck -w packages/shared && npm run check -w apps/web && npm run typecheck -w apps/server && npm run typecheck -w apps/griller",
+    "build": "npm run build -w apps/web && npm run build -w apps/server && npm run build -w apps/agent-worker",
+    "typecheck": "npm run typecheck -w packages/shared && npm run check -w apps/web && npm run typecheck -w apps/server && npm run typecheck -w apps/agent-worker",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run test -w apps/server && npm run test -w apps/web && npm run test -w apps/griller",
+    "test": "npm run test -w apps/server && npm run test -w apps/web && npm run test -w apps/agent-worker",
     "verify": "npm run build && npm run typecheck && npm run lint && npm run test",
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev:server\" \"npm run dev:web\"",
     "dev:server": "npm run dev -w apps/server",

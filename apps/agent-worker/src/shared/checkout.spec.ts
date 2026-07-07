@@ -20,8 +20,8 @@ describe('proxyGitArgs', () => {
 
 describe('cloneUrl', () => {
   it('is a plain token-free URL (auth goes via a header, never the URL / .git/config)', () => {
-    const withTok = loadConfig({ GITHUB_READ_TOKEN: 'ghp_x', GRILLER_GITHUB_REPO: 'me/repo' });
-    const noTok = loadConfig({ GRILLER_GITHUB_REPO: 'me/repo' });
+    const withTok = loadConfig({ GITHUB_READ_TOKEN: 'ghp_x', AGENT_WORKER_GITHUB_REPO: 'me/repo' });
+    const noTok = loadConfig({ AGENT_WORKER_GITHUB_REPO: 'me/repo' });
     expect(cloneUrl(withTok)).toBe('https://github.com/me/repo.git');
     expect(cloneUrl(noTok)).toBe('https://github.com/me/repo.git');
     expect(cloneUrl(withTok)).not.toContain('ghp_x');
@@ -30,7 +30,7 @@ describe('cloneUrl', () => {
 
 describe('authArgs / authHeaderValue', () => {
   it('attaches the token as a base64 Authorization header override (not persisted to config)', () => {
-    const c = loadConfig({ GITHUB_READ_TOKEN: 'ghp_secret', GRILLER_GITHUB_REPO: 'me/repo' });
+    const c = loadConfig({ GITHUB_READ_TOKEN: 'ghp_secret', AGENT_WORKER_GITHUB_REPO: 'me/repo' });
     const b64 = Buffer.from('x-access-token:ghp_secret').toString('base64');
     expect(authHeaderValue('ghp_secret')).toBe(b64);
     expect(authArgs(c)).toEqual(['-c', `http.extraHeader=Authorization: Basic ${b64}`]);
@@ -39,7 +39,7 @@ describe('authArgs / authHeaderValue', () => {
   });
 
   it('is empty with no token (public clone)', () => {
-    expect(authArgs(loadConfig({ GRILLER_GITHUB_REPO: 'me/repo' }))).toEqual([]);
+    expect(authArgs(loadConfig({ AGENT_WORKER_GITHUB_REPO: 'me/repo' }))).toEqual([]);
     expect(authHeaderValue('')).toBe('');
   });
 });

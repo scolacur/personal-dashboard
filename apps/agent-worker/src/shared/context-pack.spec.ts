@@ -19,7 +19,7 @@ describe('extractSection', () => {
 describe('buildContextPack', () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(path.join(tmpdir(), 'griller-ctx-'));
+    dir = mkdtempSync(path.join(tmpdir(), 'agent-worker-ctx-'));
     writeFileSync(
       path.join(dir, 'PROJECT.md'),
       ['# PROJECT', '## 7. Other', 'x', '## 8. Glossary', '**Refine**: the session.', '## 9. End', 'y'].join('\n'),
@@ -43,7 +43,7 @@ describe('buildContextPack', () => {
   });
 
   it('degrades gracefully when nothing is present', () => {
-    const empty = mkdtempSync(path.join(tmpdir(), 'griller-empty-'));
+    const empty = mkdtempSync(path.join(tmpdir(), 'agent-worker-empty-'));
     expect(buildContextPack(empty)).toBe('## Existing building blocks (reuse before adding new)');
     rmSync(empty, { recursive: true, force: true });
   });
