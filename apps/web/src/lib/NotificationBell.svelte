@@ -30,6 +30,7 @@
   }
 
   async function onItemClick(n: AgentNotification) {
+    open = false;
     if (n.readAt !== null) return;
     try {
       await markNotificationRead(n.id);
