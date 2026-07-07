@@ -74,20 +74,6 @@
   }
 }
 
-.condensed-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-
-  input {
-    cursor: pointer;
-  }
-}
-
 .priority-filter,
 .refinement-filter,
 .project-filter {
@@ -717,11 +703,6 @@
   .lanes-menu-wrap {
     order: 8;
     flex: 0 0 auto;
-  }
-
-  .condensed-toggle {
-    order: 9;
-    flex: 0 0 100%;
   }
 
   /* Board: flex row with scroll-snap so each lane ≈ 85vw */

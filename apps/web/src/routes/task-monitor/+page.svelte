@@ -159,9 +159,6 @@
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
-  // Condensed view hides card descriptions to fit more tickets on screen. On by default.
-  let condensed = $state(true);
-
   // Lanes group by priority (P0 on top … P5, then unset at the bottom). A card can
   // only be reordered within its own band and never dragged into another band.
   const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4, P5: 5, none: 6 };
@@ -543,10 +540,6 @@
         </div>
       {/if}
     </div>
-    <label class="condensed-toggle" title="Hide descriptions">
-      <input type="checkbox" bind:checked={condensed} />
-      <span>Condensed</span>
-    </label>
     <button class="add-btn" type="button" onclick={() => openAdd()} disabled={projects.length === 0}>
       + Add Ticket
     </button>
@@ -697,7 +690,6 @@
             <TicketCard
               {ticket}
               {project}
-              {condensed}
               dragging={draggingId === ticket.id}
               dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               isLocked={isStatusLocked(ticket)}
