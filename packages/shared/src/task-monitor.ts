@@ -382,9 +382,12 @@ export function refineStateFromLatestType(latestRefineType: string | null | unde
 }
 
 // ── Ticket relations (D-020 table, first used by PD-269) ─────────────────────
-// `blocks` (the table default, for the future blocked-by/blocking UI, PD-156) and `split`
-// (parent → child, written when a Refine decompose closes the parent into children, D-036).
-export type RelationType = 'blocks' | 'split';
+// `blocks` (the table default, for the future blocked-by/blocking UI, PD-156), `split`
+// (parent → child, written when a Refine decompose closes the parent into children, D-036),
+// `relates` (a soft, non-blocking "see also" link) and `duplicates` (from-ticket duplicates
+// to-ticket; the from side is typically archived). `relates`/`duplicates` are written
+// structurally by the Ticket Audit's LINK / duplicate-archive findings (PD-288).
+export type RelationType = 'blocks' | 'split' | 'relates' | 'duplicates';
 
 export interface TicketRelation {
   id: number;
@@ -400,6 +403,18 @@ export interface LineageRef {
   displayId: string | null;
   title: string;
   status: TicketStatus;
+}
+
+/** A relation touching a ticket, resolved to the ticket on the other end. `direction: 'from'`
+ *  means this ticket is `from_ticket_id` (the source — it blocks / splits into / duplicates the
+ *  other); `'to'` means it is `to_ticket_id` (the target). Consumers that treat relations as
+ *  truth (e.g. the Ticket Audit, PD-288) read these to avoid re-proposing existing links. */
+export interface ResolvedRelation {
+  id: number;
+  type: RelationType;
+  direction: 'from' | 'to';
+  other: LineageRef;
+  createdAt: number;
 }
 
 /** A ticket's split lineage: what it was split into (as a parent) and what it was split
