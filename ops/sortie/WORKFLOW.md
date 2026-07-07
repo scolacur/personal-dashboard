@@ -525,9 +525,13 @@ BODY
    ```sh
    PR_NUMBER="$(HTTPS_PROXY=$PX HTTP_PROXY=$PX gh pr view "$BRANCH" --repo scolacur/personal-dashboard --json number --jq .number)"
    SHA="$(git rev-parse HEAD)"
-   mkdir -p "$SORTIE_WORKSPACE/.sortie"
+   # WORKSPACE-RELATIVE (same reason as the verify-ok marker in step 1): $SORTIE_WORKSPACE is
+   # NOT set in your Bash tool, so an absolute "$SORTIE_WORKSPACE/.sortie" resolves to /.sortie
+   # and fails with "Permission denied". Your cwd is the workspace root; the after_run hook
+   # `cd`s into $SORTIE_WORKSPACE, so it reads back the same file.
+   mkdir -p .sortie
    printf '{"pr_number":%s,"owner":"scolacur","repo":"personal-dashboard","branch":"%s","sha":"%s"}\n' \
-     "$PR_NUMBER" "$BRANCH" "$SHA" > "$SORTIE_WORKSPACE/.sortie/scm.json"
+     "$PR_NUMBER" "$BRANCH" "$SHA" > .sortie/scm.json
    ```
 
 6. **Relabel to `sortie:in-review` — LAST, only after steps 1–5 succeeded.** `sortie:in-review`
