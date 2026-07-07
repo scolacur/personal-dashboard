@@ -471,3 +471,54 @@ export function refineThreadFromEvents(events: TicketEvent[]): RefineMessage[] {
   }
   return out;
 }
+
+// ── Ticket Audit (D-045, PD-283) ──────────────────────────────────────────────
+// The audit engine runs an autonomous agent over the backlog and records advisory
+// findings; a human later Accepts/Rejects them (apply mechanics land in PD-287).
+
+export const AUDIT_RUN_STATUSES = ['requested', 'running', 'done', 'error'] as const;
+export type AuditRunStatus = (typeof AUDIT_RUN_STATUSES)[number];
+
+export const FINDING_DECISIONS = ['undecided', 'accepted', 'rejected', 'other'] as const;
+export type FindingDecision = (typeof FINDING_DECISIONS)[number];
+
+/** Roll-up counts persisted on a finished run. `findings` + `tickets` + `projects` always
+ *  present; per-recommendation buckets (e.g. `archive`, `complete`) are added opportunistically. */
+export interface AuditRunCounts {
+  projects: number;
+  tickets: number;
+  findings: number;
+  [bucket: string]: number;
+}
+
+/** One audit pass. Created `requested` (by the weekly cron or POST), claimed to `running`
+ *  by the worker, then `done`/`error`. `scope` describes what was audited (e.g. `single:PD`). */
+export interface AuditRun {
+  id: number;
+  status: AuditRunStatus;
+  scope: string | null;
+  model: string | null;
+  counts: AuditRunCounts | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  createdAt: number;
+}
+
+/** One advisory finding about a ticket (or, later, a relation). Never mutates the ticket —
+ *  `decision` tracks the human's call. `confidence` is set by the verify stage (PD-284). */
+export interface AuditFinding {
+  id: number;
+  runId: number;
+  projectId: number | null;
+  ticketId: number | null;
+  /** Recommendation bucket: 'archive' | 'complete' | 'reprioritize' | 'update' | 'keep' | … */
+  type: string;
+  recommendation: string | null;
+  reason: string | null;
+  evidence: string | null;
+  proposedChange: string | null;
+  confidence: string | null;
+  decision: FindingDecision;
+  createdAt: number;
+  updatedAt: number;
+}

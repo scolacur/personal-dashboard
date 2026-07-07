@@ -652,3 +652,39 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     expect((await app.inject({ method: 'GET', url: `${base}/tickets/abc/relations` })).statusCode).toBe(400);
   });
 });
+
+describe('Ticket Audit routes (PD-283)', () => {
+  const base = '/api/widgets/task-monitor';
+
+  it('POST /audit/runs enqueues a run (202, created), and coalesces the second call', async () => {
+    const { app } = freshSetup();
+    const first = await app.inject({ method: 'POST', url: `${base}/audit/runs` });
+    expect(first.statusCode).toBe(202);
+    expect(first.json().created).toBe(true);
+
+    const second = await app.inject({ method: 'POST', url: `${base}/audit/runs` });
+    expect(second.statusCode).toBe(202);
+    expect(second.json().created).toBe(false);
+    expect(second.json().run.id).toBe(first.json().run.id);
+  });
+
+  it('GET /audit/runs lists runs newest-first', async () => {
+    const { app } = freshSetup();
+    await app.inject({ method: 'POST', url: `${base}/audit/runs` });
+    const res = await app.inject({ method: 'GET', url: `${base}/audit/runs` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toHaveLength(1);
+    expect(res.json()[0].status).toBe('requested');
+  });
+
+  it('GET /audit/runs/:id/findings returns {run, findings}; 404 unknown; 400 bad id', async () => {
+    const { app } = freshSetup();
+    const runId = (await app.inject({ method: 'POST', url: `${base}/audit/runs` })).json().run.id;
+    const ok = await app.inject({ method: 'GET', url: `${base}/audit/runs/${runId}/findings` });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().run.id).toBe(runId);
+    expect(ok.json().findings).toEqual([]);
+    expect((await app.inject({ method: 'GET', url: `${base}/audit/runs/9999/findings` })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `${base}/audit/runs/abc/findings` })).statusCode).toBe(400);
+  });
+});
