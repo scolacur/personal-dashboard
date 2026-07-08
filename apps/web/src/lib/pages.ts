@@ -1,15 +1,9 @@
-/** A nested nav item under a top-level page (PD-286). `route` may carry a `#hash` to scroll
- *  to a section on the parent page, or be omitted when the item is a non-link group header
- *  (its `children` render nested beneath it). `badge: true` opts the item into a live count
- *  overlaid by the nav from a store (Ticket Audit open findings). */
+/** A nested nav item under a top-level page (PD-286). `route` carries a `#hash` to scroll to a
+ *  section on the parent page. Revealed via the parent's accordion. */
 export interface NavChild {
   id: string;
   title: string;
-  route?: string;
-  count?: number;
-  badge?: boolean;
-  /** Grandchild items rendered indented under this one (e.g. Reports → Ticket Audit). */
-  children?: NavChild[];
+  route: string;
 }
 
 export interface PageMeta {
@@ -17,9 +11,7 @@ export interface PageMeta {
   title: string;
   description: string;
   route: string;
-  /** Optional static badge count next to the nav label. */
-  count?: number;
-  /** Nested nav items, indented under this page in the side nav. */
+  /** Nested nav items, revealed as an accordion under this page in the side nav. */
   children?: NavChild[];
 }
 
@@ -74,20 +66,9 @@ export const pages: PageMeta[] = [
     description: 'Monitor and control AI agent workflows.',
     route: '/task-monitor',
     children: [
+      { id: 'tm-site-status', title: 'Site Status', route: '/task-monitor#site-status' },
       { id: 'tm-jobs', title: 'Jobs', route: '/task-monitor#jobs' },
       { id: 'tm-tickets', title: 'Tickets', route: '/task-monitor#tickets' },
-      {
-        id: 'tm-reports',
-        title: 'Reports',
-        children: [
-          {
-            id: 'ticket-audit',
-            title: 'Ticket Audit',
-            route: '/task-monitor/reports/ticket-audit',
-            badge: true,
-          },
-        ],
-      },
     ],
   },
 ];

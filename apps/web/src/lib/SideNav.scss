@@ -36,8 +36,17 @@
   gap: var(--space-xs);
 }
 
+// A top-level nav row: the link fills the row, the accordion caret (if any) sits at the end.
+.side-link-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
 .side-link {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: var(--space-sm);
   padding: var(--space-sm) var(--space-sm);
@@ -60,6 +69,38 @@
   }
 }
 
+.side-link-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+
+  &:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+}
+
+.side-caret-icon {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+
+  &.open {
+    transform: rotate(90deg);
+  }
+}
+
 .side-sublinks {
   list-style: none;
   margin: var(--space-xs) 0 0;
@@ -67,28 +108,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-
-  &.nested {
-    margin-top: 2px;
-    padding-left: var(--space-sm);
-  }
-}
-
-// Non-link group header (e.g. "Reports"): a quiet label its children indent under.
-.side-subgroup {
-  display: block;
-  padding: var(--space-xs) var(--space-sm);
-  color: var(--muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .side-sublink {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
+  display: block;
   padding: var(--space-xs) var(--space-sm);
   border-left: 2px solid var(--border);
   border-radius: 0 var(--radius) var(--radius) 0;
@@ -110,22 +133,4 @@
     background: var(--surface-2);
     font-weight: 600;
   }
-}
-
-.side-link-label {
-  flex: 1;
-  min-width: 0;
-}
-
-.side-link-badge {
-  flex-shrink: 0;
-  min-width: 1.25rem;
-  padding: 0 0.375rem;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  line-height: 1.25rem;
-  text-align: center;
 }
