@@ -24,6 +24,7 @@ import {
   getSortieFleet,
   getTicket,
   getTicketIssueRef,
+  listAllRelations,
   listNotifications,
   listProjects,
   listRelations,
@@ -481,6 +482,11 @@ export function registerRoutes(
       ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
       : reply.status(409).send({ error: 'no proposal to reject', code: 'NO_PROPOSAL' });
   });
+
+  // Every relation on the board as raw rows (PD-322) — the board fetches this once and derives
+  // each card's blocked-by/blocking/split badges client-side against tickets it already holds,
+  // avoiding one per-card `/tickets/:id/relations` round-trip.
+  app.get(`${base}/relations`, async () => listAllRelations(db));
 
   // Every relation touching the ticket, both directions, resolved (with origin) — the canonical
   // relations resource the UI (PD-322) reads for badges + the detail-page management list

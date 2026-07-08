@@ -2,10 +2,11 @@
   import type { AgentProject, AgentState, AgentTicket, RefineState, TicketAssignee, TicketPriority } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, AGENT_STATE_LABELS } from '@dashboard/shared';
   import GithubMark from '$lib/icons/GithubMark.svelte';
-  import { Pencil, Copy, Trash2, ClipboardCopy } from 'lucide-svelte';
+  import { Pencil, Copy, Trash2, ClipboardCopy, MoreVertical } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
+  import { RELATION_ACTIONS, type RelationAction, type RelationBadges } from './relation-logic';
 
   let {
     ticket,
@@ -13,6 +14,7 @@
     dragging,
     dropBefore,
     isLocked,
+    badges,
     onDragStart,
     onDragEnd,
     onEdit,
@@ -20,6 +22,7 @@
     onCopy,
     onDelete,
     onRefine,
+    onRelationAction,
     onOpenStatusLegend,
     onUpdate,
   }: {
@@ -28,6 +31,7 @@
     dragging: boolean;
     dropBefore: boolean;
     isLocked: boolean;
+    badges: RelationBadges;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
     onEdit: () => void;
@@ -35,9 +39,19 @@
     onCopy: () => void;
     onDelete: () => void;
     onRefine: () => void;
+    onRelationAction: (action: RelationAction) => void;
     onOpenStatusLegend: (state: AgentState) => void;
     onUpdate: () => void;
   } = $props();
+
+  // ⋮ "Mark as →" relation menu (D-051, PD-322).
+  let menuOpen = $state(false);
+  const detailHref = $derived(ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined);
+
+  function chooseRelation(action: RelationAction) {
+    menuOpen = false;
+    onRelationAction(action);
+  }
 
   function bandKey(p: TicketPriority | null): string {
     return p ?? 'none';
@@ -132,6 +146,19 @@
     </span>
   </div>
   <p class="card-title">{ticket.title}</p>
+  {#if badges.blockedBy > 0 || badges.blocking > 0 || badges.split}
+    <div class="card-relations">
+      {#if badges.blockedBy > 0}
+        <a class="rel-badge rel-blocked" href={detailHref} draggable="false" title="Blocked by {badges.blockedBy} unresolved ticket(s)">⛔ blocked by {badges.blockedBy}</a>
+      {/if}
+      {#if badges.blocking > 0}
+        <a class="rel-badge rel-blocking" href={detailHref} draggable="false" title="Blocking {badges.blocking} unresolved ticket(s)">🚧 blocking {badges.blocking}</a>
+      {/if}
+      {#if badges.split}
+        <a class="rel-badge rel-split" href={detailHref} draggable="false" title="Part of a split lineage">{badges.splitOrigin === 'agent' ? 'auto-split 🤖' : 'split'}</a>
+      {/if}
+    </div>
+  {/if}
   {#if ticket.refined || ticket.refineState || ticket.agentState || (ticket.status !== 'completed' && ticket.status !== 'closed')}
     <div class="card-status-row">
       <!-- Left: Refine-agent state (outlined pill). Always occupies the left slot so the
@@ -186,6 +213,18 @@
     <Button variant="icon" title="Duplicate" aria-label="Duplicate" onclick={onDuplicate}><Copy size={13} /></Button>
     <Button variant="icon" title="Copy issue text" aria-label="Copy issue text" onclick={onCopy}><ClipboardCopy size={13} /></Button>
     <Button variant="icon" title="Delete" aria-label="Delete" onclick={onDelete}><Trash2 size={13} /></Button>
+    <div class="kebab-wrap">
+      <Button variant="icon" title="Mark as…" aria-label="Relation actions" onclick={() => (menuOpen = !menuOpen)}><MoreVertical size={13} /></Button>
+      {#if menuOpen}
+        <button class="kebab-scrim" type="button" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
+        <div class="kebab-menu" role="menu">
+          <p class="kebab-heading">Mark as…</p>
+          {#each RELATION_ACTIONS as action (action.key)}
+            <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseRelation(action)}>{action.label}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </div>
 </article>
 

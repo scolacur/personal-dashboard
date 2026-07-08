@@ -1,18 +1,27 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import type { AgentProject, AgentTicket, TicketLineage, TicketStatus } from '@dashboard/shared';
+  import type {
+    AgentProject,
+    AgentTicket,
+    ResolvedRelation,
+    TicketRelation,
+    TicketStatus,
+  } from '@dashboard/shared';
   import { PRIORITY_LABELS } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
   import TicketThread from '$lib/TicketThread.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
+  import RelationPicker from '../../RelationPicker.svelte';
+  import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
 
   let ticket = $state<AgentTicket | null>(null);
   let project = $state<AgentProject | null>(null);
-  let lineage = $state<TicketLineage | null>(null);
+  let allTickets = $state<AgentTicket[]>([]);
+  let relations = $state<ResolvedRelation[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let notFound = $state(false);
@@ -36,6 +45,7 @@
     project = null;
     try {
       const [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
+      allTickets = tickets;
       const found = tickets.find((t) => t.displayId === id) ?? null;
       if (!found) {
         notFound = true;
@@ -44,7 +54,7 @@
       ticket = found;
       project =
         found.projectId !== null ? (projects.find((p) => p.id === found.projectId) ?? null) : null;
-      lineage = await api.fetchLineage(found.id);
+      relations = await api.fetchRelations(found.id);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -117,6 +127,47 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       markingRefined = false;
+    }
+  }
+
+  // ── Relations management (PD-322, D-051) ──────────────────────────────────
+  // The relations picker + a per-row Remove make the detail page the authoritative place to
+  // hand-manage every relation type; this supersedes PD-269's read-only split-only lineage view.
+  let addMenuOpen = $state(false);
+  let pickerOpen = $state(false);
+  let pickerAction = $state<RelationAction | null>(null);
+
+  // The picker excludes tickets already related of the chosen type; it reads raw rows, so map
+  // this ticket's resolved relations back into (from,to) pairs for it.
+  const relationRows = $derived<TicketRelation[]>(
+    ticket
+      ? relations.map((r) => ({
+          id: r.id,
+          fromTicketId: r.direction === 'from' ? ticket!.id : r.other.ticketId,
+          toTicketId: r.direction === 'from' ? r.other.ticketId : ticket!.id,
+          type: r.type,
+          origin: r.origin,
+          createdAt: r.createdAt,
+        }))
+      : [],
+  );
+
+  function chooseAdd(action: RelationAction) {
+    addMenuOpen = false;
+    pickerAction = action;
+    pickerOpen = true;
+  }
+
+  async function removeRelation(rel: ResolvedRelation) {
+    if (!ticket) return;
+    const other = rel.other.displayId ?? `#${rel.other.ticketId}`;
+    if (!confirm(`Remove "${relationLabel(rel)} ${other}"?`)) return;
+    error = null;
+    try {
+      await api.deleteRelation(ticket.id, rel.id);
+      if (ticketId) await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
     }
   }
 </script>
@@ -195,36 +246,56 @@
         <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
       </dl>
 
-      {#if lineage && (lineage.splitInto.length > 0 || lineage.splitFrom.length > 0)}
-        <section class="lineage">
-          <h2>Lineage</h2>
-          {#if lineage.splitFrom.length > 0}
-            <p class="lineage-group">
-              <span class="lineage-label">Split from</span>
-              {#each lineage.splitFrom as ref (ref.ticketId)}
-                <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
-                  >{ref.displayId} — {ref.title}</a
-                >
-              {/each}
-            </p>
-          {/if}
-          {#if lineage.splitInto.length > 0}
-            <div class="lineage-group">
-              <span class="lineage-label">Split into</span>
-              <ul>
-                {#each lineage.splitInto as ref (ref.ticketId)}
-                  <li>
-                    <a class="lineage-ref" href="/task-monitor/tickets/{ref.displayId}"
-                      >{ref.displayId} — {ref.title}</a
-                    >
-                    <span class="lineage-status">{STATUS_LABELS[ref.status] ?? ref.status}</span>
-                  </li>
+      <section class="relations">
+        <div class="relations-head">
+          <h2>Relations</h2>
+          <div class="add-rel-wrap">
+            <button class="add-rel-btn" type="button" onclick={() => (addMenuOpen = !addMenuOpen)}
+              >+ Add</button
+            >
+            {#if addMenuOpen}
+              <button
+                class="add-rel-scrim"
+                type="button"
+                aria-label="Close menu"
+                onclick={() => (addMenuOpen = false)}
+              ></button>
+              <div class="add-rel-menu" role="menu">
+                {#each RELATION_ACTIONS as action (action.key)}
+                  <button
+                    class="add-rel-item"
+                    type="button"
+                    role="menuitem"
+                    onclick={() => chooseAdd(action)}>{action.label}</button
+                  >
                 {/each}
-              </ul>
-            </div>
-          {/if}
-        </section>
-      {/if}
+              </div>
+            {/if}
+          </div>
+        </div>
+        {#if relations.length === 0}
+          <p class="muted">No relations.</p>
+        {:else}
+          <ul class="relation-list">
+            {#each relations as rel (rel.id)}
+              <li class="relation-row">
+                <span class="relation-kind">{relationLabel(rel)}</span>
+                <a class="relation-ref" href="/task-monitor/tickets/{rel.other.displayId}"
+                  >{rel.other.displayId ?? `#${rel.other.ticketId}`} — {rel.other.title}</a
+                >
+                <span class="relation-status">{STATUS_LABELS[rel.other.status] ?? rel.other.status}</span>
+                <button
+                  class="relation-remove"
+                  type="button"
+                  title="Remove relation"
+                  aria-label="Remove relation"
+                  onclick={() => removeRelation(rel)}>×</button
+                >
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
     </div>
 
     <div class="ticket-right">
@@ -259,6 +330,16 @@
     </div>
 
     <GlossaryModal open={glossaryOpen} tab="refinement" onClose={() => (glossaryOpen = false)} />
+
+    <RelationPicker
+      open={pickerOpen}
+      action={pickerAction}
+      source={ticket}
+      tickets={allTickets}
+      relations={relationRows}
+      onClose={() => (pickerOpen = false)}
+      onCreated={() => ticketId && load(ticketId)}
+    />
   </article>
 {/if}
 

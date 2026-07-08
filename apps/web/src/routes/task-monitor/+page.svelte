@@ -5,11 +5,13 @@
   import DeployStatus from '../DeployStatus.svelte';
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
+  import RelationPicker from './RelationPicker.svelte';
+  import { computeBadges, type RelationAction, type RelationBadges } from './relation-logic';
   import JobsList from './JobsList.svelte';
   import * as api from './api';
   import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
@@ -134,6 +136,26 @@
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
+  // Relations (PD-322): fetched once for the whole board; card badges derive from these plus a
+  // status lookup, so an unresolved-blocker count never costs a per-card request.
+  let relations = $state<TicketRelation[]>([]);
+  const statusById = $derived(new Map(tickets.map((t) => [t.id, t.status])));
+  const badgesById = $derived(
+    new Map(tickets.map((t) => [t.id, computeBadges(t.id, relations, statusById)])),
+  );
+  const NO_BADGES: RelationBadges = { blockedBy: 0, blocking: 0, split: false, splitOrigin: null };
+
+  // Ticket-relation picker (kebab → "Mark as →"). The board owns the single picker instance
+  // since it holds the full ticket list + relations the picker filters against.
+  let pickerOpen = $state(false);
+  let pickerAction = $state<RelationAction | null>(null);
+  let pickerSource = $state<AgentTicket | null>(null);
+
+  function openRelationPicker(ticket: AgentTicket, action: RelationAction) {
+    pickerSource = ticket;
+    pickerAction = action;
+    pickerOpen = true;
+  }
 
   function visibleTickets(): AgentTicket[] {
     return tickets.filter((t) => {
@@ -155,7 +177,11 @@
     if (!silent) loading = true;
     error = null;
     try {
-      [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
+      [projects, tickets, relations] = await Promise.all([
+        api.fetchProjects(),
+        api.fetchTickets(),
+        api.fetchAllRelations(),
+      ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -367,7 +393,14 @@
       await api.updateTicket(id, { status, sortOrder });
       await load(true);
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : String(err);
+      // D-051 blocker gate: the drop is refused server-side. The card never moved optimistically,
+      // so it stays put ("snaps back"); surface the open blocker(s) as a toast rather than a banner.
+      if (msg.toLowerCase().startsWith('blocked by unresolved')) {
+        showToast(`⛔ Can't queue — ${msg}`);
+      } else {
+        error = msg;
+      }
     }
   }
 
@@ -608,6 +641,8 @@
               dragging={draggingId === ticket.id}
               dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               isLocked={isStatusLocked(ticket)}
+              badges={badgesById.get(ticket.id) ?? NO_BADGES}
+              onRelationAction={(action) => openRelationPicker(ticket, action)}
               onDragStart={(e) => onDragStart(e, ticket)}
               {onDragEnd}
               onEdit={() => openEdit(ticket)}
@@ -635,6 +670,19 @@
   </div>
 {/if}
 </section>
+
+<RelationPicker
+  open={pickerOpen}
+  action={pickerAction}
+  source={pickerSource}
+  {tickets}
+  {relations}
+  onClose={() => (pickerOpen = false)}
+  onCreated={(message) => {
+    showToast(message);
+    void load(true);
+  }}
+/>
 
 {#if toast}
   <div class="toast" role="status">{toast}</div>

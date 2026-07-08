@@ -2,8 +2,10 @@ import type {
   AgentProject,
   AgentTicket,
   CreateTicketInput,
+  RelationType,
+  ResolvedRelation,
   TicketEvent,
-  TicketLineage,
+  TicketRelation,
   UpdateTicketInput,
 } from '@dashboard/shared';
 
@@ -137,9 +139,40 @@ export async function rejectRefine(id: number): Promise<void> {
   if (!res.ok) return parseError(res);
 }
 
-/** A ticket's read-only split lineage (PD-269). */
-export async function fetchLineage(id: number): Promise<TicketLineage> {
+/** Every relation touching a ticket, both directions, resolved to the other end (PD-321). The
+ *  detail page derives its split-lineage subset client-side by filtering `type === 'split'`. */
+export async function fetchRelations(id: number): Promise<ResolvedRelation[]> {
   const res = await fetch(`${BASE}/${id}/relations`);
   if (!res.ok) return parseError(res);
-  return res.json() as Promise<TicketLineage>;
+  return res.json() as Promise<ResolvedRelation[]>;
+}
+
+/** Every relation on the board as raw rows (PD-322) — one fetch for all card badges. */
+export async function fetchAllRelations(): Promise<TicketRelation[]> {
+  const res = await fetch(`/api/widgets/task-monitor/relations`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketRelation[]>;
+}
+
+/** Create a relation from the UI (origin='human'). `fromId` is the source (for `blocks`, the
+ *  blocker); `toId` the target (the blocked). Throws on 400 self / 409 cycle. */
+export async function createRelation(
+  ticketId: number,
+  fromId: number,
+  toId: number,
+  type: RelationType,
+): Promise<ResolvedRelation> {
+  const res = await fetch(`${BASE}/${ticketId}/relations`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fromId, toId, type }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<ResolvedRelation>;
+}
+
+/** Remove a relation by its row id (the detail-page per-row remove). */
+export async function deleteRelation(ticketId: number, relationId: number): Promise<void> {
+  const res = await fetch(`${BASE}/${ticketId}/relations/${relationId}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) return parseError(res);
 }

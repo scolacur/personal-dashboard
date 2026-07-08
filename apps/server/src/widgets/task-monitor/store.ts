@@ -12,6 +12,7 @@ import type {
   RelationOrigin,
   RelationType,
   ResolvedRelation,
+  TicketRelation,
   TicketAssignee,
   TicketEvent,
   TicketLineage,
@@ -779,6 +780,33 @@ export function listRelations(db: Database.Database, ticketId: number): Resolved
   return [...outgoing.map((r) => rel(r, 'from')), ...incoming.map((r) => rel(r, 'to'))].sort(
     (a, b) => a.createdAt - b.createdAt || a.id - b.id,
   );
+}
+
+/** Every relation on the board as raw rows (PD-322). Sparse in practice, so the board fetches
+ *  this once and resolves each card's badges against tickets it already holds in memory — cheaper
+ *  than one `listRelations` call per card. */
+export function listAllRelations(db: Database.Database): TicketRelation[] {
+  const rows = db
+    .prepare(
+      `SELECT id, from_ticket_id, to_ticket_id, type, origin, created_at
+         FROM agent_ticket_relations ORDER BY id ASC`,
+    )
+    .all() as {
+    id: number;
+    from_ticket_id: number;
+    to_ticket_id: number;
+    type: string;
+    origin: string;
+    created_at: number;
+  }[];
+  return rows.map((r) => ({
+    id: r.id,
+    fromTicketId: r.from_ticket_id,
+    toTicketId: r.to_ticket_id,
+    type: r.type as RelationType,
+    origin: r.origin as RelationOrigin,
+    createdAt: r.created_at,
+  }));
 }
 
 /** A ticket's split lineage for the read-only display (PD-269); PD-156 owns the full UI. */
