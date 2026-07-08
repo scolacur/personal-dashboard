@@ -32,6 +32,8 @@ Newest decisions at the top.
 
 **Alternatives considered:** (a) check `reviewDecision == APPROVED` — redundant since `CLEAN` implies reviews are satisfied per branch-protection rules; (b) enumerate required checks by name — fragile, couples the merge bridge to CI config.
 
+**Amendment (2026-07-08, PD-211):** the original workflow used `check_suite`/`status` triggers to catch the "approved before CI went green" case. Those are **silently dead**: GitHub suppresses `check_suite`/`status` events that originate from `GITHUB_TOKEN` (which runs the `ci` workflow) to prevent recursive runs — so a review that landed before CI finished saw `mergeStateStatus != CLEAN`, skipped, and the promised re-fire never came, leaving the PR approved-and-CLEAN but unmerged forever. Replaced both with a single `workflow_run` trigger on the `ci` workflow completing — `workflow_run` is GitHub's sanctioned exception and *does* fire for `GITHUB_TOKEN`-run workflows. Also fixed a latent bug in the (never-executed) SHA→PR resolution: `gh`'s `--jq` flag doesn't accept `--arg`, so it now pipes to the runner's real `jq`. The `mergeStateStatus == CLEAN` decision above is unchanged; only the trigger wiring was wrong.
+
 ---
 
 ## D-051: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)

@@ -18,13 +18,22 @@
 # satisfied"). Keying off mergeStateStatus rather than a hard-coded check name means any
 # future required check (e.g., the D-047 path-guard) is honored automatically.
 #
+# TRIGGER — the "approved before CI was green" case (amends D-052): when the approval lands
+# before CI finishes, the review-triggered run sees mergeStateStatus != CLEAN and skips,
+# planning to re-fire when CI goes green. That re-fire MUST come from `workflow_run`, NOT
+# `check_suite`/`status`: GitHub suppresses check_suite/status events that originate from
+# GITHUB_TOKEN (which is what runs the `ci` workflow) to prevent recursive runs, so those
+# triggers are silently dead here. `workflow_run` is GitHub's sanctioned exception for
+# chaining off another workflow's completion and fires even for GITHUB_TOKEN-run workflows.
+#
 # STANDING REVIEW: reviews are grouped by reviewer; only each reviewer's *latest* review
 # counts. If an authorized approver later submits CHANGES_REQUESTED, that supersedes the
 # earlier APPROVED and will no longer qualify.
 #
 # IDEMPOTENCY / LOOP SAFETY: the script skips any PR that is not OPEN — a merged/closed PR
 # is a safe no-op. A merged PR is no longer OPEN, so re-fires after merge are no-ops. The
-# bot's own workflow activity never passes the authorized-review gate.
+# bot's own workflow activity never passes the authorized-review gate. A `ci` run on push
+# to main resolves to no open PR head → "No open PRs found" → no-op.
 
 name: sortie-auto-merge
 
@@ -32,11 +41,12 @@ on:
   # Fires when a human approves a PR — merge immediately if already CLEAN.
   pull_request_review:
     types: [submitted]
-  # Fires when CI finishes — catches the case where the approval landed before CI was green.
-  check_suite:
+  # Fires when the `ci` workflow finishes — catches the common case where the approval
+  # landed BEFORE CI was green. MUST be workflow_run (see TRIGGER note in the header):
+  # check_suite/status events from GITHUB_TOKEN don't trigger workflows, so they were dead.
+  workflow_run:
+    workflows: ["ci"]
     types: [completed]
-  # Fires on classic commit-status updates (legacy CI / third-party integrations).
-  status: {}
   # Fires when a PR is force-pushed or reopened after an earlier check.
   pull_request:
     types: [synchronize, reopened]
@@ -47,16 +57,18 @@ permissions:
 
 # One in-flight merge attempt per PR (or per commit SHA when the PR number is unknown).
 concurrency:
-  group: sortie-auto-merge-${{ github.event.pull_request.number || github.event.check_suite.head_sha || github.event.sha || 'global' }}
+  group: sortie-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || 'global' }}
   cancel-in-progress: false
 
 jobs:
   auto-merge:
-    # Cheap payload gate for pull_request_review: only proceed when the triggering review
-    # is an APPROVED review from an authorized user. All other events always run the script.
+    # Event gate:
+    #  - pull_request_review: only an APPROVED review from an authorized user.
+    #  - workflow_run: only when the `ci` run succeeded (a failed CI can't be CLEAN anyway).
+    #  - pull_request (synchronize/reopened): always run.
     if: >-
-      github.event_name != 'pull_request_review' ||
       (
+        github.event_name == 'pull_request_review' &&
         github.event.review.state == 'approved' &&
         (
           github.event.review.author_association == 'OWNER' ||
@@ -65,7 +77,12 @@ jobs:
             contains(github.event.review.body, '<!-- sortie:human-reply -->')
           )
         )
-      )
+      ) ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success'
+      ) ||
+      github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -83,19 +100,14 @@ jobs:
 
           if [ "$EVENT" = "pull_request_review" ] || [ "$EVENT" = "pull_request" ]; then
             PRS=("${{ github.event.pull_request.number }}")
-          elif [ "$EVENT" = "check_suite" ]; then
-            HEAD_SHA="${{ github.event.check_suite.head_sha }}"
+          elif [ "$EVENT" = "workflow_run" ]; then
+            # workflow_run carries no PR number — map the CI run's head SHA to an open PR.
+            # (Note: gh's --jq flag does NOT accept --arg, so pipe to the runner's real jq.)
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
             mapfile -t PRS < <(
               gh pr list --repo "$REPO" --state open --json number,headRefOid \
-                --jq --arg sha "$HEAD_SHA" \
-                '.[] | select(.headRefOid == $sha) | .number | tostring'
-            )
-          elif [ "$EVENT" = "status" ]; then
-            SHA="${{ github.event.sha }}"
-            mapfile -t PRS < <(
-              gh pr list --repo "$REPO" --state open --json number,headRefOid \
-                --jq --arg sha "$SHA" \
-                '.[] | select(.headRefOid == $sha) | .number | tostring'
+                | jq -r --arg sha "$HEAD_SHA" \
+                  '.[] | select(.headRefOid == $sha) | .number'
             )
           fi
 
