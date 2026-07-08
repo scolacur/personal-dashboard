@@ -9,12 +9,14 @@ import type { BackendWidget } from './types';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as taskMonitorWidget } from './widgets/task-monitor/index';
 import { widget as pomodoroWidget } from './widgets/pomodoro/index';
+import { widget as acuteStrategiesWidget } from './widgets/acute-strategies-generator/index';
 import { initDeployStatus, getDeployInfo } from './deploy-status';
 
 const widgets: BackendWidget[] = [
   musicTrackerWidget,
   taskMonitorWidget,
   pomodoroWidget,
+  acuteStrategiesWidget,
 ];
 
 // Structured JSON in prod (log aggregation); human-readable pretty logs in dev.

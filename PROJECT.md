@@ -408,7 +408,7 @@ trust boundary Sortie already relies on for issue labels); a stranger cannot app
 
 ### Ticket relations
 
-Definitions for the first-class ticket-relation model (D-048). A relation is a directed,
+Definitions for the first-class ticket-relation model (D-050). A relation is a directed,
 typed edge between two tickets (`agent_ticket_relations`).
 
 **Ticket relation**:
@@ -424,7 +424,7 @@ _Avoid_: reading the direction backwards — the `from` side is the thing doing 
 
 **Blocker gate**:
 The rule that a ticket **cannot enter `robot_queue`** while it has an unresolved blocker — a
-second queue-entry precondition beside **isSortieReady** (D-048). Hard-refused on entry; entry-only
+second queue-entry precondition beside **isSortieReady** (D-050). Hard-refused on entry; entry-only
 (does not evict an already-queued ticket, but blocking a queued ticket needs a confirm). Enforced
 in `updateTicket`. Cycle-safe (adding a `blocks` edge that closes a cycle is refused).
 _Avoid_: treating "blocked" as merely a badge — it refuses dispatch.
@@ -435,7 +435,7 @@ A blocker that no longer gates because it reached a terminal state — `complete
 still gate. "Done or gone."
 
 **Relation origin**:
-Provenance carried on each relation row — `agent` | `human` (D-048). `agent` = written by the
+Provenance carried on each relation row — `agent` | `human` (D-050). `agent` = written by the
 griller decompose or the Audit ([[D-045]]); `human` = hand-drawn in the relations UI. The column
 defaults `agent` so pre-existing rows back-fill correctly. Display distinguishes them (e.g. an
 agent `split` renders "auto-split 🤖", a human one "split").

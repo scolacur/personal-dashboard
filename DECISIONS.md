@@ -6,7 +6,7 @@ Newest decisions at the top.
 
 ---
 
-## D-048: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)
+## D-050: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)
 
 **Decision:** Ticket relations become first-class *and behavioral*, not cosmetic. Key choices from the 2026-07-07 grill:
 
@@ -23,6 +23,26 @@ Newest decisions at the top.
 **Trade-off:** A hard gate can deadlock via cycles — bought off with mandatory full cycle detection. Entry-only leaves a blocked ticket sitting queued if it's blocked *after* queueing — bought off with the confirm modal (conscious choice) rather than complex auto-eviction. `split` becoming hand-creatable loosens its "a decompose happened" implication — bought back by `origin` carrying the provenance instead of the type.
 
 **Implications:** Sliced from **PD-156** into two vertical slices (both P1): a **backend** slice (**PD-321**, this commit) — `origin` column + shared `RelationOrigin` + `ResolvedRelation.origin`; `addRelation` origin threading + self/`blocks`-cycle validation; the gate in `updateTicket`; relation write endpoints. The read route `GET /tickets/:id/relations` is **widened** from the PD-269 split-only `TicketLineage` to the full `ResolvedRelation[]` (both directions, with origin) — the detail page derives its split subset client-side; this temporarily changes the shape the deployed PD-269 detail page consumes until PD-322 lands (acceptable — LAN-only personal site). New `POST /tickets/:id/relations` (`origin='human'`; 400 self, 409 cycle) + `DELETE /tickets/:id/relations/:relationId`; the `robot_queue` gate surfaces as **409 `BLOCKED_BY_UNRESOLVED`** on both the PATCH and refine-approve routes. The **frontend** slice (**PD-322**, depends on PD-321) — ⋮ kebab "Mark as" submenu; ticket-picker modal reusing `ticketMatchesQuery` + `Modal.svelte`; card badges; detail-page authoritative list + the split-lineage view rebuilt over the widened endpoint; drag-drop rejection UX; the block-a-queued-ticket confirm modal. Feeds [[D-045]] — the Audit's LINK/UNLINK now write with `origin='agent'`. Glossary (*ticket relation*, *`blocks` relation*, *blocker gate*, *relation origin*, *resolved blocker*) added to PROJECT.md §8.
+
+---
+
+## D-048: Acute Strategies Generator stores tags as a JSON array in a SQLite TEXT column (PD-202)
+
+**Decision:** Idea tags are stored as a JSON array in a `TEXT` column (`tags TEXT NOT NULL DEFAULT '[]'`), not in a separate join table.
+
+**Why:** The ideas list is small (O(100) entries), tags are only used for client-side filtering, and a join table adds schema complexity with no benefit at this scale. SQLite's built-in JSON support lets us parse/serialize in the store layer without any extra SQL joins.
+
+**Trade-off:** Tag-based aggregation queries (e.g. "count ideas per tag") would require JSON parsing in SQL or in application code. Acceptable for a personal dashboard; revisit if a tag management UI becomes needed.
+
+---
+
+## D-049: Acute Strategies Generator uses client-side filtering and randomisation (PD-202)
+
+**Decision:** All ideas are loaded once via `GET /api/widgets/acute-strategies-generator/ideas`. Filtering by type/tag and random selection are done in the browser.
+
+**Why:** The ideas list is small enough that loading all of them upfront is negligible. Client-side randomisation avoids a network round-trip on every Shuffle press and makes the filter interaction feel instant.
+
+**Trade-off:** If the list grew very large (thousands of items), this would need revisiting. Not a concern for a personal creative list.
 
 ---
 

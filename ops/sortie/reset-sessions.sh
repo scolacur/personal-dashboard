@@ -5,8 +5,9 @@
 #
 # Surgical: touches ONLY the given issue's rows in `run_history` + `session_metadata`
 # (both keyed by issue_id). Every other issue's history, the reactions state, and the
-# workspaces are untouched. Interactive — confirms the issue, confirms the delete, and
-# confirms the restart, and never writes until the container is stopped + the DB backed up.
+# workspaces are untouched. Interactive — confirms the delete (the inspected rows above
+# are the confirmation) and confirms the restart, and never writes until the container is
+# stopped + the DB backed up.
 #
 # Runs on the NAS (where .sortie.db and the `sortie` container live). Uses a throwaway
 # official `alpine` + `apk add sqlite` container (no sqlite3 on the DSM host; official
@@ -80,19 +81,13 @@ echo "session_metadata rows for #$ISSUE:"
 sq "SELECT * FROM session_metadata WHERE issue_id='$ISSUE';"
 echo
 
-# ── 2. confirm correct issue ─────────────────────────────────────────────────────
-if ! confirm "Is this the correct issue to reset?"; then
+# ── 2. confirm delete (single gate — the rows above are the confirmation) ────────
+if ! confirm "Delete the run_history + session_metadata rows shown above for GitHub Issue #$ISSUE?"; then
   echo "Aborted. Nothing changed."
   exit 0
 fi
 
-# ── 3. confirm delete ────────────────────────────────────────────────────────────
-if ! confirm "Delete the run_history + session_metadata rows shown above for #$ISSUE?"; then
-  echo "Aborted. Nothing changed."
-  exit 0
-fi
-
-# ── 4. stop → backup → delete → verify ───────────────────────────────────────────
+# ── 3. stop → backup → delete → verify ───────────────────────────────────────────
 echo "Stopping $CONTAINER (so the DB is quiescent during the edit)..."
 $DOCKER stop "$CONTAINER"
 STOPPED=1
@@ -110,7 +105,7 @@ if [[ "$REMAIN" != "0" ]]; then
   echo "WARNING: expected 0 — inspect manually. Backup: ${BAK/\/data/$DATA_DIR}" >&2
 fi
 
-# ── 5. confirm restart ───────────────────────────────────────────────────────────
+# ── 4. confirm restart ───────────────────────────────────────────────────────────
 echo
 if confirm "Restart $CONTAINER now?"; then
   $DOCKER start "$CONTAINER"
