@@ -10,7 +10,7 @@
 {:else}
   <div class="grid">
     {#each widgets as w (w.route)}
-      <Widget title={w.title} description={w.description} route={w.route} />
+      <Widget title={w.title} description={w.description} route={w.route} embed={w.embed} />
     {/each}
   </div>
 {/if}
