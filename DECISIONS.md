@@ -6,6 +6,24 @@ Newest decisions at the top.
 
 ---
 
+## D-053: Widget "Arrange" mode edits the existing auto-flow grid (reorder + resize) with per-page `localStorage` overrides — not free 2D placement, not DB persistence (PD-331)
+
+**Decision:** The widget **Arrange** feature lets the user rearrange and resize widgets on any widget-bearing top-level page (Home + the six content pages; Task Monitor is excluded — it's a Kanban, not a widget grid). It is deliberately scoped to editing the **existing auto-flow CSS grid**, not introducing a new layout engine:
+
+- **Two editable properties per widget, per page:** *order* (a fractional sort key, reusing the board's `sortOrder` pattern from D-026) and *size* (an integer `{cols, rows}` span, reusing the `--col-span`/`--row-span` mechanism embedded widgets already carry from D-050). No free x/y placement, no gaps, no absolute positioning — cards still reflow to fill.
+- **Persistence is `localStorage`, keyed per page** (`dashboard:layout:<pageId>` → `[{id, order, cols, rows}]`). The registry (`widgets.ts`) values are the default when no override exists; on load the override is *merged* with the registry so a widget added to the registry later (absent from a saved layout) falls back to its default position (appended after saved cards in registry order), and a stale/removed id is ignored.
+- **Interactions:** reorder via a Svelte DnD library (`svelte-dnd-action`, pending a Svelte-5-runes compat check), resize via a hand-rolled corner handle snapping to whole spans (min 1×1, cols clamped to the visible column count, rows capped ~6). Changes **live-apply** and persist on every drag/resize; a **"Reset to default"** clears the page key. No Save/Cancel snapshot.
+- **The Arrange button lives in the app-wide top-nav** (top-right, near the theme toggle), shown *only* on arrangeable pages (≥1 widget) and *only* at viewport ≥768px.
+- **Mobile (≤768px) is a read-only reflow:** no Arrange button; the grid stacks to a single column in saved order with spans collapsed to full width. Layout is authored on a large screen; the phone is a responsive view of it.
+
+**Why:** PROJECT.md's vision line ("movable and resizable … like a datadog dashboard") reads as free 2D placement, but that means an x/y/w/h coordinate model, collision/compaction rules, and a heavy grid library — a large lift whose payoff is thin for a single-user LAN tool. Reorder+resize on the grid that already exists delivers the felt outcome (I choose what's where and how big) while reusing three mechanisms already in the codebase (auto-flow grid, `span`, fractional sort). `localStorage` matches the established client-persistence precedent (`theme`, `task-monitor:hidden-lanes`), needs no backend (the shell owns no DB tables today — widgets do), and its per-device nature is arguably correct: a layout tuned for a wide monitor need not follow you to a phone, which reflows to one column regardless.
+
+**Trade-off:** (1) Chose reorder+resize over the datadog-style free placement the vision line implies — accepted because free placement is a different architecture for marginal benefit here; revisiting means a real rebuild, hence this record. (2) Chose `localStorage` over a DB table even though every *widget* owns DB tables — accepted; the cost is no cross-device sync and loss on cache-clear, both tolerable for a personal tool, and a DB table is a clean later upgrade. (3) A CSS-grid span on a collapsed 1-column mobile grid would overflow its track, so spans *must* collapse on mobile — which is why Arrange is desktop/tablet-only rather than a half-working touch experience.
+
+**Implications:** PD-331 (P1) is the implementation. **PD-334** (P3) is V2 — add/remove widgets per page + a widget-library concept, which turns per-page *membership* into editable state on top of this layout model. **PD-333** (P4, investigation) asks whether the Task Monitor board's native-HTML5 DnD (D-026) should migrate onto the same library this feature adopts. New glossary term *Arrange mode* added to PROJECT.md §9 (new "Dashboard shell" subsection). Builds on D-050 (embed span) and the D-026 fractional-sort pattern.
+
+---
+
 ## D-052: Auto-merge bridge keys off `mergeStateStatus == CLEAN`, not specific check names (PD-211)
 
 **Decision:** `.github/workflows/sortie-auto-merge.yml` squash-merges a PR when it detects a standing authorized `APPROVED` review AND `mergeStateStatus == CLEAN` (GitHub's composite signal: no conflicts + all required CI checks green + review requirements satisfied). Deliberately does NOT enumerate specific check names like `verify`.

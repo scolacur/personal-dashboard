@@ -441,3 +441,17 @@ defaults `agent` so pre-existing rows back-fill correctly. Display distinguishes
 agent `split` renders "auto-split 🤖", a human one "split").
 _Avoid_: conflating origin with **type** — a `split` can be either origin; origin is *who made it*,
 type is *what it means*.
+
+### Dashboard shell
+
+Definitions for the widget-grid shell and its layout affordances.
+
+**Arrange mode**:
+An editing mode, toggled by an **Arrange** button in the top-nav, in which the widget cards on the
+current page become draggable (reorder) and resizable (change grid span) (D-053). It edits the
+**existing auto-flow grid** — order + size only, *not* free 2D placement. Per-page overrides persist
+to `localStorage` (`dashboard:layout:<pageId>`); the widget registry supplies the defaults. Available
+only on widget-bearing pages at viewport ≥768px; below that the grid is a read-only single-column
+reflow. "Reset to default" clears the page's override.
+_Avoid_: conflating with adding/removing widgets from a page (that is the V2 **widget library**,
+PD-334), or with the Task Monitor board's Kanban drag-and-drop (D-026), which is a different surface.
