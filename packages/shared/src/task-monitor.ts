@@ -213,6 +213,12 @@ export interface AgentTicket {
    *  Persistent marker: gates the Refine button (hidden once true) and shows a ✓. Flipped
    *  by the commit/approval step (PD-269) or the manual "Mark refined" control. */
   refined: boolean;
+  /** True when this Ticket is an Epic umbrella (D-054, PD-336). An Epic groups member Tickets,
+   *  is never dispatched (cannot enter `robot_queue`), and its board status is derived. */
+  isEpic: boolean;
+  /** The single parent Epic this Ticket belongs to, or null. An Epic itself always has this null
+   *  (no nesting). "Belongs to" — not "child of"; parent/child is reserved for `split` lineage. */
+  epicId: number | null;
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -241,6 +247,10 @@ export interface CreateTicketInput {
   assignee?: TicketAssignee | null;
   /** Recurrence hint, e.g. 'weekly'. Carried forward to the spawned next occurrence. */
   recurInterval?: string | null;
+  /** Create this Ticket as an Epic umbrella (D-054). Defaults false. */
+  isEpic?: boolean;
+  /** Parent Epic id, or null. Ignored when `isEpic` is true (no nesting). */
+  epicId?: number | null;
 }
 
 /** Partial update — any subset of these fields. */
@@ -259,6 +269,26 @@ export interface UpdateTicketInput {
   githubIssueUrl?: string | null;
   /** Mark the ticket refined (D-044, PD-268). Omit to leave unchanged. */
   refined?: boolean;
+  /** Flag/unflag as an Epic (D-054). Omit to leave unchanged. */
+  isEpic?: boolean;
+  /** Set (via id) or clear (via null) the parent Epic. Omit to leave unchanged. */
+  epicId?: number | null;
+}
+
+/** An Epic's derived board lane (D-054, PD-336). `in_progress` is the synthetic cell spanning the
+ *  two queue columns in the Epic band — an Epic is never *in* `robot_queue`/`steve_queue` itself. */
+export type EpicDerivedLane = 'backlog' | 'prioritized' | 'in_progress' | 'completed' | 'closed';
+
+/** Per-Epic roll-up the board reads to place the Epic card + show `done/total` (D-054, PD-336).
+ *  Fetched in bulk alongside tickets, like relations. */
+export interface EpicSummary {
+  ticketId: number;
+  /** Members that are `completed` or `closed`. */
+  done: number;
+  /** Total member count. */
+  total: number;
+  /** Derived lane per D-054; for an empty Epic, derived from the Epic's own hand-set status. */
+  derivedLane: EpicDerivedLane;
 }
 
 /**

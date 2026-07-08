@@ -74,6 +74,8 @@ export function bootstrapSchema(db: Database.Database): void {
       github_issue_url    TEXT,
       agent_state         TEXT,                     -- derived sortie:* agent state (PD-165); NULL = none
       refined             INTEGER NOT NULL DEFAULT 0, -- 1 once refined to completion (D-044, PD-268)
+      is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
+      epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       archived_at         INTEGER,                  -- soft delete; NULL = active
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL
@@ -185,6 +187,12 @@ export function bootstrapSchema(db: Database.Database): void {
   });
   migrate(db, 'agent_tickets_add_refined', (d) => {
     addColumn(d, 'agent_tickets', 'refined', 'INTEGER NOT NULL DEFAULT 0');
+  });
+  // D-054: Epic umbrella primitive (PD-336). `is_epic` flags an umbrella; `epic_id` is a member's
+  // single parent Epic. Both default to non-epic / no-parent so every existing row back-fills.
+  migrate(db, 'agent_tickets_add_epic_fields', (d) => {
+    addColumn(d, 'agent_tickets', 'is_epic', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'agent_tickets', 'epic_id', 'INTEGER REFERENCES agent_tickets(id)');
   });
   // D-048: relation provenance. Default 'agent' back-fills every pre-existing row (all
   // griller-authored `split` links) correctly; the relations UI writes 'human'.

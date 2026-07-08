@@ -9,6 +9,8 @@ import type {
   LineageRef,
   NotificationKind,
   RefineCommitMode,
+  EpicDerivedLane,
+  EpicSummary,
   RelationOrigin,
   RelationType,
   ResolvedRelation,
@@ -48,6 +50,8 @@ interface TicketRow {
   github_issue_url: string | null;
   agent_state: string | null;
   refined: number;
+  is_epic: number;
+  epic_id: number | null;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -97,6 +101,8 @@ function rowToTicket(row: TicketRow): AgentTicket {
     agentState: row.agent_state as AgentTicket['agentState'],
     refineState: refineStateFromLatestType(row.latest_refine_type),
     refined: row.refined === 1,
+    isEpic: row.is_epic === 1,
+    epicId: row.epic_id,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -249,12 +255,20 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     const requestedAssignee: TicketAssignee | null =
       input.assignee === undefined ? null : input.assignee;
     const assignee: TicketAssignee | null = laneForcedAssignee(status) ?? requestedAssignee;
+    // D-054: an Epic never nests (its own epic_id stays null) and can never be created into
+    // robot_queue; a member's epic_id is validated against the target Epic.
+    const isEpic = input.isEpic === true;
+    const epicId = isEpic ? null : (input.epicId ?? null);
+    if (isEpic && status === 'robot_queue') {
+      throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter robot_queue');
+    }
+    validateEpicMembership(db, { epicId, projectId: input.projectId });
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, is_epic, epic_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, isEpic ? 1 : 0, epicId, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     return id;
@@ -296,8 +310,25 @@ export function updateTicket(
     githubIssueUrl:
       patch.githubIssueUrl === undefined ? existing.githubIssueUrl : patch.githubIssueUrl,
     refined: patch.refined === undefined ? existing.refined : patch.refined,
+    isEpic: patch.isEpic === undefined ? existing.isEpic : patch.isEpic,
+    // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
+    epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
     updatedAt: Date.now(),
   };
+
+  // D-054 epic invariants. An Epic never nests (its own epic_id is forced null) and can never
+  // enter robot_queue; a member's epic_id is validated against the target Epic.
+  if (next.isEpic) next.epicId = null;
+  if (next.isEpic && next.status === 'robot_queue') {
+    throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter robot_queue');
+  }
+  // Un-flagging an Epic that still owns members would orphan their epic_id — refuse it.
+  if (existing.isEpic && !next.isEpic && epicMemberCount(db, id) > 0) {
+    throw new EpicGuardError('HAS_MEMBERS', 'unlink or archive the Epic members before un-flagging it');
+  }
+  if (next.epicId !== existing.epicId || next.isEpic !== existing.isEpic) {
+    validateEpicMembership(db, { epicId: next.epicId, projectId: next.projectId, selfId: id });
+  }
 
   // D-044: entering a queue lane forces the matching assignee, overriding any prior
   // value or hint — so "queued = assigned" holds regardless of who writes (the
@@ -318,7 +349,7 @@ export function updateTicket(
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, is_epic = ?, epic_id = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -331,6 +362,8 @@ export function updateTicket(
       next.githubIssueNumber,
       next.githubIssueUrl,
       next.refined ? 1 : 0,
+      next.isEpic ? 1 : 0,
+      next.epicId,
       next.updatedAt,
       id,
     );
@@ -505,17 +538,151 @@ export function getTicketIssueRef(db: Database.Database, id: number): TicketIssu
   return row ? { githubIssueNumber: row.n, githubRepo: row.repo } : null;
 }
 
-/** Soft-delete: hide from the board but keep the row (recoverable). */
-export function archiveTicket(db: Database.Database, id: number): boolean {
+/** Soft-delete: hide from the board but keep the row (recoverable). For an Epic (D-054), the
+ *  caller chooses what happens to its members: `cascadeMembers` archives them too, otherwise they
+ *  are unlinked (`epic_id` → null) and survive as free tickets. No-op for a non-epic. */
+export function archiveTicket(
+  db: Database.Database,
+  id: number,
+  opts: { cascadeMembers?: boolean } = {},
+): boolean {
   const existing = getTicket(db, id);
   if (!existing || existing.archivedAt !== null) return false;
   const now = Date.now();
   const apply = db.transaction(() => {
+    if (existing.isEpic) {
+      const members = db
+        .prepare('SELECT id FROM agent_tickets WHERE epic_id = ? AND archived_at IS NULL')
+        .all(id) as { id: number }[];
+      for (const m of members) {
+        if (opts.cascadeMembers) {
+          db.prepare('UPDATE agent_tickets SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, m.id);
+          logEvent(db, m.id, 'archived', { viaEpic: id });
+        } else {
+          db.prepare('UPDATE agent_tickets SET epic_id = NULL, updated_at = ? WHERE id = ?').run(now, m.id);
+          logEvent(db, m.id, 'epic_unlinked', { epicId: id });
+        }
+      }
+    }
     db.prepare('UPDATE agent_tickets SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
     logEvent(db, id, 'archived');
   });
   apply();
   return true;
+}
+
+/* ── Epics (D-054, PD-336) ───────────────────────────────────────────── */
+
+/** An Epic invariant was violated (D-054). `code` maps to the HTTP status in routes. */
+export class EpicGuardError extends Error {
+  constructor(
+    public readonly code:
+      | 'NESTING'
+      | 'NOT_AN_EPIC'
+      | 'CROSS_PROJECT'
+      | 'EPIC_NOT_FOUND'
+      | 'EPIC_NOT_QUEUEABLE'
+      | 'HAS_MEMBERS',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EpicGuardError';
+  }
+}
+
+/** Validate a member's `epic_id` (D-054): the target must exist, be an Epic, share the member's
+ *  project, and not be the member itself. No-op when `epicId` is null. */
+export function validateEpicMembership(
+  db: Database.Database,
+  m: { epicId: number | null; projectId: number | null; selfId?: number },
+): void {
+  if (m.epicId == null) return;
+  if (m.selfId != null && m.epicId === m.selfId) {
+    throw new EpicGuardError('NESTING', 'a ticket cannot be its own Epic');
+  }
+  const target = db
+    .prepare('SELECT is_epic, project_id, archived_at FROM agent_tickets WHERE id = ?')
+    .get(m.epicId) as { is_epic: number; project_id: number | null; archived_at: number | null } | undefined;
+  if (!target || target.archived_at !== null) {
+    throw new EpicGuardError('EPIC_NOT_FOUND', `epic ${m.epicId} not found`);
+  }
+  if (target.is_epic !== 1) {
+    throw new EpicGuardError('NOT_AN_EPIC', `ticket ${m.epicId} is not an Epic`);
+  }
+  if (target.project_id !== m.projectId) {
+    throw new EpicGuardError('CROSS_PROJECT', "a member must share its Epic's project");
+  }
+}
+
+/** Count an Epic's live members. */
+export function epicMemberCount(db: Database.Database, epicId: number): number {
+  const r = db
+    .prepare('SELECT COUNT(*) AS n FROM agent_tickets WHERE epic_id = ? AND archived_at IS NULL')
+    .get(epicId) as { n: number };
+  return r.n;
+}
+
+/** An Epic's live member Tickets (D-054), ordered like the board. */
+export function listEpicMembers(db: Database.Database, epicId: number): AgentTicket[] {
+  const rows = db
+    .prepare(
+      `SELECT t.*, ${LATEST_REFINE_TYPE_SELECT} FROM agent_tickets t
+        WHERE t.epic_id = ? AND t.archived_at IS NULL
+        ORDER BY t.sort_order ASC, t.id ASC`,
+    )
+    .all(epicId) as TicketRow[];
+  return rows.map(rowToTicket);
+}
+
+/** Derive an Epic's board lane from its members (D-054). With no members, fall back to the Epic's
+ *  own hand-set status (an Epic can never be `robot_queue`, so a queue status → in_progress). */
+function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus): EpicDerivedLane {
+  if (memberStatuses.length === 0) {
+    switch (ownStatus) {
+      case 'robot_queue':
+      case 'steve_queue':
+        return 'in_progress';
+      case 'completed':
+        return 'completed';
+      case 'closed':
+        return 'closed';
+      case 'prioritized':
+        return 'prioritized';
+      default:
+        return 'backlog';
+    }
+  }
+  if (memberStatuses.some((s) => s === 'robot_queue' || s === 'steve_queue')) return 'in_progress';
+  const allDone = memberStatuses.every((s) => s === 'completed' || s === 'closed');
+  if (allDone) return memberStatuses.some((s) => s === 'completed') ? 'completed' : 'closed';
+  // Nobody in a queue, not all done → least-advanced pending lane.
+  return memberStatuses.some((s) => s === 'backlog') ? 'backlog' : 'prioritized';
+}
+
+/** Roll-up + derived lane for a single Epic (D-054). */
+export function computeEpicSummary(db: Database.Database, epicId: number): EpicSummary {
+  const epic = db.prepare('SELECT status FROM agent_tickets WHERE id = ?').get(epicId) as
+    | { status: string }
+    | undefined;
+  const rows = db
+    .prepare('SELECT status FROM agent_tickets WHERE epic_id = ? AND archived_at IS NULL')
+    .all(epicId) as { status: string }[];
+  const statuses = rows.map((r) => r.status as TicketStatus);
+  const done = statuses.filter((s) => s === 'completed' || s === 'closed').length;
+  return {
+    ticketId: epicId,
+    done,
+    total: statuses.length,
+    derivedLane: deriveEpicLane(statuses, (epic?.status ?? 'backlog') as TicketStatus),
+  };
+}
+
+/** Roll-ups for every live Epic — the bulk read the board fetches alongside tickets (D-054). */
+export function listEpicSummaries(db: Database.Database): EpicSummary[] {
+  const epics = db
+    .prepare('SELECT id FROM agent_tickets WHERE is_epic = 1 AND archived_at IS NULL')
+    .all() as { id: number }[];
+  return epics.map((e) => computeEpicSummary(db, e.id));
 }
 
 /* ── Ticket activity log + Refine thread (D-044, PD-267) ─────────────── */
@@ -904,6 +1071,11 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
   }
 
   // decompose
+  // D-054: decompose closes the parent (D-036) — nonsensical for an Epic umbrella, which must
+  // stay open to hold its members. Populate an Epic via membership, not by decomposing it.
+  if (parent.isEpic) {
+    return { ok: false, reason: 'invalid_proposal', detail: 'cannot decompose an Epic' };
+  }
   const children = p.children ?? [];
   if (children.length === 0) return { ok: false, reason: 'invalid_proposal', detail: 'no children' };
   if (parent.projectId === null) {
@@ -926,6 +1098,8 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
         assignee: c.assignee ?? undefined,
         priority: c.priority ?? null,
         projectId,
+        // D-054 split-inheritance: children stay under the parent's Epic (if any).
+        epicId: parent.epicId,
       });
       addRelation(db, ticketId, child.id, 'split');
       childIds.push(child.id);
