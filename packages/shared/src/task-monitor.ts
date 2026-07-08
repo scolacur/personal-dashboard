@@ -460,6 +460,9 @@ export interface RefineChildProposal {
   body: string;
   status: TicketStatus;
   assignee: TicketAssignee | null;
+  /** P0–P5, or null/omitted when the agent leaves it for Steve to set. Optional so proposals
+   *  stored before priority-support (and terse fixtures) still typecheck; normalized to null. */
+  priority?: TicketPriority | null;
 }
 
 /** The structured commit proposal, stored as the detail of a `refine_proposal` event. */
@@ -469,6 +472,8 @@ export interface RefineProposal {
   body?: string;
   status?: TicketStatus;
   assignee?: TicketAssignee | null;
+  /** refine_in_place: P0–P5 for THIS ticket, or null to clear. Omit to leave unchanged. */
+  priority?: TicketPriority | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
   /** Short why, shown in the approval panel. */

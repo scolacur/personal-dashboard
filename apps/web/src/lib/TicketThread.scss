@@ -235,7 +235,8 @@
     font-size: var(--font-size-sm);
   }
   .child-lane,
-  .child-assignee {
+  .child-assignee,
+  .child-priority {
     font-size: var(--font-size-xs);
     color: var(--muted);
     border: 1px solid var(--border);

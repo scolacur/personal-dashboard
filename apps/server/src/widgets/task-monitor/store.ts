@@ -866,6 +866,7 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
         body,
         status,
         assignee: p.assignee === undefined ? parent.assignee : p.assignee,
+        priority: p.priority === undefined ? parent.priority : p.priority,
         refined: true,
       });
       logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode });
@@ -895,6 +896,7 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
         body: c.body,
         status: c.status,
         assignee: c.assignee ?? undefined,
+        priority: c.priority ?? null,
         projectId,
       });
       addRelation(db, ticketId, child.id, 'split');
