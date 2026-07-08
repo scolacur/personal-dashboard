@@ -1,6 +1,20 @@
 .widget {
   perspective: 800px;
   min-height: 140px;
+  grid-column: span var(--col-span, 1);
+  grid-row: span var(--row-span, 1);
+}
+
+/* Embedded live widget — no 3D flip; component fills the card */
+.widget-embedded {
+  perspective: none;
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .widget-inner {
