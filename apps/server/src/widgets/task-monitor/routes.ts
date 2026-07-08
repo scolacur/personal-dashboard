@@ -4,7 +4,9 @@ import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_ASSIGNEES,
+  RELATION_TYPES,
   type CreateTicketInput,
+  type RelationType,
   type TicketAssignee,
   type TicketPriority,
   type TicketStatus,
@@ -12,24 +14,30 @@ import {
 } from '@dashboard/shared';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import {
+  addRelation,
   appendRefineReply,
   approveRefine,
   archiveTicket,
   createProject,
   createTicket,
-  getLineage,
   getProjectBySlug,
   getSortieFleet,
+  getTicket,
   getTicketIssueRef,
   listNotifications,
   listProjects,
+  listRelations,
   listTicketEvents,
   listTickets,
   listWorkerHeartbeats,
   markAllNotificationsRead,
   markNotificationRead,
   projectExists,
+  QueueBlockedError,
   rejectRefine,
+  RelationCycleError,
+  removeRelationById,
+  SelfRelationError,
   startRefine,
   unreadNotificationCount,
   updateTicket,
@@ -246,7 +254,20 @@ export function registerRoutes(
       patch.refined = body.refined;
     }
 
-    const updated = updateTicket(db, id, patch);
+    let updated;
+    try {
+      updated = updateTicket(db, id, patch);
+    } catch (e) {
+      // Blocker gate (D-048): can't enter robot_queue with unresolved blockers.
+      if (e instanceof QueueBlockedError) {
+        return reply.status(409).send({
+          error: `blocked by unresolved: ${e.blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`,
+          code: 'BLOCKED_BY_UNRESOLVED',
+          blockers: e.blockers,
+        });
+      }
+      throw e;
+    }
     if (!updated) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
@@ -436,6 +457,11 @@ export function registerRoutes(
           error: `not Sortie-ready for robot_queue: ${result.detail}`,
           code: 'NOT_SORTIE_READY',
         });
+      case 'blocked_by_unresolved':
+        return reply.status(409).send({
+          error: `blocked by unresolved: ${result.detail}`,
+          code: 'BLOCKED_BY_UNRESOLVED',
+        });
       default:
         return reply
           .status(422)
@@ -456,13 +482,80 @@ export function registerRoutes(
       : reply.status(409).send({ error: 'no proposal to reject', code: 'NO_PROPOSAL' });
   });
 
-  // Read-only split lineage for the ticket-detail display (PD-269); full relations UI is PD-156.
+  // Every relation touching the ticket, both directions, resolved (with origin) — the canonical
+  // relations resource the UI (PD-322) reads for badges + the detail-page management list
+  // (D-048, PD-321). Widened from the PD-269 split-only lineage shape (`TicketLineage`); the
+  // detail page derives its split subset client-side by filtering `type === 'split'`.
   app.get(`${base}/tickets/:id/relations`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
-    return getLineage(db, id);
+    if (!getTicket(db, id)) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    return listRelations(db, id);
+  });
+
+  // Create a relation (origin='human'). Body is explicit about direction: `from` is the source
+  // (for `blocks`, the blocker), `to` the target (the blocked). `id` must be one of them.
+  app.post(`${base}/tickets/:id/relations`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const fromId = body.fromId;
+    const toId = body.toId;
+    if (typeof fromId !== 'number' || !Number.isInteger(fromId)) {
+      return reply.status(400).send({ error: 'fromId is required', code: 'INVALID_FROM' });
+    }
+    if (typeof toId !== 'number' || !Number.isInteger(toId)) {
+      return reply.status(400).send({ error: 'toId is required', code: 'INVALID_TO' });
+    }
+    if (!RELATION_TYPES.includes(body.type as RelationType)) {
+      return reply.status(400).send({ error: 'invalid relation type', code: 'INVALID_RELATION_TYPE' });
+    }
+    if (id !== fromId && id !== toId) {
+      return reply
+        .status(400)
+        .send({ error: 'route ticket must be one end of the relation', code: 'ID_MISMATCH' });
+    }
+    if (!getTicket(db, fromId) || !getTicket(db, toId)) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    try {
+      const relationId = addRelation(db, fromId, toId, body.type as RelationType, 'human');
+      const created = listRelations(db, id).find((r) => r.id === relationId);
+      return reply.status(201).send(created);
+    } catch (e) {
+      if (e instanceof SelfRelationError) {
+        return reply.status(400).send({ error: e.message, code: 'SELF_RELATION' });
+      }
+      if (e instanceof RelationCycleError) {
+        return reply
+          .status(409)
+          .send({ error: e.message, code: 'RELATION_CYCLE', path: e.path });
+      }
+      throw e;
+    }
+  });
+
+  // Remove a relation by its row id (the detail-page per-row remove). The relation must touch
+  // the route ticket.
+  app.delete(`${base}/tickets/:id/relations/:relationId`, async (request, reply) => {
+    const params = request.params as { id: string; relationId: string };
+    const id = Number(params.id);
+    const relationId = Number(params.relationId);
+    if (!Number.isInteger(id) || !Number.isInteger(relationId)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const owned = listRelations(db, id).some((r) => r.id === relationId);
+    if (!owned) {
+      return reply.status(404).send({ error: 'relation not found', code: 'NOT_FOUND' });
+    }
+    removeRelationById(db, relationId);
+    return reply.status(204).send();
   });
 
   // ── Ticket Audit (D-045, PD-283) ─────────────────────────────────────────────

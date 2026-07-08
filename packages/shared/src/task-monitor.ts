@@ -389,11 +389,25 @@ export function refineStateFromLatestType(latestRefineType: string | null | unde
 // structurally by the Ticket Audit's LINK / duplicate-archive findings (PD-288).
 export type RelationType = 'blocks' | 'split' | 'relates' | 'duplicates';
 
+export const RELATION_TYPES: readonly RelationType[] = [
+  'blocks',
+  'split',
+  'relates',
+  'duplicates',
+] as const;
+
+// Who authored a relation (D-048). `agent` = written by the griller decompose or the Ticket
+// Audit (PD-288); `human` = hand-drawn in the relations UI (PD-322). The DB column defaults
+// `'agent'` so pre-existing rows (all griller-authored splits) back-fill correctly with no
+// data migration. Provenance is orthogonal to `type`: a `split` can be either origin.
+export type RelationOrigin = 'agent' | 'human';
+
 export interface TicketRelation {
   id: number;
   fromTicketId: number;
   toTicketId: number;
   type: RelationType;
+  origin: RelationOrigin;
   createdAt: number;
 }
 
@@ -412,6 +426,7 @@ export interface LineageRef {
 export interface ResolvedRelation {
   id: number;
   type: RelationType;
+  origin: RelationOrigin;
   direction: 'from' | 'to';
   other: LineageRef;
   createdAt: number;

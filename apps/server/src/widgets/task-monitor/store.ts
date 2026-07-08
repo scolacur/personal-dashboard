@@ -6,8 +6,10 @@ import type {
   AgentTicket,
   CreateProjectInput,
   CreateTicketInput,
+  LineageRef,
   NotificationKind,
   RefineCommitMode,
+  RelationOrigin,
   RelationType,
   ResolvedRelation,
   TicketAssignee,
@@ -304,6 +306,14 @@ export function updateTicket(
     next.assignee = forcedAssignee;
   }
 
+  // Blocker gate (D-048): a ticket cannot ENTER robot_queue while it has unresolved blockers —
+  // a second queue-entry precondition beside isSortieReady. Entry-only: an already-queued ticket
+  // that later gains a blocker is not evicted here (PD-322's confirm covers that at add time).
+  if (next.status === 'robot_queue' && existing.status !== 'robot_queue') {
+    const blockers = unresolvedBlockers(db, id);
+    if (blockers.length > 0) throw new QueueBlockedError(blockers);
+  }
+
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
@@ -596,23 +606,126 @@ export function appendRefineReply(
   return row ? rowToTicketEvent(row) : null;
 }
 
-/* ── Ticket relations + Refine commit (D-020 table, D-044/PD-269) ────── */
+/* ── Ticket relations + Refine commit (D-020 table, D-044/PD-269, D-048) ────── */
 
-/** Link two tickets (idempotent via the UNIQUE(from,to,type) constraint). */
+/** A `blocks` relation would create a cycle (D-048) — refused so the hard queue-entry gate can
+ *  never deadlock. `path` is the existing dependency chain the new edge would close, as ticket ids. */
+export class RelationCycleError extends Error {
+  constructor(public readonly path: number[]) {
+    super(`relation would create a blocks cycle: ${path.join(' → ')}`);
+    this.name = 'RelationCycleError';
+  }
+}
+
+/** A ticket cannot relate to itself (D-048). */
+export class SelfRelationError extends Error {
+  constructor() {
+    super('a ticket cannot relate to itself');
+    this.name = 'SelfRelationError';
+  }
+}
+
+/** The blocker gate (D-048): a ticket cannot enter `robot_queue` while it has unresolved
+ *  blockers. Thrown from `updateTicket`; the PATCH route maps it to 409. */
+export class QueueBlockedError extends Error {
+  constructor(public readonly blockers: LineageRef[]) {
+    super(`blocked by unresolved: ${blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`);
+    this.name = 'QueueBlockedError';
+  }
+}
+
+/** A blocker is "resolved" (stops gating) once it is terminal — completed / closed / archived
+ *  (D-048). The four active lanes still block. Used by the gate and by `unresolvedBlockers`. */
+const UNRESOLVED_BLOCKER_SQL =
+  "t.status NOT IN ('completed', 'closed') AND t.archived_at IS NULL";
+
+/** The ticket's incoming `blocks` relations whose blocker is not yet resolved. Empty ⇒ the
+ *  blocker gate is clear. */
+export function unresolvedBlockers(db: Database.Database, ticketId: number): LineageRef[] {
+  const rows = db
+    .prepare(
+      `SELECT t.id AS oid, t.display_id, t.title, t.status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.from_ticket_id
+        WHERE r.to_ticket_id = ? AND r.type = 'blocks' AND ${UNRESOLVED_BLOCKER_SQL}
+        ORDER BY t.id ASC`,
+    )
+    .all(ticketId) as { oid: number; display_id: string | null; title: string; status: string }[];
+  return rows.map((r) => ({
+    ticketId: r.oid,
+    displayId: r.display_id,
+    title: r.title,
+    status: r.status as TicketStatus,
+  }));
+}
+
+/** Adding "blocked = blocker" (row from=blocker, to=blocked) means `blocked` now depends on
+ *  `blocker`. That closes a cycle iff `blocker` already transitively depends on `blocked`.
+ *  A ticket's dependencies are the `from` sides of its incoming `blocks` rows. Returns the
+ *  dependency path `[blocker, …, blocked]` if one exists, else null. */
+function findBlocksDependencyPath(
+  db: Database.Database,
+  blockerId: number,
+  blockedId: number,
+): number[] | null {
+  const deps = db.prepare(
+    "SELECT from_ticket_id AS dep FROM agent_ticket_relations WHERE to_ticket_id = ? AND type = 'blocks'",
+  );
+  const stack: number[][] = [[blockerId]];
+  const seen = new Set<number>();
+  while (stack.length > 0) {
+    const path = stack.pop() as number[];
+    const node = path[path.length - 1];
+    if (node === blockedId) return path;
+    if (seen.has(node)) continue;
+    seen.add(node);
+    for (const { dep } of deps.all(node) as { dep: number }[]) {
+      stack.push([...path, dep]);
+    }
+  }
+  return null;
+}
+
+/**
+ * Link two tickets (idempotent via the UNIQUE(from,to,type) constraint). Direction is
+ * `from = source, to = target`; for `blocks`, `from = blocker, to = blocked` (D-048).
+ * Rejects self-relations (all types) and, for `blocks`, any edge that would close a cycle.
+ * `origin` defaults to `'agent'` so the griller/audit callers need no change; the relations
+ * UI passes `'human'`. Returns the relation id (existing id if the row was already present).
+ */
 export function addRelation(
   db: Database.Database,
   fromTicketId: number,
   toTicketId: number,
   type: RelationType,
-): void {
+  origin: RelationOrigin = 'agent',
+): number {
+  if (fromTicketId === toTicketId) throw new SelfRelationError();
+  if (type === 'blocks') {
+    const path = findBlocksDependencyPath(db, fromTicketId, toTicketId);
+    if (path !== null) throw new RelationCycleError([...path, fromTicketId]);
+  }
   db.prepare(
-    'INSERT OR IGNORE INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (?, ?, ?, ?)',
-  ).run(fromTicketId, toTicketId, type, Date.now());
+    'INSERT OR IGNORE INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, origin, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(fromTicketId, toTicketId, type, origin, Date.now());
+  const row = db
+    .prepare(
+      'SELECT id FROM agent_ticket_relations WHERE from_ticket_id = ? AND to_ticket_id = ? AND type = ?',
+    )
+    .get(fromTicketId, toTicketId, type) as { id: number } | undefined;
+  return row?.id ?? 0;
+}
+
+/** Remove a relation by its row id (the relations UI's per-row remove, PD-322). Returns true
+ *  if a row was deleted. */
+export function removeRelationById(db: Database.Database, relationId: number): boolean {
+  const res = db.prepare('DELETE FROM agent_ticket_relations WHERE id = ?').run(relationId);
+  return res.changes > 0;
 }
 
 interface RelationJoinRow {
   id: number;
   type: string;
+  origin: string;
   created_at: number;
   oid: number;
   display_id: string | null;
@@ -638,14 +751,14 @@ export function removeRelation(
 export function listRelations(db: Database.Database, ticketId: number): ResolvedRelation[] {
   const outgoing = db
     .prepare(
-      `SELECT r.id, r.type, r.created_at, t.id AS oid, t.display_id, t.title, t.status
+      `SELECT r.id, r.type, r.origin, r.created_at, t.id AS oid, t.display_id, t.title, t.status
          FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.to_ticket_id
         WHERE r.from_ticket_id = ?`,
     )
     .all(ticketId) as RelationJoinRow[];
   const incoming = db
     .prepare(
-      `SELECT r.id, r.type, r.created_at, t.id AS oid, t.display_id, t.title, t.status
+      `SELECT r.id, r.type, r.origin, r.created_at, t.id AS oid, t.display_id, t.title, t.status
          FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.from_ticket_id
         WHERE r.to_ticket_id = ?`,
     )
@@ -653,6 +766,7 @@ export function listRelations(db: Database.Database, ticketId: number): Resolved
   const rel = (row: RelationJoinRow, direction: 'from' | 'to'): ResolvedRelation => ({
     id: row.id,
     type: row.type as RelationType,
+    origin: row.origin as RelationOrigin,
     direction,
     other: {
       ticketId: row.oid,
@@ -705,7 +819,12 @@ export type ApproveRefineResult =
   | { ok: true; mode: RefineCommitMode; refinedTicketId?: number; childIds?: number[] }
   | {
       ok: false;
-      reason: 'not_found' | 'no_proposal' | 'invalid_proposal' | 'child_not_sortie_ready';
+      reason:
+        | 'not_found'
+        | 'no_proposal'
+        | 'invalid_proposal'
+        | 'child_not_sortie_ready'
+        | 'blocked_by_unresolved';
       detail?: string;
     };
 
@@ -729,6 +848,18 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
     const body = p.body ?? parent.body;
     if (status === 'robot_queue' && !isSortieReady(body)) {
       return { ok: false, reason: 'child_not_sortie_ready', detail: parent.displayId ?? String(ticketId) };
+    }
+    // Blocker gate (D-048): pre-check here so approveRefine keeps its no-throw contract rather
+    // than letting updateTicket's QueueBlockedError escape the transaction.
+    if (status === 'robot_queue' && parent.status !== 'robot_queue') {
+      const blockers = unresolvedBlockers(db, ticketId);
+      if (blockers.length > 0) {
+        return {
+          ok: false,
+          reason: 'blocked_by_unresolved',
+          detail: blockers.map((b) => b.displayId ?? String(b.ticketId)).join(', '),
+        };
+      }
     }
     const run = db.transaction(() => {
       updateTicket(db, ticketId, {
