@@ -21,8 +21,21 @@ sortie-healthcheck() {
 }
 
 sortie-logs() {
-  # Tail live sortie container logs. Optional $1 = lines of history to show first (default 200).
-  sudo docker logs -f --tail "${1:-200}" sortie
+  # Pretty-print sortie's slog JSON logs as: time · level · msg · #issue · ⚠error.
+  #   sortie-logs             recent logs, formatted
+  #   sortie-logs <issue>     only lines for that issue id   (e.g. sortie-logs 202)
+  #   sortie-logs -f          follow live
+  #   sortie-logs -f <issue>  follow live, filtered to one issue
+  # `fromjson? // empty` skips non-JSON startup lines. Requires jq on the host.
+  local follow=""
+  if [ "$1" = "-f" ]; then follow="-f"; shift; fi
+  sudo docker logs $follow sortie 2>&1 | jq -rR --arg issue "${1:-}" '
+    fromjson? // empty
+    | select($issue == "" or ((.issue_identifier // "" | tostring) == $issue))
+    | "\(.time[11:19])  \(.level[0:4])  \(.msg)"
+      + (if .issue_identifier then "  #\(.issue_identifier)" else "" end)
+      + (if .error then "  ⚠ \(.error)" else "" end)
+  '
 }
 
 sortie-refresh() {
@@ -66,7 +79,7 @@ pd-help() {
   printf '%-28s %-40s %s\n' '-------' '-----------' '--------------'
   printf '%-28s %-40s %s\n' 'sortie-uptime'         'Show sortie container uptime/status'    'docker ps | grep sortie'
   printf '%-28s %-40s %s\n' 'sortie-healthcheck'    'Hit /readyz inside the sortie container' 'docker exec sortie curl …/readyz'
-  printf '%-28s %-40s %s\n' 'sortie-logs [lines]'   'Tail live sortie container logs'        'docker logs -f --tail 200 sortie'
+  printf '%-28s %-40s %s\n' 'sortie-logs [-f] [issue]' 'Pretty-print sortie JSON logs (jq)'   'docker logs sortie | jq …'
   printf '%-28s %-40s %s\n' 'sortie-refresh'        'git pull + recreate both containers'    'docker-compose up -d --force-recreate'
   printf '%-28s %-40s %s\n' 'sortie-refresh-proxy'  'git pull + recreate egress-proxy only'  'docker-compose up -d … egress-proxy'
   printf '%-28s %-40s %s\n' 'sortie-refresh-no-proxy' 'git pull + recreate sortie only'      'docker-compose up -d … sortie'
