@@ -10,6 +10,7 @@
   }
 
   let info = $state<DeployInfo | null>(null);
+  let loaded = $state(false);
   let now = $state(Date.now());
 
   $effect(() => {
@@ -18,7 +19,10 @@
       .then((data: DeployInfo | null) => {
         info = data;
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        loaded = true;
+      });
 
     const timer = setInterval(() => {
       now = Date.now();
@@ -33,7 +37,9 @@
   }
 </script>
 
-{#if info}
+{#if loaded && info === null}
+  <p class="deploy-empty">No recent deployment info.</p>
+{:else if info}
   <div class="deploy-status">
     <span class="item">
       <span class="label">Deployed</span>

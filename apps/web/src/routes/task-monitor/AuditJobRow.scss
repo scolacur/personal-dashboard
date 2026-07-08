@@ -1,0 +1,140 @@
+.job-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  list-style: none;
+}
+
+.job-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.job-name {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.job-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+
+  &:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+}
+
+// Controls row: schedule (two lines) on the left, Run now on the right.
+.job-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.job-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.job-nextrun {
+  color: var(--muted);
+}
+
+.run-rows {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-sm) 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.3rem var(--space-sm);
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+
+  &:nth-child(even) {
+    background: var(--surface-2);
+  }
+}
+
+.run-id {
+  flex-shrink: 0;
+  min-width: 5rem;
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.run-count {
+  flex-shrink: 0;
+  min-width: 6.5rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.run-time {
+  flex: 1;
+  min-width: 9rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.run-report {
+  flex-shrink: 0;
+  color: var(--accent-2);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &.run-report-muted {
+    color: var(--muted);
+    font-style: italic;
+  }
+}
+
+.job-about {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.toast {
+  position: fixed;
+  bottom: var(--space-lg);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  z-index: 50;
+}

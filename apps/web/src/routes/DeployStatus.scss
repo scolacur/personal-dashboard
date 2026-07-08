@@ -52,3 +52,9 @@ a.value {
   color: var(--border);
   user-select: none;
 }
+
+.deploy-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}

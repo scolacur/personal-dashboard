@@ -1,0 +1,39 @@
+.jobs-section {
+  scroll-margin-top: 5rem; // clear the sticky top nav when jumped to via #jobs
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.jobs-view-all {
+  color: var(--accent-2);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.job-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: start;
+  gap: var(--space-sm);
+
+  // On large screens the cards sit side-by-side, each taking half the width.
+  @media (min-width: 900px) {
+    grid-template-columns: 1fr 1fr;
+  }
+}

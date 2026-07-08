@@ -36,8 +36,19 @@
   gap: var(--space-xs);
 }
 
+// A top-level nav row: the link fills the row, the accordion caret (if any) sits at the end.
+.side-link-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
 .side-link {
-  display: block;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-sm);
   padding: var(--space-sm) var(--space-sm);
   border-radius: var(--radius);
   color: var(--muted);
@@ -54,6 +65,72 @@
   &.active {
     color: var(--on-accent);
     background: var(--accent);
+    font-weight: 600;
+  }
+}
+
+.side-link-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: var(--radius);
+
+  &:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+}
+
+.side-caret-icon {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+
+  &.open {
+    transform: rotate(90deg);
+  }
+}
+
+.side-sublinks {
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0 0 0 var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.side-sublink {
+  display: block;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: 2px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  transition:
+    color 0.15s,
+    background 0.15s,
+    border-color 0.15s;
+
+  &:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+
+  &.active {
+    color: var(--text);
+    border-left-color: var(--accent);
+    background: var(--surface-2);
     font-weight: 600;
   }
 }

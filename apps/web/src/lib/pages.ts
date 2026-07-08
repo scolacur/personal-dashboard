@@ -1,8 +1,18 @@
+/** A nested nav item under a top-level page (PD-286). `route` carries a `#hash` to scroll to a
+ *  section on the parent page. Revealed via the parent's accordion. */
+export interface NavChild {
+  id: string;
+  title: string;
+  route: string;
+}
+
 export interface PageMeta {
   id: string;
   title: string;
   description: string;
   route: string;
+  /** Nested nav items, revealed as an accordion under this page in the side nav. */
+  children?: NavChild[];
 }
 
 // The dashboard's top-level nav destinations. One entry per folder in the
@@ -55,6 +65,11 @@ export const pages: PageMeta[] = [
     title: 'Task Monitor',
     description: 'Monitor and control AI agent workflows.',
     route: '/task-monitor',
+    children: [
+      { id: 'tm-site-status', title: 'Site Status', route: '/task-monitor#site-status' },
+      { id: 'tm-jobs', title: 'Jobs', route: '/task-monitor#jobs' },
+      { id: 'tm-tickets', title: 'Tickets', route: '/task-monitor#tickets' },
+    ],
   },
 ];
 
