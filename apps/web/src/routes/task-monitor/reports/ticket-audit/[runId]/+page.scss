@@ -1,0 +1,66 @@
+// Per-run permalink shell. Mirrors the report page's layout but only the selectors this
+// page actually uses (no open-vs-fresher banner), so svelte-check stays warning-clean.
+.report {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: var(--space-lg) var(--space-md);
+}
+
+.report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.report-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.report-sub {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.report-board-link {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.report-muted {
+  color: var(--muted);
+}
+
+.report-error {
+  color: var(--status-stuck);
+}
+
+.report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.run-status {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--rc);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}

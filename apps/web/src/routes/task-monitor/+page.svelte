@@ -9,6 +9,7 @@
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
+  import JobsList from './JobsList.svelte';
   import * as api from './api';
   import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
   import type { RefineFilter } from './filter-logic';
@@ -403,9 +404,16 @@
   }
 </script>
 
-<DeployStatus />
+<section class="deploy-section" id="site-status">
+  <div class="section-head">
+    <h2 class="section-title">Site Status</h2>
+  </div>
+  <DeployStatus />
+</section>
 
-<section class="tickets-section">
+<JobsList heading="Jobs" limit={5} viewAllHref="/task-monitor/jobs" />
+
+<section class="tickets-section" id="tickets">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
     <label class="ticket-search">

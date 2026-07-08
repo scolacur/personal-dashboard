@@ -1,0 +1,119 @@
+.report {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: var(--space-lg) var(--space-md);
+}
+
+.report-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.report-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.report-sub {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.report-board-link {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.report-muted {
+  color: var(--muted);
+}
+
+.report-error {
+  color: var(--status-stuck);
+}
+
+.report-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+
+  a {
+    color: var(--accent-2);
+  }
+}
+
+.run-status {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--rc);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.run-fresher {
+  color: var(--status-working);
+  font-style: italic;
+}
+
+.run-history {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.run-history-title {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+.run-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.run-history-row {
+  display: grid;
+  grid-template-columns: 5rem 5.5rem 1fr auto;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  a {
+    color: var(--accent-2);
+    font-family: var(--font-mono, monospace);
+  }
+}
+
+.hist-status {
+  color: var(--rc);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.hist-time {
+  text-align: right;
+}

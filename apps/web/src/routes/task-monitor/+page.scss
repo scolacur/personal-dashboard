@@ -1,3 +1,18 @@
+/* ── Page sections (Deployment / Jobs / Tickets) ── */
+.deploy-section {
+  margin-bottom: var(--space-xl);
+}
+
+// Clear the sticky top nav when jumped to via #deploy / #tickets anchors.
+.deploy-section,
+.tickets-section {
+  scroll-margin-top: 5rem;
+}
+
+.tickets-section {
+  margin-top: var(--space-xl);
+}
+
 /* ── Tickets section ───────────────────────────── */
 .section-head {
   display: flex;
