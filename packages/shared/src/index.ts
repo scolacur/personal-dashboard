@@ -1,6 +1,13 @@
 // Shared types between server and web.
 // Import from '@dashboard/shared' in both apps.
 export type {
+  IdeaType,
+  AcuteStrategyIdea,
+  CreateIdeaInput,
+  UpdateIdeaInput,
+} from './acute-strategies-generator';
+export { IDEA_TYPES } from './acute-strategies-generator';
+export type {
   TicketStatus,
   TicketPriority,
   TicketAssignee,
