@@ -8,12 +8,8 @@
   --muted: #585656;
   --accent: #33a27d; /* primary */
   --accent-2: #954cb1; /* accent */
+  --accent-3: #c2410c; /* orange */
   --on-accent: #f0f0f0;
-
-  /* Acute Strategies Generator — idea type colours */
-  --idea-acute: #b08800;       /* yellow */
-  --idea-inspiration: #7c3aed; /* purple */
-  --idea-oblique: #c2410c;     /* orange */
 
   /* Agent-state / Sortie status pill colours (see .agent-state-badge). Each state
      has its own hue; theme-agnostic (chosen to read on both light and dark). */
@@ -58,10 +54,6 @@
   --muted: #a9a7a7;
   --accent: #ffff5c; /* primary */
   --accent-2: #ddaeef; /* accent */
+  --accent-3: #f97316; /* orange */
   --on-accent: #242424;
-
-  /* Acute Strategies Generator — idea type colours (dark overrides) */
-  --idea-acute: #e6a300;
-  --idea-inspiration: #a78bfa;
-  --idea-oblique: #f97316;
 }

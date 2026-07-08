@@ -102,15 +102,15 @@
   margin: 0;
 
   &.idea-text--acute {
-    color: var(--idea-acute);
+    color: var(--accent);
   }
 
   &.idea-text--inspiration {
-    color: var(--idea-inspiration);
+    color: var(--accent-2);
   }
 
   &.idea-text--oblique {
-    color: var(--idea-oblique);
+    color: var(--accent-3);
   }
 }
 
