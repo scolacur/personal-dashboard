@@ -1,0 +1,179 @@
+# Sortie auto-merge bridge: squash-merges any PR an authorized human has approved
+# once it is fully mergeable (all required checks green, no conflicts, reviews satisfied).
+#
+# WHY THIS EXISTS: branch protection on `main` requires the `verify` check + 1 approving
+# review + no merge conflicts, but a pure APPROVED review triggers nothing today —
+# sortie-review-rework.yml deliberately ignores APPROVED reviews (they mean "ready to merge",
+# not "re-work"). So Steve merges every green PR by hand. This bridge closes that gap and
+# follows the house pattern (D-042): in-repo Actions bridges are preferred over Sortie's
+# flaky native `reactions`, including its restart-coupled native `auto_merge`.
+#
+# AUTHORIZATION: repo OWNER (scolacur) directly, OR a COLLABORATOR review carrying the
+# <!-- sortie:human-reply --> marker (same trust boundary as sortie-review-rework.yml and
+# sortie-conflict-rework.yml). The Sortie bot (sortie-bot-55) is a COLLABORATOR without the
+# marker, so its own reviews never qualify.
+#
+# MERGE CONDITION: state == OPEN, a standing authorized APPROVED review, and
+# mergeStateStatus == CLEAN (GitHub's "no conflicts + all required checks green + reviews
+# satisfied"). Keying off mergeStateStatus rather than a hard-coded check name means any
+# future required check (e.g., the D-047 path-guard) is honored automatically.
+#
+# STANDING REVIEW: reviews are grouped by reviewer; only each reviewer's *latest* review
+# counts. If an authorized approver later submits CHANGES_REQUESTED, that supersedes the
+# earlier APPROVED and will no longer qualify.
+#
+# IDEMPOTENCY / LOOP SAFETY: the script skips any PR that is not OPEN — a merged/closed PR
+# is a safe no-op. A merged PR is no longer OPEN, so re-fires after merge are no-ops. The
+# bot's own workflow activity never passes the authorized-review gate.
+
+name: sortie-auto-merge
+
+on:
+  # Fires when a human approves a PR — merge immediately if already CLEAN.
+  pull_request_review:
+    types: [submitted]
+  # Fires when CI finishes — catches the case where the approval landed before CI was green.
+  check_suite:
+    types: [completed]
+  # Fires on classic commit-status updates (legacy CI / third-party integrations).
+  status: {}
+  # Fires when a PR is force-pushed or reopened after an earlier check.
+  pull_request:
+    types: [synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# One in-flight merge attempt per PR (or per commit SHA when the PR number is unknown).
+concurrency:
+  group: sortie-auto-merge-${{ github.event.pull_request.number || github.event.check_suite.head_sha || github.event.sha || 'global' }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    # Cheap payload gate for pull_request_review: only proceed when the triggering review
+    # is an APPROVED review from an authorized user. All other events always run the script.
+    if: >-
+      github.event_name != 'pull_request_review' ||
+      (
+        github.event.review.state == 'approved' &&
+        (
+          github.event.review.author_association == 'OWNER' ||
+          (
+            github.event.review.author_association == 'COLLABORATOR' &&
+            contains(github.event.review.body, '<!-- sortie:human-reply -->')
+          )
+        )
+      )
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Squash-merge any approved and fully mergeable PRs
+        run: |
+          set -euo pipefail
+
+          BOT_LOGIN="sortie-bot-55"
+          EVENT="${{ github.event_name }}"
+
+          # ── 1. Resolve which PR(s) to check ─────────────────────────────────
+          declare -a PRS=()
+
+          if [ "$EVENT" = "pull_request_review" ] || [ "$EVENT" = "pull_request" ]; then
+            PRS=("${{ github.event.pull_request.number }}")
+          elif [ "$EVENT" = "check_suite" ]; then
+            HEAD_SHA="${{ github.event.check_suite.head_sha }}"
+            mapfile -t PRS < <(
+              gh pr list --repo "$REPO" --state open --json number,headRefOid \
+                --jq --arg sha "$HEAD_SHA" \
+                '.[] | select(.headRefOid == $sha) | .number | tostring'
+            )
+          elif [ "$EVENT" = "status" ]; then
+            SHA="${{ github.event.sha }}"
+            mapfile -t PRS < <(
+              gh pr list --repo "$REPO" --state open --json number,headRefOid \
+                --jq --arg sha "$SHA" \
+                '.[] | select(.headRefOid == $sha) | .number | tostring'
+            )
+          fi
+
+          if [ "${#PRS[@]}" -eq 0 ]; then
+            echo "No open PRs found for event=$EVENT — skip."
+            exit 0
+          fi
+
+          for PR in "${PRS[@]}"; do
+            echo "─── Checking PR #$PR ───"
+
+            # ── 2. Idempotency: skip if not OPEN ────────────────────────────────
+            DATA="$(gh pr view "$PR" --repo "$REPO" \
+              --json state,mergeable,mergeStateStatus,reviews)"
+            STATE="$(echo "$DATA" | jq -r .state)"
+
+            if [ "$STATE" != "OPEN" ]; then
+              echo "PR #$PR state=$STATE (not OPEN) — already merged/closed, skip."
+              continue
+            fi
+
+            # ── 3. Check for a standing authorized APPROVED review ───────────────
+            # Group by reviewer, take each reviewer's most recent review, then check
+            # whether any authorized reviewer's latest review is APPROVED.
+            AUTHORIZED_APPROVED="$(echo "$DATA" | jq -r --arg bot "$BOT_LOGIN" '
+              .reviews
+              | map(select(.author != null))
+              | group_by(.author.login)
+              | map(sort_by(.submittedAt) | last)
+              | map(select(
+                  .state == "APPROVED" and
+                  .author.login != $bot and
+                  (
+                    .authorAssociation == "OWNER" or
+                    (
+                      .authorAssociation == "COLLABORATOR" and
+                      ((.body // "") | contains("<!-- sortie:human-reply -->"))
+                    )
+                  )
+                ))
+              | length > 0
+            ')"
+
+            if [ "$AUTHORIZED_APPROVED" != "true" ]; then
+              echo "PR #$PR: no authorized standing APPROVED review — skip."
+              continue
+            fi
+
+            echo "PR #$PR has an authorized APPROVED review — checking mergeability."
+
+            # ── 4. Poll mergeStateStatus past UNKNOWN (mirrors sortie-conflict-rework) ──
+            MERGE_STATE="UNKNOWN"
+            CLOSED_DURING_POLL=false
+            for _ in 1 2 3 4 5; do
+              POLL="$(gh pr view "$PR" --repo "$REPO" --json state,mergeStateStatus)"
+              if [ "$(echo "$POLL" | jq -r .state)" != "OPEN" ]; then
+                echo "PR #$PR closed during mergeability poll — skip."
+                CLOSED_DURING_POLL=true
+                break
+              fi
+              MERGE_STATE="$(echo "$POLL" | jq -r .mergeStateStatus)"
+              [ "$MERGE_STATE" != "UNKNOWN" ] && break
+              sleep 5
+            done
+
+            if [ "$CLOSED_DURING_POLL" = "true" ]; then
+              continue
+            fi
+
+            echo "PR #$PR mergeStateStatus=$MERGE_STATE"
+
+            if [ "$MERGE_STATE" != "CLEAN" ]; then
+              echo "PR #$PR not CLEAN (mergeStateStatus=$MERGE_STATE) — skip; will merge once it becomes CLEAN."
+              continue
+            fi
+
+            # ── 5. Squash merge — branch left intact (no --delete-branch) ────────
+            echo "PR #$PR is CLEAN with an authorized APPROVED review — squash-merging."
+            gh pr merge "$PR" --repo "$REPO" --squash
+            echo "PR #$PR merged successfully."
+          done

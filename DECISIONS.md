@@ -6,6 +6,16 @@ Newest decisions at the top.
 
 ---
 
+## D-052: Auto-merge bridge keys off `mergeStateStatus == CLEAN`, not specific check names (PD-211)
+
+**Decision:** `.github/workflows/sortie-auto-merge.yml` squash-merges a PR when it detects a standing authorized `APPROVED` review AND `mergeStateStatus == CLEAN` (GitHub's composite signal: no conflicts + all required CI checks green + review requirements satisfied). Deliberately does NOT enumerate specific check names like `verify`.
+
+**Reasoning:** keying off `mergeStateStatus` means any future required check added to branch protection (e.g., the D-047 path-guard) is automatically honored without editing the workflow. Hard-coding check names creates a maintenance hazard — the auto-merge would bypass new protections silently. `CLEAN` is the single authoritative signal that GitHub's own branch-protection layer is satisfied.
+
+**Alternatives considered:** (a) check `reviewDecision == APPROVED` — redundant since `CLEAN` implies reviews are satisfied per branch-protection rules; (b) enumerate required checks by name — fragile, couples the merge bridge to CI config.
+
+---
+
 ## D-051: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)
 
 **Decision:** Ticket relations become first-class *and behavioral*, not cosmetic. Key choices from the 2026-07-07 grill:
