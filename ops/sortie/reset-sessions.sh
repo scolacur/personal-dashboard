@@ -82,7 +82,7 @@ sq "SELECT * FROM session_metadata WHERE issue_id='$ISSUE';"
 echo
 
 # ── 2. confirm delete (single gate — the rows above are the confirmation) ────────
-if ! confirm "Delete the run_history + session_metadata rows shown above for #$ISSUE?"; then
+if ! confirm "Delete the run_history + session_metadata rows shown above for GitHub Issue #$ISSUE?"; then
   echo "Aborted. Nothing changed."
   exit 0
 fi
