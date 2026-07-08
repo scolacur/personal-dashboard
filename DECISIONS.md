@@ -6,6 +6,26 @@ Newest decisions at the top.
 
 ---
 
+## D-048: Acute Strategies Generator stores tags as a JSON array in a SQLite TEXT column (PD-202)
+
+**Decision:** Idea tags are stored as a JSON array in a `TEXT` column (`tags TEXT NOT NULL DEFAULT '[]'`), not in a separate join table.
+
+**Why:** The ideas list is small (O(100) entries), tags are only used for client-side filtering, and a join table adds schema complexity with no benefit at this scale. SQLite's built-in JSON support lets us parse/serialize in the store layer without any extra SQL joins.
+
+**Trade-off:** Tag-based aggregation queries (e.g. "count ideas per tag") would require JSON parsing in SQL or in application code. Acceptable for a personal dashboard; revisit if a tag management UI becomes needed.
+
+---
+
+## D-049: Acute Strategies Generator uses client-side filtering and randomisation (PD-202)
+
+**Decision:** All ideas are loaded once via `GET /api/widgets/acute-strategies-generator/ideas`. Filtering by type/tag and random selection are done in the browser.
+
+**Why:** The ideas list is small enough that loading all of them upfront is negligible. Client-side randomisation avoids a network round-trip on every Shuffle press and makes the filter interaction feel instant.
+
+**Trade-off:** If the list grew very large (thousands of items), this would need revisiting. Not a concern for a personal creative list.
+
+---
+
 ## D-047: Sortie sensitive-path guardrails are two-tier — an authoritative, runtime-independent CI path-guard (Tier 1) plus a runtime-coupled in-loop Claude Code layer (Tier 2), both fed by one shared denylist (PD-308, PD-312; supersedes C-2, PD-13, C-15)
 
 **Decision:** Bounding what an autonomous Sortie worker may change **inside the repo** is enforced in **two tiers**, split by whether the layer survives an agent-runtime swap:
