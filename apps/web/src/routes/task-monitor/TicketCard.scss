@@ -102,6 +102,37 @@
   min-width: 0;
 }
 
+// Relation badges (PD-322) — unresolved blocked-by / blocking counts + split indicator.
+.card-relations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.rel-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  text-decoration: none;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+
+  &.rel-blocked {
+    color: var(--status-stuck);
+    border-color: var(--status-stuck);
+  }
+}
+
 .card-actions {
   display: flex;
   align-items: center;
@@ -112,6 +143,64 @@
     flex: 1;
   }
 
+}
+
+// ⋮ relation menu — anchored to the kebab button in the actions row.
+.kebab-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.kebab-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.kebab-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 41;
+  min-width: 150px;
+  padding: var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+.kebab-heading {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.kebab-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--text);
+  text-align: left;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--surface-2);
+    outline: none;
+  }
 }
 
 // Assignee circle — in-place <select> on each card.

@@ -269,48 +269,141 @@
   }
 }
 
-// Read-only split lineage (D-044, PD-269); full relations UI is PD-156.
-.lineage {
+// Authoritative relations management (PD-322, D-051) — supersedes the PD-269 split-only lineage.
+.relations {
   margin-top: var(--space-lg);
   padding-top: var(--space-md);
   border-top: 1px solid var(--border);
+}
+
+.relations-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
 
   h2 {
-    margin: 0 0 var(--space-sm);
-    font-size: var(--font-size-md);
-  }
-
-  ul {
-    margin: var(--space-xs) 0 0;
-    padding-left: var(--space-lg);
-  }
-
-  li {
-    margin-bottom: var(--space-xs);
+    margin: 0;
+    font-size: var(--font-size-lg);
   }
 }
 
-.lineage-group {
-  margin: var(--space-sm) 0 0;
+.add-rel-wrap {
+  position: relative;
+}
+
+.add-rel-btn {
+  padding: 2px var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
   font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--muted);
+  }
 }
 
-.lineage-label {
-  display: inline-block;
-  margin-right: var(--space-sm);
+.add-rel-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.add-rel-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 41;
+  min-width: 150px;
+  padding: var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+}
+
+.add-rel-item {
+  display: block;
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--text);
+  text-align: left;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--surface-2);
+    outline: none;
+  }
+}
+
+.relation-list {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+}
+
+.relation-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-xs) 0;
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.relation-kind {
+  flex: 0 0 auto;
+  min-width: 92px;
   color: var(--muted);
+  font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: var(--font-size-xs);
 }
 
-.lineage-ref {
+.relation-ref {
+  flex: 1 1 auto;
   color: var(--accent);
   text-decoration: underline;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.lineage-status {
-  margin-left: var(--space-sm);
+.relation-status {
+  flex: 0 0 auto;
   color: var(--muted);
   font-size: var(--font-size-xs);
+}
+
+.relation-remove {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--status-stuck);
+    border-color: var(--border);
+  }
 }

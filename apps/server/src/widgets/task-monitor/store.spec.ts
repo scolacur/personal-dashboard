@@ -9,6 +9,7 @@ import {
   createNotification,
   createTicket,
   getLineage,
+  listAllRelations,
   listRelations,
   removeRelation,
   removeRelationById,
@@ -614,6 +615,24 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(listRelations(db, a.id).map((r) => r.type)).toEqual(['duplicates']);
     removeRelation(db, a.id, b.id, 'relates'); // already gone — no throw
     expect(listRelations(db, a.id).map((r) => r.type)).toEqual(['duplicates']);
+  });
+
+  it('listAllRelations returns every row as raw endpoints (PD-322 board badges)', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    const c = createTicket(db, { title: 'c', projectId: pd });
+    addRelation(db, a.id, b.id, 'split'); // agent default
+    addRelation(db, c.id, a.id, 'blocks', 'human');
+    const all = listAllRelations(db);
+    expect(all).toHaveLength(2);
+    const split = all.find((r) => r.type === 'split')!;
+    expect(split.fromTicketId).toBe(a.id);
+    expect(split.toTicketId).toBe(b.id);
+    expect(split.origin).toBe('agent');
+    const blocks = all.find((r) => r.type === 'blocks')!;
+    expect(blocks.fromTicketId).toBe(c.id);
+    expect(blocks.toTicketId).toBe(a.id);
+    expect(blocks.origin).toBe('human');
   });
 
   // ── Relation origin, validation, blocker gate (D-048, PD-321) ──────────────
