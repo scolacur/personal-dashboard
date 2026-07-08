@@ -616,8 +616,14 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(201);
-    const lineage = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}/relations` })).json();
-    expect(lineage.splitInto).toHaveLength(1);
+    // GET /relations is now the full resolved list (D-048); the parent's "split into" lineage is
+    // its outgoing (direction 'from') split relations, and the decompose writes them origin='agent'.
+    const rels = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}/relations` })).json();
+    const splitInto = rels.filter(
+      (r: { type: string; direction: string }) => r.type === 'split' && r.direction === 'from',
+    );
+    expect(splitInto).toHaveLength(1);
+    expect(splitInto[0].origin).toBe('agent');
   });
 
   it('POST /refine-approve 422s a non-Sortie-ready robot child', async () => {
@@ -686,5 +692,159 @@ describe('Ticket Audit routes (PD-283)', () => {
     expect(ok.json().findings).toEqual([]);
     expect((await app.inject({ method: 'GET', url: `${base}/audit/runs/9999/findings` })).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url: `${base}/audit/runs/abc/findings` })).statusCode).toBe(400);
+  });
+});
+
+describe('ticket relations endpoints (D-048, PD-321)', () => {
+  const B = '/api/widgets/task-monitor';
+  async function mk(app: ReturnType<typeof freshSetup>['app'], pid: number, title: string) {
+    const res = await app.inject({ method: 'POST', url: `${B}/tickets`, payload: { title, projectId: pid } });
+    return res.json();
+  }
+
+  it('POST creates a human relation; GET /relations returns it resolved with origin', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const a = await mk(app, pid, 'a');
+    const b = await mk(app, pid, 'b');
+    // "a blocked by b" → from=b (blocker), to=a (blocked)
+    const created = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: b.id, toId: a.id, type: 'blocks' },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().origin).toBe('human');
+    expect(created.json().type).toBe('blocks');
+
+    const all = await app.inject({ method: 'GET', url: `${B}/tickets/${a.id}/relations` });
+    expect(all.statusCode).toBe(200);
+    const rels = all.json();
+    expect(rels).toHaveLength(1);
+    expect(rels[0].direction).toBe('to'); // a is the blocked (to) end
+    expect(rels[0].other.ticketId).toBe(b.id);
+    expect(rels[0].origin).toBe('human');
+  });
+
+  it('POST rejects self-relation (400) and cycle (409)', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const a = await mk(app, pid, 'a');
+    const b = await mk(app, pid, 'b');
+    const self = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: a.id, toId: a.id, type: 'blocks' },
+    });
+    expect(self.statusCode).toBe(400);
+    expect(self.json().code).toBe('SELF_RELATION');
+
+    await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: b.id, toId: a.id, type: 'blocks' },
+    });
+    const cycle = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${b.id}/relations`,
+      payload: { fromId: a.id, toId: b.id, type: 'blocks' },
+    });
+    expect(cycle.statusCode).toBe(409);
+    expect(cycle.json().code).toBe('RELATION_CYCLE');
+    expect(Array.isArray(cycle.json().path)).toBe(true);
+  });
+
+  it('POST validates type, id membership, and ticket existence', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const a = await mk(app, pid, 'a');
+    const b = await mk(app, pid, 'b');
+    const badType = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: a.id, toId: b.id, type: 'nope' },
+    });
+    expect(badType.statusCode).toBe(400);
+    const mismatch = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: b.id, toId: b.id, type: 'relates' },
+    });
+    expect(mismatch.statusCode).toBe(400);
+    expect(mismatch.json().code).toBe('ID_MISMATCH');
+    const missing = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: a.id, toId: 99999, type: 'relates' },
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it('DELETE removes a relation by id (204) then 404', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const a = await mk(app, pid, 'a');
+    const b = await mk(app, pid, 'b');
+    const created = await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: a.id, toId: b.id, type: 'relates' },
+    });
+    const relId = created.json().id;
+    const del = await app.inject({ method: 'DELETE', url: `${B}/tickets/${a.id}/relations/${relId}` });
+    expect(del.statusCode).toBe(204);
+    const again = await app.inject({ method: 'DELETE', url: `${B}/tickets/${a.id}/relations/${relId}` });
+    expect(again.statusCode).toBe(404);
+  });
+
+  it('PATCH to robot_queue is 409 while blocked, 200 once the blocker resolves', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const a = await mk(app, pid, 'a');
+    const blocker = await mk(app, pid, 'blocker');
+    await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${a.id}/relations`,
+      payload: { fromId: blocker.id, toId: a.id, type: 'blocks' },
+    });
+    const blocked = await app.inject({
+      method: 'PATCH',
+      url: `${B}/tickets/${a.id}`,
+      payload: { status: 'robot_queue' },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().code).toBe('BLOCKED_BY_UNRESOLVED');
+    expect(blocked.json().blockers[0].ticketId).toBe(blocker.id);
+
+    await app.inject({ method: 'PATCH', url: `${B}/tickets/${blocker.id}`, payload: { status: 'completed' } });
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: `${B}/tickets/${a.id}`,
+      payload: { status: 'robot_queue' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().status).toBe('robot_queue');
+  });
+
+  it('GET /relations returns the full resolved list including split (PD-269 lineage derivable)', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const parent = await mk(app, pid, 'parent');
+    const child = await mk(app, pid, 'child');
+    await app.inject({
+      method: 'POST',
+      url: `${B}/tickets/${parent.id}/relations`,
+      payload: { fromId: parent.id, toId: child.id, type: 'split' },
+    });
+    const res = await app.inject({ method: 'GET', url: `${B}/tickets/${parent.id}/relations` });
+    expect(res.statusCode).toBe(200);
+    const rels = res.json();
+    expect(rels).toHaveLength(1);
+    // parent is the `from` end of the split → its "split into" lineage is direction 'from'.
+    expect(rels[0].type).toBe('split');
+    expect(rels[0].direction).toBe('from');
+    expect(rels[0].other.ticketId).toBe(child.id);
+    // 404 on a missing ticket.
+    expect((await app.inject({ method: 'GET', url: `${B}/tickets/99999/relations` })).statusCode).toBe(404);
   });
 });

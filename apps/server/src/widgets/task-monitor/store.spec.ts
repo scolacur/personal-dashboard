@@ -11,6 +11,11 @@ import {
   getLineage,
   listRelations,
   removeRelation,
+  removeRelationById,
+  unresolvedBlockers,
+  QueueBlockedError,
+  RelationCycleError,
+  SelfRelationError,
   getProjectBySlug,
   getTicket,
   listNotifications,
@@ -609,6 +614,100 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(listRelations(db, a.id).map((r) => r.type)).toEqual(['duplicates']);
     removeRelation(db, a.id, b.id, 'relates'); // already gone — no throw
     expect(listRelations(db, a.id).map((r) => r.type)).toEqual(['duplicates']);
+  });
+
+  // ── Relation origin, validation, blocker gate (D-048, PD-321) ──────────────
+
+  it('addRelation defaults origin to agent and accepts human', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    const c = createTicket(db, { title: 'c', projectId: pd });
+    addRelation(db, a.id, b.id, 'relates'); // default → agent
+    addRelation(db, a.id, c.id, 'relates', 'human');
+    const byOther = Object.fromEntries(listRelations(db, a.id).map((r) => [r.other.ticketId, r.origin]));
+    expect(byOther[b.id]).toBe('agent');
+    expect(byOther[c.id]).toBe('human');
+  });
+
+  it('addRelation returns the row id (existing id on idempotent re-add)', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    const first = addRelation(db, a.id, b.id, 'relates');
+    const again = addRelation(db, a.id, b.id, 'relates');
+    expect(first).toBeGreaterThan(0);
+    expect(again).toBe(first);
+  });
+
+  it('rejects self-relations for any type', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    expect(() => addRelation(db, a.id, a.id, 'blocks')).toThrow(SelfRelationError);
+    expect(() => addRelation(db, a.id, a.id, 'relates')).toThrow(SelfRelationError);
+  });
+
+  it('rejects a blocks edge that would close a direct 2-cycle', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    addRelation(db, b.id, a.id, 'blocks'); // a blocked by b
+    expect(() => addRelation(db, a.id, b.id, 'blocks')).toThrow(RelationCycleError); // b blocked by a
+  });
+
+  it('rejects a blocks edge that would close a deep cycle', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    const c = createTicket(db, { title: 'c', projectId: pd });
+    addRelation(db, b.id, a.id, 'blocks'); // a blocked by b
+    addRelation(db, c.id, b.id, 'blocks'); // b blocked by c
+    expect(() => addRelation(db, a.id, c.id, 'blocks')).toThrow(RelationCycleError); // c blocked by a
+  });
+
+  it('does not treat relates/duplicates cycles as errors', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    addRelation(db, a.id, b.id, 'relates');
+    expect(() => addRelation(db, b.id, a.id, 'relates')).not.toThrow();
+  });
+
+  it('unresolvedBlockers lists open blockers and clears when they go terminal', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const open = createTicket(db, { title: 'open', projectId: pd });
+    const done = createTicket(db, { title: 'done', projectId: pd });
+    const gone = createTicket(db, { title: 'gone', projectId: pd });
+    addRelation(db, open.id, a.id, 'blocks');
+    addRelation(db, done.id, a.id, 'blocks');
+    addRelation(db, gone.id, a.id, 'blocks');
+    updateTicket(db, done.id, { status: 'completed' });
+    archiveTicket(db, gone.id);
+    expect(unresolvedBlockers(db, a.id).map((b) => b.ticketId)).toEqual([open.id]);
+  });
+
+  it('blocker gate: cannot enter robot_queue with an unresolved blocker; lifts once resolved', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const blocker = createTicket(db, { title: 'blocker', projectId: pd });
+    addRelation(db, blocker.id, a.id, 'blocks'); // a blocked by blocker
+    expect(() => updateTicket(db, a.id, { status: 'robot_queue' })).toThrow(QueueBlockedError);
+    // A different (non-queue) transition is unaffected.
+    expect(() => updateTicket(db, a.id, { status: 'prioritized' })).not.toThrow();
+    // Resolve the blocker → gate lifts.
+    updateTicket(db, blocker.id, { status: 'completed' });
+    expect(updateTicket(db, a.id, { status: 'robot_queue' })?.status).toBe('robot_queue');
+  });
+
+  it('blocker gate is entry-only: blocking an already-queued ticket is allowed at the store level', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd, status: 'robot_queue' });
+    const blocker = createTicket(db, { title: 'blocker', projectId: pd });
+    // Adding the blocker does not throw (PD-322 gates this with a confirm in the UI), and does
+    // not evict the already-queued ticket.
+    expect(() => addRelation(db, blocker.id, a.id, 'blocks')).not.toThrow();
+    expect(getTicket(db, a.id)?.status).toBe('robot_queue');
+  });
+
+  it('removeRelationById deletes by row id and reports whether a row went', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    const relId = addRelation(db, a.id, b.id, 'relates');
+    expect(removeRelationById(db, relId)).toBe(true);
+    expect(listRelations(db, a.id)).toHaveLength(0);
+    expect(removeRelationById(db, relId)).toBe(false);
   });
 
   it('approveRefine refine_in_place rewrites, routes, and marks refined', () => {

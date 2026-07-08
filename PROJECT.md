@@ -405,3 +405,39 @@ swap silently removes it.
 The GitHub label a write+ collaborator applies to consciously ack a PR that touches a
 **sensitive path**, turning the **path-guard** from red to green. Collaborator-gated (the same
 trust boundary Sortie already relies on for issue labels); a stranger cannot apply it.
+
+### Ticket relations
+
+Definitions for the first-class ticket-relation model (D-051). A relation is a directed,
+typed edge between two tickets (`agent_ticket_relations`).
+
+**Ticket relation**:
+A directed, typed edge between two tickets — `blocks` | `relates` | `duplicates` | `split`.
+Stored `(from, to, type)`; `UNIQUE(from, to, type)`. `split` is the decompose lineage
+(parent→child, [[D-044]]); the other three are peer links. Distinct from the *prose* a body
+carries — relations are the structured, queryable truth the Audit reads ([[D-045]]).
+
+**`blocks` relation**:
+The one *behavioral* relation type. Stored `from = blocker`, `to = blocked` — "A blocked by B"
+is the row `(from=B, to=A)`. Drives the **blocker gate**. The others are display-only.
+_Avoid_: reading the direction backwards — the `from` side is the thing doing the blocking.
+
+**Blocker gate**:
+The rule that a ticket **cannot enter `robot_queue`** while it has an unresolved blocker — a
+second queue-entry precondition beside **isSortieReady** (D-051). Hard-refused on entry; entry-only
+(does not evict an already-queued ticket, but blocking a queued ticket needs a confirm). Enforced
+in `updateTicket`. Cycle-safe (adding a `blocks` edge that closes a cycle is refused).
+_Avoid_: treating "blocked" as merely a badge — it refuses dispatch.
+
+**Resolved blocker**:
+A blocker that no longer gates because it reached a terminal state — `completed` / `closed` /
+`archived`. The four active lanes (`backlog` / `prioritized` / `robot_queue` / `steve_queue`)
+still gate. "Done or gone."
+
+**Relation origin**:
+Provenance carried on each relation row — `agent` | `human` (D-051). `agent` = written by the
+griller decompose or the Audit ([[D-045]]); `human` = hand-drawn in the relations UI. The column
+defaults `agent` so pre-existing rows back-fill correctly. Display distinguishes them (e.g. an
+agent `split` renders "auto-split 🤖", a human one "split").
+_Avoid_: conflating origin with **type** — a `split` can be either origin; origin is *who made it*,
+type is *what it means*.

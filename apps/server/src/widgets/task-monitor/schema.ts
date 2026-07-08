@@ -91,6 +91,9 @@ export function bootstrapSchema(db: Database.Database): void {
       from_ticket_id  INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
       to_ticket_id    INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
       type          TEXT    NOT NULL DEFAULT 'blocks',
+      -- Provenance (D-048): 'agent' (griller decompose / Ticket Audit) | 'human' (relations UI).
+      -- Defaults 'agent' so pre-existing rows back-fill correctly (see the migrate step below).
+      origin        TEXT    NOT NULL DEFAULT 'agent',
       created_at    INTEGER NOT NULL,
       UNIQUE(from_ticket_id, to_ticket_id, type)
     );
@@ -182,6 +185,11 @@ export function bootstrapSchema(db: Database.Database): void {
   });
   migrate(db, 'agent_tickets_add_refined', (d) => {
     addColumn(d, 'agent_tickets', 'refined', 'INTEGER NOT NULL DEFAULT 0');
+  });
+  // D-048: relation provenance. Default 'agent' back-fills every pre-existing row (all
+  // griller-authored `split` links) correctly; the relations UI writes 'human'.
+  migrate(db, 'agent_ticket_relations_add_origin', (d) => {
+    addColumn(d, 'agent_ticket_relations', 'origin', "TEXT NOT NULL DEFAULT 'agent'");
   });
 
   // Remap legacy low/medium/high priorities to the P0–P5 scale ('none' = unset).
