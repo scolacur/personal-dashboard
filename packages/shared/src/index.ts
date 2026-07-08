@@ -7,6 +7,8 @@ export type {
   UpdateIdeaInput,
 } from './acute-strategies-generator';
 export { IDEA_TYPES } from './acute-strategies-generator';
+export type { TrackStatus, Track, CreateManualTrackInput } from './music-tracker';
+export { TRACK_STATUSES } from './music-tracker';
 export type {
   TicketStatus,
   TicketPriority,

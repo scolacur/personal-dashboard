@@ -19,6 +19,8 @@ export function bootstrapSchema(db: Database.Database): void {
       norm_title  TEXT    NOT NULL,
       norm_remixer TEXT,
       status      TEXT    NOT NULL DEFAULT 'new',
+      want_music_library INTEGER NOT NULL DEFAULT 0,
+      want_dj_library    INTEGER NOT NULL DEFAULT 0,
       detected_at INTEGER NOT NULL,
       reviewed_at INTEGER,
       UNIQUE(source, source_ref)
@@ -60,4 +62,22 @@ export function bootstrapSchema(db: Database.Database): void {
       error       TEXT
     );
   `);
+
+  // Idempotent migrations for tables that predate later columns.
+  // CREATE TABLE IF NOT EXISTS above is a no-op on an existing table, so new
+  // columns must be added explicitly for DBs created before this widget grew them.
+  addColumnIfMissing(db, 'music_tracker_tracks', 'want_music_library', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'music_tracker_tracks', 'want_dj_library', 'INTEGER NOT NULL DEFAULT 0');
+}
+
+function addColumnIfMissing(
+  db: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }

@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
 import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
+import MusicTracker from './MusicTracker.svelte';
 
 export interface WidgetEmbed {
   // Typed loosely: each widget's embedded component accepts `variant` and `view` props
@@ -88,6 +89,10 @@ export const widgets: WidgetMeta[] = [
     description: 'Detect new playlist additions and check whether they are in your DJ library.',
     route: '/widgets/music-tracker',
     pages: ['music-discovery'],
+    embed: {
+      component: MusicTracker,
+      span: { cols: 2, rows: 3 },
+    },
   },
   {
     id: 'concert-discovery',

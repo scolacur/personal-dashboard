@@ -1,8 +1,33 @@
 import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
+import type { CreateManualTrackInput } from '@dashboard/shared';
 import { scanLibrary } from './library';
+import { insertManualTrack, listTracks } from './store';
+
+const BASE = '/api/widgets/music-tracker';
 
 export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
+  app.get(`${BASE}/tracks`, async () => listTracks(db));
+
+  app.post(`${BASE}/tracks`, async (request, reply) => {
+    const body = request.body as Partial<CreateManualTrackInput>;
+    if (typeof body.artist !== 'string' || !body.artist.trim()) {
+      return reply.status(400).send({ error: 'artist is required' });
+    }
+    if (typeof body.title !== 'string' || !body.title.trim()) {
+      return reply.status(400).send({ error: 'title is required' });
+    }
+    const input: CreateManualTrackInput = {
+      artist: body.artist,
+      title: body.title,
+      remixer: typeof body.remixer === 'string' ? body.remixer : undefined,
+      notes: typeof body.notes === 'string' ? body.notes : undefined,
+      wantMusicLibrary: body.wantMusicLibrary === true,
+      wantDjLibrary: body.wantDjLibrary === true,
+    };
+    return reply.status(201).send(insertManualTrack(db, input));
+  });
+
   app.post('/api/widgets/music-tracker/jobs/library-scan', async (_request, reply) => {
     const libraryPath = process.env.DJ_LIBRARY_PATH;
     if (!libraryPath) {

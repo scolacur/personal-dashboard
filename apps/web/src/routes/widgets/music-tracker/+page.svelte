@@ -1,2 +1,5 @@
-<h1>Music Tracker</h1>
-<p>This widget is stubbed out — implementation coming soon.</p>
+<script lang="ts">
+  import MusicTracker from '$lib/MusicTracker.svelte';
+</script>
+
+<MusicTracker variant="page" />
