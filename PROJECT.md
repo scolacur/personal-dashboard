@@ -442,6 +442,37 @@ agent `split` renders "auto-split 🤖", a human one "split").
 _Avoid_: conflating origin with **type** — a `split` can be either origin; origin is *who made it*,
 type is *what it means*.
 
+### Epics
+
+Definitions for the Epic umbrella primitive (D-054). An Epic groups Tickets; it is its **own**
+primitive — an `is_epic` flag plus a single-parent `epic_id` column on `agent_tickets` — **not** a
+relation row and **not** a tag.
+
+**Epic**:
+A Ticket flagged `is_epic` that acts as an umbrella over a set of member Tickets. Never dispatched
+(cannot enter `robot_queue`); its status is **derived** from its members (hand-set only while it has
+none). No nesting — an Epic cannot belong to another Epic. Members share the Epic's `project_id`.
+_Avoid_: calling an Epic's members "issues" — **issue** is the GitHub lease; an Epic contains
+**Tickets**. Also avoid "parent/child" for the Epic↔member link — that phrasing is reserved for
+`split` lineage; an Epic *contains* Tickets / a Ticket *belongs to* an Epic.
+
+**Epic member**:
+A Ticket that belongs to an Epic via its `epic_id` (at most one Epic per Ticket). Joined/left via
+the card kebab picker, the create/edit modal's epic selector, or the Epic detail page. A member
+decomposed by Refine (`split`) passes its `epic_id` down to the children (the work stays under the
+umbrella).
+
+**Derived Epic status**:
+A non-empty Epic's board position, computed from its members and never hand-dragged: any member in
+a queue → **In Progress** (a cell spanning Steve's + Robot's queues in the Epic band); all members
+`completed` (or `completed`+`closed`) → **Completed**; all `closed` → **Closed**; otherwise the
+least-advanced pending lane (Backlog before Prioritized). An empty Epic defaults to Backlog and may
+be hand-set until it gains a member.
+_Avoid_: confusing this with a **Ticket's** hand-dragged workflow status.
+
+**Epic roll-up**:
+The `done / total` member tally shown on an Epic card (done = `completed` or `closed`).
+
 ### Dashboard shell
 
 Definitions for the widget-grid shell and its layout affordances.

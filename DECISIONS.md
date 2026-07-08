@@ -6,6 +6,26 @@ Newest decisions at the top.
 
 ---
 
+## D-054: Epics are a first-class umbrella primitive (`is_epic` + `epic_id`), distinct from `split`; status is derived and rendered in a non-draggable board band (PD-318)
+
+**Decision:** Add an **Epic** to the board — a Ticket that groups other Tickets. Choices from the 2026-07-08 grill:
+
+- **Its own primitive, not a relation or a tag.** An Epic is `agent_tickets.is_epic = 1`; membership is a single-parent **`epic_id`** FK on the member Ticket (at most one Epic per Ticket). The `agent_ticket_relations` table (blocks/relates/duplicates/split) is left untouched — containment and peer-dependency are different shapes, and conflating them is what muddied `split`-vs-epic in the first place.
+- **Terminology.** *Epic* + *Ticket* (member). **"Issue" stays reserved for the GitHub execution lease** — an Epic contains Tickets, never "issues". **"parent/child" stays reserved for `split` decompose lineage** — the Epic↔member relationship is "contains / belongs to".
+- **Umbrella, never dispatched.** An Epic cannot enter `robot_queue` (structurally impossible — see the band model); `isSortieReady` does not apply; assignment does not cascade. Decompose (`split`) is disabled on an Epic (it would close the umbrella, [[D-036]]). No nesting (an Epic can't belong to an Epic). Members share the Epic's `project_id`.
+- **Status is derived, not dragged.** A non-empty Epic's lane is computed from its members: any member in Steve's/Robot's Queue → **In Progress**; all `completed` (or completed+closed) → **Completed**; all `closed` → **Closed**; else the least-advanced pending lane (Backlog before Prioritized). An **empty** Epic defaults to Backlog and may be hand-set until it gains a member (then derivation takes over).
+- **Two-band board.** A horizontal divider splits every lane: a top **Epic band** (stripe-tinted, non-draggable, derived placement, with an **In Progress** cell spanning the two queue columns) and the normal **Ticket band** below. Only the bottom band is the real Robot's Queue, so an Epic can never be picked up by Sortie. Epic `+` buttons appear in Backlog/Prioritized only; the board filter toggles band visibility (Epics / Tickets / both).
+- **Assignee = manual signal.** `robot` = "the whole Epic is robot-doable", `steve` = "≥1 member needs me". A **"Dispatch ready members"** action (queue eligible members: robot-assigned + `isSortieReady` + unblocked + Backlog/Prioritized, with a report) is deferred to **v2** (P4) — an explicit button, never a silent side-effect of setting the assignee.
+- **Archive is a choice.** Archiving an Epic prompts: archive the Epic only (unlink its members) or archive the Epic + all N members. Never a silent cascade.
+
+**Why:** Epics were being expressed only in prose ("Epic: PD-281", title prefixes). `split` is the closest existing shape but means "a decompose happened and the parent was closed" — the opposite of a live umbrella that stays open and rolls up. A dedicated primitive keeps `split` honest and gives real roll-up/containment. Derived status + the band model resolve the core tension (an Epic's members are scattered across lanes, so an Epic has no single hand-dragged lane) while keeping everything on one board.
+
+**Trade-off:** A second linking mechanism (FK) alongside relations — accepted, because containment ≠ peer-dependency. The two-band layout with a spanning In-Progress cell is the fiddliest part to build. Single-parent membership forbids a Ticket living under two Epics (chosen for coherent roll-up).
+
+**Implications:** Sliced from **PD-318** into three v1 tickets — backend (schema + migration + membership API + derived status/roll-up + split-inheritance + archive-choice + guards), board rendering (two-band layout + derived placement + filter), membership UX (modal checkbox + epic dropdown + kebab "Add to Epic" + Epic detail page) — plus a **v2** ticket (P4) for the "Dispatch ready members" button + batch member-create. Glossary terms (*Epic*, *Epic member*, *Derived Epic status*, *Epic roll-up*) added to PROJECT.md §9. PD-318 decomposed into the slices and closed.
+
+---
+
 ## D-053: Widget "Arrange" mode edits the existing auto-flow grid (reorder + resize) with per-page `localStorage` overrides — not free 2D placement, not DB persistence (PD-331)
 
 **Decision:** The widget **Arrange** feature lets the user rearrange and resize widgets on any widget-bearing top-level page (Home + the six content pages; Task Monitor is excluded — it's a Kanban, not a widget grid). It is deliberately scoped to editing the **existing auto-flow CSS grid**, not introducing a new layout engine:
