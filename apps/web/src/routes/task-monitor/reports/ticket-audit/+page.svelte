@@ -4,7 +4,6 @@
   import { fetchAuditRuns, fetchRunFindings } from '$lib/audit-api';
   import { latestRun, pickReportRun, isRunInFlight, openActionableFindings } from '$lib/audit-logic';
   import { runStatusLabel, runStatusColor, formatTs } from '$lib/audit-display';
-  import { refreshOpenFindingCount } from '$lib/audit-store';
   import { fetchProjects, fetchTickets } from '../../api';
   import AuditReport from './AuditReport.svelte';
 
@@ -39,8 +38,6 @@
       tickets = tix;
       reportRun = pickReportRun(allRuns);
       findings = reportRun ? (await fetchRunFindings(reportRun.id)).findings : [];
-      // Keep the nav badge in lockstep with what this page shows.
-      void refreshOpenFindingCount();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {

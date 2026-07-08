@@ -6,7 +6,6 @@
   import { fetchAuditRuns, requestAuditRun } from '$lib/audit-api';
   import { latestRun, isRunInFlight } from '$lib/audit-logic';
   import { formatTs } from '$lib/audit-display';
-  import { refreshOpenFindingCount } from '$lib/audit-store';
   import { nextCronRun, scheduleLabel } from '$lib/cron';
   import Button from '$lib/Button.svelte';
   import Modal from '$lib/Modal.svelte';
@@ -46,7 +45,6 @@
       pollTimer = setInterval(refresh, POLL_MS);
     } else if (!inFlight && pollTimer !== null) {
       stopPolling();
-      void refreshOpenFindingCount();
     }
   }
 
