@@ -6,7 +6,7 @@ Newest decisions at the top.
 
 ---
 
-## D-050: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)
+## D-051: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)
 
 **Decision:** Ticket relations become first-class *and behavioral*, not cosmetic. Key choices from the 2026-07-07 grill:
 
@@ -23,6 +23,16 @@ Newest decisions at the top.
 **Trade-off:** A hard gate can deadlock via cycles — bought off with mandatory full cycle detection. Entry-only leaves a blocked ticket sitting queued if it's blocked *after* queueing — bought off with the confirm modal (conscious choice) rather than complex auto-eviction. `split` becoming hand-creatable loosens its "a decompose happened" implication — bought back by `origin` carrying the provenance instead of the type.
 
 **Implications:** Sliced from **PD-156** into two vertical slices (both P1): a **backend** slice (**PD-321**, this commit) — `origin` column + shared `RelationOrigin` + `ResolvedRelation.origin`; `addRelation` origin threading + self/`blocks`-cycle validation; the gate in `updateTicket`; relation write endpoints. The read route `GET /tickets/:id/relations` is **widened** from the PD-269 split-only `TicketLineage` to the full `ResolvedRelation[]` (both directions, with origin) — the detail page derives its split subset client-side; this temporarily changes the shape the deployed PD-269 detail page consumes until PD-322 lands (acceptable — LAN-only personal site). New `POST /tickets/:id/relations` (`origin='human'`; 400 self, 409 cycle) + `DELETE /tickets/:id/relations/:relationId`; the `robot_queue` gate surfaces as **409 `BLOCKED_BY_UNRESOLVED`** on both the PATCH and refine-approve routes. The **frontend** slice (**PD-322**, depends on PD-321) — ⋮ kebab "Mark as" submenu; ticket-picker modal reusing `ticketMatchesQuery` + `Modal.svelte`; card badges; detail-page authoritative list + the split-lineage view rebuilt over the widened endpoint; drag-drop rejection UX; the block-a-queued-ticket confirm modal. Feeds [[D-045]] — the Audit's LINK/UNLINK now write with `origin='agent'`. Glossary (*ticket relation*, *`blocks` relation*, *blocker gate*, *relation origin*, *resolved blocker*) added to PROJECT.md §8.
+
+---
+
+## D-050: Embedded live widgets use a registry-provided component + span; generic card is shared chrome (PD-207)
+
+**Decision:** Widgets that want to render live content on the home grid and page stubs register an `embed` object in `widgets.ts` containing a Svelte component and a `{ cols, rows }` grid span. `Widget.svelte` is the shared card chrome: when `embed` is absent it renders the existing link-stub + "Rear panel" placeholder; when present, it renders the component (variant="widget") and uses its own ↺ button to toggle `view` between `'generator'` and `'manage'`, which the component renders accordingly. The grid adds `grid-auto-rows: 140px` so integer-multiple spans give predictable card heights.
+
+**Why:** Widgets are conceptually mini-apps that should be usable directly on the dashboard grid, not just link tiles. The pattern is established with ASG as the first consumer; other widgets can opt in by adding an `embed` entry without touching Widget.svelte or the grids.
+
+**Trade-off:** The embed component API (`variant` / `view` props) is enforced by convention, not TypeScript generics — the registry types `component` loosely to avoid threading per-widget prop types through the generic registry. A future strict-mode approach could use a discriminated union per widget, but at O(10) widgets this adds complexity for no practical benefit.
 
 ---
 

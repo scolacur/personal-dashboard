@@ -1,3 +1,16 @@
+import type { Component } from 'svelte';
+import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
+
+export interface WidgetEmbed {
+  // Typed loosely: each widget's embedded component accepts `variant` and `view` props
+  // by convention; threading per-widget prop types through the generic registry would
+  // require heavy generics with no practical benefit at this scale.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  component: Component<any>;
+  /** Grid span in integer multiples of the base card cell. */
+  span: { cols: number; rows: number };
+}
+
 export interface WidgetMeta {
   id: string;
   title: string;
@@ -5,6 +18,8 @@ export interface WidgetMeta {
   route: string;
   /** Page ids (see pages.ts) this widget is surfaced on. */
   pages?: string[];
+  /** When present, the card renders a live embedded component instead of a link stub. */
+  embed?: WidgetEmbed;
 }
 
 // One entry per folder in the repo-root `widgets/` spec directory. Each widget
@@ -87,6 +102,10 @@ export const widgets: WidgetMeta[] = [
     description: 'Random musical ideas and techniques from a list you maintain.',
     route: '/widgets/acute-strategies-generator',
     pages: ['music-production'],
+    embed: {
+      component: AcuteStrategiesGenerator,
+      span: { cols: 2, rows: 2 },
+    },
   },
   {
     id: 'festival-follower',
