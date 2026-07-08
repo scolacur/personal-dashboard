@@ -132,7 +132,7 @@
     </span>
   </div>
   <p class="card-title">{ticket.title}</p>
-  {#if ticket.refined || ticket.refineState || ticket.agentState || ticket.status === 'prioritized' || ticket.status === 'backlog'}
+  {#if ticket.refined || ticket.refineState || ticket.agentState || (ticket.status !== 'completed' && ticket.status !== 'closed')}
     <div class="card-status-row">
       <!-- Left: Refine-agent state (outlined pill). Always occupies the left slot so the
            Sortie badge stays right-aligned even when there's no refine state. -->
@@ -146,7 +146,7 @@
             draggable="false"
             title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
           >{REFINE_STATE_LABELS[ticket.refineState]}</a>
-        {:else if ticket.status === 'prioritized' || ticket.status === 'backlog'}
+        {:else if ticket.status !== 'completed' && ticket.status !== 'closed'}
           <button
             class="refine-pill refine-start"
             type="button"
