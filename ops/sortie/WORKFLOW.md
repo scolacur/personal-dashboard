@@ -147,6 +147,17 @@ hooks:
   # body) so the worker can actually resolve conflicts rather than the hook failing.
   before_run: |
     cd "$SORTIE_WORKSPACE"
+    # PRISTINE THE TREE FIRST (self-healing retries): a failed prior attempt can leave
+    # modified tracked files AND untracked WIP in this persistent per-issue workspace,
+    # and Sortie's automatic within-dispatch retries re-run before_run WITHOUT after_create's
+    # wipe+clone. The checkout below is then a bare `checkout -B <branch> <start>` — which
+    # dies with "local changes would be overwritten by checkout" (exit 1) the moment
+    # origin/main has moved during the failed attempt. That deterministic failure burned all
+    # 5 sessions and froze #220 (PD-340). reset --hard + clean -fd discard ONLY uncommitted
+    # WIP; a follow-up's real commits live on origin/<branch> and are re-adopted by the
+    # checkout below. No `-x`: keep gitignored node_modules/.sortie so retries don't reinstall.
+    git reset --hard
+    git clean -fd
     PX=http://egress-proxy:3128
     git -c http.proxy=$PX fetch origin main
     BRANCH="sortie/${SORTIE_ISSUE_IDENTIFIER}"
