@@ -1,0 +1,98 @@
+.system-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-lg);
+  font-size: var(--font-size-sm);
+}
+
+.ss-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.ss-label {
+  font-weight: 500;
+  color: var(--muted);
+  min-width: 4.5rem;
+}
+
+.ss-idle {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+// Sortie fleet chips — colour tracks the same --status-* tokens as the card pills.
+.ss-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+
+  .count {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .name {
+    color: var(--muted);
+  }
+
+  &.agent-state-queued {
+    color: var(--status-queued);
+  }
+  &.agent-state-working {
+    color: var(--status-working);
+  }
+  &.agent-state-in-review {
+    color: var(--status-in-review);
+  }
+  &.agent-state-awaiting-human {
+    color: var(--status-awaiting-human);
+  }
+  &.agent-state-needs-human {
+    color: var(--status-needs-human);
+  }
+  &.agent-state-stuck {
+    color: var(--status-stuck);
+  }
+}
+
+// Worker liveness — green while fresh, red once stale.
+.ss-worker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--status-done);
+
+  &.stale {
+    color: var(--status-stuck);
+  }
+
+  .name {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .meta {
+    color: var(--muted);
+  }
+
+  .sha {
+    font-family: monospace;
+    font-size: 0.8em;
+    color: var(--muted);
+  }
+}
