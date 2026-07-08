@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import {
   TICKET_PRIORITIES,
@@ -18,6 +18,10 @@ import {
   appendRefineReply,
   approveRefine,
   archiveTicket,
+  computeEpicSummary,
+  EpicGuardError,
+  listEpicMembers,
+  listEpicSummaries,
   createProject,
   createTicket,
   getProjectBySlug,
@@ -62,6 +66,19 @@ function isStatus(v: unknown): v is TicketStatus {
 
 function isAssignee(v: unknown): v is TicketAssignee {
   return typeof v === 'string' && (TICKET_ASSIGNEES as readonly string[]).includes(v);
+}
+
+/** Map an Epic invariant violation (D-054) to an HTTP reply. */
+const EPIC_ERROR_STATUS: Record<EpicGuardError['code'], number> = {
+  NESTING: 400,
+  NOT_AN_EPIC: 400,
+  CROSS_PROJECT: 400,
+  EPIC_NOT_FOUND: 404,
+  EPIC_NOT_QUEUEABLE: 409,
+  HAS_MEMBERS: 409,
+};
+function sendEpicError(reply: FastifyReply, e: EpicGuardError) {
+  return reply.status(EPIC_ERROR_STATUS[e.code]).send({ error: e.message, code: e.code });
 }
 
 /** Injectable deps for the routes — defaults resolve from the environment / global fetch. */
@@ -159,6 +176,12 @@ export function registerRoutes(
     if (body.status !== undefined && !isStatus(body.status)) {
       return reply.status(400).send({ error: 'invalid status', code: 'INVALID_STATUS' });
     }
+    if (body.isEpic !== undefined && typeof body.isEpic !== 'boolean') {
+      return reply.status(400).send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
+    }
+    if (body.epicId !== undefined && body.epicId !== null && !Number.isInteger(body.epicId)) {
+      return reply.status(400).send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
+    }
 
     const input: CreateTicketInput = {
       title: body.title.trim(),
@@ -167,8 +190,31 @@ export function registerRoutes(
       priority: body.priority === null ? null : isPriority(body.priority) ? body.priority : undefined,
       assignee: body.assignee === undefined ? undefined : body.assignee === null ? null : (body.assignee as TicketAssignee),
       status: isStatus(body.status) ? body.status : undefined,
+      isEpic: body.isEpic === true,
+      epicId: body.epicId === undefined ? undefined : (body.epicId as number | null),
     };
-    return reply.status(201).send(createTicket(db, input));
+    try {
+      return reply.status(201).send(createTicket(db, input));
+    } catch (e) {
+      if (e instanceof EpicGuardError) return sendEpicError(reply, e);
+      throw e;
+    }
+  });
+
+  // Every live Epic's roll-up + derived lane (D-054) — the bulk read the board fetches alongside
+  // tickets to place Epic cards and show done/total. Sparse; mirrors the /relations bulk pattern.
+  app.get(`${base}/epics`, async () => listEpicSummaries(db));
+
+  // An Epic's member Tickets + its roll-up (D-054) — the Epic detail page's list.
+  app.get(`${base}/tickets/:id/members`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    if (!getTicket(db, id)) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    return { members: listEpicMembers(db, id), summary: computeEpicSummary(db, id) };
   });
 
   app.patch(`${base}/tickets/:id`, async (request, reply) => {
@@ -254,6 +300,18 @@ export function registerRoutes(
       }
       patch.refined = body.refined;
     }
+    if (body.isEpic !== undefined) {
+      if (typeof body.isEpic !== 'boolean') {
+        return reply.status(400).send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
+      }
+      patch.isEpic = body.isEpic;
+    }
+    if (body.epicId !== undefined) {
+      if (body.epicId !== null && !Number.isInteger(body.epicId)) {
+        return reply.status(400).send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
+      }
+      patch.epicId = body.epicId as number | null;
+    }
 
     let updated;
     try {
@@ -267,6 +325,8 @@ export function registerRoutes(
           blockers: e.blockers,
         });
       }
+      // Epic invariants (D-054).
+      if (e instanceof EpicGuardError) return sendEpicError(reply, e);
       throw e;
     }
     if (!updated) {
@@ -283,7 +343,10 @@ export function registerRoutes(
     }
     // Capture the linked-issue ref before archiving (archive keeps it, but read once).
     const ref = getTicketIssueRef(db, id);
-    if (!archiveTicket(db, id)) {
+    // D-054: for an Epic, `?cascadeMembers=1` archives its members too; otherwise they're unlinked.
+    const q = request.query as { cascadeMembers?: string };
+    const cascadeMembers = q.cascadeMembers === '1' || q.cascadeMembers === 'true';
+    if (!archiveTicket(db, id, { cascadeMembers })) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     // PD-207 A: best-effort close the linked issue as "not planned" so Sortie stops

@@ -6,6 +6,10 @@ import {
   appendRefineReply,
   approveRefine,
   archiveTicket,
+  computeEpicSummary,
+  EpicGuardError,
+  listEpicMembers,
+  listEpicSummaries,
   createNotification,
   createTicket,
   getLineage,
@@ -929,5 +933,137 @@ describe('recurring tickets', () => {
     expect(t.recurInterval).toBe('daily');
     // Verify it roundtrips through getTicket.
     expect(getTicket(db, t.id)!.recurInterval).toBe('daily');
+  });
+});
+
+describe('epics (D-054, PD-336)', () => {
+  let db: Database.Database;
+  let pd: number;
+  let core: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+    core = projectId(db, 'core');
+  });
+
+  function epic(title = 'Epic'): number {
+    return createTicket(db, { title, projectId: pd, isEpic: true }).id;
+  }
+
+  it('creates an Epic (isEpic true, epicId null) and a member pointing at it', () => {
+    const e = epic();
+    expect(getTicket(db, e)!.isEpic).toBe(true);
+    expect(getTicket(db, e)!.epicId).toBeNull();
+    const m = createTicket(db, { title: 'member', projectId: pd, epicId: e });
+    expect(m.epicId).toBe(e);
+    expect(m.isEpic).toBe(false);
+  });
+
+  it('forces epicId null when isEpic is set (no nesting)', () => {
+    const e = epic();
+    const also = createTicket(db, { title: 'also epic', projectId: pd, isEpic: true, epicId: e });
+    expect(also.isEpic).toBe(true);
+    expect(also.epicId).toBeNull();
+  });
+
+  it('rejects membership guards: not-an-epic, missing, cross-project', () => {
+    const plain = createTicket(db, { title: 'plain', projectId: pd });
+    const e = epic();
+    expect(() => createTicket(db, { title: 'x', projectId: pd, epicId: plain.id })).toThrow(EpicGuardError);
+    expect(() => createTicket(db, { title: 'x', projectId: pd, epicId: 99999 })).toThrow(EpicGuardError);
+    // cross-project: member in `core` under a `pd` epic
+    expect(() => createTicket(db, { title: 'x', projectId: core, epicId: e })).toThrow(EpicGuardError);
+    try {
+      createTicket(db, { title: 'x', projectId: core, epicId: e });
+    } catch (err) {
+      expect((err as EpicGuardError).code).toBe('CROSS_PROJECT');
+    }
+  });
+
+  it('an Epic can never enter robot_queue (create or update)', () => {
+    expect(() => createTicket(db, { title: 'e', projectId: pd, isEpic: true, status: 'robot_queue' })).toThrow(
+      EpicGuardError,
+    );
+    const e = epic();
+    expect(() => updateTicket(db, e, { status: 'robot_queue' })).toThrow(EpicGuardError);
+  });
+
+  it('refuses un-flagging an Epic that still has members', () => {
+    const e = epic();
+    createTicket(db, { title: 'm', projectId: pd, epicId: e });
+    try {
+      updateTicket(db, e, { isEpic: false });
+      throw new Error('expected throw');
+    } catch (err) {
+      expect((err as EpicGuardError).code).toBe('HAS_MEMBERS');
+    }
+  });
+
+  it('derives lane + roll-up per D-054', () => {
+    const e = epic();
+    // empty → backlog
+    expect(computeEpicSummary(db, e)).toMatchObject({ done: 0, total: 0, derivedLane: 'backlog' });
+    const m1 = createTicket(db, { title: 'm1', projectId: pd, epicId: e, status: 'backlog' }).id;
+    const m2 = createTicket(db, { title: 'm2', projectId: pd, epicId: e, status: 'prioritized' }).id;
+    // mixed backlog + prioritized → least-advanced pending = backlog
+    expect(computeEpicSummary(db, e).derivedLane).toBe('backlog');
+    // a member in a queue → in_progress
+    updateTicket(db, m2, { status: 'steve_queue' });
+    expect(computeEpicSummary(db, e).derivedLane).toBe('in_progress');
+    // all done (one completed, one closed) → completed; roll-up counts both as done
+    updateTicket(db, m1, { status: 'completed' });
+    updateTicket(db, m2, { status: 'closed' });
+    const s = computeEpicSummary(db, e);
+    expect(s).toMatchObject({ done: 2, total: 2, derivedLane: 'completed' });
+    // all closed → closed
+    updateTicket(db, m1, { status: 'closed' });
+    expect(computeEpicSummary(db, e).derivedLane).toBe('closed');
+  });
+
+  it('listEpicMembers + listEpicSummaries see only live members', () => {
+    const e = epic();
+    const m = createTicket(db, { title: 'm', projectId: pd, epicId: e });
+    createTicket(db, { title: 'm2', projectId: pd, epicId: e });
+    expect(listEpicMembers(db, e).map((t) => t.id).sort()).toContain(m.id);
+    expect(listEpicMembers(db, e)).toHaveLength(2);
+    const summaries = listEpicSummaries(db);
+    expect(summaries.find((s) => s.ticketId === e)).toMatchObject({ total: 2 });
+  });
+
+  it('archive unlinks members by default, cascades with the flag', () => {
+    const e1 = epic('e1');
+    const m1 = createTicket(db, { title: 'm1', projectId: pd, epicId: e1 });
+    archiveTicket(db, e1); // default: unlink
+    expect(getTicket(db, m1.id)!.archivedAt).toBeNull();
+    expect(getTicket(db, m1.id)!.epicId).toBeNull();
+
+    const e2 = epic('e2');
+    const m2 = createTicket(db, { title: 'm2', projectId: pd, epicId: e2 });
+    archiveTicket(db, e2, { cascadeMembers: true });
+    expect(getTicket(db, m2.id)!.archivedAt).not.toBeNull();
+  });
+
+  it('decompose is refused on an Epic; split children inherit the parent member\'s epic_id', () => {
+    // decompose refused on an epic
+    const e = epic();
+    seedProposal(db,e, {
+      mode: 'decompose',
+      children: [{ title: 'c', body: '## Context\n## Task\n## Done When\n## Out of scope', status: 'backlog' }],
+    });
+    const r = approveRefine(db, e);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.detail).toMatch(/Epic/);
+
+    // a member decomposed → children stay under the same epic
+    const member = createTicket(db, { title: 'member', projectId: pd, epicId: e });
+    seedProposal(db,member.id, {
+      mode: 'decompose',
+      children: [{ title: 'child', body: 'b', status: 'backlog' }],
+    });
+    const r2 = approveRefine(db, member.id);
+    expect(r2.ok).toBe(true);
+    if (r2.ok && r2.childIds) {
+      for (const cid of r2.childIds) expect(getTicket(db, cid)!.epicId).toBe(e);
+    }
   });
 });

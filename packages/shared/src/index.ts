@@ -32,6 +32,8 @@ export type {
   LineageRef,
   TicketLineage,
   ResolvedRelation,
+  EpicDerivedLane,
+  EpicSummary,
   RefineCommitMode,
   RefineChildProposal,
   RefineProposal,
