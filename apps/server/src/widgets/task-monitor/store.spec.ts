@@ -752,6 +752,35 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(robotChild.assignee).toBe('robot');
   });
 
+  it('approveRefine decompose carries each child priority (unset → null)', () => {
+    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [
+        { title: 'urgent', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot', priority: 'P1' },
+        { title: 'later', body: 'loose', status: 'backlog', assignee: null, priority: 'P3' },
+        { title: 'unset', body: 'loose', status: 'backlog', assignee: null },
+      ],
+    });
+    expect(approveRefine(db, parent.id).ok).toBe(true);
+    const byTitle = (t: string) => listTickets(db).find((x) => x.title === t)!;
+    expect(byTitle('urgent').priority).toBe('P1');
+    expect(byTitle('later').priority).toBe('P3');
+    expect(byTitle('unset').priority).toBeNull();
+  });
+
+  it('approveRefine refine_in_place applies proposed priority; omitted leaves it unchanged', () => {
+    const a = createTicket(db, { title: 'a', status: 'prioritized', priority: 'P4', projectId: pd });
+    seedProposal(db, a.id, { mode: 'refine_in_place', body: SORTIE_BODY, priority: 'P0' });
+    expect(approveRefine(db, a.id).ok).toBe(true);
+    expect(getTicket(db, a.id)!.priority).toBe('P0');
+
+    const b = createTicket(db, { title: 'b', status: 'prioritized', priority: 'P4', projectId: pd });
+    seedProposal(db, b.id, { mode: 'refine_in_place', body: SORTIE_BODY });
+    expect(approveRefine(db, b.id).ok).toBe(true);
+    expect(getTicket(db, b.id)!.priority).toBe('P4'); // unchanged
+  });
+
   it('approveRefine decompose rejects a non-Sortie-ready robot child (no writes)', () => {
     const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
     seedProposal(db, parent.id, {

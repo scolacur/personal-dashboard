@@ -154,6 +154,7 @@
               <dl class="proposal-fields">
                 {#if proposal.status}<div><dt>Lane</dt><dd>{proposal.status}</dd></div>{/if}
                 {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
+                {#if proposal.priority !== undefined}<div><dt>Priority</dt><dd>{proposal.priority ?? '—'}</dd></div>{/if}
               </dl>
               {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
             {:else}
@@ -163,6 +164,7 @@
                     <div class="child-head">
                       <span class="child-lane">{child.status}</span>
                       <span class="child-assignee">{child.assignee ?? '—'}</span>
+                      {#if child.priority}<span class="child-priority">{child.priority}</span>{/if}
                       <span class="child-title">{child.title}</span>
                     </div>
                     <pre class="proposal-body">{child.body}</pre>
