@@ -27,10 +27,16 @@
   style:--row-span={embed?.span.rows ?? 1}
 >
   {#if embed && EmbedComponent}
-    <EmbedComponent
-      variant="widget"
-      view={flipped ? 'manage' : 'generator'}
-    />
+    <div class="widget-card-header">
+      <span class="widget-card-title">{title}</span>
+    </div>
+    <div class="widget-card-content">
+      <EmbedComponent
+        variant="widget"
+        view={flipped ? 'manage' : 'generator'}
+      />
+    </div>
+    <a href={route} class="expand-link">Expand ↗</a>
     <button
       type="button"
       class="flip-btn"
@@ -45,6 +51,7 @@
         <a href={route} class="stretched-link" aria-label={title}></a>
         <h2>{title}</h2>
         <p>{description}</p>
+        <a href={route} class="expand-link">Expand ↗</a>
         <button type="button" class="flip-btn" onclick={flip} aria-label="Flip widget">↺</button>
       </div>
       <div class="face face-back">

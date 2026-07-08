@@ -97,18 +97,21 @@
   overflow: hidden;
 }
 
-.idea-type-label {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-}
-
 .idea-text {
   line-height: 1.5;
-  color: var(--text);
   margin: 0;
+
+  &.idea-text--acute {
+    color: var(--accent);
+  }
+
+  &.idea-text--inspiration {
+    color: var(--accent-2);
+  }
+
+  &.idea-text--oblique {
+    color: var(--accent-3);
+  }
 }
 
 .asg[data-variant='page'] .idea-text {

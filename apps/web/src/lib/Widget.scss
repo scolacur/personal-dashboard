@@ -17,6 +17,26 @@
   flex-direction: column;
 }
 
+.widget-card-header {
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.widget-card-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.widget-card-content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
 .widget-inner {
   position: relative;
   width: 100%;
@@ -98,6 +118,22 @@
   inset: 0;
   z-index: 1;
   border-radius: var(--radius);
+}
+
+.expand-link {
+  position: absolute;
+  bottom: 0.625rem;
+  left: 0.625rem;
+  z-index: 2;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  text-decoration: none;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+
+  &:hover {
+    color: var(--accent);
+  }
 }
 
 .flip-btn {
