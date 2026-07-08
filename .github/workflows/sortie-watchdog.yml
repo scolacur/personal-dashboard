@@ -23,11 +23,18 @@
 # it catches all four modes. It is the sibling of sortie-conflict-rework.yml (BEHAVIOR 2).
 #
 # WHAT IT DOES: an issue that has sat in sortie:in-progress (or sortie:queued) longer than
-# the threshold (default 2h) is flipped to the terminal-ish sortie:stuck label and an
-# @-mention comment is posted. A healthy run completes in minutes and moves the label well
-# before the threshold, so a breach means genuinely stalled. sortie:stuck is NOT in
-# query_filter, so the issue drops out of Sortie's candidate set until a human re-queues it
-# (sortie:queued) or drops it (sortie:wontfix).
+# the threshold (in-progress 120m, queued 30m) is flipped to the terminal-ish sortie:stuck
+# label and an @-mention comment is posted. A healthy run completes in minutes and moves the
+# label well before the threshold, so a breach means genuinely stalled. sortie:stuck is NOT
+# in query_filter, so the issue drops out of Sortie's candidate set until a human re-queues
+# it (sortie:queued) or drops it (sortie:wontfix).
+#
+# CONCURRENCY-AWARE QUEUED SWEEP (PD-296): a queued issue is only a problem if Sortie COULD
+# have dispatched it but didn't. When the in-progress count is already at max_concurrent_agents
+# (read from ops/sortie/WORKFLOW.md), every worker slot is busy and a long queue is EXPECTED,
+# not stuck — so the queued sweep is skipped entirely for that run. Queued-stuck therefore
+# fires only when a slot is free and work still sits queued (mode 4: Sortie down / not
+# dispatching). The in-progress sweep is unconditional (a busy slot can still be a stalled one).
 #
 # DELIBERATELY NOT TOUCHED: sortie:awaiting-human (Layer 2 ask_human — an INTENTIONAL,
 # expected park waiting on a human; escalating it to stuck would be wrong), and the terminal
@@ -42,14 +49,17 @@ name: sortie-watchdog
 
 on:
   schedule:
-    # Every 15 min. The queued threshold is 20m, so the run cadence must be <= that to
-    # catch it promptly; effective detection latency is (threshold + up to one interval).
-    # NOTE: GitHub cron is best-effort and can be delayed several minutes under load.
-    - cron: '*/15 * * * *'
+    # Every 30 min. The queued threshold is 30m, so the run cadence matches it: effective
+    # detection latency is (threshold + up to one interval). Cadence was relaxed from 15m
+    # once the queued sweep became concurrency-aware (PD-296) — queued-stuck now fires only
+    # on genuine non-dispatch (a free slot with work waiting), a rare failure mode that does
+    # not need minute-level detection. NOTE: GitHub cron is best-effort and can be delayed
+    # several minutes under load.
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       threshold_minutes:
-        description: 'Override BOTH per-state thresholds for this run (blank = use defaults: queued 20m, in-progress 120m). Handy with dry_run.'
+        description: 'Override BOTH per-state thresholds for this run (blank = use defaults: queued 30m, in-progress 120m). Handy with dry_run.'
         required: false
         default: ''
       dry_run:
@@ -75,11 +85,41 @@ jobs:
       REPO: ${{ github.repository }}
       MENTION: scolacur          # who to @-mention (also forwarded to Discord via webhook)
       THRESHOLD_IN_PROGRESS_MIN: '120'   # a stalled active run (prep-fail / exhaustion / restart-orphan)
-      THRESHOLD_QUEUED_MIN: '20'         # not picked up promptly -> Sortie may be down / not dispatching
+      THRESHOLD_QUEUED_MIN: '30'         # not picked up promptly WHILE a slot is free -> Sortie may be down
     steps:
+      # Checkout is only for reading ops/sortie/WORKFLOW.md (the max_concurrent_agents source
+      # of truth) — the sweep itself talks to GitHub via `gh`, not the working tree.
+      - uses: actions/checkout@v4
+
       - name: Escalate stale in-progress / queued issues to sortie:stuck
         run: |
           set -euo pipefail
+
+          # ── Concurrency limit (single source of truth: ops/sortie/WORKFLOW.md, PD-296) ──
+          # Parse `max_concurrent_agents: N` out of the YAML front-matter. Fall back to 1
+          # (the pilot value) if the line ever moves/renames, so the gate fails SAFE-CLOSED:
+          # a limit of 1 is the most permissive gate (queued rarely swept), never a false
+          # "stuck" storm. Log whichever we used so a drift is visible in the run output.
+          # `|| true` so a no-match (grep exit 1) under `set -e`/`pipefail` doesn't abort the
+          # script before the fallback below runs.
+          CONCURRENCY_LIMIT="$(
+            { grep -oE '^[[:space:]]*max_concurrent_agents:[[:space:]]*[0-9]+' ops/sortie/WORKFLOW.md \
+              | grep -oE '[0-9]+$' | head -n1; } || true
+          )"
+          if [ -z "${CONCURRENCY_LIMIT:-}" ]; then
+            echo "watchdog: WARN could not parse max_concurrent_agents from WORKFLOW.md — defaulting to 1"
+            CONCURRENCY_LIMIT=1
+          fi
+
+          # In-progress slots in use RIGHT NOW — snapshotted BEFORE the loop, because the
+          # in-progress sweep below may relabel stalled issues to sortie:stuck (freeing their
+          # slot). The queued gate must reflect the state the operator sees at run start, not
+          # a slot this same run just vacated.
+          IN_PROGRESS_COUNT="$(
+            gh issue list --repo "$REPO" --state open --label "sortie:in-progress" \
+              --json number --jq 'length'
+          )"
+          echo "watchdog: concurrency_limit=${CONCURRENCY_LIMIT} in_progress_now=${IN_PROGRESS_COUNT}"
 
           OVERRIDE="${{ github.event.inputs.threshold_minutes }}"
           DRY_RUN="${{ github.event.inputs.dry_run }}"
@@ -103,6 +143,15 @@ jobs:
               THRESHOLD_MIN="$THRESHOLD_IN_PROGRESS_MIN"
             else
               THRESHOLD_MIN="$THRESHOLD_QUEUED_MIN"
+            fi
+
+            # Concurrency gate (PD-296): a queued issue is only "stuck" if a worker slot was
+            # free and Sortie still failed to dispatch it. When in-progress is at/over the
+            # limit, every slot is busy and the queue is legitimately waiting its turn — skip
+            # the whole queued sweep for this run. The in-progress sweep is never gated.
+            if [ "$STATE" = "queued" ] && [ "$IN_PROGRESS_COUNT" -ge "$CONCURRENCY_LIMIT" ]; then
+              echo "queued sweep skipped: in_progress=${IN_PROGRESS_COUNT} >= limit=${CONCURRENCY_LIMIT} (all slots busy; queue is expected, not stuck)"
+              continue
             fi
 
             mapfile -t NUMS < <(
@@ -132,7 +181,7 @@ jobs:
               if [ "$STATE" = "in-progress" ]; then
                 REASON="has been in \`$LABEL\` for **${AGE_MIN} min** with no resolution. A healthy run finishes in minutes and moves the label; this one is stalled (workspace-prep failure, max_sessions exhaustion, or a container-restart orphan)."
               else
-                REASON="has been in \`$LABEL\` for **${AGE_MIN} min** without being picked up. Sortie may not be dispatching — check the \`sortie\` container is up and not saturated (max_concurrent_agents=1)."
+                REASON="has been in \`$LABEL\` for **${AGE_MIN} min** without being picked up **while a worker slot was free** (in-progress ${IN_PROGRESS_COUNT} < limit ${CONCURRENCY_LIMIT}) — so this is not a full-queue wait. Sortie may not be dispatching — check the \`sortie\` container is up and healthy."
               fi
 
               echo "#$N ($LABEL) age ${AGE_MIN}m >= ${THRESHOLD_MIN}m — STUCK"
