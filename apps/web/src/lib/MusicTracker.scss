@@ -1,10 +1,28 @@
-.mt-page {
+/* ── Page variant ──────────────────────────────────────────── */
+
+.mt[data-variant='page'] {
   max-width: 640px;
   margin: 2rem auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
 }
+
+/* ── Widget variant ────────────────────────────────────────── */
+
+.mt[data-variant='widget'] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: var(--space-md);
+  // Reserve bottom-right corner for the Widget flip button
+  padding-bottom: calc(var(--space-md) + 2.25rem);
+  gap: var(--space-sm);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* ── Page header (page variant only) ──────────────────────── */
 
 .page-header {
   display: flex;
@@ -18,7 +36,18 @@
   font-size: 1.5rem;
 }
 
-/* ── Add form ────────────────────────────────────────────── */
+/* ── Status messages ───────────────────────────────────────── */
+
+.status-msg {
+  color: var(--muted);
+  margin: 0;
+
+  &.error {
+    color: #cf222e;
+  }
+}
+
+/* ── Add form ──────────────────────────────────────────────── */
 
 .add-form {
   display: flex;
@@ -28,6 +57,15 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-lg);
+}
+
+.mt[data-variant='widget'] .add-form {
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow-y: auto;
 }
 
 .field-row {
@@ -120,21 +158,18 @@
   }
 }
 
-.status-msg {
-  color: var(--muted);
-  margin: 0;
-
-  &.error {
-    color: #cf222e;
-  }
-}
-
-/* ── Track list ──────────────────────────────────────────── */
+/* ── Track list ──────────────────────────────────────────────── */
 
 .tracks {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+.mt[data-variant='widget'] .tracks {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .tracks-heading {
