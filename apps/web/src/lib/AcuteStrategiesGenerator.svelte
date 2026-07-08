@@ -101,8 +101,7 @@
     <div class="generator-view">
       <div class="idea-display">
         {#if currentIdea}
-          <div class="idea-type-label">{currentIdea.type}</div>
-          <p class="idea-text">{currentIdea.text}</p>
+          <p class="idea-text idea-text--{currentIdea.type.toLowerCase()}">{currentIdea.text}</p>
           {#if currentIdea.tags.length > 0}
             <div class="idea-tags">
               {#each currentIdea.tags as tag (tag)}
