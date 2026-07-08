@@ -5,6 +5,7 @@ import { openDb } from './shared/db';
 import { logger } from './shared/logger';
 import { startRefineJob } from './jobs/refine';
 import { startAuditJob } from './jobs/audit';
+import { startHeartbeat } from './heartbeat';
 
 /**
  * agent-worker entrypoint (D-044 scaffold → D-045 multi-job host). Boots the long-lived
@@ -28,6 +29,9 @@ async function main(): Promise<void> {
   // Fail fast if the shared dashboard DB isn't mounted where we expect.
   const db = openDb(config);
   db.prepare('SELECT 1').get();
+
+  // Liveness beacon the dashboard's Site Status reads (this worker never serves HTTP).
+  startHeartbeat(db, config);
 
   // Job dispatch — start each agent-worker job over the shared infra above.
   startRefineJob(db, config);

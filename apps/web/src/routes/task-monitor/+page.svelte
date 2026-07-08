@@ -3,6 +3,7 @@
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import DeployStatus from '../DeployStatus.svelte';
+  import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isSortieReady } from '@dashboard/shared';
@@ -409,6 +410,7 @@
     <h2 class="section-title">Site Status</h2>
   </div>
   <DeployStatus />
+  <SystemStatus />
 </section>
 
 <JobsList heading="Jobs" limit={5} viewAllHref="/task-monitor/jobs" />

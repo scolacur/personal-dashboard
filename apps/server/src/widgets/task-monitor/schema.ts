@@ -145,6 +145,21 @@ export function bootstrapSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_notifications_unread
       ON agent_notifications (read_at, created_at);
+
+    -- Worker liveness beacons (Site Status). One row per long-lived worker process
+    -- (e.g. the out-of-process agent-worker), which upserts its own row on an interval.
+    -- The web server only READS this — it's how the dashboard knows the worker is alive
+    -- without talking to it directly. The agent-worker also CREATEs this table defensively
+    -- in case it boots before the server has ever bootstrapped the shared DB; that DDL
+    -- must match this one. Brand-new table, so CREATE IF NOT EXISTS needs no migrate step.
+    CREATE TABLE IF NOT EXISTS worker_heartbeat (
+      worker      TEXT    PRIMARY KEY,
+      started_at  INTEGER NOT NULL,
+      last_seen   INTEGER NOT NULL,
+      pid         INTEGER,
+      sha         TEXT,
+      model       TEXT
+    );
   `);
 
   // Bring pre-existing tables (older dev DBs) up to the current schema. Each is a

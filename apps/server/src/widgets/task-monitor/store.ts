@@ -16,6 +16,7 @@ import type {
   TicketPriority,
   TicketStatus,
   UpdateTicketInput,
+  WorkerHeartbeat,
 } from '@dashboard/shared';
 import {
   isSortieReady,
@@ -889,4 +890,48 @@ export function markAllNotificationsRead(db: Database.Database): number {
     .prepare('UPDATE agent_notifications SET read_at = ? WHERE read_at IS NULL')
     .run(Date.now());
   return res.changes;
+}
+
+// ── System status (Site Status section) ──────────────────────────────────────
+
+interface WorkerHeartbeatRow {
+  worker: string;
+  started_at: number;
+  last_seen: number;
+  pid: number | null;
+  sha: string | null;
+  model: string | null;
+}
+
+/** Count active (non-archived) tickets by Sortie `agent_state`. Only states that
+ *  actually occur appear in the map — a state with zero tickets is simply absent.
+ *  Pure aggregation over existing rows; no new data source. */
+export function getSortieFleet(db: Database.Database): Partial<Record<AgentState, number>> {
+  const rows = db
+    .prepare(
+      `SELECT agent_state AS state, COUNT(*) AS n
+         FROM agent_tickets
+        WHERE archived_at IS NULL AND agent_state IS NOT NULL
+        GROUP BY agent_state`,
+    )
+    .all() as { state: string; n: number }[];
+  const out: Partial<Record<AgentState, number>> = {};
+  for (const r of rows) out[r.state as AgentState] = r.n;
+  return out;
+}
+
+/** Every known worker heartbeat, freshest first. The web server never talks to a
+ *  worker directly — this row (upserted by the worker) is the liveness signal. */
+export function listWorkerHeartbeats(db: Database.Database): WorkerHeartbeat[] {
+  const rows = db
+    .prepare('SELECT * FROM worker_heartbeat ORDER BY last_seen DESC')
+    .all() as WorkerHeartbeatRow[];
+  return rows.map((r) => ({
+    worker: r.worker,
+    startedAt: r.started_at,
+    lastSeen: r.last_seen,
+    pid: r.pid,
+    sha: r.sha,
+    model: r.model,
+  }));
 }

@@ -30,6 +30,8 @@ export type {
   AuditRunCounts,
   AuditRun,
   AuditFinding,
+  WorkerHeartbeat,
+  SystemStatus,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,

@@ -19,11 +19,13 @@ import {
   createTicket,
   getLineage,
   getProjectBySlug,
+  getSortieFleet,
   getTicketIssueRef,
   listNotifications,
   listProjects,
   listTicketEvents,
   listTickets,
+  listWorkerHeartbeats,
   markAllNotificationsRead,
   markNotificationRead,
   projectExists,
@@ -486,4 +488,12 @@ export function registerRoutes(
     const { run, created } = insertRequestedRunIfNone(db, null);
     return reply.status(202).send({ run, created });
   });
+
+  // ── System status (Site Status section) ──────────────────────────────────────
+  // Two cheap runtime signals for the board header: Sortie fleet counts (pure
+  // aggregation over agent_state) + worker liveness (the heartbeat rows workers upsert).
+  app.get(`${base}/system-status`, async () => ({
+    sortie: getSortieFleet(db),
+    workers: listWorkerHeartbeats(db),
+  }));
 }

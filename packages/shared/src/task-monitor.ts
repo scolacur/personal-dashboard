@@ -551,3 +551,34 @@ export interface AuditFinding {
   createdAt: number;
   updatedAt: number;
 }
+
+// ── System status (Site Status section) ──────────────────────────────────────
+// Two cheap runtime signals surfaced above the board: how the Sortie fleet is
+// doing right now, and whether the out-of-process agent-worker is alive.
+
+/** Liveness beacon written by a long-lived worker process (agent-worker) into the
+ *  shared DB. The web server never talks to the worker directly — it reads this row.
+ *  A worker is "stale" if `lastSeen` is older than a small multiple of its write
+ *  interval (the UI decides the threshold). */
+export interface WorkerHeartbeat {
+  /** Stable worker identity, e.g. 'agent-worker'. One row per worker. */
+  worker: string;
+  /** Unix ms when the worker process started (resets on restart). */
+  startedAt: number;
+  /** Unix ms of the most recent heartbeat write. */
+  lastSeen: number;
+  /** OS pid of the worker process; null if unknown. */
+  pid: number | null;
+  /** Short SHA of the worker's grounding checkout HEAD; null if unavailable. */
+  sha: string | null;
+  /** Model the worker's jobs run on; null if unknown. */
+  model: string | null;
+}
+
+/** Runtime status for the board's Site Status strip. `sortie` counts active
+ *  (non-archived) tickets by agent state — only states with a non-zero count
+ *  appear. `workers` is every known worker heartbeat. */
+export interface SystemStatus {
+  sortie: Partial<Record<AgentState, number>>;
+  workers: WorkerHeartbeat[];
+}
