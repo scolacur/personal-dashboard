@@ -5,6 +5,7 @@ import { openDb } from './shared/db';
 import { logger } from './shared/logger';
 import { startRefineJob } from './jobs/refine';
 import { startAuditJob } from './jobs/audit';
+import { startRobotJob } from './jobs/robot';
 import { startHeartbeat } from './heartbeat';
 
 /**
@@ -14,7 +15,8 @@ import { startHeartbeat } from './heartbeat';
  * the registered jobs. Each job owns its own poll loop and tables; they share the
  * checkout, proxy, config, and DB set up here.
  *
- * Jobs: `refine` (interactive, D-044) and `audit` (autonomous, weekly, D-045/PD-283).
+ * Jobs: `refine` (interactive, D-044), `audit` (autonomous, weekly, D-045/PD-283), and
+ * `robot` (the in-house Sortie replacement, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED).
  */
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -36,6 +38,7 @@ async function main(): Promise<void> {
   // Job dispatch — start each agent-worker job over the shared infra above.
   startRefineJob(db, config);
   startAuditJob(db, config);
+  startRobotJob(db, config);
 
   logger.info('agent-worker ready');
 }

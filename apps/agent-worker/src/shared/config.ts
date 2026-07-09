@@ -26,6 +26,72 @@ export interface AgentWorkerConfig {
   auditIntervalMs: number;
   /** Squid proxy URL when egress-hardened; empty in local dev (direct egress). */
   httpsProxy: string;
+  /** The Robot loop (D-055, PD-342) — the in-house Sortie replacement. Off by default. */
+  robot: RobotConfig;
+}
+
+/**
+ * Config for the **Robot loop** (D-055, PD-342): the `robot` job that replaces the
+ * third-party Sortie dispatcher. It polls `robot_queue` tickets, opens a git worktree per
+ * ticket, and runs a write-enabled coding session (a **Robot**) that hands off a PR. All
+ * env-driven; the whole loop is inert unless `dispatchEnabled` is true, so the image ships
+ * with Sortie still primary until cutover (C6).
+ */
+export interface RobotConfig {
+  /** Master switch — the loop does nothing unless true (default off). C6 flips it on. */
+  dispatchEnabled: boolean;
+  /** Prove-on-one gate: only these ticket ids may dispatch. Empty ⇒ nothing dispatches,
+   *  even when enabled — a second safety catch during bring-up. */
+  allowlist: number[];
+  /** Max Robots in flight at once (PILOT default 1, mirrors Sortie's max_concurrent_agents). */
+  concurrency: number;
+  /** How often to poll `robot_queue` for dispatchable tickets (ms). */
+  intervalMs: number;
+  /** Parent dir for per-ticket worktrees (`<dir>/robot-<n>`); on the persistent /data volume. */
+  worktreesDir: string;
+  /** WRITE-scoped GitHub token (bot PAT, public_repo) the Robot uses to push + open PRs.
+   *  Distinct from the read-only grounding token; the coding session gets it as GH_TOKEN. */
+  writeToken: string;
+  /** git author identity stamped on the Robot's commits. */
+  botName: string;
+  botEmail: string;
+  /** uid/gid the coding subprocess is dropped to (privilege-split, D-055). undefined ⇒ no
+   *  drop (local dev). In the container the loop runs privileged and the coding uid has no
+   *  read access to dashboard.db, structurally enforcing D-039. */
+  codingUid?: number;
+  codingGid?: number;
+  /** Hard turn ceiling for one coding session (mirrors Sortie's max_turns). */
+  maxTurns: number;
+}
+
+/** Parse an env value as an integer, or undefined when unset/blank/invalid. */
+function optInt(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) ? n : undefined;
+}
+
+export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
+  return {
+    dispatchEnabled: env.ROBOT_DISPATCH_ENABLED === '1' || env.ROBOT_DISPATCH_ENABLED === 'true',
+    // "429,431" → [429, 431]; blank ⇒ []. Filter empties first so a trailing comma / blank
+    // segment doesn't coerce to 0 (Number('') === 0).
+    allowlist: (env.ROBOT_ALLOWLIST ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s !== '')
+      .map((s) => Number(s))
+      .filter((n) => Number.isInteger(n)),
+    concurrency: Number(env.ROBOT_CONCURRENCY ?? 1),
+    intervalMs: Number(env.ROBOT_INTERVAL_MS ?? 15_000),
+    worktreesDir: env.ROBOT_WORKTREES_DIR ?? '/data/robot-worktrees',
+    writeToken: env.ROBOT_GITHUB_TOKEN ?? '',
+    botName: env.ROBOT_BOT_NAME ?? 'sortie-bot-55',
+    botEmail: env.ROBOT_BOT_EMAIL ?? '297784052+sortie-bot-55@users.noreply.github.com',
+    codingUid: optInt(env.ROBOT_CODING_UID),
+    codingGid: optInt(env.ROBOT_CODING_GID),
+    maxTurns: Number(env.ROBOT_MAX_TURNS ?? 50),
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerConfig {
@@ -39,6 +105,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     refineIntervalMs: Number(env.AGENT_WORKER_REFINE_INTERVAL_MS ?? 5_000),
     auditIntervalMs: Number(env.AGENT_WORKER_AUDIT_INTERVAL_MS ?? 30_000),
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
+    robot: loadRobotConfig(env),
   };
 }
 
