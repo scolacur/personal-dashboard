@@ -23,6 +23,8 @@
     onDelete,
     onRefine,
     onRelationAction,
+    onAddToEpic,
+    onRemoveFromEpic,
     onOpenStatusLegend,
     onUpdate,
   }: {
@@ -40,6 +42,8 @@
     onDelete: () => void;
     onRefine: () => void;
     onRelationAction: (action: RelationAction) => void;
+    onAddToEpic: () => void;
+    onRemoveFromEpic: () => void;
     onOpenStatusLegend: (state: AgentState) => void;
     onUpdate: () => void;
   } = $props();
@@ -51,6 +55,11 @@
   function chooseRelation(action: RelationAction) {
     menuOpen = false;
     onRelationAction(action);
+  }
+
+  function chooseEpicAction(fn: () => void) {
+    menuOpen = false;
+    fn();
   }
 
   function bandKey(p: TicketPriority | null): string {
@@ -222,6 +231,13 @@
           {#each RELATION_ACTIONS as action (action.key)}
             <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseRelation(action)}>{action.label}</button>
           {/each}
+          {#if !ticket.isEpic}
+            <div class="kebab-divider"></div>
+            <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onAddToEpic)}>{ticket.epicId ? 'Move to Epic…' : 'Add to Epic…'}</button>
+            {#if ticket.epicId}
+              <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onRemoveFromEpic)}>Remove from Epic</button>
+            {/if}
+          {/if}
         </div>
       {/if}
     </div>
