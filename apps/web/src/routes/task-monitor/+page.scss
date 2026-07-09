@@ -18,7 +18,20 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+// Row 1 action buttons (Glossary / Sync / Lanes / Add Ticket), pushed to the right.
+.head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+
+  // Match the ghost buttons' height to the primary Add Ticket button (space-sm padding-block).
+  :global(.btn) {
+    padding-block: var(--space-sm);
+  }
 }
 
 .section-title {
@@ -27,11 +40,15 @@
   flex: 0 0 auto;
 }
 
-// On desktop, margin-left: auto on project-filter creates the left/right split:
-// left → (Tickets | Search), right → (Projects | Priority | Info | Condensed | Add)
-.project-filter {
-  margin-left: auto;
+// Row 2: all filters (Type / Project / Priority / Refinement), left-aligned and wrapping.
+.filters-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
+
 
 .sr-label {
   position: absolute;
@@ -91,7 +108,8 @@
 
 .priority-filter,
 .refinement-filter,
-.project-filter {
+.project-filter,
+.type-filter {
   select {
     font-family: var(--font-sans);
     font-size: var(--font-size-sm);
@@ -170,19 +188,57 @@
 }
 
 /* ── Board ─────────────────────────────────────── */
+// Two-band board (D-054): explicit grid so the Epic band's In-Progress cell can span the two
+// queue columns. Row 1 = lane headers, row 2 = Epic band, row 3 = Ticket band. Column-gap
+// separates lanes; no row-gap so a lane's three cells stack into one visual column.
 .board {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(205px, 1fr);
-  gap: var(--space-md);
-  align-items: start;
+  grid-template-columns: repeat(var(--lanes, 6), minmax(205px, 1fr));
+  grid-template-rows: auto auto minmax(0, 1fr);
+  column-gap: var(--space-md);
+  row-gap: 0;
+  align-items: stretch;
   overflow-x: auto;
 }
 
-.column {
+.lane-head {
+  grid-row: 1;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+// Epic band cell — stripe-tinted, non-draggable; its bottom border is the divider across the board.
+.epic-cell {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 36px;
+  padding: var(--space-sm);
+  background: var(--surface-2);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 2px solid var(--border);
+
+  &.in-progress {
+    // Spans the two queue columns — a faint accent tint to read as one region.
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  }
+}
+
+.epic-add {
+  margin: 0 !important;
+  width: 100% !important;
+}
+
+.ticket-cell {
+  grid-row: 3;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
   min-height: 120px;
   transition: border-color 0.12s;
 
@@ -194,6 +250,17 @@
   &.drag-over {
     border-color: var(--accent);
   }
+}
+
+// With the Epic band hidden, the header joins straight onto the ticket body.
+.board.no-epics .lane-head {
+  border-bottom: none;
+}
+
+.lanes-menu-divider {
+  height: 1px;
+  margin: var(--space-xs) 0;
+  background: var(--border);
 }
 
 .column-head {
@@ -421,15 +488,15 @@
     flex: 0 0 auto;
   }
 
-  /* Board: flex row with scroll-snap so each lane ≈ 85vw */
+  /* Board: keep the two-band grid (D-054) but narrow lanes so a couple show at a time;
+     horizontal scroll handles the rest. */
   .board {
-    display: flex;
-    scroll-snap-type: x mandatory;
+    grid-template-columns: repeat(var(--lanes, 6), minmax(78vw, 1fr));
+    scroll-snap-type: x proximity;
     -webkit-overflow-scrolling: touch;
   }
 
-  .column {
-    flex: 0 0 85vw;
+  .ticket-cell {
     scroll-snap-align: start;
   }
 

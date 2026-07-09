@@ -2,6 +2,7 @@ import type {
   AgentProject,
   AgentTicket,
   CreateTicketInput,
+  EpicSummary,
   RelationType,
   ResolvedRelation,
   TicketEvent,
@@ -152,6 +153,13 @@ export async function fetchAllRelations(): Promise<TicketRelation[]> {
   const res = await fetch(`/api/widgets/task-monitor/relations`);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<TicketRelation[]>;
+}
+
+/** Every live Epic's roll-up + derived lane (D-054, PD-337) — one fetch to place Epic cards. */
+export async function fetchEpicSummaries(): Promise<EpicSummary[]> {
+  const res = await fetch(`/api/widgets/task-monitor/epics`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<EpicSummary[]>;
 }
 
 /** Create a relation from the UI (origin='human'). `fromId` is the source (for `blocks`, the
