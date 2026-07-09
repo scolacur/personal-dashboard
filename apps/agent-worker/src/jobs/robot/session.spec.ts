@@ -25,6 +25,18 @@ describe('codingEnv', () => {
     expect(env.GITHUB_READ_TOKEN).toBeUndefined();
   });
 
+  it('repoints HOME/USER at the coding home only when a uid is dropped', () => {
+    // dev (no uid): inherit the loop's HOME — no override.
+    const dev = codingEnv(loadConfig({}));
+    expect(dev.HOME).toBe(process.env.HOME);
+    expect(dev.USER).toBe(process.env.USER);
+    // uid dropped: HOME/USER point at the robot home the image created.
+    const dropped = codingEnv(loadConfig({ ROBOT_CODING_UID: '1500', ROBOT_CODING_HOME: '/home/robot' }));
+    expect(dropped.HOME).toBe('/home/robot');
+    expect(dropped.USER).toBe('robot');
+    expect(dropped.LOGNAME).toBe('robot');
+  });
+
   it('sets proxy vars only when a proxy is configured', () => {
     expect(codingEnv(loadConfig({})).HTTPS_PROXY).toBeUndefined();
     const env = codingEnv(loadConfig({ HTTPS_PROXY: 'http://egress-proxy:3128' }));

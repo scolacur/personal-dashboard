@@ -43,15 +43,27 @@ laptop — it needs the container (for the uid drop) and a real GitHub push.
 
 The loop process runs privileged (as today); the coding session runs as a dedicated low-priv uid.
 
-1. **Create the coding uid** in the agent-worker image (e.g. `robot`, uid/gid 1500) with a home
-   dir. It needs no special groups — the point is that it is NOT the loop's uid.
-2. **`gh` + `git` on PATH** for the coding session (the Robot runs `git push` / `gh pr create`).
-   Confirm `gh --version` works in the image; add it to `ops/agent-worker/Dockerfile` if absent.
-3. **Lock the DB:** ensure the mounted `dashboard.db` is `chmod 600` and `chown`ed to the loop's
-   uid (root today). Group/other must have **no** access. The loop asserts this and won't dispatch
-   otherwise.
-4. **Worktrees dir** (`ROBOT_WORKTREES_DIR`, default `/data/robot-worktrees`) must be writable by
-   the coding uid (the Robot writes files there), while `dashboard.db` is not.
+1. **Coding uid + `gh` — now baked into the image.** `ops/agent-worker/Dockerfile` creates the
+   `robot` user (uid/gid **1500**, home `/home/robot`) and installs the GitHub CLI. Just rebuild
+   the image; confirm with `docker run --rm agent-worker-dashboard sh -c 'id robot && gh --version'`.
+2. **Lock the DB (host-side `chmod`/`chown`).** The mounted `dashboard.db` (+ its `-wal`/`-shm`
+   sidecars) must be `chmod 600`, owned by the loop's uid (root). Group/other must have **no**
+   access. The loop asserts this at boot and refuses to dispatch otherwise. On the NAS:
+   ```sh
+   cd /volume1/docker/personal-dashboard/personal-dashboard/data
+   sudo chown root:root dashboard.db dashboard.db-wal dashboard.db-shm 2>/dev/null
+   sudo chmod 600 dashboard.db dashboard.db-wal dashboard.db-shm 2>/dev/null
+   ```
+3. **Give the Robot write access to its worktrees + the shared git.** A per-ticket worktree lives
+   under `/data/agent-worker-checkout` (its commits write to that checkout's shared `.git/objects`
+   + `.git/worktrees/<name>`). The dropped uid must be able to write both, so hand the checkout and
+   the worktrees dir to `robot` — the loop (root) can still write them regardless:
+   ```sh
+   cd /volume1/docker/personal-dashboard/personal-dashboard/data
+   sudo mkdir -p robot-worktrees
+   sudo chown -R 1500:1500 agent-worker-checkout robot-worktrees
+   ```
+   (`dashboard.db` stays root-600 — the boundary is the file, not the directory.)
 
 ## Environment (agent-worker's own env file — never the web process)
 
@@ -62,7 +74,8 @@ ROBOT_CONCURRENCY=1                 # one Robot at a time (pilot)
 ROBOT_GITHUB_TOKEN=<bot PAT>        # WRITE-scoped (public_repo) — push + PR. Distinct from GITHUB_READ_TOKEN.
 ROBOT_CODING_UID=1500               # the low-priv coding uid (enables the kernel privilege drop)
 ROBOT_CODING_GID=1500
-# optional: ROBOT_INTERVAL_MS, ROBOT_WORKTREES_DIR, ROBOT_MAX_TURNS, ROBOT_BOT_NAME, ROBOT_BOT_EMAIL
+# optional: ROBOT_CODING_HOME (default /home/robot — matches the image), ROBOT_INTERVAL_MS,
+#           ROBOT_WORKTREES_DIR, ROBOT_MAX_TURNS, ROBOT_BOT_NAME, ROBOT_BOT_EMAIL
 ```
 
 ## Avoiding Sortie contention (C1 is supervised)

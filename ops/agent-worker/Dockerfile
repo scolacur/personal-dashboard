@@ -45,9 +45,27 @@ FROM node:24-slim AS runtime
 WORKDIR /app
 
 # git + ca-certificates: the worker clones/pulls the read-only grounding checkout.
+# gh + curl: the Robot loop's coding session (D-055/PD-342) pushes + opens PRs with `gh`.
+# gh isn't in Debian's default repos, so add the official GitHub CLI apt source (the build
+# stage has internet — the egress restriction is a RUNTIME network, not build-time).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates \
+  && apt-get install -y --no-install-recommends git ca-certificates curl \
+  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       > /etc/apt/sources.list.d/github-cli.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends gh \
   && rm -rf /var/lib/apt/lists/*
+
+# The Robot coding uid (D-055 privilege-split, PD-342). The loop process runs as root (it owns
+# dashboard.db); the coding session is spawned DROPPED to this uid — its home is writable to it
+# (git/gh/npm config + cache) but it has NO read access to the root-600 dashboard.db. Used only
+# when ROBOT_CODING_UID/GID point at it (1500); otherwise the coding session inherits root (dev).
+# nologin: the account is a spawn target, never a login shell.
+RUN groupadd -g 1500 robot \
+  && useradd -u 1500 -g 1500 -m -d /home/robot -s /usr/sbin/nologin robot
 
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json ./packages/shared/
@@ -60,12 +78,15 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/agent-worker/node_modules ./apps/agent-worker/node_modules
 COPY --from=build /app/apps/agent-worker/dist ./apps/agent-worker/dist
 
-# Run as root (the node base default — no USER drop). The agent-worker shares dashboard.db with
-# the web app, which runs as root and OWNS that file plus its WAL/-shm sidecars; it also
-# creates the grounding checkout under the mounted /data. A non-root uid (1002) can't write
-# root-owned WAL files or create dirs in a root-owned /data, so it must match the web app's
-# uid to share the DB read+write. The security boundary for this container is the
+# The LOOP process runs as root (the node base default — no USER drop). The agent-worker shares
+# dashboard.db with the web app, which runs as root and OWNS that file plus its WAL/-shm sidecars;
+# it also creates the grounding checkout under the mounted /data. The loop must match the web
+# app's uid to share the DB read+write. The security boundary for the container as a whole is the
 # egress-hardened network (squid allowlist), not the in-container uid.
+#
+# The Robot coding session is the ONE exception: it is spawned DROPPED to the `robot` uid above
+# (D-055), so it structurally cannot read the root-600 dashboard.db — enforcing D-039 by the
+# kernel. That drop happens only when ROBOT_CODING_UID/GID are set; the loop itself stays root.
 
 ENV NODE_ENV=production
 # Make Node's global fetch honor HTTP(S)_PROXY (Node 24+); the compose sets the proxy.

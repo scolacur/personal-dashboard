@@ -60,6 +60,10 @@ export interface RobotConfig {
    *  read access to dashboard.db, structurally enforcing D-039. */
   codingUid?: number;
   codingGid?: number;
+  /** Home dir for the dropped coding uid. When the uid is dropped, the coding subprocess must
+   *  NOT inherit the loop's HOME (root's — unreadable to it); git/gh/npm write their config +
+   *  cache here instead. Matches the `robot` user's home created in the image. */
+  codingHome: string;
   /** Hard turn ceiling for one coding session (mirrors Sortie's max_turns). */
   maxTurns: number;
 }
@@ -90,6 +94,7 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     botEmail: env.ROBOT_BOT_EMAIL ?? '297784052+sortie-bot-55@users.noreply.github.com',
     codingUid: optInt(env.ROBOT_CODING_UID),
     codingGid: optInt(env.ROBOT_CODING_GID),
+    codingHome: env.ROBOT_CODING_HOME ?? '/home/robot',
     maxTurns: Number(env.ROBOT_MAX_TURNS ?? 50),
   };
 }
