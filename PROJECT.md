@@ -303,6 +303,41 @@ spec. Deletion is ticket-authoritative (D-039).
 
 ### Agent execution
 
+> **D-055 (in progress):** the third-party **Sortie** runtime is being absorbed into `agent-worker`
+> as the **Robot loop**. The *Sortie*-prefixed terms below (Sortie watchdog, hand-off-via-hook,
+> the reaction bridges) are being retired/rehomed by that work; they stay documented until the C6
+> cutover + C7 terminology sweep land.
+
+**Robot**:
+A **dispatched ticket-completing coding agent** — the `agent-worker` counterpart to what the
+third-party Sortie runtime used to spawn (D-055). One Robot works one `robot_queue` ticket:
+it gets a per-ticket **worktree**, runs an Agent-SDK coding session against the ticket body, and
+runs the durable **hand-off** (verify → commit → push → PR → relabel). Runs as a lower-privilege
+uid with **no `dashboard.db` reach** (worktree-only), which structurally enforces D-039 (a Robot
+can't queue or self-complete). Autonomous — backlog-only ticket creation still applies.
+_Avoid_: calling it "sortie" (the retired product name) or "the loop" (that's the Robot loop).
+
+**Robot loop**:
+The `robot` **job** in `agent-worker` (D-055) that replaces the Sortie dispatcher: polls
+`robot_queue` tickets in the board DB (the DB is the queue), spawns **Robots** under a
+concurrency cap, applies the three-tier **fault-tier** retry policy, and owns the agent-state
+machine (writing DB state, pushing `robot:*` labels as a best-effort projection). The **sole
+`dashboard.db` writer**.
+_Avoid_: "the dispatcher" is fine informally, but the canonical noun is the Robot loop.
+
+**run**:
+One **Robot attempt on a ticket** (the counterpart to a Sortie "session"; recorded in the
+`agent_runs` table). Retries produce further runs against the per-ticket retry cap.
+_Avoid_: "session" (Sortie's term) and "sortie" (retired).
+
+**Fault tier**:
+How the Robot loop classifies a failed **run** (D-055), deciding whether to retry: **transient**
+(no-output turn, network/CI flake → retry, per-ticket cap 3), **deterministic** (repeated identical
+signature, path-guard rejection, setup fault → 0 retries, park + surface), or **system-wide**
+(GitHub/Anthropic auth 401/403 → pause the whole loop + alert, zero per-ticket burn). Identical
+signatures auto-promote transient→deterministic at N=2.
+_Avoid_: conflating a per-ticket deterministic fault with a system-wide pause.
+
 **agent-worker**:
 The long-running process (`apps/agent-worker`, Agent SDK, out of the Fastify web process)
 that **hosts LLM-agent jobs**. Owns the shared read-only repo checkout, the egress proxy,
