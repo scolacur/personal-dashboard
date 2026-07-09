@@ -56,6 +56,11 @@ describe('loadRobotConfig', () => {
     expect(s.maxTurns).toBe(50);
     expect(s.codingUid).toBeUndefined();
     expect(s.codingGid).toBeUndefined();
+    expect(s.codingHome).toBe('/home/robot');
+  });
+
+  it('reads a custom coding home', () => {
+    expect(loadRobotConfig({ ROBOT_CODING_HOME: '/home/coder' }).codingHome).toBe('/home/coder');
   });
 
   it('enables on "1" or "true"', () => {

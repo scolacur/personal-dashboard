@@ -33,19 +33,24 @@ export interface RobotSessionResult {
   error?: string;
 }
 
-/** The env handed to the coding subprocess. Inherits the loop env for PATH/HOME/ANTHROPIC_API_KEY,
+/** The env handed to the coding subprocess. Inherits the loop env for PATH/ANTHROPIC_API_KEY,
  *  then injects the WRITE token as GH_TOKEN and the proxy so git/gh/npm reach GitHub + the registry
  *  through squid. The read token is intentionally NOT forwarded — a Robot pushes with the write
- *  token or not at all. */
+ *  token or not at all. When the uid is dropped, HOME/USER are repointed at the coding user's
+ *  home (inheriting root's HOME would be unreadable to the dropped uid). */
 export function codingEnv(config: AgentWorkerConfig): Record<string, string | undefined> {
-  const { writeToken } = config.robot;
+  const { writeToken, codingUid, codingHome } = config.robot;
   const proxyVars = config.httpsProxy
     ? { HTTPS_PROXY: config.httpsProxy, HTTP_PROXY: config.httpsProxy, NODE_USE_ENV_PROXY: '1' }
     : {};
+  // Only override HOME when actually dropping privilege; in dev (no uid) the inherited HOME is right.
+  const homeVars =
+    codingUid !== undefined ? { HOME: codingHome, USER: 'robot', LOGNAME: 'robot' } : {};
   return {
     ...process.env,
     GITHUB_READ_TOKEN: undefined,
     ...proxyVars,
+    ...homeVars,
     ...(writeToken ? { GH_TOKEN: writeToken, GITHUB_TOKEN: writeToken } : {}),
   };
 }
