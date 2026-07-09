@@ -164,6 +164,14 @@
   let epicSummaries = $state<EpicSummary[]>([]);
   const epicSummaryById = $derived(new Map(epicSummaries.map((s) => [s.ticketId, s])));
 
+  // D-054: a non-empty Epic's lane is *derived* from its members, so its own status is inert —
+  // setting it here silently no-ops. Lock the Status field for that case and explain why.
+  const editingEpicWithMembers = $derived(
+    editingId !== null &&
+      formIsEpic &&
+      (epicSummaryById.get(editingId)?.total ?? 0) > 0,
+  );
+
   // Ticket-type filter (D-054): All shows both bands; Epics-only hides the ticket band;
   // Tickets-only hides the epic band; Epics & Lone Tickets shows epics + only the tickets
   // that don't belong to an epic.
@@ -752,13 +760,15 @@
     </label>
     <label>
       <span>Status</span>
-      <select bind:value={formStatus} disabled={editingLocked}>
+      <select bind:value={formStatus} disabled={editingLocked || editingEpicWithMembers}>
         {#each COLUMNS as c (c.status)}
           <option value={c.status}>{c.label}</option>
         {/each}
       </select>
       {#if editingLocked}
         <small class="field-note">Locked — this ticket is controlled by its agent.</small>
+      {:else if editingEpicWithMembers}
+        <small class="field-note">Derived from members — prioritize a member to move the Epic.</small>
       {/if}
     </label>
     <label>

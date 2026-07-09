@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { AgentProject, AgentTicket, EpicSummary, TicketAssignee } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES } from '@dashboard/shared';
+  import type { AgentProject, AgentTicket, EpicSummary, TicketAssignee, TicketPriority } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, TICKET_PRIORITIES } from '@dashboard/shared';
   import { Pencil, Trash2, Layers } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
   import * as api from './api';
@@ -43,6 +43,20 @@
     return '—';
   }
 
+  function bandKey(p: TicketPriority | null): string {
+    return p ?? 'none';
+  }
+
+  async function setPriority(priority: TicketPriority | null) {
+    if (epic.priority === priority) return;
+    try {
+      await api.updateTicket(epic.id, { priority });
+      onUpdate();
+    } catch (e) {
+      console.error('[EpicCard] setPriority failed', e);
+    }
+  }
+
   async function setAssignee(assignee: TicketAssignee | null) {
     if (epic.assignee === assignee) return;
     try {
@@ -76,6 +90,17 @@
       >
     {/if}
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
+    <select
+      class="priority priority-{bandKey(epic.priority)}"
+      title="Set priority"
+      value={epic.priority ?? ''}
+      onchange={(e) => setPriority((e.currentTarget.value || null) as TicketPriority | null)}
+    >
+      <option value="">—</option>
+      {#each TICKET_PRIORITIES as p (p)}
+        <option value={p}>{p}</option>
+      {/each}
+    </select>
   </div>
 
   <a class="epic-title" href={detailHref} draggable="false">{epic.title}</a>
