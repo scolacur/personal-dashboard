@@ -10,6 +10,10 @@
     epic,
     project,
     summary,
+    dragging = false,
+    dropBefore = false,
+    onDragStart,
+    onDragEnd,
     onEdit,
     onDelete,
     onUpdate,
@@ -17,6 +21,10 @@
     epic: AgentTicket;
     project: AgentProject | undefined;
     summary: EpicSummary | undefined;
+    dragging?: boolean;
+    dropBefore?: boolean;
+    onDragStart: (e: DragEvent) => void;
+    onDragEnd: () => void;
     onEdit: () => void;
     onDelete: () => void;
     onUpdate: () => void;
@@ -46,7 +54,15 @@
   }
 </script>
 
-<article class="epic-card" data-id={epic.id}>
+<article
+  class="epic-card"
+  class:dragging
+  class:drop-before={dropBefore}
+  data-id={epic.id}
+  draggable={true}
+  ondragstart={onDragStart}
+  ondragend={onDragEnd}
+>
   <div class="epic-top">
     <span class="epic-badge" title="Epic"><Layers size={12} /></span>
     {#if epic.displayId}
@@ -54,6 +70,7 @@
         class="epic-id"
         style="--id-color: {projectIdColor(project)}"
         href={detailHref}
+        draggable="false"
         title={project ? `${project.name} · open ${epic.displayId}` : `Open ${epic.displayId}`}
         >{epic.displayId}</a
       >
@@ -61,7 +78,7 @@
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
   </div>
 
-  <a class="epic-title" href={detailHref}>{epic.title}</a>
+  <a class="epic-title" href={detailHref} draggable="false">{epic.title}</a>
 
   <div class="epic-rollup" title="{pct}% complete">
     <div class="epic-rollup-fill" style="width: {pct}%"></div>

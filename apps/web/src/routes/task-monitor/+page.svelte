@@ -5,22 +5,23 @@
   import DeployStatus from '../DeployStatus.svelte';
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
   import EpicCard from './EpicCard.svelte';
   import RelationPicker from './RelationPicker.svelte';
+  import EpicPicker from './EpicPicker.svelte';
   import { computeBadges, type RelationAction, type RelationBadges } from './relation-logic';
-  import { buildEpicBand } from './epic-logic';
+  import { buildEpicBand, type EpicBandCell } from './epic-logic';
   import JobsList from './JobsList.svelte';
   import * as api from './api';
   import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
   import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
-  import { isStatusLocked, computeSortOrder } from './board-logic';
+  import { isStatusLocked, computeSortOrder, computeOrderWithin } from './board-logic';
   import Button from '$lib/Button.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
@@ -134,10 +135,18 @@
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
   let formAssignee = $state<TicketAssignee | null>(null);
-  // Whether the add form is creating an Epic (D-054). The board's Epic `+` sets this; the full
-  // Is-Epic checkbox + epic dropdown is PD-338.
+  // Whether the add form is creating an Epic (D-054). The board's Epic `+` sets this; the
+  // Is-Epic checkbox toggles it in the form (PD-338).
   let formIsEpic = $state(false);
+  // Which Epic this ticket belongs to (D-054, PD-338); null = none. Forced null when isEpic.
+  let formEpicId = $state<number | null>(null);
   let formProjectId = $state<number | null>(null);
+
+  // Epics selectable as a parent in the form's "Belongs to epic" dropdown — same project,
+  // excluding the ticket being edited (no nesting / self).
+  const epicOptions = $derived(
+    tickets.filter((t) => t.isEpic && t.projectId === formProjectId && t.id !== editingId),
+  );
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
@@ -155,9 +164,10 @@
   let epicSummaries = $state<EpicSummary[]>([]);
   const epicSummaryById = $derived(new Map(epicSummaries.map((s) => [s.ticketId, s])));
 
-  // Ticket-type filter (D-054): All shows both bands, Epics-only hides the ticket band,
-  // Tickets-only hides the epic band.
-  let filterType = $state<'all' | 'epics' | 'tickets'>('all');
+  // Ticket-type filter (D-054): All shows both bands; Epics-only hides the ticket band;
+  // Tickets-only hides the epic band; Epics & Lone Tickets shows epics + only the tickets
+  // that don't belong to an epic.
+  let filterType = $state<'all' | 'epics' | 'tickets' | 'epics-lone'>('all');
   const showEpics = $derived(filterType !== 'tickets');
   const showTickets = $derived(filterType !== 'epics');
 
@@ -173,6 +183,26 @@
     pickerOpen = true;
   }
 
+  // Epic membership (D-054, PD-338): the kebab "Add to Epic…" opens a picker to set epic_id.
+  let epicPickerOpen = $state(false);
+  let epicPickerSource = $state<AgentTicket | null>(null);
+
+  function openEpicPicker(ticket: AgentTicket) {
+    epicPickerSource = ticket;
+    epicPickerOpen = true;
+  }
+
+  async function setTicketEpic(ticketId: number, epicId: number | null) {
+    error = null;
+    try {
+      await api.updateTicket(ticketId, { epicId });
+      await load(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(msg);
+    }
+  }
+
   function visibleTickets(): AgentTicket[] {
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
@@ -184,9 +214,11 @@
   }
 
   // Ticket band excludes Epics — Epics render in the top band by their derived lane (D-054).
+  // 'epics-lone' further drops tickets that belong to an epic, leaving only free-standing ones.
   function byStatus(status: TicketStatus): AgentTicket[] {
     return visibleTickets()
       .filter((t) => t.status === status && !t.isEpic)
+      .filter((t) => filterType !== 'epics-lone' || t.epicId === null)
       .sort((a, b) => compareTicketsInColumn(status, a, b));
   }
 
@@ -260,6 +292,7 @@
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = null;
     formIsEpic = false;
+    formEpicId = null;
     // Default to the active filter, else "personal-dashboard", else the first project.
     const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
     formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
@@ -281,6 +314,7 @@
     formPriority = ticket.priority;
     formAssignee = ticket.assignee;
     formIsEpic = ticket.isEpic;
+    formEpicId = ticket.epicId;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
   }
@@ -297,6 +331,8 @@
     }
     error = null;
     try {
+      // An Epic never belongs to another Epic (no nesting, D-054).
+      const epicId = formIsEpic ? null : formEpicId;
       if (editingId === null) {
         await api.createTicket({
           title,
@@ -306,6 +342,7 @@
           status: formStatus,
           assignee: formAssignee,
           isEpic: formIsEpic,
+          epicId,
         });
       } else {
         await api.updateTicket(editingId, {
@@ -314,6 +351,8 @@
           priority: formPriority,
           projectId: formProjectId,
           assignee: formAssignee,
+          isEpic: formIsEpic,
+          epicId,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: formStatus }),
         });
@@ -441,6 +480,65 @@
     }
   }
 
+  /* ── Epic reorder (D-054 amended) ──────────────────────────────────────
+     Epics reorder WITHIN their derived lane only — lane placement stays derived
+     (never dragged across lanes / into a queue); this just sets `sortOrder` among
+     the cell's epics. Separate drag state from tickets so the two bands don't cross-react. */
+  let epicDraggingId = $state<number | null>(null);
+  let epicDropTarget = $state<{ lane: EpicDerivedLane; beforeId: number | null } | null>(null);
+
+  function onEpicDragStart(e: DragEvent, epic: AgentTicket) {
+    epicDraggingId = epic.id;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(epic.id));
+    }
+  }
+
+  function onEpicDragEnd() {
+    epicDraggingId = null;
+    epicDropTarget = null;
+  }
+
+  function onEpicCellDragOver(e: DragEvent, cell: EpicBandCell) {
+    // Only allow reordering within the epic's own lane (lane is derived, not draggable).
+    if (epicDraggingId === null || !cell.epics.some((ep) => ep.id === epicDraggingId)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const cards = [
+      ...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.epic-card'),
+    ].filter((el) => Number(el.dataset.id) !== epicDraggingId);
+    let beforeId: number | null = null;
+    for (const el of cards) {
+      const rect = el.getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) {
+        beforeId = Number(el.dataset.id);
+        break;
+      }
+    }
+    epicDropTarget = { lane: cell.lane, beforeId };
+  }
+
+  async function onEpicDrop(e: DragEvent, cell: EpicBandCell) {
+    e.preventDefault();
+    const id = epicDraggingId;
+    const target = epicDropTarget;
+    epicDraggingId = null;
+    epicDropTarget = null;
+    if (id === null || !cell.epics.some((ep) => ep.id === id)) return; // same-lane only
+    const epic = tickets.find((t) => t.id === id);
+    if (!epic) return;
+    const sortOrder = computeOrderWithin(cell.epics, target?.beforeId ?? null, id);
+    if (epic.sortOrder === sortOrder) return;
+    error = null;
+    try {
+      await api.updateTicket(id, { sortOrder });
+      await load(true);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   // Start a Refine session (D-044, PD-268), then open the ticket to watch the thread.
   async function refine(ticket: AgentTicket) {
     error = null;
@@ -454,10 +552,34 @@
   }
 
   async function remove(ticket: AgentTicket) {
+    // An Epic with members needs the unlink-vs-cascade choice (D-054) — route to the modal.
+    if (ticket.isEpic && (epicSummaryById.get(ticket.id)?.total ?? 0) > 0) {
+      archiveEpicTarget = ticket;
+      return;
+    }
     if (!confirm(`Delete "${ticket.title}"?`)) return;
     error = null;
     try {
       await api.deleteTicket(ticket.id);
+      await load(true);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Epic archive-confirm (D-054): archive the Epic only (unlink members) or Epic + all members.
+  let archiveEpicTarget = $state<AgentTicket | null>(null);
+  const archiveEpicMemberCount = $derived(
+    archiveEpicTarget ? (epicSummaryById.get(archiveEpicTarget.id)?.total ?? 0) : 0,
+  );
+
+  async function archiveEpic(cascadeMembers: boolean) {
+    const target = archiveEpicTarget;
+    if (!target) return;
+    archiveEpicTarget = null;
+    error = null;
+    try {
+      await api.deleteTicket(target.id, { cascadeMembers });
       await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -543,6 +665,7 @@
       <span class="sr-label">Type</span>
       <select bind:value={filterType}>
         <option value="all">Epics &amp; Tickets</option>
+        <option value="epics-lone">Epics &amp; Lone Tickets</option>
         <option value="epics">Epics only</option>
         <option value="tickets">Tickets only</option>
       </select>
@@ -590,6 +713,27 @@
 
 <Modal open={formOpen} title={editingId === null ? 'New Ticket' : 'Edit Ticket'} onClose={closeForm}>
   <div class="ticket-form">
+    <label class="epic-flag">
+      <input type="checkbox" bind:checked={formIsEpic} />
+      This is an Epic (an umbrella for other tickets)
+    </label>
+    {#if !formIsEpic}
+      <label>
+        <span>Belongs to epic</span>
+        <select
+          value={formEpicId === null ? '' : String(formEpicId)}
+          onchange={(e) => {
+            const v = e.currentTarget.value;
+            formEpicId = v === '' ? null : Number(v);
+          }}
+        >
+          <option value="">— None</option>
+          {#each epicOptions as ep (ep.id)}
+            <option value={String(ep.id)}>{ep.displayId} — {ep.title}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     <label>
       <span>Project</span>
       <select bind:value={formProjectId}>
@@ -677,7 +821,15 @@
     <!-- Row 2: Epic band (derived placement; In-Progress spans the two queue columns) -->
     {#if showEpics}
       {#each epicBandCells as cell (cell.lane)}
-        <div class="epic-cell" class:in-progress={cell.lane === 'in_progress'} style="grid-column: {cell.colStart} / span {cell.colSpan}">
+        <div
+          class="epic-cell"
+          class:in-progress={cell.lane === 'in_progress'}
+          class:drag-over={epicDropTarget?.lane === cell.lane && epicDraggingId !== null}
+          style="grid-column: {cell.colStart} / span {cell.colSpan}"
+          ondragover={(e) => onEpicCellDragOver(e, cell)}
+          ondrop={(e) => onEpicDrop(e, cell)}
+          role="list"
+        >
           {#if cell.canAdd}
             <button
               class="column-add-btn epic-add"
@@ -694,6 +846,10 @@
               {epic}
               {project}
               summary={epicSummaryById.get(epic.id)}
+              dragging={epicDraggingId === epic.id}
+              dropBefore={epicDropTarget?.lane === cell.lane && epicDropTarget?.beforeId === epic.id}
+              onDragStart={(e) => onEpicDragStart(e, epic)}
+              onDragEnd={onEpicDragEnd}
               onEdit={() => openEdit(epic)}
               onDelete={() => remove(epic)}
               onUpdate={() => load(true)}
@@ -737,6 +893,8 @@
                 isLocked={isStatusLocked(ticket)}
                 badges={badgesById.get(ticket.id) ?? NO_BADGES}
                 onRelationAction={(action) => openRelationPicker(ticket, action)}
+                onAddToEpic={() => openEpicPicker(ticket)}
+                onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
                 onDragStart={(e) => onDragStart(e, ticket)}
                 {onDragEnd}
                 onEdit={() => openEdit(ticket)}
@@ -778,6 +936,36 @@
     void load(true);
   }}
 />
+
+<EpicPicker
+  open={epicPickerOpen}
+  source={epicPickerSource}
+  {tickets}
+  onClose={() => (epicPickerOpen = false)}
+  onPicked={(epicId) => epicPickerSource && setTicketEpic(epicPickerSource.id, epicId)}
+/>
+
+<Modal
+  open={archiveEpicTarget !== null}
+  title="Archive Epic"
+  onClose={() => (archiveEpicTarget = null)}
+>
+  {#if archiveEpicTarget}
+    <p class="archive-epic-msg">
+      <strong>{archiveEpicTarget.displayId ?? archiveEpicTarget.title}</strong> has
+      {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}. Archive the Epic
+      only (its members become free tickets), or archive the Epic and all its members?
+    </p>
+    <div class="archive-epic-actions">
+      <Button variant="ghost" onclick={() => (archiveEpicTarget = null)}>Cancel</Button>
+      <span class="spacer"></span>
+      <Button variant="ghost" onclick={() => archiveEpic(false)}>Epic only (unlink members)</Button>
+      <Button variant="primary" onclick={() => archiveEpic(true)}>
+        Epic + {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}
+      </Button>
+    </div>
+  {/if}
+</Modal>
 
 {#if toast}
   <div class="toast" role="status">{toast}</div>

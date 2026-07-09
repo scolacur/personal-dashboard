@@ -3,6 +3,7 @@
   import type {
     AgentProject,
     AgentTicket,
+    EpicSummary,
     ResolvedRelation,
     TicketRelation,
     TicketStatus,
@@ -12,8 +13,10 @@
   import { projectIdColor } from '../../api';
   import TicketThread from '$lib/TicketThread.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
+  import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
+  import { ticketMatchesQuery } from '../../filter-logic';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
@@ -22,6 +25,9 @@
   let project = $state<AgentProject | null>(null);
   let allTickets = $state<AgentTicket[]>([]);
   let relations = $state<ResolvedRelation[]>([]);
+  // Epic members + roll-up (D-054, PD-338), loaded only when this ticket is an Epic.
+  let epicMembers = $state<AgentTicket[]>([]);
+  let epicSummary = $state<EpicSummary | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let notFound = $state(false);
@@ -55,6 +61,14 @@
       project =
         found.projectId !== null ? (projects.find((p) => p.id === found.projectId) ?? null) : null;
       relations = await api.fetchRelations(found.id);
+      if (found.isEpic) {
+        const m = await api.fetchEpicMembers(found.id);
+        epicMembers = m.members;
+        epicSummary = m.summary;
+      } else {
+        epicMembers = [];
+        epicSummary = null;
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -170,6 +184,49 @@
       error = e instanceof Error ? e.message : String(e);
     }
   }
+
+  // ── Epic membership (D-054, PD-338) ───────────────────────────────────────
+  const memberDone = $derived(epicSummary?.done ?? 0);
+  const memberTotal = $derived(epicSummary?.total ?? 0);
+  const memberPct = $derived(memberTotal > 0 ? Math.round((memberDone / memberTotal) * 100) : 0);
+
+  let memberPickerOpen = $state(false);
+  let memberQuery = $state('');
+  $effect(() => {
+    if (memberPickerOpen) memberQuery = '';
+  });
+
+  // Candidate members: non-epic tickets in the same project, not already in this Epic.
+  const memberCandidates = $derived(
+    ticket
+      ? allTickets
+          .filter(
+            (t) =>
+              !t.isEpic &&
+              t.projectId === ticket!.projectId &&
+              t.id !== ticket!.id &&
+              t.epicId !== ticket!.id &&
+              ticketMatchesQuery(t, memberQuery),
+          )
+          .slice(0, 50)
+      : [],
+  );
+
+  async function setMemberEpic(memberId: number, epicId: number | null) {
+    error = null;
+    try {
+      await api.updateTicket(memberId, { epicId });
+      if (ticketId) await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function addMember(t: AgentTicket) {
+    if (!ticket) return;
+    memberPickerOpen = false;
+    await setMemberEpic(t.id, ticket.id);
+  }
 </script>
 
 <nav class="detail-nav">
@@ -216,6 +273,52 @@
             >GitHub issue #{ticket.githubIssueNumber}</a
           >
         </p>
+      {/if}
+
+      {#if !ticket.isEpic && ticket.epicId}
+        {@const parent = allTickets.find((t) => t.id === ticket!.epicId)}
+        {#if parent}
+          <p class="belongs-to-epic">
+            Part of epic
+            <a href="/task-monitor/tickets/{parent.displayId}">{parent.displayId} — {parent.title}</a>
+          </p>
+        {/if}
+      {/if}
+
+      {#if ticket.isEpic}
+        <section class="epic-members">
+          <div class="epic-members-head">
+            <h2>Members</h2>
+            <span class="epic-rollup-label">{memberDone}/{memberTotal} done</span>
+            <button class="add-member-btn" type="button" onclick={() => (memberPickerOpen = true)}
+              >+ Add member</button
+            >
+          </div>
+          <div class="epic-members-bar">
+            <div class="epic-members-fill" style="width: {memberPct}%"></div>
+          </div>
+          {#if epicMembers.length === 0}
+            <p class="muted">No members yet.</p>
+          {:else}
+            <ul class="member-list">
+              {#each epicMembers as m (m.id)}
+                <li class="member-row">
+                  <a class="member-ref" href="/task-monitor/tickets/{m.displayId}"
+                    >{m.displayId} — {m.title}</a
+                  >
+                  <span class="member-status">{STATUS_LABELS[m.status] ?? m.status}</span>
+                  <button
+                    class="member-remove"
+                    type="button"
+                    title="Remove from epic"
+                    aria-label="Remove from epic"
+                    onclick={() => setMemberEpic(m.id, null)}>×</button
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
       {/if}
 
       {#if isParked && ticket.githubIssueNumber}
@@ -340,6 +443,30 @@
       onClose={() => (pickerOpen = false)}
       onCreated={() => ticketId && load(ticketId)}
     />
+
+    <Modal open={memberPickerOpen} title="Add member to epic" onClose={() => (memberPickerOpen = false)}>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        class="member-search"
+        type="search"
+        placeholder="Filter tickets…"
+        bind:value={memberQuery}
+        autofocus
+      />
+      <ul class="member-picker-list">
+        {#each memberCandidates as t (t.id)}
+          <li>
+            <button type="button" class="member-picker-row" onclick={() => addMember(t)}>
+              <span class="member-picker-id">{t.displayId ?? `#${t.id}`}</span>
+              <span class="member-picker-title">{t.title}</span>
+              <span class="member-picker-status">{t.status.replace(/_/g, ' ')}</span>
+            </button>
+          </li>
+        {:else}
+          <li class="member-picker-empty">No eligible tickets in this project.</li>
+        {/each}
+      </ul>
+    </Modal>
   </article>
 {/if}
 

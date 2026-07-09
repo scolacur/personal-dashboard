@@ -81,8 +81,11 @@ export async function updateTicket(id: number, patch: UpdateTicketInput): Promis
   return res.json() as Promise<AgentTicket>;
 }
 
-export async function deleteTicket(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
+/** Archive a ticket. For an Epic (D-054), `cascadeMembers` archives its members too; otherwise
+ *  they're unlinked and survive as free tickets. */
+export async function deleteTicket(id: number, opts: { cascadeMembers?: boolean } = {}): Promise<void> {
+  const q = opts.cascadeMembers ? '?cascadeMembers=1' : '';
+  const res = await fetch(`${BASE}/${id}${q}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
 }
 
@@ -160,6 +163,15 @@ export async function fetchEpicSummaries(): Promise<EpicSummary[]> {
   const res = await fetch(`/api/widgets/task-monitor/epics`);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<EpicSummary[]>;
+}
+
+/** An Epic's member Tickets + its roll-up (D-054, PD-338) — the Epic detail page's list. */
+export async function fetchEpicMembers(
+  id: number,
+): Promise<{ members: AgentTicket[]; summary: EpicSummary }> {
+  const res = await fetch(`${BASE}/${id}/members`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ members: AgentTicket[]; summary: EpicSummary }>;
 }
 
 /** Create a relation from the UI (origin='human'). `fromId` is the source (for `blocks`, the

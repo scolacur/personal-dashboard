@@ -142,6 +142,24 @@
   color: var(--muted);
 }
 
+.archive-epic-msg {
+  margin: 0 0 var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.archive-epic-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+
+  .spacer {
+    flex: 1;
+  }
+}
+
 /* ── Add / edit form (rendered inside the generic Modal) ── */
 .ticket-form {
   label {
@@ -178,6 +196,20 @@
 
   textarea {
     resize: vertical;
+  }
+
+  // Is-Epic checkbox — inline (not the full-width block the other fields use).
+  .epic-flag {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+    color: var(--text);
+
+    input {
+      width: auto;
+      cursor: pointer;
+    }
   }
 }
 
@@ -216,6 +248,10 @@
   flex-direction: column;
   gap: var(--space-sm);
   min-height: 36px;
+  // Cap the Epic band so many epics scroll within the lane instead of shoving the
+  // ticket band down the page (12.5rem ≈ 200px, rem to match the spacing scale).
+  max-height: 12.5rem;
+  overflow-y: auto;
   padding: var(--space-sm);
   background: var(--surface-2);
   border-left: 1px solid var(--border);
@@ -225,6 +261,11 @@
   &.in-progress {
     // Spans the two queue columns — a faint accent tint to read as one region.
     background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  }
+
+  // Highlight the lane an epic is being reordered within.
+  &.drag-over {
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 }
 
@@ -257,11 +298,6 @@
   border-bottom: none;
 }
 
-.lanes-menu-divider {
-  height: 1px;
-  margin: var(--space-xs) 0;
-  background: var(--border);
-}
 
 .column-head {
   display: flex;
@@ -349,26 +385,6 @@
 }
 
 
-.info-btn {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--font-display);
-  font-style: italic;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-}
 
 /* ── Lanes show/hide menu ───────────────────────── */
 .lanes-menu-wrap {
@@ -476,11 +492,6 @@
     select {
       width: 100%;
     }
-  }
-
-  .info-btn {
-    order: 7;
-    flex: 0 0 auto;
   }
 
   .lanes-menu-wrap {

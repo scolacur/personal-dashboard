@@ -43,3 +43,24 @@ export function computeSortOrder(
   if (!next) return prev.sortOrder + 1;
   return (prev.sortOrder + next.sortOrder) / 2;
 }
+
+/**
+ * Fractional `sortOrder` for reordering an item within a flat list (no priority banding) —
+ * used for Epic reorder within a derived lane (D-054, PD-337 follow-up). `items` is the lane's
+ * epics in display order; `beforeId` is the epic being dropped in front of, or `null` to append.
+ */
+export function computeOrderWithin(
+  items: AgentTicket[],
+  beforeId: number | null,
+  draggedId: number,
+): number {
+  const list = items.filter((t) => t.id !== draggedId);
+  let idx = beforeId === null ? list.length : list.findIndex((t) => t.id === beforeId);
+  if (idx === -1) idx = list.length;
+  const prev = list[idx - 1];
+  const next = list[idx];
+  if (!prev && !next) return 0;
+  if (!prev) return next.sortOrder - 1;
+  if (!next) return prev.sortOrder + 1;
+  return (prev.sortOrder + next.sortOrder) / 2;
+}

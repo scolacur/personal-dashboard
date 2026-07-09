@@ -184,6 +184,12 @@
   color: var(--muted);
 }
 
+.kebab-divider {
+  height: 1px;
+  margin: var(--space-xs) 0;
+  background: var(--border);
+}
+
 .kebab-item {
   display: block;
   width: 100%;

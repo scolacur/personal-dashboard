@@ -7,6 +7,16 @@
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius);
+  cursor: grab;
+
+  &.dragging {
+    opacity: 0.4;
+  }
+
+  // Insertion indicator when another epic will drop above this one.
+  &.drop-before {
+    box-shadow: 0 -2px 0 var(--accent);
+  }
 }
 
 .epic-top {
