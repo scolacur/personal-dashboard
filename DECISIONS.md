@@ -48,6 +48,8 @@ Newest decisions at the top.
 
 **Implications:** Sliced from **PD-318** into three v1 tickets — backend (schema + migration + membership API + derived status/roll-up + split-inheritance + archive-choice + guards), board rendering (two-band layout + derived placement + filter), membership UX (modal checkbox + epic dropdown + kebab "Add to Epic" + Epic detail page) — plus a **v2** ticket (P4) for the "Dispatch ready members" button + batch member-create. Glossary terms (*Epic*, *Epic member*, *Derived Epic status*, *Epic roll-up*) added to PROJECT.md §9. PD-318 decomposed into the slices and closed.
 
+**Amendment (2026-07-09):** Epics are drag-**reorderable within their derived lane**. This narrows the original "non-draggable" wording: an Epic's *lane placement stays derived* (it can never be dragged across lanes or into a queue — the whole point of the band model), but within the cell it lands in, the card can be dragged to set its `sortOrder` relative to sibling epics (same fractional-order pattern as tickets, [[D-026]], minus priority banding). Also shipped alongside: a per-lane **max-height** on the Epic band (so a crowded band scrolls instead of shoving the ticket band down) and an **"Epics & Lone Tickets"** type-filter option (epics + only tickets with no `epic_id`). All frontend-only, landed in the PD-338 recovery PR (#228 — PD-338 had merged into the PD-337 branch instead of main; see MEMORY 2026-07-09).
+
 ---
 
 ## D-053: Widget "Arrange" mode edits the existing auto-flow grid (reorder + resize) with per-page `localStorage` overrides — not free 2D placement, not DB persistence (PD-331)
