@@ -45,19 +45,21 @@ FROM node:24-slim AS runtime
 WORKDIR /app
 
 # git + ca-certificates: the worker clones/pulls the read-only grounding checkout.
-# gh + curl: the Robot loop's coding session (D-055/PD-342) pushes + opens PRs with `gh`.
-# gh isn't in Debian's default repos, so add the official GitHub CLI apt source (the build
-# stage has internet — the egress restriction is a RUNTIME network, not build-time).
+# gh: the Robot loop's coding session (D-055/PD-342) pushes + opens PRs with `gh`.
+# Install gh from its GitHub release TARBALL (host github.com) rather than the apt repo
+# (cli.github.com) — the latter is a separate host some build networks can't resolve, and
+# github.com is already what everything else here reaches. Arch string (amd64/arm64) from
+# dpkg matches gh's asset naming. Bump GH_VERSION to update.
+ARG GH_VERSION=2.63.2
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl \
-  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-       > /etc/apt/sources.list.d/github-cli.list \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends gh \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && arch="$(dpkg --print-architecture)" \
+  && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" -o /tmp/gh.tgz \
+  && tar -xzf /tmp/gh.tgz -C /tmp \
+  && install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh \
+  && rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${arch}" \
+  && gh --version
 
 # The Robot coding uid (D-055 privilege-split, PD-342). The loop process runs as root (it owns
 # dashboard.db); the coding session is spawned DROPPED to this uid — its home is writable to it
