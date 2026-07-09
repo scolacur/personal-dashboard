@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import type { RefineProposal, TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
-import type { AgentWorkerConfig } from '../../shared/config';
+import { type AgentWorkerConfig, loadRobotConfig } from '../../shared/config';
 import type { GrillSession, GrillTurnResult, OpenGrillSession, OpenSessionInput } from './session';
 import {
   nextRefineWork,
@@ -58,6 +58,7 @@ const CONFIG: AgentWorkerConfig = {
   refineIntervalMs: 1,
   auditIntervalMs: 1,
   httpsProxy: '',
+  robot: loadRobotConfig({}),
 };
 
 /** A fake session factory: records every open() + send(), returns canned replies. Each open

@@ -1,0 +1,131 @@
+/**
+ * The Robot coding prompt (D-055, PD-342) — ported from ops/sortie/WORKFLOW.md, adapted for the
+ * DB-blind hand-off model.
+ *
+ * KEY DIFFERENCE FROM SORTIE: a Robot cannot touch the board (uid-split, D-039). Under Sortie the
+ * agent relabelled its own issue to `sortie:in-review` as the final step. A Robot instead ends at
+ * a filesystem + GitHub hand-off: green verify → write `.robot/verify-ok` marker → commit → push →
+ * open PR → write `.robot/scm.json`. The LOOP (sole DB writer) then observes the marker + PR and
+ * writes the board state transition. So there is no "relabel" step here — that is the loop's job.
+ *
+ * The `verify-ok` marker gate (D-046) is preserved verbatim: the loop only completes a hand-off if
+ * the Robot left the marker, so a turn that dies before a green verify leaves WIP for retry rather
+ * than a red PR.
+ */
+
+/** Where the Robot writes its hand-off signals (workspace-relative — the loop reads them back). */
+export const MARKER_DIR = '.robot';
+export const VERIFY_OK_MARKER = `${MARKER_DIR}/verify-ok`;
+export const SCM_JSON = `${MARKER_DIR}/scm.json`;
+
+export function robotSystemPrompt(): string {
+  return [
+    'You are a Robot: an autonomous coding agent completing ONE ticket in the Personal Dashboard',
+    'repo (D-055). You run unattended in a dedicated git worktree that is already checked out to',
+    'your branch. Your job is to implement the ticket, verify it, and hand off a PR for human review.',
+    '',
+    'Ground rules:',
+    '- Prefer the codebase\'s existing conventions over new ones. When a choice is non-obvious, read',
+    '  DECISIONS.md; if still unclear, match the nearest existing pattern.',
+    '- Log a non-obvious design choice as a short DECISIONS.md entry in this same PR.',
+    '- Stay strictly within this one ticket. Do not refactor unrelated code.',
+    '- Any new/changed business logic MUST ship with vitest tests. Never weaken, skip, or delete',
+    '  existing tests to get a green verify.',
+    '- Do NOT touch secrets/.env*, auth/session code, CI, Dockerfiles, package.json scripts,',
+    '  dependencies, or the DB schema unless the ticket explicitly requires it.',
+  ].join('\n');
+}
+
+export interface TaskPromptInput {
+  title: string;
+  body: string | null;
+  branch: string;
+  repo: string;
+  /** GitHub issue number for `Closes #N`, or null when the ticket has no linked issue. */
+  issueNumber: number | null;
+  /** Squid proxy URL, or '' for direct egress (dev). Passed inline to git/gh in the finish steps. */
+  proxy: string;
+}
+
+/** Build the per-run task prompt (the user turn) with the ticket and the DB-blind Finish sequence. */
+export function buildTaskPrompt(input: TaskPromptInput): string {
+  const { title, body, branch, repo, issueNumber, proxy } = input;
+  // git needs the proxy inline (an exported *_proxy is not honored for git); npm/gh honor env.
+  const pxFlag = proxy ? `-c http.proxy=${proxy} ` : '';
+  const closes = issueNumber !== null ? `Closes #${issueNumber}\n\n` : '';
+
+  return [
+    `# Ticket: ${title}`,
+    '',
+    body ?? '(no description)',
+    '',
+    '---',
+    '',
+    '## Step 1 — Orient',
+    'Read `PROJECT.md`, `CLAUDE.md`, and (as needed) `DECISIONS.md`. They define the stack,',
+    'architecture, and conventions. Your working directory IS the repo worktree on your branch',
+    `(\`${branch}\`); node_modules may already be present from a prior run.`,
+    '',
+    '## Step 2 — Implement',
+    'Do the work described in the ticket. Add tests for any new/changed logic.',
+    '',
+    '## Step 3 — Finish: verify, commit, push, open your PR (do all of this yourself)',
+    '',
+    'Run these IN ORDER. Do not skip the marker — it is how your work is accepted (D-046).',
+    '',
+    '1. **Verify.** The worktree may have no deps yet, so install then verify:',
+    '   ```sh',
+    '   npm ci',
+    '   npm run verify   # build + typecheck + lint + test',
+    '   ```',
+    '   If — and only if — verify is GREEN, record the hand-off marker:',
+    '   ```sh',
+    `   mkdir -p ${MARKER_DIR} && touch ${VERIFY_OK_MARKER}`,
+    '   ```',
+    '   If verify cannot pass within the ticket\'s scope, do NOT write the marker and do NOT open a',
+    '   PR — leave the tree as-is and end your turn. Never weaken tests to force it green.',
+    '',
+    '2. **Commit** with a clear conventional-commit message (this becomes your PR title):',
+    '   ```sh',
+    '   git add -A',
+    '   git commit -m "<concise conventional-commit summary>"',
+    '   ```',
+    '   If there is nothing to commit, you made no changes — end your turn without a PR.',
+    '',
+    `3. **Push** your branch (proxy passed inline where set):`,
+    '   ```sh',
+    `   git ${pxFlag}push -u origin ${branch}`,
+    '   ```',
+    '',
+    '4. **Open the PR** with a descriptive conventional-commit title (NOT "automated changes").',
+    '   The body must follow this envelope — fill in every placeholder:',
+    '   ```sh',
+    `   gh pr create --repo ${repo} --base main --head ${branch} \\`,
+    '     --title "<concise conventional-commit summary>" \\',
+    '     --body "$(cat <<\'BODY\'',
+    `${closes}**Status:** <DONE | PARTIAL | BLOCKED>`,
+    '',
+    '**Summary:** <1–3 lines>',
+    '',
+    '**Acceptance:**',
+    '- [ ] <echo each Done-When item + one-line evidence>',
+    '',
+    '**Testing:**',
+    '- <exact steps to verify + which tests you added/ran>',
+    '',
+    '**Assumptions / Flags:**',
+    '- <list yours, or "none">',
+    'BODY',
+    '   )"',
+    '   ```',
+    '',
+    '5. **Write the hand-off manifest** so the loop can locate your PR:',
+    '   ```sh',
+    `   PR_NUMBER="$(gh pr view ${branch} --repo ${repo} --json number --jq .number)"`,
+    `   mkdir -p ${MARKER_DIR}`,
+    `   printf '{"pr_number":%s,"branch":"%s","sha":"%s"}\\n' "$PR_NUMBER" "${branch}" "$(git rev-parse HEAD)" > ${SCM_JSON}`,
+    '   ```',
+    '',
+    'Then end your turn. Do NOT change any GitHub labels or ticket state — the loop handles that.',
+  ].join('\n');
+}
