@@ -50,12 +50,13 @@
   <div class="epic-top">
     <span class="epic-badge" title="Epic"><Layers size={12} /></span>
     {#if epic.displayId}
-      <a class="epic-id" style="--id-color: {projectIdColor(project)}" href={detailHref} title="Open {epic.displayId}"
+      <a
+        class="epic-id"
+        style="--id-color: {projectIdColor(project)}"
+        href={detailHref}
+        title={project ? `${project.name} · open ${epic.displayId}` : `Open ${epic.displayId}`}
         >{epic.displayId}</a
       >
-    {/if}
-    {#if project}
-      <span class="epic-project" style="--chip: {projectIdColor(project)}">{project.name}</span>
     {/if}
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
   </div>

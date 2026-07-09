@@ -23,21 +23,15 @@
 
 .epic-id {
   font-family: var(--font-display);
-  font-size: var(--font-size-sm);
-  color: var(--id-color, var(--accent));
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--id-color, var(--muted));
   text-decoration: none;
 
   &:hover {
     text-decoration: underline;
   }
-}
-
-.epic-project {
-  font-size: var(--font-size-xs);
-  color: var(--chip, var(--muted));
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 var(--space-xs);
 }
 
 .epic-count {

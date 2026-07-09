@@ -18,7 +18,20 @@
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+// Row 1 action buttons (Glossary / Sync / Lanes / Add Ticket), pushed to the right.
+.head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+
+  // Match the ghost buttons' height to the primary Add Ticket button (space-sm padding-block).
+  :global(.btn) {
+    padding-block: var(--space-sm);
+  }
 }
 
 .section-title {
@@ -27,11 +40,15 @@
   flex: 0 0 auto;
 }
 
-// On desktop, margin-left: auto on project-filter creates the left/right split:
-// left → (Tickets | Search), right → (Projects | Priority | Info | Condensed | Add)
-.project-filter {
-  margin-left: auto;
+// Row 2: all filters (Type / Project / Priority / Refinement), left-aligned and wrapping.
+.filters-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
+
 
 .sr-label {
   position: absolute;
@@ -91,7 +108,8 @@
 
 .priority-filter,
 .refinement-filter,
-.project-filter {
+.project-filter,
+.type-filter {
   select {
     font-family: var(--font-sans);
     font-size: var(--font-size-sm);

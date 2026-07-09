@@ -155,9 +155,11 @@
   let epicSummaries = $state<EpicSummary[]>([]);
   const epicSummaryById = $derived(new Map(epicSummaries.map((s) => [s.ticketId, s])));
 
-  // Band visibility filter — show/hide the Epic band and the Ticket band (D-054).
-  let showEpics = $state(true);
-  let showTickets = $state(true);
+  // Ticket-type filter (D-054): All shows both bands, Epics-only hides the ticket band,
+  // Tickets-only hides the epic band.
+  let filterType = $state<'all' | 'epics' | 'tickets'>('all');
+  const showEpics = $derived(filterType !== 'tickets');
+  const showTickets = $derived(filterType !== 'epics');
 
   // Ticket-relation picker (kebab → "Mark as →"). The board owns the single picker instance
   // since it holds the full ticket list + relations the picker filters against.
@@ -491,6 +493,60 @@
       <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
       <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
     </label>
+    <div class="head-actions">
+      <Button
+        variant="ghost"
+        title="Glossary"
+        onclick={() => { glossaryTab = 'priority'; glossaryOpen = true; }}
+      >Glossary</Button>
+      <Button
+        variant="ghost"
+        title="Fetch the latest issue status &amp; labels from GitHub now"
+        onclick={() => syncThenLoad(true)}
+        disabled={syncing}
+        style={syncing ? 'cursor: progress; opacity: 0.6' : undefined}
+      >{syncing ? 'Syncing…' : 'Sync now'}</Button>
+      <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
+        <Button
+          variant="ghost"
+          title="Show/hide lanes"
+          aria-label="Show/hide lanes"
+          aria-expanded={laneMenuOpen}
+          onclick={() => (laneMenuOpen = !laneMenuOpen)}
+        >Lanes</Button>
+        {#if laneMenuOpen}
+          <div class="lanes-menu">
+            {#each COLUMNS as col (col.status)}
+              <label class="lanes-menu-item">
+                <input
+                  type="checkbox"
+                  checked={!hiddenLanes.has(col.status)}
+                  onchange={() => toggleLane(col.status)}
+                />
+                <span>{col.label}</span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="add-ticket-wrap">
+        <Button variant="primary" onclick={() => openAdd()} disabled={projects.length === 0}>
+          + Add Ticket
+        </Button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Second toolbar row: all filters (D-054 adds Ticket Type). Search + buttons stay on row 1. -->
+  <div class="filters-row">
+    <label class="type-filter">
+      <span class="sr-label">Type</span>
+      <select bind:value={filterType}>
+        <option value="all">Epics &amp; Tickets</option>
+        <option value="epics">Epics only</option>
+        <option value="tickets">Tickets only</option>
+      </select>
+    </label>
     <label class="project-filter">
       <span class="sr-label">Project</span>
       <select
@@ -519,64 +575,13 @@
     <label class="refinement-filter">
       <span class="sr-label">Refinement</span>
       <select bind:value={filterRefine}>
-        <option value="all">All refinement</option>
+        <option value="all">All refinement statuses</option>
         <option value="refined">Refined</option>
         <option value="grilling">Grilling</option>
         <option value="awaiting-human">Needs you</option>
         <option value="unrefined">Unrefined</option>
       </select>
     </label>
-    <button
-      class="info-btn"
-      type="button"
-      title="Glossary"
-      aria-label="Glossary"
-      onclick={() => { glossaryTab = 'priority'; glossaryOpen = true; }}>i</button
-    >
-    <Button
-      variant="ghost"
-      title="Fetch the latest issue status &amp; labels from GitHub now"
-      onclick={() => syncThenLoad(true)}
-      disabled={syncing}
-      style={syncing ? 'cursor: progress; opacity: 0.6' : undefined}
-    >{syncing ? 'Syncing…' : 'Sync now'}</Button>
-    <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
-      <Button
-        variant="ghost"
-        title="Show/hide lanes"
-        aria-label="Show/hide lanes"
-        aria-expanded={laneMenuOpen}
-        onclick={() => (laneMenuOpen = !laneMenuOpen)}
-      >Lanes</Button>
-      {#if laneMenuOpen}
-        <div class="lanes-menu">
-          {#each COLUMNS as col (col.status)}
-            <label class="lanes-menu-item">
-              <input
-                type="checkbox"
-                checked={!hiddenLanes.has(col.status)}
-                onchange={() => toggleLane(col.status)}
-              />
-              <span>{col.label}</span>
-            </label>
-          {/each}
-          <div class="lanes-menu-divider"></div>
-          <label class="lanes-menu-item">
-            <input type="checkbox" bind:checked={showEpics} />
-            <span>Epics band</span>
-          </label>
-          <label class="lanes-menu-item">
-            <input type="checkbox" bind:checked={showTickets} />
-            <span>Tickets band</span>
-          </label>
-        </div>
-      {/if}
-    </div>
-    <div class="add-ticket-wrap">
-      <Button variant="primary" onclick={() => openAdd()} disabled={projects.length === 0}>
-        + Add Ticket
-      </Button>
-    </div>
   </div>
 
 {#if error}
