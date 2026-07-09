@@ -1,0 +1,93 @@
+.epic-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.epic-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.epic-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.epic-id {
+  font-family: var(--font-display);
+  font-size: var(--font-size-sm);
+  color: var(--id-color, var(--accent));
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.epic-project {
+  font-size: var(--font-size-xs);
+  color: var(--chip, var(--muted));
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 var(--space-xs);
+}
+
+.epic-count {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.epic-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.epic-rollup {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.epic-rollup-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.epic-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+
+  .spacer {
+    flex: 1;
+  }
+
+  // Assignee signal select (scoped here — TicketCard's copy doesn't reach this component).
+  .assignee-pill {
+    font-size: var(--font-size-xs);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--text);
+    padding: 1px var(--space-xs);
+    cursor: pointer;
+  }
+}

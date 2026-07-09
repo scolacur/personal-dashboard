@@ -5,13 +5,15 @@
   import DeployStatus from '../DeployStatus.svelte';
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isSortieReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
+  import EpicCard from './EpicCard.svelte';
   import RelationPicker from './RelationPicker.svelte';
   import { computeBadges, type RelationAction, type RelationBadges } from './relation-logic';
+  import { buildEpicBand } from './epic-logic';
   import JobsList from './JobsList.svelte';
   import * as api from './api';
   import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
@@ -132,6 +134,9 @@
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
   let formAssignee = $state<TicketAssignee | null>(null);
+  // Whether the add form is creating an Epic (D-054). The board's Epic `+` sets this; the full
+  // Is-Epic checkbox + epic dropdown is PD-338.
+  let formIsEpic = $state(false);
   let formProjectId = $state<number | null>(null);
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
@@ -144,6 +149,15 @@
     new Map(tickets.map((t) => [t.id, computeBadges(t.id, relations, statusById)])),
   );
   const NO_BADGES: RelationBadges = { blockedBy: 0, blocking: 0, split: false, splitOrigin: null };
+
+  // Epics (D-054, PD-337): summaries drive each Epic card's derived board lane + roll-up. Fetched
+  // in bulk alongside tickets (sparse). Epics render in the top band; tickets in the bottom band.
+  let epicSummaries = $state<EpicSummary[]>([]);
+  const epicSummaryById = $derived(new Map(epicSummaries.map((s) => [s.ticketId, s])));
+
+  // Band visibility filter — show/hide the Epic band and the Ticket band (D-054).
+  let showEpics = $state(true);
+  let showTickets = $state(true);
 
   // Ticket-relation picker (kebab → "Mark as →"). The board owns the single picker instance
   // since it holds the full ticket list + relations the picker filters against.
@@ -167,20 +181,32 @@
     });
   }
 
+  // Ticket band excludes Epics — Epics render in the top band by their derived lane (D-054).
   function byStatus(status: TicketStatus): AgentTicket[] {
     return visibleTickets()
-      .filter((t) => t.status === status)
+      .filter((t) => t.status === status && !t.isEpic)
       .sort((a, b) => compareTicketsInColumn(status, a, b));
   }
+
+  const visibleColumns = $derived(COLUMNS.filter((c) => !hiddenLanes.has(c.status)));
+  // Epic band cells over the visible columns (In-Progress spans the two queue columns, D-054).
+  const epicBandCells = $derived(
+    buildEpicBand(
+      visibleTickets().filter((t) => t.isEpic),
+      epicSummaryById,
+      visibleColumns.map((c) => c.status),
+    ),
+  );
 
   async function load(silent = false) {
     if (!silent) loading = true;
     error = null;
     try {
-      [projects, tickets, relations] = await Promise.all([
+      [projects, tickets, relations, epicSummaries] = await Promise.all([
         api.fetchProjects(),
         api.fetchTickets(),
         api.fetchAllRelations(),
+        api.fetchEpicSummaries(),
       ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -231,10 +257,17 @@
     formStatus = status;
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = null;
+    formIsEpic = false;
     // Default to the active filter, else "personal-dashboard", else the first project.
     const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
     formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
     formOpen = true;
+  }
+
+  // Create an Epic from the Epic band's `+` (Backlog/Prioritized only, D-054).
+  function openAddEpic(status: TicketStatus) {
+    openAdd(status);
+    formIsEpic = true;
   }
 
   function openEdit(ticket: AgentTicket) {
@@ -245,6 +278,7 @@
     formStatus = ticket.status;
     formPriority = ticket.priority;
     formAssignee = ticket.assignee;
+    formIsEpic = ticket.isEpic;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
   }
@@ -269,6 +303,7 @@
           priority: formPriority,
           status: formStatus,
           assignee: formAssignee,
+          isEpic: formIsEpic,
         });
       } else {
         await api.updateTicket(editingId, {
@@ -525,6 +560,15 @@
               <span>{col.label}</span>
             </label>
           {/each}
+          <div class="lanes-menu-divider"></div>
+          <label class="lanes-menu-item">
+            <input type="checkbox" bind:checked={showEpics} />
+            <span>Epics band</span>
+          </label>
+          <label class="lanes-menu-item">
+            <input type="checkbox" bind:checked={showTickets} />
+            <span>Tickets band</span>
+          </label>
         </div>
       {/if}
     </div>
@@ -612,61 +656,107 @@
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
-  <div class="board">
-    {#each COLUMNS.filter((c) => !hiddenLanes.has(c.status)) as col (col.status)}
-      {@const items = byStatus(col.status)}
-      <section class="column" class:robot-queue={col.status === 'robot_queue'} class:drag-over={dropTarget?.status === col.status && draggingId !== null}>
+  <!-- Two-band board (D-054): a derived, non-draggable Epic band on top; the normal Ticket band
+       below. Only the Ticket band is a drop target, so an Epic can never enter Robot's Queue. -->
+  <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}">
+    <!-- Row 1: lane headers -->
+    {#each visibleColumns as col, i (col.status)}
+      {@const tItems = byStatus(col.status)}
+      <div class="lane-head" style="grid-column: {i + 1}">
         <h2 class="column-head">
-          {col.label}<span class="count">{items.length}</span>
+          {col.label}<span class="count">{tItems.length}</span>
         </h2>
-        <button
-          class="column-add-btn"
-          type="button"
-          title="Add ticket to {col.label}"
-          aria-label="Add ticket to {col.label}"
-          onclick={() => openAdd(col.status)}
-          disabled={projects.length === 0}
-        >+</button>
-        <div
-          class="column-body"
-          role="list"
-          ondragover={(e) => onColumnDragOver(e, col.status)}
-          ondrop={(e) => onDrop(e, col.status)}
-        >
-          {#each items as ticket (ticket.id)}
-            {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
-            <TicketCard
-              {ticket}
+      </div>
+    {/each}
+
+    <!-- Row 2: Epic band (derived placement; In-Progress spans the two queue columns) -->
+    {#if showEpics}
+      {#each epicBandCells as cell (cell.lane)}
+        <div class="epic-cell" class:in-progress={cell.lane === 'in_progress'} style="grid-column: {cell.colStart} / span {cell.colSpan}">
+          {#if cell.canAdd}
+            <button
+              class="column-add-btn epic-add"
+              type="button"
+              title="Add Epic to {cell.label}"
+              aria-label="Add Epic to {cell.label}"
+              onclick={() => openAddEpic(cell.lane === 'backlog' ? 'backlog' : 'prioritized')}
+              disabled={projects.length === 0}
+            >+ Epic</button>
+          {/if}
+          {#each cell.epics as epic (epic.id)}
+            {@const project = epic.projectId !== null ? projectsById.get(epic.projectId) : undefined}
+            <EpicCard
+              {epic}
               {project}
-              dragging={draggingId === ticket.id}
-              dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
-              isLocked={isStatusLocked(ticket)}
-              badges={badgesById.get(ticket.id) ?? NO_BADGES}
-              onRelationAction={(action) => openRelationPicker(ticket, action)}
-              onDragStart={(e) => onDragStart(e, ticket)}
-              {onDragEnd}
-              onEdit={() => openEdit(ticket)}
-              onDuplicate={() => duplicate(ticket)}
-              onCopy={() => copyIssue(ticket, project)}
-              onDelete={() => remove(ticket)}
-              onRefine={() => refine(ticket)}
-              onOpenStatusLegend={(state) => {
-                glossaryHighlightState = state;
-                glossaryTab = 'sortie';
-                glossaryOpen = true;
-              }}
+              summary={epicSummaryById.get(epic.id)}
+              onEdit={() => openEdit(epic)}
+              onDelete={() => remove(epic)}
               onUpdate={() => load(true)}
             />
           {/each}
-          {#if draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
-            <div class="drop-end"></div>
-          {/if}
-          {#if items.length === 0}
-            <p class="empty">—</p>
-          {/if}
         </div>
-      </section>
-    {/each}
+      {/each}
+    {/if}
+
+    <!-- Row 3: Ticket band (the only drop target) -->
+    {#if showTickets}
+      {#each visibleColumns as col, i (col.status)}
+        {@const items = byStatus(col.status)}
+        <section
+          class="ticket-cell"
+          class:robot-queue={col.status === 'robot_queue'}
+          class:drag-over={dropTarget?.status === col.status && draggingId !== null}
+          style="grid-column: {i + 1}"
+        >
+          <button
+            class="column-add-btn"
+            type="button"
+            title="Add ticket to {col.label}"
+            aria-label="Add ticket to {col.label}"
+            onclick={() => openAdd(col.status)}
+            disabled={projects.length === 0}
+          >+</button>
+          <div
+            class="column-body"
+            role="list"
+            ondragover={(e) => onColumnDragOver(e, col.status)}
+            ondrop={(e) => onDrop(e, col.status)}
+          >
+            {#each items as ticket (ticket.id)}
+              {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
+              <TicketCard
+                {ticket}
+                {project}
+                dragging={draggingId === ticket.id}
+                dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+                isLocked={isStatusLocked(ticket)}
+                badges={badgesById.get(ticket.id) ?? NO_BADGES}
+                onRelationAction={(action) => openRelationPicker(ticket, action)}
+                onDragStart={(e) => onDragStart(e, ticket)}
+                {onDragEnd}
+                onEdit={() => openEdit(ticket)}
+                onDuplicate={() => duplicate(ticket)}
+                onCopy={() => copyIssue(ticket, project)}
+                onDelete={() => remove(ticket)}
+                onRefine={() => refine(ticket)}
+                onOpenStatusLegend={(state) => {
+                  glossaryHighlightState = state;
+                  glossaryTab = 'sortie';
+                  glossaryOpen = true;
+                }}
+                onUpdate={() => load(true)}
+              />
+            {/each}
+            {#if draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
+              <div class="drop-end"></div>
+            {/if}
+            {#if items.length === 0}
+              <p class="empty">—</p>
+            {/if}
+          </div>
+        </section>
+      {/each}
+    {/if}
   </div>
 {/if}
 </section>
