@@ -49,7 +49,10 @@ export function buildEpicBand(
 ): EpicBandCell[] {
   const colIndex = new Map<TicketStatus, number>(visibleStatuses.map((s, i) => [s, i + 1]));
   const byLane = new Map<EpicDerivedLane, AgentTicket[]>();
-  for (const e of epics) {
+  // Order epics within a cell purely by sortOrder (then id) so hand-reordering (D-054 amended)
+  // is stable — independent of the server list's status-first sort.
+  const ordered = [...epics].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+  for (const e of ordered) {
     const lane = summaryById.get(e.id)?.derivedLane ?? 'backlog';
     const list = byLane.get(lane);
     if (list) list.push(e);
