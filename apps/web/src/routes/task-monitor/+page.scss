@@ -142,6 +142,24 @@
   color: var(--muted);
 }
 
+.archive-epic-msg {
+  margin: 0 0 var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.archive-epic-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+
+  .spacer {
+    flex: 1;
+  }
+}
+
 /* ── Add / edit form (rendered inside the generic Modal) ── */
 .ticket-form {
   label {
@@ -178,6 +196,20 @@
 
   textarea {
     resize: vertical;
+  }
+
+  // Is-Epic checkbox — inline (not the full-width block the other fields use).
+  .epic-flag {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+    color: var(--text);
+
+    input {
+      width: auto;
+      cursor: pointer;
+    }
   }
 }
 
@@ -257,11 +289,6 @@
   border-bottom: none;
 }
 
-.lanes-menu-divider {
-  height: 1px;
-  margin: var(--space-xs) 0;
-  background: var(--border);
-}
 
 .column-head {
   display: flex;
@@ -349,26 +376,6 @@
 }
 
 
-.info-btn {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  flex: none;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--muted);
-  font-family: var(--font-display);
-  font-style: italic;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-}
 
 /* ── Lanes show/hide menu ───────────────────────── */
 .lanes-menu-wrap {
@@ -476,11 +483,6 @@
     select {
       width: 100%;
     }
-  }
-
-  .info-btn {
-    order: 7;
-    flex: 0 0 auto;
   }
 
   .lanes-menu-wrap {

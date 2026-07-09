@@ -12,6 +12,7 @@
   import TicketCard from './TicketCard.svelte';
   import EpicCard from './EpicCard.svelte';
   import RelationPicker from './RelationPicker.svelte';
+  import EpicPicker from './EpicPicker.svelte';
   import { computeBadges, type RelationAction, type RelationBadges } from './relation-logic';
   import { buildEpicBand } from './epic-logic';
   import JobsList from './JobsList.svelte';
@@ -134,10 +135,18 @@
   let formStatus = $state<TicketStatus>('backlog');
   let formPriority = $state<TicketPriority | null>(null);
   let formAssignee = $state<TicketAssignee | null>(null);
-  // Whether the add form is creating an Epic (D-054). The board's Epic `+` sets this; the full
-  // Is-Epic checkbox + epic dropdown is PD-338.
+  // Whether the add form is creating an Epic (D-054). The board's Epic `+` sets this; the
+  // Is-Epic checkbox toggles it in the form (PD-338).
   let formIsEpic = $state(false);
+  // Which Epic this ticket belongs to (D-054, PD-338); null = none. Forced null when isEpic.
+  let formEpicId = $state<number | null>(null);
   let formProjectId = $state<number | null>(null);
+
+  // Epics selectable as a parent in the form's "Belongs to epic" dropdown — same project,
+  // excluding the ticket being edited (no nesting / self).
+  const epicOptions = $derived(
+    tickets.filter((t) => t.isEpic && t.projectId === formProjectId && t.id !== editingId),
+  );
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
 
@@ -171,6 +180,26 @@
     pickerSource = ticket;
     pickerAction = action;
     pickerOpen = true;
+  }
+
+  // Epic membership (D-054, PD-338): the kebab "Add to Epic…" opens a picker to set epic_id.
+  let epicPickerOpen = $state(false);
+  let epicPickerSource = $state<AgentTicket | null>(null);
+
+  function openEpicPicker(ticket: AgentTicket) {
+    epicPickerSource = ticket;
+    epicPickerOpen = true;
+  }
+
+  async function setTicketEpic(ticketId: number, epicId: number | null) {
+    error = null;
+    try {
+      await api.updateTicket(ticketId, { epicId });
+      await load(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      showToast(msg);
+    }
   }
 
   function visibleTickets(): AgentTicket[] {
@@ -260,6 +289,7 @@
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = null;
     formIsEpic = false;
+    formEpicId = null;
     // Default to the active filter, else "personal-dashboard", else the first project.
     const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
     formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
@@ -281,6 +311,7 @@
     formPriority = ticket.priority;
     formAssignee = ticket.assignee;
     formIsEpic = ticket.isEpic;
+    formEpicId = ticket.epicId;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
   }
@@ -297,6 +328,8 @@
     }
     error = null;
     try {
+      // An Epic never belongs to another Epic (no nesting, D-054).
+      const epicId = formIsEpic ? null : formEpicId;
       if (editingId === null) {
         await api.createTicket({
           title,
@@ -306,6 +339,7 @@
           status: formStatus,
           assignee: formAssignee,
           isEpic: formIsEpic,
+          epicId,
         });
       } else {
         await api.updateTicket(editingId, {
@@ -314,6 +348,8 @@
           priority: formPriority,
           projectId: formProjectId,
           assignee: formAssignee,
+          isEpic: formIsEpic,
+          epicId,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: formStatus }),
         });
@@ -454,10 +490,34 @@
   }
 
   async function remove(ticket: AgentTicket) {
+    // An Epic with members needs the unlink-vs-cascade choice (D-054) — route to the modal.
+    if (ticket.isEpic && (epicSummaryById.get(ticket.id)?.total ?? 0) > 0) {
+      archiveEpicTarget = ticket;
+      return;
+    }
     if (!confirm(`Delete "${ticket.title}"?`)) return;
     error = null;
     try {
       await api.deleteTicket(ticket.id);
+      await load(true);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Epic archive-confirm (D-054): archive the Epic only (unlink members) or Epic + all members.
+  let archiveEpicTarget = $state<AgentTicket | null>(null);
+  const archiveEpicMemberCount = $derived(
+    archiveEpicTarget ? (epicSummaryById.get(archiveEpicTarget.id)?.total ?? 0) : 0,
+  );
+
+  async function archiveEpic(cascadeMembers: boolean) {
+    const target = archiveEpicTarget;
+    if (!target) return;
+    archiveEpicTarget = null;
+    error = null;
+    try {
+      await api.deleteTicket(target.id, { cascadeMembers });
       await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -590,6 +650,27 @@
 
 <Modal open={formOpen} title={editingId === null ? 'New Ticket' : 'Edit Ticket'} onClose={closeForm}>
   <div class="ticket-form">
+    <label class="epic-flag">
+      <input type="checkbox" bind:checked={formIsEpic} />
+      This is an Epic (an umbrella for other tickets)
+    </label>
+    {#if !formIsEpic}
+      <label>
+        <span>Belongs to epic</span>
+        <select
+          value={formEpicId === null ? '' : String(formEpicId)}
+          onchange={(e) => {
+            const v = e.currentTarget.value;
+            formEpicId = v === '' ? null : Number(v);
+          }}
+        >
+          <option value="">— None</option>
+          {#each epicOptions as ep (ep.id)}
+            <option value={String(ep.id)}>{ep.displayId} — {ep.title}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     <label>
       <span>Project</span>
       <select bind:value={formProjectId}>
@@ -737,6 +818,8 @@
                 isLocked={isStatusLocked(ticket)}
                 badges={badgesById.get(ticket.id) ?? NO_BADGES}
                 onRelationAction={(action) => openRelationPicker(ticket, action)}
+                onAddToEpic={() => openEpicPicker(ticket)}
+                onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
                 onDragStart={(e) => onDragStart(e, ticket)}
                 {onDragEnd}
                 onEdit={() => openEdit(ticket)}
@@ -778,6 +861,36 @@
     void load(true);
   }}
 />
+
+<EpicPicker
+  open={epicPickerOpen}
+  source={epicPickerSource}
+  {tickets}
+  onClose={() => (epicPickerOpen = false)}
+  onPicked={(epicId) => epicPickerSource && setTicketEpic(epicPickerSource.id, epicId)}
+/>
+
+<Modal
+  open={archiveEpicTarget !== null}
+  title="Archive Epic"
+  onClose={() => (archiveEpicTarget = null)}
+>
+  {#if archiveEpicTarget}
+    <p class="archive-epic-msg">
+      <strong>{archiveEpicTarget.displayId ?? archiveEpicTarget.title}</strong> has
+      {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}. Archive the Epic
+      only (its members become free tickets), or archive the Epic and all its members?
+    </p>
+    <div class="archive-epic-actions">
+      <Button variant="ghost" onclick={() => (archiveEpicTarget = null)}>Cancel</Button>
+      <span class="spacer"></span>
+      <Button variant="ghost" onclick={() => archiveEpic(false)}>Epic only (unlink members)</Button>
+      <Button variant="primary" onclick={() => archiveEpic(true)}>
+        Epic + {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}
+      </Button>
+    </div>
+  {/if}
+</Modal>
 
 {#if toast}
   <div class="toast" role="status">{toast}</div>
