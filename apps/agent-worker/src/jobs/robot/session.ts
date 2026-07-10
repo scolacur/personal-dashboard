@@ -42,7 +42,7 @@ export function codingEnv(config: AgentWorkerConfig): Record<string, string | un
   const { writeToken, codingUid, codingHome } = config.robot;
   const proxyVars = config.httpsProxy
     ? { HTTPS_PROXY: config.httpsProxy, HTTP_PROXY: config.httpsProxy, NODE_USE_ENV_PROXY: '1' }
-    : {};
+    : { HTTPS_PROXY: undefined, HTTP_PROXY: undefined };
   // Only override HOME when actually dropping privilege; in dev (no uid) the inherited HOME is right.
   const homeVars =
     codingUid !== undefined ? { HOME: codingHome, USER: 'robot', LOGNAME: 'robot' } : {};
