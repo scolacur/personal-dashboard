@@ -43,6 +43,8 @@
     status ? ACTIVE_STATES.filter((s) => (status!.sortie[s] ?? 0) > 0) : [],
   );
 
+  let dispatch = $derived(status?.dispatch ?? null);
+
   function isStale(w: WorkerHeartbeat): boolean {
     return now - w.lastSeen > STALE_MS;
   }
@@ -64,6 +66,23 @@
         {/each}
       {/if}
     </div>
+
+    {#if dispatch}
+      <div class="ss-line">
+        <span class="ss-label">Robot</span>
+        <span class="ss-dispatch" class:paused={dispatch.paused}>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="name">{dispatch.paused ? 'dispatch paused' : 'dispatch running'}</span>
+        </span>
+      </div>
+      {#if dispatch.paused}
+        <div class="ss-fault" role="status">
+          <strong>⛔ Robot dispatch paused</strong>
+          <span class="reason">{dispatch.reason ?? 'system-wide fault'}</span>
+          {#if dispatch.since}<span class="since">since {formatRelativeTime(dispatch.since, now)}</span>{/if}
+        </div>
+      {/if}
+    {/if}
 
     <div class="ss-line">
       <span class="ss-label">Workers</span>

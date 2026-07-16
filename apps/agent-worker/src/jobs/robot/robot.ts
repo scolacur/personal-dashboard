@@ -10,6 +10,7 @@ import { runRobotSession, type RobotSessionResult } from './session';
 import { ensureRunsTable, startRun, finishRun, failedRunsForTicket } from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
 import { ensureRobotStateTable, isDispatchPaused, pauseDispatch } from './state';
+import { logMilestone, ROBOT_EVENT } from './events';
 
 /**
  * The Robot loop orchestration (D-055, PD-342): one poll cycle. Selects dispatchable
@@ -109,6 +110,7 @@ export async function processRobotQueue(
     if (gate.action === 'park') {
       logger.warn({ ticketId: candidate.id, reason: gate.reason }, 'robot: budget exhausted — parking (stuck)');
       setAgentState(db, candidate.id, 'stuck', now());
+      logMilestone(db, candidate.id, ROBOT_EVENT.parked, { reason: gate.reason }, now());
       continue;
     }
     if (gate.action === 'backoff') {
@@ -119,16 +121,31 @@ export async function processRobotQueue(
     const branch = branchFor(candidate);
     setAgentState(db, candidate.id, 'working', now());
     const runId = startRun(db, { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch }, now());
+    logMilestone(db, candidate.id, ROBOT_EVENT.dispatched, { branch }, now());
 
     // Route a failed run (no-verify or errored) through the fault guardrail. Shared by the normal
     // path and the catch below so a thrown clone/spawn error is classified the same way.
-    const handleFailure = (status: 'no-verify' | 'error', sessionId: string | undefined, error?: string): void => {
+    const handleFailure = (
+      status: 'no-verify' | 'error',
+      sessionId: string | undefined,
+      error: string | undefined,
+      metrics: { turns?: number; tokens?: number } = {},
+    ): void => {
       const cls = classifyFault({ verifyOk: false, error });
       const decision = decideFault(cls, failures, policy);
       finishRun(
         db,
         runId,
-        { status, sessionId, error, faultTier: decision.tier, faultSignature: decision.signature, faultReason: decision.reason },
+        {
+          status,
+          sessionId,
+          error,
+          faultTier: decision.tier,
+          faultSignature: decision.signature,
+          faultReason: decision.reason,
+          turns: metrics.turns,
+          tokens: metrics.tokens,
+        },
         now(),
       );
       if (decision.action === 'pause') {
@@ -136,12 +153,15 @@ export async function processRobotQueue(
         // ticket goes back to queued; the whole loop pauses so no other ticket burns budget either.
         pauseDispatch(db, decision.reason, now());
         setAgentState(db, candidate.id, 'queued', now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.paused, { tier: decision.tier, reason: decision.reason }, now());
         logger.error({ ticketId: candidate.id, reason: decision.reason }, 'robot: system-wide fault — PAUSING dispatch (no burn)');
       } else if (decision.action === 'park') {
         setAgentState(db, candidate.id, 'stuck', now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason }, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: fault → parking (stuck)');
       } else {
         setAgentState(db, candidate.id, 'queued', now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.fault, { tier: decision.tier, reason: decision.reason }, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: transient fault → will retry');
       }
     };
@@ -150,24 +170,27 @@ export async function processRobotQueue(
     try {
       worktree = await doEnsure(config, branch);
       const result = await doRun(config, candidate, worktree);
+      const metrics = { turns: result.turns, tokens: result.tokens };
 
       if (result.askHuman) {
         // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a
         // question. Not a failure — burns no budget; a human answers and re-queues.
-        finishRun(db, runId, { status: 'ask-human', sessionId: result.sessionId, faultReason: result.askHuman }, now());
+        finishRun(db, runId, { status: 'ask-human', sessionId: result.sessionId, faultReason: result.askHuman, ...metrics }, now());
         setAgentState(db, candidate.id, 'awaiting-human', now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.askHuman, { question: result.askHuman }, now());
         logger.info({ ticketId: candidate.id, question: result.askHuman.slice(0, 200) }, 'robot: ask_human — parked (awaiting-human)');
       } else if (result.ok && result.verifyOk && result.prNumber !== undefined) {
         const prUrl = `https://github.com/${candidate.repo}/pull/${result.prNumber}`;
-        finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl }, now());
+        finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
         setAgentState(db, candidate.id, 'in-review', now());
         dispatched++;
+        logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
         logger.info({ ticketId: candidate.id, branch, prUrl }, 'robot: handed off PR');
       } else if (result.ok && !result.verifyOk) {
         // D-046 gate: the session ended without a green verify — leave WIP, don't publish a red PR.
-        handleFailure('no-verify', result.sessionId);
+        handleFailure('no-verify', result.sessionId, undefined, metrics);
       } else {
-        handleFailure('error', result.sessionId, result.error);
+        handleFailure('error', result.sessionId, result.error, metrics);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

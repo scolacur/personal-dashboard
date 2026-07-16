@@ -22,6 +22,7 @@ import type {
   TicketStatus,
   UpdateTicketInput,
   WorkerHeartbeat,
+  DispatchPauseState,
 } from '@dashboard/shared';
 import {
   isSortieReady,
@@ -1253,6 +1254,24 @@ export function getSortieFleet(db: Database.Database): Partial<Record<AgentState
   const out: Partial<Record<AgentState, number>> = {};
   for (const r of rows) out[r.state as AgentState] = r.n;
   return out;
+}
+
+/** The Robot loop's global dispatch-pause flag (C2/PD-343), read from the worker-owned
+ *  `robot_state` k/v table in the same shared DB. Set when a system-wide (auth/credit)
+ *  fault is detected; cleared by a human (C4). Absent table / row ⇒ running. Read-only. */
+export function getDispatchPauseState(db: Database.Database): DispatchPauseState {
+  const row = (() => {
+    try {
+      return db.prepare("SELECT value, updated_at FROM robot_state WHERE key = 'dispatch_paused'").get() as
+        | { value: string | null; updated_at: number }
+        | undefined;
+    } catch {
+      // robot_state not bootstrapped yet (worker never booted) ⇒ treat as running.
+      return undefined;
+    }
+  })();
+  if (!row || row.value === null) return { paused: false, reason: null, since: null };
+  return { paused: true, reason: row.value, since: row.updated_at };
 }
 
 /** Every known worker heartbeat, freshest first. The web server never talks to a

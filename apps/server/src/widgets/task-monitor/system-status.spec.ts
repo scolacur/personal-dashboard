@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { createTicket, getProjectBySlug, getSortieFleet, listWorkerHeartbeats } from './store';
+import { createTicket, getDispatchPauseState, getProjectBySlug, getSortieFleet, listWorkerHeartbeats } from './store';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -74,5 +74,39 @@ describe('listWorkerHeartbeats', () => {
 
   it('is empty before any worker has beaten', () => {
     expect(listWorkerHeartbeats(freshDb())).toEqual([]);
+  });
+});
+
+describe('getDispatchPauseState', () => {
+  // robot_state is worker-owned; mirror the worker's create so the server can read it.
+  function withRobotState(db: Database.Database): void {
+    db.exec('CREATE TABLE robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+  }
+
+  it('reports running when the robot_state table does not exist yet', () => {
+    expect(getDispatchPauseState(freshDb())).toEqual({ paused: false, reason: null, since: null });
+  });
+
+  it('reports running when the flag row is absent or cleared (null value)', () => {
+    const db = freshDb();
+    withRobotState(db);
+    expect(getDispatchPauseState(db)).toEqual({ paused: false, reason: null, since: null });
+    db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, NULL, ?)').run('dispatch_paused', 5);
+    expect(getDispatchPauseState(db)).toEqual({ paused: false, reason: null, since: null });
+  });
+
+  it('reports paused with reason + since when the flag is set', () => {
+    const db = freshDb();
+    withRobotState(db);
+    db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'dispatch_paused',
+      'auth/credit fault (loop-wide): HTTP 403',
+      1700,
+    );
+    expect(getDispatchPauseState(db)).toEqual({
+      paused: true,
+      reason: 'auth/credit fault (loop-wide): HTTP 403',
+      since: 1700,
+    });
   });
 });

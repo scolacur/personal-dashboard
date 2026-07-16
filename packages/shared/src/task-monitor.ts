@@ -625,10 +625,83 @@ export interface WorkerHeartbeat {
   model: string | null;
 }
 
+/** Whether the Robot loop's dispatch is globally paused (C2/PD-343). Set when a
+ *  system-wide (auth/credit) fault is detected; cleared by a human (C4). Read by the
+ *  server from the worker-owned `robot_state` k/v table. */
+export interface DispatchPauseState {
+  paused: boolean;
+  /** The reason the loop paused (the triggering fault), or null when running. */
+  reason: string | null;
+  /** Unix ms the pause was set, or null when running. */
+  since: number | null;
+}
+
 /** Runtime status for the board's Site Status strip. `sortie` counts active
  *  (non-archived) tickets by agent state — only states with a non-zero count
- *  appear. `workers` is every known worker heartbeat. */
+ *  appear. `workers` is every known worker heartbeat. `dispatch` is the Robot
+ *  loop's global running/paused state (C3/PD-344). */
 export interface SystemStatus {
   sortie: Partial<Record<AgentState, number>>;
   workers: WorkerHeartbeat[];
+  dispatch: DispatchPauseState;
+}
+
+// ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────
+// The Robot loop (D-055) records one `agent_runs` row per attempt and emits
+// milestone events onto the SAME `agent_ticket_events` timeline the Refine thread
+// uses (reuse, not a parallel log). Both are read on the ticket-detail page.
+
+/** How a Robot run ended. Mirrors the worker's `RunStatus` (agent-worker owns the
+ *  write side; this is the read-side shape the server + web share). */
+export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'error';
+
+/** The fault taxonomy a failed run is classified into (C2/PD-343). */
+export type RobotFaultTier = 'transient' | 'deterministic' | 'system-wide';
+
+/** One Robot attempt on a ticket, as returned by `GET /tickets/:id/runs` (newest first). */
+export interface AgentRun {
+  id: number;
+  ticketId: number;
+  issueNumber: number | null;
+  branch: string;
+  status: RobotRunStatus;
+  /** The coding SDK session id, for cross-referencing logs. */
+  sessionId: string | null;
+  prUrl: string | null;
+  /** Raw error text on an errored run. */
+  error: string | null;
+  faultTier: RobotFaultTier | null;
+  faultSignature: string | null;
+  /** Human-readable reason a run parked/faulted, or the ask_human question. */
+  faultReason: string | null;
+  /** SDK turns the coding session used (null for older rows). */
+  turns: number | null;
+  /** Total tokens the coding session used (null for older rows). */
+  tokens: number | null;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+/** `agent_ticket_events.type` values the Robot loop emits for the activity timeline.
+ *  Referenced by BOTH the agent-worker (write) and the web (render), so the literals
+ *  live here to keep them in lockstep (mirrors REFINE_EVENT_TYPE). */
+export const ROBOT_EVENT = {
+  dispatched: 'robot_dispatched',
+  handoff: 'robot_handoff',
+  fault: 'robot_fault',
+  parked: 'robot_parked',
+  askHuman: 'robot_ask_human',
+  paused: 'robot_paused',
+} as const;
+
+export type RobotEventType = (typeof ROBOT_EVENT)[keyof typeof ROBOT_EVENT];
+
+/** JSON stored in a `robot_*` event's `detail` (all fields optional — depends on type). */
+export interface RobotEventDetail {
+  branch?: string;
+  prUrl?: string;
+  tier?: RobotFaultTier;
+  reason?: string;
+  question?: string;
+  state?: string;
 }

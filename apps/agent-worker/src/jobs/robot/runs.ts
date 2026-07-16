@@ -37,6 +37,9 @@ export interface RunRow {
   faultTier: FaultTier | null;
   faultSignature: string | null;
   faultReason: string | null;
+  /** C3 observability metrics off the SDK result (null for older rows / no result). */
+  turns: number | null;
+  tokens: number | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -69,6 +72,9 @@ export function ensureRunsTable(db: Database.Database): void {
   addColumnIfMissing(db, 'agent_runs', 'fault_tier', 'TEXT');
   addColumnIfMissing(db, 'agent_runs', 'fault_signature', 'TEXT');
   addColumnIfMissing(db, 'agent_runs', 'fault_reason', 'TEXT');
+  // C3 (PD-344) observability metrics.
+  addColumnIfMissing(db, 'agent_runs', 'turns', 'INTEGER');
+  addColumnIfMissing(db, 'agent_runs', 'tokens', 'INTEGER');
 }
 
 export interface StartRunInput {
@@ -101,6 +107,9 @@ export interface FinishRunInput {
   faultTier?: FaultTier | null;
   faultSignature?: string | null;
   faultReason?: string | null;
+  /** C3 observability metrics off the SDK result. */
+  turns?: number | null;
+  tokens?: number | null;
 }
 
 /** Close out a run with its terminal outcome. */
@@ -113,7 +122,8 @@ export function finishRun(
   db.prepare(
     `UPDATE agent_runs
         SET status = ?, session_id = ?, pr_url = ?, error = ?,
-            fault_tier = ?, fault_signature = ?, fault_reason = ?, finished_at = ?
+            fault_tier = ?, fault_signature = ?, fault_reason = ?,
+            turns = ?, tokens = ?, finished_at = ?
       WHERE id = ?`,
   ).run(
     input.status,
@@ -123,6 +133,8 @@ export function finishRun(
     input.faultTier ?? null,
     input.faultSignature ?? null,
     input.faultReason ?? null,
+    input.turns ?? null,
+    input.tokens ?? null,
     now,
     runId,
   );
@@ -170,6 +182,8 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     faultTier: (r.fault_tier as FaultTier | null) ?? null,
     faultSignature: (r.fault_signature as string | null) ?? null,
     faultReason: (r.fault_reason as string | null) ?? null,
+    turns: (r.turns as number | null) ?? null,
+    tokens: (r.tokens as number | null) ?? null,
     startedAt: r.started_at as number,
     finishedAt: (r.finished_at as number | null) ?? null,
   };
