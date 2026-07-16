@@ -5,7 +5,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { makeCodingSpawn } from './privilege';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 
@@ -29,6 +29,8 @@ export interface RobotSessionResult {
   verifyOk: boolean;
   /** PR number from `.robot/scm.json`, when the Robot opened one. */
   prNumber?: number;
+  /** The Robot's blocking question from `.robot/ask-human`, when it deliberately parked (C2). */
+  askHuman?: string;
   /** On !ok, the SDK error text (billing / rate-limit / max-turns / crash). */
   error?: string;
 }
@@ -56,7 +58,7 @@ export function codingEnv(config: AgentWorkerConfig): Record<string, string | un
 }
 
 /** Read the hand-off signals the Robot left in its worktree. */
-export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?: number } {
+export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?: number; askHuman?: string } {
   const verifyOk = existsSync(path.join(worktreeDir, VERIFY_OK_MARKER));
   let prNumber: number | undefined;
   try {
@@ -65,7 +67,14 @@ export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?
   } catch {
     // no scm.json (session didn't reach the PR step) — prNumber stays undefined
   }
-  return { verifyOk, prNumber };
+  let askHuman: string | undefined;
+  try {
+    const q = readFileSync(path.join(worktreeDir, ASK_HUMAN_MARKER), 'utf8').trim();
+    if (q) askHuman = q;
+  } catch {
+    // no ask-human marker — the Robot didn't park for a human
+  }
+  return { verifyOk, prNumber, askHuman };
 }
 
 /** Injectable SDK query (tests swap the real subprocess out). */

@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
-import { processRobotQueue, branchFor, SIMPLE_RETRY_CAP, type RobotDeps } from './robot';
-import { startRun, finishRun, listRunsForTicket, ensureRunsTable } from './runs';
+import { processRobotQueue, branchFor, type RobotDeps } from './robot';
+import { startRun, finishRun, listRunsForTicket, failedRunsForTicket, ensureRunsTable } from './runs';
+import { isDispatchPaused } from './state';
 import type { RobotSessionResult } from './session';
 
 const READY = ['## Context', 'c', '## Task', 't', '## Done When', 'd', '## Out of scope', 'o'].join('\n');
@@ -36,6 +37,10 @@ function agentState(db: Database.Database, id: number): string | null {
 
 const cfg = (over: Record<string, string> = {}): AgentWorkerConfig =>
   loadConfig({ ROBOT_DISPATCH_ENABLED: '1', ROBOT_ALLOWLIST: '1', ...over });
+
+/** Backoff off so multi-cycle tests with a fixed clock are always retry-eligible. */
+const cfgNoBackoff = (over: Record<string, string> = {}): AgentWorkerConfig =>
+  cfg({ ROBOT_BACKOFF_BASE_MS: '0', ...over });
 
 /** Deps that succeed with a full hand-off, unless a custom session result is given. */
 function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
@@ -88,15 +93,17 @@ describe('processRobotQueue', () => {
     });
   });
 
-  it('no verify-ok ⇒ run no-verify + re-queued for retry (D-046 gate, no red PR)', async () => {
+  it('no verify-ok ⇒ run no-verify (transient) + re-queued for retry (D-046 gate, no red PR)', async () => {
     addQueued(db, 1);
     const n = await processRobotQueue(db, cfg(), deps({ ok: true, verifyOk: false, prNumber: undefined }));
     expect(n).toBe(0);
     expect(agentState(db, 1)).toBe('queued');
-    expect(listRunsForTicket(db, 1)[0].status).toBe('no-verify');
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('no-verify');
+    expect(run.faultTier).toBe('transient');
   });
 
-  it('session error ⇒ run error + re-queued', async () => {
+  it('session error (unrecognised) ⇒ run error (transient) + re-queued', async () => {
     addQueued(db, 1);
     const n = await processRobotQueue(db, cfg(), deps({ ok: false, verifyOk: false, error: 'max turns' }));
     expect(n).toBe(0);
@@ -104,13 +111,118 @@ describe('processRobotQueue', () => {
     const [run] = listRunsForTicket(db, 1);
     expect(run.status).toBe('error');
     expect(run.error).toBe('max turns');
+    expect(run.faultTier).toBe('transient');
   });
 
-  it('parks a ticket at the retry cap instead of dispatching again', async () => {
+  // ---- C2 fault-tier guardrail (PD-343) ----
+
+  it('a deterministic fault parks immediately (0 retries)', async () => {
     addQueued(db, 1);
-    // Pre-load SIMPLE_RETRY_CAP finished runs.
-    for (let i = 0; i < SIMPLE_RETRY_CAP; i++) {
-      finishRun(db, startRun(db, { ticketId: 1, issueNumber: 1, branch: 'robot/1' }), { status: 'error' });
+    let calls = 0;
+    const d = deps();
+    d.runSession = async () => {
+      calls++;
+      return { ok: false, verifyOk: false, error: 'refused to edit protected path auth/session.ts' };
+    };
+    await processRobotQueue(db, cfg(), d);
+    expect(agentState(db, 1)).toBe('stuck');
+    expect(calls).toBe(1);
+    expect(listRunsForTicket(db, 1)[0].faultTier).toBe('deterministic');
+  });
+
+  it('a transient fault retries up to the cap, then parks (distinct signatures)', async () => {
+    addQueued(db, 1);
+    const errors = ['flake-a', 'flake-b', 'flake-c'];
+    let calls = 0;
+    const d = deps();
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: errors[calls++] });
+    const c = cfgNoBackoff();
+
+    await processRobotQueue(db, c, d);
+    expect(agentState(db, 1)).toBe('queued'); // retry 1
+    await processRobotQueue(db, c, d);
+    expect(agentState(db, 1)).toBe('queued'); // retry 2
+    await processRobotQueue(db, c, d);
+    expect(agentState(db, 1)).toBe('stuck'); // cap → park on the 3rd
+    expect(calls).toBe(3);
+
+    await processRobotQueue(db, c, d); // parked ⇒ no longer a candidate
+    expect(calls).toBe(3);
+    expect(listRunsForTicket(db, 1).length).toBe(3);
+  });
+
+  it('two identical failures stop at the second (transient→deterministic promotion)', async () => {
+    addQueued(db, 1);
+    let calls = 0;
+    const d = deps();
+    d.runSession = async () => {
+      calls++;
+      return { ok: true, verifyOk: false, prNumber: undefined }; // identical no-verify each time
+    };
+    const c = cfgNoBackoff();
+
+    await processRobotQueue(db, c, d);
+    expect(agentState(db, 1)).toBe('queued'); // first no-verify → retry
+    await processRobotQueue(db, c, d);
+    expect(agentState(db, 1)).toBe('stuck'); // same signature again → promoted → park
+    expect(calls).toBe(2);
+
+    await processRobotQueue(db, c, d);
+    expect(calls).toBe(2);
+    const runs = listRunsForTicket(db, 1);
+    expect(runs.length).toBe(2);
+    expect(runs[0].status).toBe('no-verify');
+    expect(runs[0].faultTier).toBe('deterministic'); // the promoted run
+  });
+
+  it('a system-wide auth fault pauses the whole loop without burning any ticket', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const d = deps();
+    d.runSession = async (_c, cand) =>
+      cand.id === 1
+        ? { ok: false, verifyOk: false, error: 'GitHub API: HTTP 403 Forbidden' }
+        : { ok: true, verifyOk: true, prNumber: 999 };
+
+    const n = await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
+    expect(n).toBe(0);
+    expect(isDispatchPaused(db)).toBe(true);
+
+    // ticket 1: recorded system-wide (excluded from the cap = no burn), returned to queued
+    expect(agentState(db, 1)).toBe('queued');
+    expect(listRunsForTicket(db, 1)[0].faultTier).toBe('system-wide');
+    expect(failedRunsForTicket(db, 1).every((f) => f.tier === 'system-wide')).toBe(true);
+
+    // ticket 2: never ran — the loop broke on the pause before reaching it
+    expect(listRunsForTicket(db, 2)).toEqual([]);
+    expect(agentState(db, 2)).toBeNull();
+
+    // and the loop stays inert on the next cycle until a human resumes
+    const n2 = await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
+    expect(n2).toBe(0);
+    expect(listRunsForTicket(db, 2)).toEqual([]);
+  });
+
+  it('ask_human parks awaiting-human and is not counted as a failure', async () => {
+    addQueued(db, 1);
+    const n = await processRobotQueue(db, cfg(), deps({ ok: true, verifyOk: false, prNumber: undefined, askHuman: 'Design A or B?' }));
+    expect(n).toBe(0);
+    expect(agentState(db, 1)).toBe('awaiting-human');
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('ask-human');
+    expect(run.faultReason).toContain('Design A or B');
+    expect(failedRunsForTicket(db, 1)).toEqual([]); // not a failure ⇒ no budget burned
+  });
+
+  it('parks a budget-exhausted ticket pre-dispatch without running it again', async () => {
+    addQueued(db, 1);
+    // Pre-load the cap with distinct transient signatures (as C2 finishRun records them).
+    for (const sig of ['s1', 's2', 's3']) {
+      finishRun(db, startRun(db, { ticketId: 1, issueNumber: 1, branch: 'robot/1' }), {
+        status: 'error',
+        faultTier: 'transient',
+        faultSignature: sig,
+      });
     }
     let sessionRan = false;
     const d = deps();
@@ -118,7 +230,7 @@ describe('processRobotQueue', () => {
       sessionRan = true;
       return { ok: true, verifyOk: true, prNumber: 1 };
     };
-    const n = await processRobotQueue(db, cfg(), d);
+    const n = await processRobotQueue(db, cfgNoBackoff(), d);
     expect(n).toBe(0);
     expect(sessionRan).toBe(false);
     expect(agentState(db, 1)).toBe('stuck');

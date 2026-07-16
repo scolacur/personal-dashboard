@@ -59,6 +59,27 @@ describe('loadRobotConfig', () => {
     expect(s.codingHome).toBe('/home/robot');
   });
 
+  it('defaults the C2 fault-guardrail knobs', () => {
+    const s = loadRobotConfig({});
+    expect(s.retryCap).toBe(3);
+    expect(s.promoteAfter).toBe(2);
+    expect(s.backoffBaseMs).toBe(60_000);
+    expect(s.backoffMaxMs).toBe(15 * 60_000);
+  });
+
+  it('reads the C2 fault-guardrail knobs from env', () => {
+    const s = loadRobotConfig({
+      ROBOT_RETRY_CAP: '5',
+      ROBOT_PROMOTE_AFTER: '3',
+      ROBOT_BACKOFF_BASE_MS: '1000',
+      ROBOT_BACKOFF_MAX_MS: '2000',
+    });
+    expect(s.retryCap).toBe(5);
+    expect(s.promoteAfter).toBe(3);
+    expect(s.backoffBaseMs).toBe(1000);
+    expect(s.backoffMaxMs).toBe(2000);
+  });
+
   it('reads a custom coding home', () => {
     expect(loadRobotConfig({ ROBOT_CODING_HOME: '/home/coder' }).codingHome).toBe('/home/coder');
   });
