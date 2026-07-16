@@ -18,10 +18,20 @@ function boardDb(): Database.Database {
       updated_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_relations (id INTEGER PRIMARY KEY, from_ticket_id INTEGER, to_ticket_id INTEGER, type TEXT);
+    CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
   `);
   db.prepare('INSERT INTO agent_projects (id, github_repo, sortie_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
   ensureRunsTable(db);
   return db;
+}
+
+/** The milestone event types written for a ticket, oldest first (C3). */
+function eventTypes(db: Database.Database, ticketId: number): string[] {
+  return (
+    db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = ? ORDER BY id ASC').all(ticketId) as {
+      type: string;
+    }[]
+  ).map((r) => r.type);
 }
 
 function addQueued(db: Database.Database, id: number, issue: number | null = id): void {
@@ -81,7 +91,7 @@ describe('processRobotQueue', () => {
 
   it('happy path: worktree → session → verify-ok + PR → run handed-off + state in-review', async () => {
     addQueued(db, 1, 220);
-    const n = await processRobotQueue(db, cfg(), deps());
+    const n = await processRobotQueue(db, cfg(), deps({ turns: 7, tokens: 4200 }));
     expect(n).toBe(1);
     expect(agentState(db, 1)).toBe('in-review');
     const [run] = listRunsForTicket(db, 1);
@@ -90,7 +100,11 @@ describe('processRobotQueue', () => {
       branch: 'robot/220',
       sessionId: 'sess-1',
       prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314',
+      turns: 7,
+      tokens: 4200,
     });
+    // C3: emits dispatched + handoff milestones onto the shared events timeline.
+    expect(eventTypes(db, 1)).toEqual(['robot_dispatched', 'robot_handoff']);
   });
 
   it('no verify-ok ⇒ run no-verify (transient) + re-queued for retry (D-046 gate, no red PR)', async () => {
@@ -212,6 +226,36 @@ describe('processRobotQueue', () => {
     expect(run.status).toBe('ask-human');
     expect(run.faultReason).toContain('Design A or B');
     expect(failedRunsForTicket(db, 1)).toEqual([]); // not a failure ⇒ no budget burned
+  });
+
+  // ---- C3 observability milestones (PD-344) ----
+
+  it('emits a robot_fault milestone on a transient retry and robot_parked on a deterministic park', async () => {
+    addQueued(db, 1);
+    const d = deps();
+    d.runSession = async () => ({ ok: true, verifyOk: false, prNumber: undefined }); // transient no-verify
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    expect(eventTypes(db, 1)).toEqual(['robot_dispatched', 'robot_fault']);
+
+    addQueued(db, 2);
+    const d2 = deps();
+    d2.runSession = async () => ({ ok: false, verifyOk: false, error: 'permission denied' });
+    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '2' }), d2);
+    expect(eventTypes(db, 2)).toEqual(['robot_dispatched', 'robot_parked']);
+  });
+
+  it('emits robot_ask_human with the question in the detail', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), deps({ ok: true, verifyOk: false, prNumber: undefined, askHuman: 'A or B?' }));
+    expect(eventTypes(db, 1)).toEqual(['robot_dispatched', 'robot_ask_human']);
+    const ev = db.prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = 1 AND type = 'robot_ask_human'").get() as { detail: string };
+    expect(JSON.parse(ev.detail)).toMatchObject({ question: 'A or B?' });
+  });
+
+  it('emits robot_paused on the triggering ticket for a system-wide fault', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), deps({ ok: false, verifyOk: false, error: 'HTTP 401 Unauthorized' }));
+    expect(eventTypes(db, 1)).toEqual(['robot_dispatched', 'robot_paused']);
   });
 
   it('parks a budget-exhausted ticket pre-dispatch without running it again', async () => {

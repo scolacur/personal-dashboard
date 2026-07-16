@@ -78,11 +78,11 @@ describe('agent_runs', () => {
     expect(runs.map((r) => r.startedAt)).toEqual([2000, 1000]);
   });
 
-  it('persists the C2 fault classification on a finished run', () => {
+  it('persists the C2 fault classification + C3 metrics on a finished run', () => {
     const id = startRun(db, { ticketId: 9, issueNumber: null, branch: 'b' });
-    finishRun(db, id, { status: 'error', faultTier: 'deterministic', faultSignature: 'sig', faultReason: 'why' });
+    finishRun(db, id, { status: 'error', faultTier: 'deterministic', faultSignature: 'sig', faultReason: 'why', turns: 8, tokens: 5100 });
     const [run] = listRunsForTicket(db, 9);
-    expect(run).toMatchObject({ faultTier: 'deterministic', faultSignature: 'sig', faultReason: 'why' });
+    expect(run).toMatchObject({ faultTier: 'deterministic', faultSignature: 'sig', faultReason: 'why', turns: 8, tokens: 5100 });
   });
 
   it('migrates a pre-C2 table (no fault columns) in place', () => {

@@ -12,6 +12,8 @@
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
   import TicketThread from '$lib/TicketThread.svelte';
+  import RunHistory from '$lib/RunHistory.svelte';
+  import ActivityTimeline from '$lib/ActivityTimeline.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
@@ -399,6 +401,8 @@
           </ul>
         {/if}
       </section>
+
+      <RunHistory ticketId={ticket.id} />
     </div>
 
     <div class="ticket-right">
@@ -415,6 +419,8 @@
       {/if}
 
       <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
+
+      <ActivityTimeline ticketId={ticket.id} />
 
       <div class="refine-footer">
         <button

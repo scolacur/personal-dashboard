@@ -24,6 +24,7 @@ import {
   listEpicSummaries,
   createProject,
   createTicket,
+  getDispatchPauseState,
   getProjectBySlug,
   getSortieFleet,
   getTicket,
@@ -48,6 +49,7 @@ import {
   updateTicket,
 } from './store';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
+import { listRunsForTicket } from './runs-store';
 import {
   GITHUB_READ_TOKEN_ENV,
   GITHUB_WRITE_TOKEN_ENV,
@@ -462,6 +464,16 @@ export function registerRoutes(
     return listTicketEvents(db, id);
   });
 
+  // A ticket's Robot runs (C3/PD-344): one row per attempt, newest first, with fault tier +
+  // reason + metrics. The ticket-detail run-history table reads this. Read-only, no token needed.
+  app.get(`${base}/tickets/:id/runs`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    return listRunsForTicket(db, id);
+  });
+
   // Start a Refine session (D-044, PD-268): the Refine button POSTs here. Writes the kickoff
   // refine_human event (ticket title + body) the agent-worker worker polls to open a grounded
   // session. 409 if a thread already exists so a double-click can't spawn a second.
@@ -657,5 +669,6 @@ export function registerRoutes(
   app.get(`${base}/system-status`, async () => ({
     sortie: getSortieFleet(db),
     workers: listWorkerHeartbeats(db),
+    dispatch: getDispatchPauseState(db),
   }));
 }

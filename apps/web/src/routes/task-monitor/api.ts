@@ -1,10 +1,12 @@
 import type {
   AgentProject,
+  AgentRun,
   AgentTicket,
   CreateTicketInput,
   EpicSummary,
   RelationType,
   ResolvedRelation,
+  SystemStatus,
   TicketEvent,
   TicketRelation,
   UpdateTicketInput,
@@ -109,11 +111,25 @@ export async function startRefine(id: number): Promise<TicketEvent> {
   return res.json() as Promise<TicketEvent>;
 }
 
-/** A ticket's activity log — the generic substrate the Refine thread renders (PD-267). */
+/** A ticket's activity log — the generic substrate the Refine thread + activity timeline render. */
 export async function fetchTicketEvents(id: number): Promise<TicketEvent[]> {
   const res = await fetch(`${BASE}/${id}/events`);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<TicketEvent[]>;
+}
+
+/** A ticket's Robot run history — one row per attempt, newest first (C3/PD-344). */
+export async function fetchTicketRuns(id: number): Promise<AgentRun[]> {
+  const res = await fetch(`${BASE}/${id}/runs`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentRun[]>;
+}
+
+/** The board's Site Status snapshot — Sortie fleet + worker liveness + Robot dispatch state. */
+export async function fetchSystemStatus(): Promise<SystemStatus> {
+  const res = await fetch('/api/widgets/task-monitor/system-status');
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<SystemStatus>;
 }
 
 /**

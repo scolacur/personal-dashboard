@@ -31,6 +31,10 @@ export interface RobotSessionResult {
   prNumber?: number;
   /** The Robot's blocking question from `.robot/ask-human`, when it deliberately parked (C2). */
   askHuman?: string;
+  /** SDK turns the session used, from the result message (observability, C3). */
+  turns?: number;
+  /** Total tokens the session used (input+output, from the result usage; C3). */
+  tokens?: number;
   /** On !ok, the SDK error text (billing / rate-limit / max-turns / crash). */
   error?: string;
 }
@@ -102,6 +106,8 @@ export async function runRobotSession(
   let ok = false;
   let sessionId: string | undefined;
   let error: string | undefined;
+  let turns: number | undefined;
+  let tokens: number | undefined;
 
   try {
     for await (const message of runQuery({
@@ -123,6 +129,11 @@ export async function runRobotSession(
         sessionId = message.session_id;
         ok = message.subtype === 'success' && !message.is_error;
         if (!ok) error = message.subtype === 'success' ? 'is_error' : (message.errors ?? []).join('; ');
+        // Observability metrics (C3): turns + total tokens off the result message. Read
+        // defensively — the SDK shape carries num_turns + a usage object.
+        const r = message as { num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number } };
+        if (typeof r.num_turns === 'number') turns = r.num_turns;
+        if (r.usage) tokens = (r.usage.input_tokens ?? 0) + (r.usage.output_tokens ?? 0);
       }
     }
   } catch (err) {
@@ -131,5 +142,5 @@ export async function runRobotSession(
   }
 
   const handoff = readHandoff(worktree.dir);
-  return { ok, sessionId, error, ...handoff };
+  return { ok, sessionId, error, turns, tokens, ...handoff };
 }

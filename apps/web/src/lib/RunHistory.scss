@@ -1,0 +1,128 @@
+.run-history {
+  margin-top: var(--space-lg);
+
+  h2 {
+    font-size: var(--font-size-md, 1rem);
+    margin: 0 0 var(--space-sm);
+  }
+}
+
+.ask-human {
+  padding: 0.6rem 0.8rem;
+  margin-bottom: var(--space-sm);
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--status-awaiting-human) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-awaiting-human) 40%, transparent);
+
+  .ah-head {
+    font-weight: 600;
+    color: var(--status-awaiting-human);
+    margin-bottom: 0.3rem;
+  }
+
+  .ah-body {
+    :global(p) {
+      margin: 0.2rem 0;
+    }
+  }
+}
+
+.latest-failure {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: 0.5rem 0.7rem;
+  margin-bottom: var(--space-sm);
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--status-stuck) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-stuck) 30%, transparent);
+
+  .lf-label {
+    font-weight: 600;
+    color: var(--status-stuck);
+  }
+
+  .lf-reason {
+    font-family: monospace;
+    font-size: 0.85em;
+  }
+}
+
+.runs-scroll {
+  overflow-x: auto;
+}
+
+.runs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--border, #2a2a2a);
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--muted);
+    font-weight: 500;
+  }
+
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  td.reason {
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  td.when {
+    color: var(--muted);
+  }
+}
+
+.status-badge,
+.tier-badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.8em;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.status-badge {
+  &.status-handed-off {
+    color: var(--status-in-review);
+  }
+  &.status-running {
+    color: var(--status-working);
+  }
+  &.status-no-verify {
+    color: var(--status-queued);
+  }
+  &.status-ask-human {
+    color: var(--status-awaiting-human);
+  }
+  &.status-error {
+    color: var(--status-stuck);
+  }
+}
+
+.tier-badge {
+  &.tier-transient {
+    color: var(--status-queued);
+  }
+  &.tier-deterministic {
+    color: var(--status-stuck);
+  }
+  &.tier-system-wide {
+    color: var(--status-needs-human);
+  }
+}

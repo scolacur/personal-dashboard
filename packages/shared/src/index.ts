@@ -44,6 +44,12 @@ export type {
   AuditFinding,
   WorkerHeartbeat,
   SystemStatus,
+  DispatchPauseState,
+  AgentRun,
+  RobotRunStatus,
+  RobotFaultTier,
+  RobotEventType,
+  RobotEventDetail,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,
@@ -69,4 +75,5 @@ export {
   latestActionableProposal,
   REFINE_STATE_LABELS,
   REFINE_STATE_DESCRIPTIONS,
+  ROBOT_EVENT,
 } from './task-monitor';

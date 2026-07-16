@@ -94,11 +94,19 @@ describe('runRobotSession', () => {
       writeFileSync(path.join(dir, VERIFY_OK_MARKER), '');
       writeFileSync(path.join(dir, SCM_JSON), JSON.stringify({ pr_number: 99 }));
       yield { type: 'system', subtype: 'init', session_id: 'sess-abc' } as never;
-      yield { type: 'result', subtype: 'success', is_error: false, session_id: 'sess-abc' } as never;
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        session_id: 'sess-abc',
+        num_turns: 6,
+        usage: { input_tokens: 1000, output_tokens: 234 },
+      } as never;
     }) as unknown as RunQuery;
 
     const res = await runRobotSession(config, candidate, worktree, fake);
-    expect(res).toMatchObject({ ok: true, sessionId: 'sess-abc', verifyOk: true, prNumber: 99 });
+    // C3 metrics: turns + total tokens captured off the result message.
+    expect(res).toMatchObject({ ok: true, sessionId: 'sess-abc', verifyOk: true, prNumber: 99, turns: 6, tokens: 1234 });
   });
 
   it('reports !ok with the error text on an API error, and no hand-off', async () => {

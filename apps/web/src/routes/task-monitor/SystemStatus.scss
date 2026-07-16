@@ -70,6 +70,50 @@
   }
 }
 
+// Robot dispatch state — green when running, red/paused when a system-wide fault halted it.
+.ss-dispatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--status-done);
+
+  &.paused {
+    color: var(--status-stuck);
+  }
+
+  .name {
+    font-weight: 500;
+    color: var(--text);
+  }
+}
+
+// System-wide fault banner (PD-323 surface) — only shown while dispatch is paused.
+.ss-fault {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--status-stuck) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-stuck) 40%, transparent);
+  color: var(--text);
+
+  strong {
+    color: var(--status-stuck);
+  }
+
+  .reason {
+    font-family: monospace;
+    font-size: 0.85em;
+  }
+
+  .since {
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+}
+
 // Worker liveness — green while fresh, red once stale.
 .ss-worker {
   display: inline-flex;
