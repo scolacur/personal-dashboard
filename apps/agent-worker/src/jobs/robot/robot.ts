@@ -7,7 +7,9 @@ import { robotQueueCandidates, selectDispatchable, type RobotCandidate } from '.
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, removeWorktree, type Worktree } from './workspace';
 import { runRobotSession, type RobotSessionResult } from './session';
-import { ensureRunsTable, startRun, finishRun, runCountForTicket } from './runs';
+import { ensureRunsTable, startRun, finishRun, failedRunsForTicket } from './runs';
+import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
+import { ensureRobotStateTable, isDispatchPaused, pauseDispatch } from './state';
 
 /**
  * The Robot loop orchestration (D-055, PD-342): one poll cycle. Selects dispatchable
@@ -15,13 +17,17 @@ import { ensureRunsTable, startRun, finishRun, runCountForTicket } from './runs'
  * session → observe the filesystem hand-off → record the run → write the board state. The LOOP
  * is the sole `dashboard.db` writer; the coding session (uid-split) never touches it.
  *
- * C1 scope: skeleton with a HARD-CODED simple retry cap (below). The fault-tier taxonomy that
- * distinguishes transient/deterministic/system faults is C2; here we only stop obvious burn.
+ * C2 (PD-343): the blind retry cap is replaced by the fault-tier guardrail (faults.ts). Each
+ * failed run is classified transient / deterministic / system-wide, and the loop retries with
+ * backoff, parks, or pauses the whole loop accordingly. `ask_human` is a deliberate park
+ * (awaiting-human), never a failure.
  */
 
-/** Placeholder retry cap until C2 replaces it with the fault-tier policy. A ticket that has
- *  already accumulated this many runs is parked (`stuck`) instead of re-dispatched. */
-export const SIMPLE_RETRY_CAP = 3;
+/** Derive the fault policy from config (faults.ts is pure; this is the only adapter). */
+function faultPolicy(config: AgentWorkerConfig): FaultPolicy {
+  const { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs } = config.robot;
+  return { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs };
+}
 
 /** The loop's own board-state write (loop is the sole writer — the coding session can't). */
 export function setAgentState(
@@ -49,7 +55,8 @@ export interface RobotDeps {
 
 /**
  * Run one Robot poll cycle. Returns the number of tickets dispatched this cycle. Fails closed
- * (dispatches nothing) if the DB-perms precondition for the uid-split is not satisfied.
+ * (dispatches nothing) if the DB-perms precondition for the uid-split is not satisfied, and does
+ * nothing while the loop is paused by a system-wide fault (C2).
  */
 export async function processRobotQueue(
   db: Database.Database,
@@ -67,20 +74,45 @@ export async function processRobotQueue(
   }
 
   ensureRunsTable(db);
+  ensureRobotStateTable(db);
+
+  // System-wide fault gate (C2): a prior auth/credit fault paused the whole loop. Stay inert until
+  // a human resumes (C4) — auto-resuming would re-burn the board (the PD-320/#202 failure mode).
+  const pause = isDispatchPaused(db);
+  if (pause) {
+    logger.warn('robot: dispatch is paused (system-wide fault) — not dispatching until resumed');
+    return 0;
+  }
+
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
   const doRun = deps.runSession ?? ((c, cand, w) => runRobotSession(c, cand, w));
   const now = deps.now ?? Date.now;
+  const policy = faultPolicy(config);
 
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
   const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);
   let dispatched = 0;
 
   for (const candidate of selected) {
-    // Simple retry cap (C1 placeholder for C2). Park an over-retried ticket rather than burn.
-    if (runCountForTicket(db, candidate.id) >= SIMPLE_RETRY_CAP) {
-      logger.warn({ ticketId: candidate.id, cap: SIMPLE_RETRY_CAP }, 'robot: retry cap reached — parking (stuck)');
+    // A system-wide fault earlier in THIS cycle paused the loop — stop before running any further
+    // ticket, so no other ticket burns budget on the same broken auth/credit state.
+    if (isDispatchPaused(db)) {
+      logger.warn('robot: dispatch paused mid-cycle (system-wide fault) — stopping this cycle');
+      break;
+    }
+
+    // Pre-dispatch fault gate: park a budget-exhausted ticket without wasting a run, and hold a
+    // ticket inside its transient-retry backoff window (leave it queued for a later cycle).
+    const failures = failedRunsForTicket(db, candidate.id);
+    const gate = preflight(failures, policy, now());
+    if (gate.action === 'park') {
+      logger.warn({ ticketId: candidate.id, reason: gate.reason }, 'robot: budget exhausted — parking (stuck)');
       setAgentState(db, candidate.id, 'stuck', now());
+      continue;
+    }
+    if (gate.action === 'backoff') {
+      logger.info({ ticketId: candidate.id, until: gate.until }, 'robot: within retry backoff — skipping this cycle');
       continue;
     }
 
@@ -88,33 +120,59 @@ export async function processRobotQueue(
     setAgentState(db, candidate.id, 'working', now());
     const runId = startRun(db, { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch }, now());
 
+    // Route a failed run (no-verify or errored) through the fault guardrail. Shared by the normal
+    // path and the catch below so a thrown clone/spawn error is classified the same way.
+    const handleFailure = (status: 'no-verify' | 'error', sessionId: string | undefined, error?: string): void => {
+      const cls = classifyFault({ verifyOk: false, error });
+      const decision = decideFault(cls, failures, policy);
+      finishRun(
+        db,
+        runId,
+        { status, sessionId, error, faultTier: decision.tier, faultSignature: decision.signature, faultReason: decision.reason },
+        now(),
+      );
+      if (decision.action === 'pause') {
+        // Zero per-ticket burn: this run is recorded system-wide (excluded from the cap) and the
+        // ticket goes back to queued; the whole loop pauses so no other ticket burns budget either.
+        pauseDispatch(db, decision.reason, now());
+        setAgentState(db, candidate.id, 'queued', now());
+        logger.error({ ticketId: candidate.id, reason: decision.reason }, 'robot: system-wide fault — PAUSING dispatch (no burn)');
+      } else if (decision.action === 'park') {
+        setAgentState(db, candidate.id, 'stuck', now());
+        logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: fault → parking (stuck)');
+      } else {
+        setAgentState(db, candidate.id, 'queued', now());
+        logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: transient fault → will retry');
+      }
+    };
+
     let worktree: Worktree | undefined;
     try {
       worktree = await doEnsure(config, branch);
       const result = await doRun(config, candidate, worktree);
 
-      if (result.ok && result.verifyOk && result.prNumber !== undefined) {
+      if (result.askHuman) {
+        // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a
+        // question. Not a failure — burns no budget; a human answers and re-queues.
+        finishRun(db, runId, { status: 'ask-human', sessionId: result.sessionId, faultReason: result.askHuman }, now());
+        setAgentState(db, candidate.id, 'awaiting-human', now());
+        logger.info({ ticketId: candidate.id, question: result.askHuman.slice(0, 200) }, 'robot: ask_human — parked (awaiting-human)');
+      } else if (result.ok && result.verifyOk && result.prNumber !== undefined) {
         const prUrl = `https://github.com/${candidate.repo}/pull/${result.prNumber}`;
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl }, now());
         setAgentState(db, candidate.id, 'in-review', now());
         dispatched++;
         logger.info({ ticketId: candidate.id, branch, prUrl }, 'robot: handed off PR');
       } else if (result.ok && !result.verifyOk) {
-        // D-046 gate: the session ended without a green verify — leave WIP for retry, don't
-        // publish a red PR. Re-queue so a later cycle retries (until the cap).
-        finishRun(db, runId, { status: 'no-verify', sessionId: result.sessionId }, now());
-        setAgentState(db, candidate.id, 'queued', now());
-        logger.warn({ ticketId: candidate.id, branch }, 'robot: no verify-ok — left for retry');
+        // D-046 gate: the session ended without a green verify — leave WIP, don't publish a red PR.
+        handleFailure('no-verify', result.sessionId);
       } else {
-        finishRun(db, runId, { status: 'error', sessionId: result.sessionId, error: result.error }, now());
-        setAgentState(db, candidate.id, 'queued', now());
-        logger.warn({ ticketId: candidate.id, error: result.error?.slice(0, 200) }, 'robot: run errored — will retry');
+        handleFailure('error', result.sessionId, result.error);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      finishRun(db, runId, { status: 'error', error: msg }, now());
-      setAgentState(db, candidate.id, 'queued', now());
       logger.error({ err, ticketId: candidate.id }, 'robot: dispatch failed');
+      handleFailure('error', undefined, msg);
     } finally {
       if (worktree) await doRemove(config, worktree);
     }

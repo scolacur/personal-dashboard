@@ -4,6 +4,7 @@ import { dbPathFor } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureRunsTable } from './runs';
+import { ensureRobotStateTable, dispatchPauseState } from './state';
 import { processRobotQueue } from './robot';
 
 /**
@@ -32,6 +33,14 @@ export function startRobotJob(db: Database.Database, config: AgentWorkerConfig):
   }
 
   ensureRunsTable(db);
+  ensureRobotStateTable(db);
+
+  // Surface a carried-over system-wide pause (C2): the loop arms but dispatches nothing until a
+  // human resumes. Durable across restarts on purpose — auto-resuming would re-burn the board.
+  const pause = dispatchPauseState(db);
+  if (pause.paused) {
+    logger.warn({ reason: pause.reason, since: pause.since }, 'robot loop ARMED but PAUSED (system-wide fault) — will not dispatch until resumed');
+  }
 
   let running = false;
   setInterval(() => {

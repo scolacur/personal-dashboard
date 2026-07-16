@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
 
 const base = {
   title: 'Add a thing',
@@ -36,6 +36,13 @@ describe('buildTaskPrompt', () => {
     expect(p).toContain('git -c http.proxy=http://egress-proxy:3128 push -u origin robot/220');
     expect(p).toContain('gh pr create --repo scolacur/personal-dashboard --base main --head robot/220');
     expect(p).toContain(SCM_JSON);
+  });
+
+  it('tells the Robot how to park for a human on a genuine ambiguity (C2 ask_human)', () => {
+    const p = buildTaskPrompt(base);
+    expect(p).toContain(ASK_HUMAN_MARKER);
+    expect(p).toMatch(/only a human can resolve|genuine ambiguity/i);
+    expect(p).toMatch(/not a failure/i);
   });
 
   it('is DB-blind: never tells the Robot to relabel or change ticket/board state', () => {

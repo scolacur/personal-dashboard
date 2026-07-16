@@ -66,6 +66,13 @@ export interface RobotConfig {
   codingHome: string;
   /** Hard turn ceiling for one coding session (mirrors Sortie's max_turns). */
   maxTurns: number;
+  /** Fault-tier retry guardrail (D-055, PD-343 / C2). Consumed by faults.ts as its `FaultPolicy`. */
+  retryCap: number;
+  /** Identical-signature repeats that promote a transient fault to deterministic (park). */
+  promoteAfter: number;
+  /** First transient-retry backoff step (ms); doubles per attempt up to `backoffMaxMs`. */
+  backoffBaseMs: number;
+  backoffMaxMs: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -96,6 +103,10 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     codingGid: optInt(env.ROBOT_CODING_GID),
     codingHome: env.ROBOT_CODING_HOME ?? '/home/robot',
     maxTurns: Number(env.ROBOT_MAX_TURNS ?? 50),
+    retryCap: Number(env.ROBOT_RETRY_CAP ?? 3),
+    promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
+    backoffBaseMs: Number(env.ROBOT_BACKOFF_BASE_MS ?? 60_000),
+    backoffMaxMs: Number(env.ROBOT_BACKOFF_MAX_MS ?? 15 * 60_000),
   };
 }
 

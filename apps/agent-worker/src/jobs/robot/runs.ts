@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { FailedRun, FaultTier } from './faults';
 
 /**
  * `agent_runs` — one row per **run** (a single Robot attempt on a ticket; D-055 glossary).
@@ -16,9 +17,10 @@ export type RunStatus =
   | 'running'
   | 'handed-off' // green verify → pushed branch + PR (the success path)
   | 'no-verify' // turn ended before a green verify → WIP left for retry (D-046 gate)
+  | 'ask-human' // the Robot posted a question and parked (awaiting-human) — not a failure (C2)
   | 'error'; // the coding session itself failed (spawn/SDK/crash)
 
-export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'error'];
+export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'error'];
 
 export interface RunRow {
   id: number;
@@ -31,8 +33,19 @@ export interface RunRow {
   sessionId: string | null;
   prUrl: string | null;
   error: string | null;
+  /** C2 fault classification of a failed run (null for successes / older rows). */
+  faultTier: FaultTier | null;
+  faultSignature: string | null;
+  faultReason: string | null;
   startedAt: number;
   finishedAt: number | null;
+}
+
+/** Add a column only if it isn't already present — additive migration for a table that already
+ *  exists on the NAS (CREATE IF NOT EXISTS won't alter an existing table). */
+function addColumnIfMissing(db: Database.Database, table: string, column: string, decl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
 
 /** Idempotent schema bootstrap — safe to call on every boot. */
@@ -52,6 +65,10 @@ export function ensureRunsTable(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_runs_ticket ON agent_runs (ticket_id, started_at);
   `);
+  // C2 (PD-343) fault-tier columns — added post-hoc so an existing NAS table migrates in place.
+  addColumnIfMissing(db, 'agent_runs', 'fault_tier', 'TEXT');
+  addColumnIfMissing(db, 'agent_runs', 'fault_signature', 'TEXT');
+  addColumnIfMissing(db, 'agent_runs', 'fault_reason', 'TEXT');
 }
 
 export interface StartRunInput {
@@ -80,6 +97,10 @@ export interface FinishRunInput {
   sessionId?: string | null;
   prUrl?: string | null;
   error?: string | null;
+  /** C2 fault classification, for a failed run. */
+  faultTier?: FaultTier | null;
+  faultSignature?: string | null;
+  faultReason?: string | null;
 }
 
 /** Close out a run with its terminal outcome. */
@@ -91,9 +112,20 @@ export function finishRun(
 ): void {
   db.prepare(
     `UPDATE agent_runs
-        SET status = ?, session_id = ?, pr_url = ?, error = ?, finished_at = ?
+        SET status = ?, session_id = ?, pr_url = ?, error = ?,
+            fault_tier = ?, fault_signature = ?, fault_reason = ?, finished_at = ?
       WHERE id = ?`,
-  ).run(input.status, input.sessionId ?? null, input.prUrl ?? null, input.error ?? null, now, runId);
+  ).run(
+    input.status,
+    input.sessionId ?? null,
+    input.prUrl ?? null,
+    input.error ?? null,
+    input.faultTier ?? null,
+    input.faultSignature ?? null,
+    input.faultReason ?? null,
+    now,
+    runId,
+  );
 }
 
 /** How many runs a ticket has accumulated — the raw signal C2's retry cap reads. */
@@ -102,6 +134,27 @@ export function runCountForTicket(db: Database.Database, ticketId: number): numb
     .prepare('SELECT COUNT(*) AS n FROM agent_runs WHERE ticket_id = ?')
     .get(ticketId) as { n: number };
   return row.n;
+}
+
+/**
+ * A ticket's FAILED runs as the fault engine (faults.ts) needs them — the `no-verify` and `error`
+ * runs only (`ask-human` is a park, not a failure; successes don't count). A missing `fault_tier`
+ * (a pre-C2 row) is treated as `transient`, the safe/retryable default.
+ */
+export function failedRunsForTicket(db: Database.Database, ticketId: number): FailedRun[] {
+  const rows = db
+    .prepare(
+      `SELECT fault_tier, fault_signature, status, finished_at
+         FROM agent_runs
+        WHERE ticket_id = ? AND status IN ('no-verify', 'error')
+        ORDER BY started_at ASC, id ASC`,
+    )
+    .all(ticketId) as { fault_tier: string | null; fault_signature: string | null; status: string; finished_at: number | null }[];
+  return rows.map((r) => ({
+    tier: (r.fault_tier as FaultTier | null) ?? 'transient',
+    signature: r.fault_signature ?? r.status,
+    finishedAt: r.finished_at ?? null,
+  }));
 }
 
 function rowToRun(r: Record<string, unknown>): RunRow {
@@ -114,6 +167,9 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     sessionId: (r.session_id as string | null) ?? null,
     prUrl: (r.pr_url as string | null) ?? null,
     error: (r.error as string | null) ?? null,
+    faultTier: (r.fault_tier as FaultTier | null) ?? null,
+    faultSignature: (r.fault_signature as string | null) ?? null,
+    faultReason: (r.fault_reason as string | null) ?? null,
     startedAt: r.started_at as number,
     finishedAt: (r.finished_at as number | null) ?? null,
   };

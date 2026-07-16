@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { codingEnv, readHandoff, runRobotSession, type RunQuery } from './session';
-import { VERIFY_OK_MARKER, SCM_JSON } from './prompt';
+import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
 import type { RobotCandidate } from './select';
 import type { Worktree } from './workspace';
 
@@ -67,6 +67,12 @@ describe('readHandoff', () => {
     mkdirSync(path.join(dir, '.robot'), { recursive: true });
     writeFileSync(path.join(dir, SCM_JSON), 'not json');
     expect(readHandoff(dir)).toEqual({ verifyOk: false, prNumber: undefined });
+  });
+
+  it('reads the ask-human question when the Robot parked for a human (C2)', () => {
+    mkdirSync(path.join(dir, '.robot'), { recursive: true });
+    writeFileSync(path.join(dir, ASK_HUMAN_MARKER), 'Should this use the new or old API?\n');
+    expect(readHandoff(dir).askHuman).toBe('Should this use the new or old API?');
   });
 });
 

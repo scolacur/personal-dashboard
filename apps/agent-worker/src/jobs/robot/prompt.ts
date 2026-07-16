@@ -17,6 +17,9 @@
 export const MARKER_DIR = '.robot';
 export const VERIFY_OK_MARKER = `${MARKER_DIR}/verify-ok`;
 export const SCM_JSON = `${MARKER_DIR}/scm.json`;
+/** The Robot writes its blocking question here to park the ticket for a human (C2, PD-343). Its
+ *  contents become the awaiting-human reason. A deliberate park, NOT a failure — it burns no budget. */
+export const ASK_HUMAN_MARKER = `${MARKER_DIR}/ask-human`;
 
 export function robotSystemPrompt(): string {
   return [
@@ -68,6 +71,15 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     '## Step 2 — Implement',
     'Do the work described in the ticket. Add tests for any new/changed logic.',
+    '',
+    'If — and only if — you hit a GENUINE ambiguity that only a human can resolve (a real product',
+    'or design decision the ticket + docs do not settle), do NOT guess and do NOT force a PR.',
+    `Write your specific question to \`${ASK_HUMAN_MARKER}\` and end your turn:`,
+    '```sh',
+    `mkdir -p ${MARKER_DIR} && printf '%s\\n' "<your specific question>" > ${ASK_HUMAN_MARKER}`,
+    '```',
+    'This parks the ticket for a human — it is expected and healthy, not a failure. Use it sparingly:',
+    'a normal bug/verify failure is NOT an ask-human; only a decision you genuinely cannot make is.',
     '',
     '## Step 3 — Finish: verify, commit, push, open your PR (do all of this yourself)',
     '',
