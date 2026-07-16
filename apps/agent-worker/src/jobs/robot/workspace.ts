@@ -1,33 +1,39 @@
 import { execFile } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentWorkerConfig } from '../../shared/config';
-import { authArgs, authHeaderValue, proxyGitArgs } from '../../shared/checkout';
+import { authArgs, authHeaderValue, cloneUrl, proxyGitArgs } from '../../shared/checkout';
 import { logger } from '../../shared/logger';
 
 const run = promisify(execFile);
 
 /**
- * Per-ticket git worktree lifecycle for the Robot loop (D-055, PD-342). Each run works in its
- * OWN worktree branched off the grounding checkout, so a Robot never mutates the shared
- * checkout the Refine/Audit jobs ground against and two Robots never collide.
+ * Per-ticket workspace lifecycle for the Robot loop (D-055, PD-342).
  *
- * PD-340 pristine-tree hygiene is applied on REUSE: a retry starts from a clean tree
- * (`git reset --hard` + `git clean -fd`, no `-x` so gitignored `node_modules` survives),
- * then resets the branch to a fresh `origin/main`. This is the self-healing fix for the
- * #220 dirty-WIP freeze, applied to the worktree model.
+ * Each run gets its OWN fresh CLONE (not a worktree off the shared grounding checkout). This is
+ * deliberate: under the uid-split, the coding session runs as a low-priv uid and must be able to
+ * commit — but a worktree shares the grounding checkout's `.git` (objects/refs/worktree metadata),
+ * which the loop creates as root, so the Robot couldn't write it, and chowning the shared `.git`
+ * to the Robot breaks the root loop's own git. A standalone clone sidesteps all of that: the loop
+ * (root) clones, then `chown`s the WHOLE clone to the coding uid, so the Robot owns the one repo it
+ * works in and root never contends with it. (This is also how Sortie worked — clone per workspace.)
+ *
+ * Fresh clone every dispatch ⇒ PD-340 pristine-tree hygiene is automatic (no dirty WIP can carry
+ * over). C1 runs are first-attempt/pristine; branch reuse for review-rework is a later slice.
  */
 
 export interface Worktree {
-  /** Absolute worktree directory. */
+  /** Absolute clone directory. */
   dir: string;
-  /** The branch checked out there (`robot/<n>`). */
+  /** The branch created there (`robot/<n>`). */
   branch: string;
 }
 
 /** Runs one git invocation (secrets redacted on failure). Injectable for tests. */
 export type GitRunner = (args: string[]) => Promise<void>;
+/** Recursively chowns the clone to the coding uid (no-op in dev). Injectable for tests. */
+export type ChownRunner = (dir: string) => Promise<void>;
 
 /** Default runner: real git with the read token + proxy attached inline (never persisted to
  *  `.git/config`), failing fast instead of prompting. Mirrors checkout.ts's runGit. */
@@ -45,65 +51,64 @@ export function defaultGitRunner(config: AgentWorkerConfig): GitRunner {
   };
 }
 
-/** The worktree directory for a branch: `<worktreesDir>/<branch-with-slash-flattened>`. */
+/** Default chown: hand the clone to the coding uid/gid so the dropped Robot owns it. A no-op when
+ *  no coding uid is configured (dev — the session inherits the current uid, which already owns it). */
+export function defaultChown(config: AgentWorkerConfig): ChownRunner {
+  const { codingUid, codingGid } = config.robot;
+  return async (dir: string) => {
+    if (codingUid === undefined) return;
+    await run('chown', ['-R', `${codingUid}:${codingGid ?? codingUid}`, dir]);
+  };
+}
+
+/** The clone directory for a branch: `<worktreesDir>/<branch-with-slash-flattened>`. */
 export function worktreeDirFor(config: AgentWorkerConfig, branch: string): string {
   return path.join(config.robot.worktreesDir, branch.replace(/\//g, '-'));
 }
 
 /**
- * Ensure a clean worktree exists for `branch`, reset to the latest `origin/main`, and return
- * it. First attempt creates it; a reuse pristine-cleans it (PD-340) before resetting the
- * branch. The `origin` fetch is best-effort (like `pullLatest`) — a stale-but-present
- * `origin/main` is better than failing the run over a transient network blip.
+ * Produce a fresh, coding-uid-owned clone for `branch` and return it. Any prior clone at the same
+ * path is removed first (fresh = pristine). The loop runs this as root; the final `chown` transfers
+ * ownership to the Robot so its subsequent commit/push succeed.
  */
 export async function ensureWorktree(
   config: AgentWorkerConfig,
   branch: string,
   git: GitRunner = defaultGitRunner(config),
+  chown: ChownRunner = defaultChown(config),
 ): Promise<Worktree> {
   const dir = worktreeDirFor(config, branch);
 
-  // Refresh origin/main in the grounding checkout (single-branch clone → default refspec
-  // updates refs/remotes/origin/main). Best-effort.
-  try {
-    await git(['-C', config.checkoutDir, 'fetch', 'origin', 'main']);
-  } catch (err) {
-    logger.warn({ err }, 'robot: origin fetch failed — using existing origin/main');
-  }
+  // The loop (root) owns the parent worktrees dir; create it if absent so `git clone` has a
+  // place to land. Per-clone ownership is handed to the coding uid below.
+  mkdirSync(config.robot.worktreesDir, { recursive: true });
 
-  if (existsSync(path.join(dir, '.git'))) {
-    // Reuse: PD-340 pristine hygiene, then re-point the branch at fresh main. `-x` is
-    // deliberately omitted so gitignored node_modules survives the clean (an npm ci per run
-    // would be wasteful; the coding session re-runs `npm ci` itself in its verify step).
-    await git(['-C', dir, 'reset', '--hard']);
-    await git(['-C', dir, 'clean', '-fd']);
-    await git(['-C', dir, 'checkout', '-B', branch, 'origin/main']);
-    logger.info({ dir, branch }, 'robot: reused worktree (pristine)');
-  } else {
-    await git(['-C', config.checkoutDir, 'worktree', 'add', '-B', branch, dir, 'origin/main']);
-    logger.info({ dir, branch }, 'robot: created worktree');
-  }
+  // Fresh every time — remove any leftover clone (root can rm the coding-uid-owned tree).
+  rmSync(dir, { recursive: true, force: true });
 
+  // Shallow clone (the Robot makes one change off main; it needs no history). auth+proxy are
+  // prepended by the runner. Then cut the working branch and stamp the committer identity now,
+  // while we're still root — the config write lands before the chown.
+  await git(['clone', '--depth', '1', cloneUrl(config), dir]);
+  await git(['-C', dir, 'checkout', '-B', branch]);
+  await git(['-C', dir, 'config', 'user.name', config.robot.botName]);
+  await git(['-C', dir, 'config', 'user.email', config.robot.botEmail]);
+
+  // Hand the whole clone to the coding uid so the dropped Robot can write/commit/push in it.
+  await chown(dir);
+
+  logger.info({ dir, branch }, 'robot: fresh clone ready');
   return { dir, branch };
 }
 
 /**
- * Tear a worktree down (best-effort). `git worktree remove` unregisters it; a hard rm is the
- * fallback if git refuses (dirty tree). Never throws — cleanup failure must not fail a run.
+ * Tear a clone down (best-effort). It's a standalone clone, so a plain recursive rm is all that's
+ * needed (root can remove the coding-uid-owned tree). Never throws — cleanup must not fail a run.
  */
-export async function removeWorktree(
-  config: AgentWorkerConfig,
-  worktree: Worktree,
-  git: GitRunner = defaultGitRunner(config),
-): Promise<void> {
+export async function removeWorktree(_config: AgentWorkerConfig, worktree: Worktree): Promise<void> {
   try {
-    await git(['-C', config.checkoutDir, 'worktree', 'remove', '--force', worktree.dir]);
+    rmSync(worktree.dir, { recursive: true, force: true });
   } catch (err) {
-    logger.warn({ err, dir: worktree.dir }, 'robot: worktree remove failed — hard rm');
-    try {
-      rmSync(worktree.dir, { recursive: true, force: true });
-    } catch {
-      // give up — a leftover dir is pristine-cleaned on next reuse anyway
-    }
+    logger.warn({ err, dir: worktree.dir }, 'robot: clone remove failed');
   }
 }
