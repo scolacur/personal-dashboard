@@ -1,67 +1,73 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { ensureWorktree, removeWorktree, worktreeDirFor } from './workspace';
 
-/** A git runner that records invocations (and can be told to fail specific subcommands). */
-function recordingGit(failOn: (args: string[]) => boolean = () => false) {
-  const calls: string[][] = [];
-  const git = async (args: string[]) => {
-    calls.push(args);
-    if (failOn(args)) throw new Error('boom');
+/** Records git invocations + chown targets so the clone sequence can be asserted. */
+function recording() {
+  const git: string[][] = [];
+  const chowns: string[] = [];
+  return {
+    git,
+    chowns,
+    gitRunner: async (args: string[]) => {
+      git.push(args);
+    },
+    chownRunner: async (dir: string) => {
+      chowns.push(dir);
+    },
   };
-  return { git, calls };
 }
 
-describe('robot worktree lifecycle', () => {
+describe('robot workspace lifecycle (per-ticket clone)', () => {
   let root: string;
   let config: AgentWorkerConfig;
 
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'robot-wt-'));
-    config = loadConfig({ AGENT_WORKER_CHECKOUT_DIR: path.join(root, 'checkout'), ROBOT_WORKTREES_DIR: path.join(root, 'wt') });
+    config = loadConfig({
+      ROBOT_WORKTREES_DIR: path.join(root, 'wt'),
+      ROBOT_CODING_UID: '1500',
+      ROBOT_CODING_GID: '1500',
+    });
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it('flattens the branch slash into the worktree dir name', () => {
+  it('flattens the branch slash into the clone dir name', () => {
     expect(worktreeDirFor(config, 'robot/220')).toBe(path.join(root, 'wt', 'robot-220'));
   });
 
-  it('creates a worktree off origin/main on first use', async () => {
-    const { git, calls } = recordingGit();
-    const wt = await ensureWorktree(config, 'robot/220', git);
-    expect(wt).toEqual({ dir: path.join(root, 'wt', 'robot-220'), branch: 'robot/220' });
-    // fetch origin main, then worktree add -B
-    expect(calls[0]).toEqual(['-C', config.checkoutDir, 'fetch', 'origin', 'main']);
-    expect(calls[1]).toEqual(['-C', config.checkoutDir, 'worktree', 'add', '-B', 'robot/220', wt.dir, 'origin/main']);
-    // no reset/clean on the create path
-    expect(calls.some((c) => c.includes('reset'))).toBe(false);
+  it('produces a fresh shallow clone, cuts the branch, stamps identity, and chowns to the coder', async () => {
+    const r = recording();
+    const wt = await ensureWorktree(config, 'robot/220', r.gitRunner, r.chownRunner);
+    const dir = path.join(root, 'wt', 'robot-220');
+    expect(wt).toEqual({ dir, branch: 'robot/220' });
+
+    expect(r.git[0]).toEqual(['clone', '--depth', '1', 'https://github.com/scolacur/personal-dashboard.git', dir]);
+    expect(r.git[1]).toEqual(['-C', dir, 'checkout', '-B', 'robot/220']);
+    expect(r.git).toContainEqual(['-C', dir, 'config', 'user.name', config.robot.botName]);
+    expect(r.git).toContainEqual(['-C', dir, 'config', 'user.email', config.robot.botEmail]);
+    // never a worktree add (that was the old shared-checkout model)
+    expect(r.git.some((c) => c.includes('worktree'))).toBe(false);
+    // the whole clone is handed to the coding uid
+    expect(r.chowns).toEqual([dir]);
   });
 
-  it('pristine-cleans and re-points the branch on reuse (PD-340)', async () => {
-    const dir = worktreeDirFor(config, 'robot/220');
-    mkdirSync(path.join(dir, '.git'), { recursive: true }); // simulate an existing worktree
-    const { git, calls } = recordingGit();
-    await ensureWorktree(config, 'robot/220', git);
-    const subs = calls.map((c) => c.slice(c.indexOf('-C') + 2)); // drop the `-C <dir>` prefix
-    expect(subs).toContainEqual(['reset', '--hard']);
-    expect(subs).toContainEqual(['clean', '-fd']); // note: no -x — keeps node_modules
-    expect(subs).toContainEqual(['checkout', '-B', 'robot/220', 'origin/main']);
-    expect(calls.some((c) => c.includes('add'))).toBe(false); // not re-created
+  it('removes any leftover clone before re-cloning (fresh = pristine, PD-340)', async () => {
+    const dir = worktreeDirFor(config, 'robot/9');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'stale.txt'), 'dirty WIP from a prior run');
+    const r = recording();
+    await ensureWorktree(config, 'robot/9', r.gitRunner, r.chownRunner);
+    expect(existsSync(path.join(dir, 'stale.txt'))).toBe(false); // wiped before clone
   });
 
-  it('tolerates a best-effort fetch failure and still proceeds', async () => {
-    const { git, calls } = recordingGit((args) => args.includes('fetch'));
-    await expect(ensureWorktree(config, 'robot/9', git)).resolves.toMatchObject({ branch: 'robot/9' });
-    expect(calls.some((c) => c.includes('worktree') && c.includes('add'))).toBe(true);
-  });
-
-  it('removeWorktree never throws, even when git refuses', async () => {
-    const { git } = recordingGit((args) => args.includes('worktree') && args.includes('remove'));
-    await expect(
-      removeWorktree(config, { dir: path.join(root, 'wt', 'robot-9'), branch: 'robot/9' }, git),
-    ).resolves.toBeUndefined();
+  it('removeWorktree deletes the clone dir', async () => {
+    const dir = worktreeDirFor(config, 'robot/1');
+    mkdirSync(dir, { recursive: true });
+    await removeWorktree(config, { dir, branch: 'robot/1' });
+    expect(existsSync(dir)).toBe(false);
   });
 });

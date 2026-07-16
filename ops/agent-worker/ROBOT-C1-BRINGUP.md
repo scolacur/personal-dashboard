@@ -46,24 +46,23 @@ The loop process runs privileged (as today); the coding session runs as a dedica
 1. **Coding uid + `gh` — now baked into the image.** `ops/agent-worker/Dockerfile` creates the
    `robot` user (uid/gid **1500**, home `/home/robot`) and installs the GitHub CLI. Just rebuild
    the image; confirm with `docker run --rm agent-worker-dashboard sh -c 'id robot && gh --version'`.
-2. **Lock the DB (host-side `chmod`/`chown`).** The mounted `dashboard.db` (+ its `-wal`/`-shm`
-   sidecars) must be `chmod 600`, owned by the loop's uid (root). Group/other must have **no**
-   access. The loop asserts this at boot and refuses to dispatch otherwise. On the NAS:
+2. **Lock the DB — `chmod` only, do NOT `chown`.** The mounted `dashboard.db` (+ its `-wal`/`-shm`
+   sidecars) is owned by the web app's uid (on the NAS, `Steve:users`) and defaults to a permissive
+   mode. Drop world access so the `robot` uid — which is neither the owner nor in the owning group —
+   is locked out, while the web app (owner) and the root loop keep access. Keep the ownership as-is;
+   `chown`ing away from the web app would break the board. The loop asserts this at boot and refuses
+   to dispatch otherwise.
    ```sh
    cd /volume1/docker/personal-dashboard/personal-dashboard/data
-   sudo chown root:root dashboard.db dashboard.db-wal dashboard.db-shm 2>/dev/null
-   sudo chmod 600 dashboard.db dashboard.db-wal dashboard.db-shm 2>/dev/null
+   sudo chmod 660 dashboard.db dashboard.db-wal dashboard.db-shm 2>/dev/null
+   sudo ls -l dashboard.db*     # want: -rw-rw---- <web-uid> <web-gid>
    ```
-3. **Give the Robot write access to its worktrees + the shared git.** A per-ticket worktree lives
-   under `/data/agent-worker-checkout` (its commits write to that checkout's shared `.git/objects`
-   + `.git/worktrees/<name>`). The dropped uid must be able to write both, so hand the checkout and
-   the worktrees dir to `robot` — the loop (root) can still write them regardless:
-   ```sh
-   cd /volume1/docker/personal-dashboard/personal-dashboard/data
-   sudo mkdir -p robot-worktrees
-   sudo chown -R 1500:1500 agent-worker-checkout robot-worktrees
-   ```
-   (`dashboard.db` stays root-600 — the boundary is the file, not the directory.)
+   Then load the board in a browser to confirm the web app still reads/writes. (If it breaks, the
+   web app runs as a different uid than the file owner — `chmod 664` to revert and re-check.)
+
+   *No worktree/checkout chown needed.* Each run gets its own **clone** that the loop creates and
+   `chown`s to the `robot` uid for you (it also creates `/data/robot-worktrees` itself). The only
+   host-side lockdown is the DB above.
 
 ## Environment (agent-worker's own env file — never the web process)
 

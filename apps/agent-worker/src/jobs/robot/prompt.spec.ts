@@ -32,6 +32,7 @@ describe('buildTaskPrompt', () => {
     expect(p).toContain('npm run verify');
     expect(p).toContain(VERIFY_OK_MARKER);
     expect(p).toContain('git add -A');
+    expect(p).toContain('gh auth setup-git'); // wire push auth to the token before pushing
     expect(p).toContain('git -c http.proxy=http://egress-proxy:3128 push -u origin robot/220');
     expect(p).toContain('gh pr create --repo scolacur/personal-dashboard --base main --head robot/220');
     expect(p).toContain(SCM_JSON);

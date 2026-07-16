@@ -50,40 +50,73 @@ export interface DbLockCheck {
   reason?: string;
 }
 
+/** Is this one file unreadable by the coding uid/gid? The coding session reaches a file as
+ *  "other" (it is neither the db's owner nor — by our image setup — in its group), so the file
+ *  is locked away from it iff: no world access, the coding uid isn't the owner, and the coding
+ *  gid isn't the owning group with group access. This deliberately does NOT require the LOOP to
+ *  own the file — the loop reaches it as root (DAC override) or as the owner; only the coding
+ *  uid must be excluded. */
+function fileLockedFromCoder(
+  path: string,
+  st: Stats,
+  codingUid: number,
+  codingGid: number | undefined,
+): DbLockCheck {
+  const mode = st.mode & 0o777;
+  if ((mode & 0o007) !== 0) {
+    return { ok: false, reason: `${path} is world-accessible (mode 0${mode.toString(8)})` };
+  }
+  if (st.uid === codingUid) {
+    return { ok: false, reason: `${path} is owned by the coding uid ${codingUid}` };
+  }
+  if (codingGid !== undefined && st.gid === codingGid && (mode & 0o070) !== 0) {
+    return { ok: false, reason: `${path} group is the coding gid ${codingGid} with group access` };
+  }
+  return { ok: true };
+}
+
 /**
- * Verify `dashboard.db` is unreadable by the coding uid — the precondition that turns the
- * uid-split from "documented" into a checked invariant. Only meaningful when a coding uid is
- * configured; in dev it returns ok (nothing to enforce). Injectable stat/getuid for tests.
+ * Verify `dashboard.db` (and its `-wal`/`-shm` sidecars, which carry board data too) are
+ * unreadable by the coding uid — the precondition that turns the uid-split from "documented"
+ * into a checked invariant, fail-closed before dispatch. Only meaningful when a coding uid is
+ * configured; in dev it returns ok. Injectable stat for tests.
+ *
+ * Note it does NOT require the loop to own the DB: in the real deploy the DB is owned by the
+ * web app's uid and the loop reaches it as root. The check is purely "the coding uid can't."
  */
 export function checkDbLockedFromCoder(
   dbPath: string,
   config: AgentWorkerConfig,
-  deps: { stat?: (p: string) => Stats; getuid?: () => number } = {},
+  deps: { stat?: (p: string) => Stats } = {},
 ): DbLockCheck {
-  const { codingUid } = config.robot;
+  const { codingUid, codingGid } = config.robot;
   if (codingUid === undefined) return { ok: true }; // no privilege drop configured (dev)
 
   const stat = deps.stat ?? statSync;
-  const getuid = deps.getuid ?? (typeof process.getuid === 'function' ? process.getuid.bind(process) : undefined);
 
-  let st: Stats;
+  let mainSt: Stats;
   try {
-    st = stat(dbPath);
+    mainSt = stat(dbPath);
   } catch {
     return { ok: false, reason: `cannot stat ${dbPath}` };
   }
 
-  const mode = st.mode & 0o777;
-  if ((mode & 0o077) !== 0) {
-    return { ok: false, reason: `dashboard.db mode 0${mode.toString(8)} grants group/other access` };
+  const main = fileLockedFromCoder(dbPath, mainSt, codingUid, codingGid);
+  if (!main.ok) return main;
+
+  // WAL/-shm may be absent at rest (only present while a connection is open); check any that
+  // exist. SQLite recreates them from the main db's mode, so a locked main db keeps them locked.
+  for (const suffix of ['-wal', '-shm']) {
+    const p = `${dbPath}${suffix}`;
+    let st: Stats;
+    try {
+      st = stat(p);
+    } catch {
+      continue; // absent sidecar — nothing to check
+    }
+    const side = fileLockedFromCoder(p, st, codingUid, codingGid);
+    if (!side.ok) return side;
   }
-  const owner = st.uid;
-  const loopUid = getuid ? getuid() : owner;
-  if (owner !== loopUid) {
-    return { ok: false, reason: `dashboard.db owner uid ${owner} != loop uid ${loopUid}` };
-  }
-  if (codingUid === owner) {
-    return { ok: false, reason: `coding uid ${codingUid} equals db owner — no split` };
-  }
+
   return { ok: true };
 }
