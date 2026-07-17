@@ -43,11 +43,11 @@
   }: Props = $props();
 
   const specs: BarSpec[] = $derived([
-    { key: 0, label: 'Work', value: workMinutes, min: 1, max: 240, step: 5, isMinutes: true, isActive: activePhase === 'work' },
-    { key: 1, label: 'Short Brk', value: shortBreakMinutes, min: 1, max: 60, step: 5, isMinutes: true, isActive: activePhase === 'short-break' },
-    { key: 2, label: 'Long Brk', value: longBreakMinutes, min: 1, max: 120, step: 5, isMinutes: true, isActive: activePhase === 'long-break' },
+    { key: 0, label: 'Work', value: workMinutes, min: 1, max: 120, step: 5, isMinutes: true, isActive: activePhase === 'work' },
+    { key: 1, label: 'Short Brk', value: shortBreakMinutes, min: 1, max: 30, step: 5, isMinutes: true, isActive: activePhase === 'short-break' },
+    { key: 2, label: 'Long Brk', value: longBreakMinutes, min: 1, max: 60, step: 5, isMinutes: true, isActive: activePhase === 'long-break' },
     { key: 3, label: '→ Long', value: roundsBeforeLongBreak, min: 1, max: totalRounds, step: 1, isMinutes: false, isActive: false },
-    { key: 4, label: 'Total', value: totalRounds, min: 1, max: 20, step: 1, isMinutes: false, isActive: false },
+    { key: 4, label: 'Total', value: totalRounds, min: 1, max: 10, step: 1, isMinutes: false, isActive: false },
   ]);
 
   let dragIndex = $state(-1);
