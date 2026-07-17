@@ -2,6 +2,7 @@
   import type { AgentState, SystemStatus, WorkerHeartbeat } from '@dashboard/shared';
   import { AGENT_STATE_LABELS } from '@dashboard/shared';
   import { formatRelativeTime } from '../deploy-status-utils';
+  import { pauseDispatch, resumeDispatch } from './api';
 
   // In-flight states worth a live glance (terminal done/wontfix are excluded — the fleet
   // view is about active work). Fixed order so chips don't reshuffle between polls.
@@ -48,6 +49,21 @@
   function isStale(w: WorkerHeartbeat): boolean {
     return now - w.lastSeen > STALE_MS;
   }
+
+  // C4 remediation: pause/resume Robot dispatch loop-wide, straight from Site Status.
+  let toggling = $state(false);
+  async function toggleDispatch(): Promise<void> {
+    if (toggling || !dispatch) return;
+    toggling = true;
+    try {
+      const next = dispatch.paused ? await resumeDispatch() : await pauseDispatch();
+      if (status) status = { ...status, dispatch: next };
+    } catch {
+      // leave the current state; the next poll reconciles
+    } finally {
+      toggling = false;
+    }
+  }
 </script>
 
 {#if status}
@@ -74,6 +90,9 @@
           <span class="dot" aria-hidden="true"></span>
           <span class="name">{dispatch.paused ? 'dispatch paused' : 'dispatch running'}</span>
         </span>
+        <button class="ss-toggle" type="button" onclick={toggleDispatch} disabled={toggling}>
+          {toggling ? '…' : dispatch.paused ? 'Resume' : 'Pause'}
+        </button>
       </div>
       {#if dispatch.paused}
         <div class="ss-fault" role="status">

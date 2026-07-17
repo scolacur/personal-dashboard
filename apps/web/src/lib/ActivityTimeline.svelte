@@ -2,6 +2,7 @@
   import type { TicketEvent, RobotEventDetail } from '@dashboard/shared';
   import { ROBOT_EVENT } from '@dashboard/shared';
   import { fetchTicketEvents } from '../routes/task-monitor/api';
+  import Collapsible from './Collapsible.svelte';
 
   // The ticket's activity timeline (C3/PD-344, realising PD-255). Reads the SAME
   // agent_ticket_events log the Refine thread uses (reuse, not a parallel log) and renders the
@@ -95,8 +96,7 @@
 </script>
 
 {#if !loading && events.length > 0}
-  <section class="activity-timeline">
-    <h2>Activity</h2>
+  <Collapsible title="Robot activity" count={events.length} storeKey="activity">
     <ul class="events">
       {#each events as e (e.id)}
         <li class="event" class:milestone={e.type.startsWith('robot_')}>
@@ -111,7 +111,7 @@
         </li>
       {/each}
     </ul>
-  </section>
+  </Collapsible>
 {/if}
 
 <style lang="scss" src="./ActivityTimeline.scss"></style>

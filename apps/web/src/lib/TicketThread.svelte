@@ -14,7 +14,14 @@
   // component reads it via the generic events endpoint and renders the refine_* subset
   // (PD-267). PD-255 will extend the same endpoint/component to the rest of the log.
   // onChanged fires after an approve/reject so the parent can reload the ticket (PD-269).
-  const { ticketId, onChanged }: { ticketId: number; onChanged?: () => void } = $props();
+  // onStart (C4 redesign): before a thread exists, the composer is replaced by a single
+  // "Start Refine" button that calls this — the conversation only opens once there's one to hold.
+  const {
+    ticketId,
+    onChanged,
+    onStart,
+    starting = false,
+  }: { ticketId: number; onChanged?: () => void; onStart?: () => void; starting?: boolean } = $props();
 
   let messages = $state<RefineMessage[]>([]);
   let proposal = $state<RefineProposal | null>(null);
@@ -119,8 +126,12 @@
   {:else if messages.length === 0}
     <ul class="thread" bind:this={threadEl}>
       <li class="muted empty-msg">
-        No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
-        above) to start one — the agent-worker's turns and your replies appear here.
+        {#if onStart}
+          No Refine conversation yet. Start one below — the Refine agent grills the ticket into a
+          sharp spec, and its turns and your replies appear here.
+        {:else}
+          No Refine conversation yet.
+        {/if}
       </li>
     </ul>
   {:else}
@@ -191,20 +202,28 @@
   {/if}
 
   {#if !loading && !error}
-    <div class="reply">
-      <textarea
-        bind:value={replyText}
-        rows="3"
-        placeholder="Reply to the Refine agent…"
-        disabled={sending}
-      ></textarea>
-      <div class="reply-actions">
-        <button onclick={submit} disabled={sending || !replyText.trim()}>
-          {sending ? 'Sending…' : 'Send'}
+    {#if messages.length === 0 && onStart}
+      <div class="reply reply-start">
+        <button class="start-refine" type="button" onclick={onStart} disabled={starting}>
+          {starting ? 'Starting…' : '✦ Start Refine'}
         </button>
-        {#if sendMsg}<span class="send-msg">{sendMsg}</span>{/if}
       </div>
-    </div>
+    {:else}
+      <div class="reply">
+        <textarea
+          bind:value={replyText}
+          rows="3"
+          placeholder="Reply to the Refine agent…"
+          disabled={sending}
+        ></textarea>
+        <div class="reply-actions">
+          <button onclick={submit} disabled={sending || !replyText.trim()}>
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+          {#if sendMsg}<span class="send-msg">{sendMsg}</span>{/if}
+        </div>
+      </div>
+    {/if}
   {/if}
 </section>
 

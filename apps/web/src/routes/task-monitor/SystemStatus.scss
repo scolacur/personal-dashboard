@@ -87,6 +87,27 @@
   }
 }
 
+// Pause/Resume dispatch control (C4/PD-345) — loop-wide, beside the dispatch pill.
+.ss-toggle {
+  margin-left: var(--space-xs);
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--muted);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
 // System-wide fault banner (PD-323 surface) — only shown while dispatch is paused.
 .ss-fault {
   display: flex;

@@ -76,4 +76,5 @@ export {
   REFINE_STATE_LABELS,
   REFINE_STATE_DESCRIPTIONS,
   ROBOT_EVENT,
+  ROBOT_RESET_EVENTS,
 } from './task-monitor';

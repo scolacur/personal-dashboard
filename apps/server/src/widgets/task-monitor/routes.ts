@@ -43,7 +43,9 @@ import {
   rejectRefine,
   RelationCycleError,
   removeRelationById,
+  resetRobotRuns,
   SelfRelationError,
+  setDispatchPaused,
   startRefine,
   unreadNotificationCount,
   updateTicket,
@@ -473,6 +475,33 @@ export function registerRoutes(
     }
     return listRunsForTicket(db, id);
   });
+
+  /* ── Robot remediation controls (C4/PD-345) — plain DB writes the loop honors next poll ─── */
+
+  // Reset a ticket's transient-retry budget (for a capped/backing-off ticket) and re-dispatch.
+  app.post(`${base}/tickets/:id/robot/reset`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const ticket = resetRobotRuns(db, id, 'reset');
+    if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    return ticket;
+  });
+
+  // Unstick a parked ticket (stuck / awaiting-human): clear the park + re-queue it.
+  app.post(`${base}/tickets/:id/robot/unstick`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const ticket = resetRobotRuns(db, id, 'unstick');
+    if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    return ticket;
+  });
+
+  // Global pause/resume of Robot dispatch. Resume clears the flag a system-wide fault (C2) set.
+  app.post(`${base}/robot/pause`, async (request) => {
+    const reason = (request.body as { reason?: string } | null)?.reason;
+    return setDispatchPaused(db, true, reason ?? 'paused by human');
+  });
+  app.post(`${base}/robot/resume`, async () => setDispatchPaused(db, false));
 
   // Start a Refine session (D-044, PD-268): the Refine button POSTs here. Writes the kickoff
   // refine_human event (ticket title + body) the agent-worker worker polls to open a grounded
