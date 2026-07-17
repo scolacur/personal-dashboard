@@ -1063,6 +1063,9 @@ export type ApproveRefineResult =
       childIds?: number[];
       /** True when the approval also moved the ticket into `queue` (`queue: true`). */
       queued?: boolean;
+      /** True when a decompose on an Epic was reinterpreted as `Populate` (D-058): members
+       *  created via `epic_id`, the Epic left open, no `split` relations. */
+      populated?: boolean;
     }
   | {
       ok: false;
@@ -1087,7 +1090,9 @@ export type ApproveRefineResult =
  * `ready` is recomputed from the body on write (surfaced in the UI), not a gate here.
  *
  * Refine-in-place rewrites the ticket; decompose creates children in non-queue lanes, closes the
- * parent (D-036), and links each via a `split` relation. All-or-nothing (one transaction).
+ * parent (D-036), and links each via a `split` relation. A decompose whose target is an Epic is
+ * reinterpreted as **Populate** (D-058): members are linked by `epic_id`, the Epic stays open, and
+ * no `split` relations are written. All-or-nothing (one transaction).
  */
 export function approveRefine(
   db: Database.Database,
@@ -1145,12 +1150,14 @@ export function approveRefine(
     return { ok: true, mode: p.mode, refinedTicketId: ticketId, queued };
   }
 
-  // decompose
-  // D-054: decompose closes the parent (D-036) — nonsensical for an Epic umbrella, which must
-  // stay open to hold its members. Populate an Epic via membership, not by decomposing it.
-  if (parent.isEpic) {
-    return { ok: false, reason: 'invalid_proposal', detail: 'cannot decompose an Epic' };
-  }
+  // decompose / populate (D-058)
+  // A non-Epic decompose closes the parent (D-036) and links children via `split`. When the target
+  // is an Epic we reinterpret the same proposal as **Populate**: members are linked by `epic_id`,
+  // the Epic is LEFT OPEN (its lane derives from its members, D-054), and no `split` relations are
+  // written — an Epic umbrella must stay open to hold its members. This reinterpret (rather than the
+  // old `cannot decompose an Epic` refusal) is what lets PD-382's existing split-shaped proposal
+  // approve cleanly with no re-run.
+  const populate = parent.isEpic;
   const children = p.children ?? [];
   if (children.length === 0) return { ok: false, reason: 'invalid_proposal', detail: 'no children' };
   if (parent.projectId === null) {
@@ -1171,17 +1178,24 @@ export function approveRefine(
         assignee: c.assignee ?? undefined,
         priority: c.priority ?? null,
         projectId,
-        // D-054 split-inheritance: children stay under the parent's Epic (if any).
-        epicId: parent.epicId,
+        // Populate: members belong to the Epic itself. Split: children inherit the parent's Epic
+        // (if any), staying under the same umbrella (D-054 split-inheritance).
+        epicId: populate ? parent.id : parent.epicId,
       });
-      addRelation(db, ticketId, child.id, 'split');
+      // `split` lineage is a decompose-only relation; Populate links purely by membership.
+      if (!populate) addRelation(db, ticketId, child.id, 'split');
       childIds.push(child.id);
     }
-    updateTicket(db, ticketId, { status: 'closed' });
-    logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, childIds });
+    // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
+    if (!populate) updateTicket(db, ticketId, { status: 'closed' });
+    logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, {
+      mode: p.mode,
+      childIds,
+      ...(populate ? { populated: true } : {}),
+    });
   });
   run();
-  return { ok: true, mode: p.mode, childIds, queued: false };
+  return { ok: true, mode: p.mode, childIds, queued: false, ...(populate ? { populated: true } : {}) };
 }
 
 export type RejectRefineResult = { ok: true } | { ok: false; reason: 'not_found' | 'no_proposal' };

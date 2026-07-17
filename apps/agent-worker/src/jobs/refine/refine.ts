@@ -182,10 +182,16 @@ export function writeRefineProposal(
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
   ).run(ticketId, REFINE_PROPOSAL_EVENT.proposal, JSON.stringify(proposal), now);
 
-  const t = db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(ticketId) as
-    | { display_id: string | null }
+  const t = db.prepare('SELECT display_id, is_epic FROM agent_tickets WHERE id = ?').get(ticketId) as
+    | { display_id: string | null; is_epic: number }
     | undefined;
-  const verb = proposal.mode === 'decompose' ? 'proposed a split' : 'proposed changes';
+  // D-058: a decompose on an Epic is reinterpreted as Populate (members, Epic stays open).
+  const verb =
+    proposal.mode === 'decompose'
+      ? t?.is_epic === 1
+        ? 'proposed members'
+        : 'proposed a split'
+      : 'proposed changes';
   const title = `Refine agent ${verb}${t?.display_id ? ` on ${t.display_id}` : ''}`;
   db.prepare(
     'INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)',

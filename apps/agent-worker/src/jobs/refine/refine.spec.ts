@@ -20,7 +20,8 @@ function freshDb(): Database.Database {
   db.pragma('foreign_keys = ON');
   db.exec(`
     CREATE TABLE agent_tickets (
-      id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL
+      id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL,
+      is_epic INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_events (
       id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL,
@@ -35,8 +36,13 @@ function freshDb(): Database.Database {
 }
 
 let seq = 0;
-function addTicket(db: Database.Database, id: number, displayId: string): void {
-  db.prepare('INSERT INTO agent_tickets (id, display_id, title) VALUES (?, ?, ?)').run(id, displayId, 't');
+function addTicket(db: Database.Database, id: number, displayId: string, isEpic = false): void {
+  db.prepare('INSERT INTO agent_tickets (id, display_id, title, is_epic) VALUES (?, ?, ?, ?)').run(
+    id,
+    displayId,
+    't',
+    isEpic ? 1 : 0,
+  );
 }
 function addEvent(db: Database.Database, ticketId: number, type: string, detail: unknown): void {
   // Monotonic created_at so ordering is deterministic regardless of clock resolution.
@@ -351,6 +357,14 @@ describe('propose_commit path (D-044, PD-269)', () => {
     };
     expect(notif.kind).toBe('agent_refine');
     expect(notif.title).toContain('split');
+  });
+
+  it('writeRefineProposal frames a decompose on an Epic as "members" (D-058 Populate)', () => {
+    addTicket(db, 1, 'PD-1', /* isEpic */ true);
+    writeRefineProposal(db, 1, { mode: 'decompose', rationale: 'flesh out', children: [] }, ++seq);
+    const notif = db.prepare('SELECT title FROM agent_notifications').get() as { title: string };
+    expect(notif.title).toContain('members');
+    expect(notif.title).not.toContain('split');
   });
 
   it('processPendingRefines wires onProposal so a tool call records a proposal', async () => {

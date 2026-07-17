@@ -112,10 +112,14 @@
         await rejectRefine(ticketId);
         decideMsg = 'Proposal rejected — the agent can propose again.';
       } else {
-        const { queued } = await approveRefine(ticketId, { queue: action === 'approve-queue' });
-        decideMsg = queued
-          ? 'Approved & queued — Robot will pick it up.'
-          : "Approved. Drag to the Robot's Queue when you're ready to dispatch.";
+        const { queued, populated } = await approveRefine(ticketId, {
+          queue: action === 'approve-queue',
+        });
+        decideMsg = populated
+          ? 'Approved — members created under this Epic. Queue the ready ones when you are.'
+          : queued
+            ? 'Approved & queued — Robot will pick it up.'
+            : "Approved. Drag to the Robot's Queue when you're ready to dispatch.";
       }
       await load();
       onChanged?.();
@@ -200,7 +204,7 @@
           <div class="bubble proposal" role="group" aria-label="Proposed commit">
             <div class="turn-head">
               <span class="who">Refine agent</span>
-              <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? 'Split' : 'Refine in place'}</span>
+              <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? (isEpic ? 'Populate' : 'Split') : 'Refine in place'}</span>
             </div>
             {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
 

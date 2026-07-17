@@ -173,16 +173,20 @@ export async function postRefineReply(id: number, body: string): Promise<TicketE
  *  decomposes and marks refined, but never dispatches. Pass `queue: true` (the "Approve & queue"
  *  button — non-Epic refine_in_place only) to also move the ticket into `queue`. Throws on
  *  409 (no proposal / Epic can't queue / blocked) / 422 (invalid proposal). Resolves with
- *  `{ queued }` so the caller can confirm whether it entered the Queue. */
-export async function approveRefine(id: number, opts: { queue?: boolean } = {}): Promise<{ queued: boolean }> {
+ *  `{ queued, populated }` — `populated` is true when a decompose on an Epic was reinterpreted as
+ *  Populate (members created, Epic left open; D-058). */
+export async function approveRefine(
+  id: number,
+  opts: { queue?: boolean } = {},
+): Promise<{ queued: boolean; populated: boolean }> {
   const res = await fetch(`${BASE}/${id}/refine-approve`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ queue: opts.queue === true }),
   });
   if (!res.ok) return parseError(res);
-  const body = (await res.json()) as { queued?: boolean };
-  return { queued: body.queued === true };
+  const body = (await res.json()) as { queued?: boolean; populated?: boolean };
+  return { queued: body.queued === true, populated: body.populated === true };
 }
 
 /** Reject the latest Refine commit proposal (PD-269); the refine session can propose again. */
