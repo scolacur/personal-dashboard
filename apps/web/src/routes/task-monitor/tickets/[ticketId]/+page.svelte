@@ -355,12 +355,12 @@
         </div>
       {/if}
 
-      {#if isParked && ticket.githubIssueNumber}
+      {#if isParked}
         <section class="reply-box">
           <h2>Reply to the agent</h2>
           <p class="muted">
             The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
-            reply is posted to the issue and re-queues it.
+            reply is recorded on the ticket and re-queues it for the Robot.
           </p>
           <textarea
             bind:value={replyText}

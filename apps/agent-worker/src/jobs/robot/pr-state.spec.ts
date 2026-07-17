@@ -6,7 +6,7 @@ import { decideReactivation, parsePrUrl, pollInReviewPrs, type PrState, type PrF
 import { ensureRunsTable, startRun, finishRun } from './runs';
 import { ensureRobotStateTable } from './state';
 
-const EMPTY: PrState = { mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [] };
+const EMPTY: PrState = { state: 'OPEN', mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [] };
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 describe('parsePrUrl', () => {
@@ -75,6 +75,7 @@ describe('pollInReviewPrs', () => {
     db.exec(`
       CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
     `);
     ensureRunsTable(db);
     ensureRobotStateTable(db);
@@ -99,6 +100,30 @@ describe('pollInReviewPrs', () => {
     const n = await pollInReviewPrs(db, cfg(), 5000, fetcher);
     expect(n).toBe(0);
     expect((db.prepare('SELECT agent_state AS s FROM agent_tickets WHERE id = 1').get() as { s: string }).s).toBe('in-review');
+  });
+
+  it('completes an in-review ticket whose PR merged, logging robot_completed (C6/PD-347)', async () => {
+    const fetcher: PrFetcher = async () => ({ ...EMPTY, state: 'MERGED' });
+    const n = await pollInReviewPrs(db, cfg(), 5000, fetcher);
+    expect(n).toBe(0); // terminal transitions are side effects, not counted as re-activations
+    const row = db.prepare('SELECT status AS st, agent_state AS ag FROM agent_tickets WHERE id = 1').get() as { st: string; ag: string };
+    expect(row.st).toBe('completed');
+    expect(row.ag).toBe('done');
+    const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = 1').all() as { type: string }[]).map((r) => r.type);
+    expect(types).toContain('robot_completed');
+  });
+
+  it('parks an in-review ticket needs-human when its PR was closed unmerged (C6/PD-347)', async () => {
+    const fetcher: PrFetcher = async () => ({ ...EMPTY, state: 'CLOSED' });
+    const n = await pollInReviewPrs(db, cfg(), 5000, fetcher);
+    expect(n).toBe(0);
+    const row = db.prepare('SELECT status AS st, agent_state AS ag FROM agent_tickets WHERE id = 1').get() as { st: string; ag: string };
+    expect(row.st).toBe('robot_queue'); // stays in the lane; it's a park, not a terminal
+    expect(row.ag).toBe('needs-human');
+    const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = 1').all() as { type: string }[]).map((r) => r.type);
+    expect(types).toContain('robot_pr_closed');
+    const notif = db.prepare("SELECT kind AS k FROM agent_notifications WHERE ticket_id = 1").get() as { k: string } | undefined;
+    expect(notif?.k).toBe('agent_needs_human');
   });
 
   it('throttles: a second poll within the interval does no work', async () => {

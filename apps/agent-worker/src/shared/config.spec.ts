@@ -45,10 +45,12 @@ describe('loadConfig', () => {
 });
 
 describe('loadRobotConfig', () => {
-  it('is inert by default (disabled, empty allowlist, concurrency 1)', () => {
+  it('is inert by default via the master switch (disabled), scope "all", concurrency 1', () => {
     const s = loadRobotConfig({});
     expect(s.dispatchEnabled).toBe(false);
-    expect(s.allowlist).toEqual([]);
+    // C6/PD-347: unset ROBOT_ALLOWLIST now means "all" (go-live default). The loop is still inert
+    // because dispatchEnabled is the master switch and defaults off.
+    expect(s.allowlist).toBe('all');
     expect(s.concurrency).toBe(1);
     expect(s.intervalMs).toBe(15_000);
     expect(s.worktreesDir).toBe('/data/robot-worktrees');
@@ -92,7 +94,16 @@ describe('loadRobotConfig', () => {
 
   it('parses a comma-separated allowlist, dropping blanks/non-integers', () => {
     expect(loadRobotConfig({ ROBOT_ALLOWLIST: '429, 431 ,x,' }).allowlist).toEqual([429, 431]);
-    expect(loadRobotConfig({ ROBOT_ALLOWLIST: '' }).allowlist).toEqual([]);
+  });
+
+  it('maps the allowlist scope sentinels (C6/PD-347): unset/empty ⇒ all, NONE ⇒ none', () => {
+    expect(loadRobotConfig({}).allowlist).toBe('all');
+    expect(loadRobotConfig({ ROBOT_ALLOWLIST: '' }).allowlist).toBe('all');
+    expect(loadRobotConfig({ ROBOT_ALLOWLIST: '   ' }).allowlist).toBe('all');
+    expect(loadRobotConfig({ ROBOT_ALLOWLIST: 'NONE' }).allowlist).toBe('none');
+    expect(loadRobotConfig({ ROBOT_ALLOWLIST: 'none' }).allowlist).toBe('none');
+    // A non-empty value that yields no valid ids fails safe to 'none' (blocks, never opens).
+    expect(loadRobotConfig({ ROBOT_ALLOWLIST: 'x, y' }).allowlist).toBe('none');
   });
 
   it('reads uid/gid only when set to a valid integer', () => {

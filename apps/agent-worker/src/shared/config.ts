@@ -40,9 +40,15 @@ export interface AgentWorkerConfig {
 export interface RobotConfig {
   /** Master switch — the loop does nothing unless true (default off). C6 flips it on. */
   dispatchEnabled: boolean;
-  /** Prove-on-one gate: only these ticket ids may dispatch. Empty ⇒ nothing dispatches,
-   *  even when enabled — a second safety catch during bring-up. */
-  allowlist: number[];
+  /**
+   * Dispatch scope (`ROBOT_ALLOWLIST`), post-cutover semantics (C6/PD-347):
+   *   - `'all'`  — unset/empty ⇒ every eligible `robot_queue` ticket dispatches (normal operation,
+   *                still bounded by `dispatchEnabled` + `concurrency`). This is the go-live default.
+   *   - `'none'` — the literal `NONE` (or a garbage value) ⇒ dispatch nothing: a per-allowlist
+   *                killswitch that halts new work without touching `dispatchEnabled`.
+   *   - `number[]` — an explicit id list ⇒ only those tickets (the prove-on-one / prove-on-N gate).
+   */
+  allowlist: number[] | 'all' | 'none';
   /** Max Robots in flight at once (PILOT default 1, mirrors Sortie's max_concurrent_agents). */
   concurrency: number;
   /** How often to poll `robot_queue` for dispatchable tickets (ms). */
@@ -90,17 +96,30 @@ function optInt(raw: string | undefined): number | undefined {
   return Number.isInteger(n) ? n : undefined;
 }
 
+/**
+ * Parse `ROBOT_ALLOWLIST` into the dispatch scope (C6/PD-347). Unset/empty ⇒ `'all'` (go-live
+ * default: dispatch everything eligible). The literal `NONE` ⇒ `'none'` (killswitch). Otherwise
+ * "429,431" → [429, 431]; empties are filtered first so a trailing comma / blank segment doesn't
+ * coerce to 0 (Number('') === 0). A non-empty value that yields NO valid ids fails safe to `'none'`
+ * — a typo'd allowlist blocks rather than silently opening the floodgates.
+ */
+function parseAllowlist(raw: string | undefined): number[] | 'all' | 'none' {
+  const v = (raw ?? '').trim();
+  if (v === '') return 'all';
+  if (v.toUpperCase() === 'NONE') return 'none';
+  const ids = v
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+    .map((s) => Number(s))
+    .filter((n) => Number.isInteger(n));
+  return ids.length > 0 ? ids : 'none';
+}
+
 export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
   return {
     dispatchEnabled: env.ROBOT_DISPATCH_ENABLED === '1' || env.ROBOT_DISPATCH_ENABLED === 'true',
-    // "429,431" → [429, 431]; blank ⇒ []. Filter empties first so a trailing comma / blank
-    // segment doesn't coerce to 0 (Number('') === 0).
-    allowlist: (env.ROBOT_ALLOWLIST ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s !== '')
-      .map((s) => Number(s))
-      .filter((n) => Number.isInteger(n)),
+    allowlist: parseAllowlist(env.ROBOT_ALLOWLIST),
     concurrency: Number(env.ROBOT_CONCURRENCY ?? 1),
     intervalMs: Number(env.ROBOT_INTERVAL_MS ?? 15_000),
     worktreesDir: env.ROBOT_WORKTREES_DIR ?? '/data/robot-worktrees',
