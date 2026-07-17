@@ -67,46 +67,67 @@
   function endDrag() {
     dragId = null;
     dropTargetId = null;
+    // Belt-and-suspenders: a finished drag means no interaction is in flight, so
+    // clear any lingering resize state too (resize and reorder are exclusive).
+    resizeId = null;
+    resizeAnchor = null;
   }
 
   // ── Corner-handle resize ──────────────────────────────────────────────────────
-  let resizeId = $state<string | null>(null);
-  let resizeAnchor = $state<{ x: number; y: number; cols: number; rows: number } | null>(null);
-
-  function startResize(id: string, e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    resizeId = id;
-    const layout = layouts.find((l) => l.id === id);
-    if (layout) {
-      resizeAnchor = { x: e.clientX, y: e.clientY, cols: layout.cols, rows: layout.rows };
-    }
+  interface GridMeasurements {
+    colWidth: number;
+    rowHeight: number;
+    maxCols: number;
+    colGap: number;
+    rowGap: number;
   }
 
-  function getGridMeasurements(): { colWidth: number; rowHeight: number; maxCols: number } {
-    if (!gridEl) return { colWidth: 260, rowHeight: 140, maxCols: 4 };
+  let resizeId = $state<string | null>(null);
+  let resizeAnchor = $state<({ x: number; y: number; cols: number; rows: number } & GridMeasurements) | null>(null);
+
+  // Grid geometry doesn't change mid-drag, so measure once at resize start and
+  // cache it on the anchor — avoids a forced reflow on every mousemove.
+  function getGridMeasurements(): GridMeasurements {
+    if (!gridEl) return { colWidth: 260, rowHeight: 140, maxCols: 4, colGap: 16, rowGap: 16 };
     const style = getComputedStyle(gridEl);
+    // getComputedStyle resolves gridTemplateColumns to the used value — a
+    // space-separated list of pixel track sizes, one per rendered column.
     const colTracks = style.gridTemplateColumns.split(' ');
     const colWidth = parseFloat(colTracks[0]) || 260;
     const maxCols = colTracks.length;
     const rowHeight = parseFloat(style.gridAutoRows) || 140;
-    return { colWidth, rowHeight, maxCols };
+    const colGap = parseFloat(style.columnGap) || 16;
+    const rowGap = parseFloat(style.rowGap) || 16;
+    return { colWidth, rowHeight, maxCols, colGap, rowGap };
   }
 
-  const GAP = 16; // --space-md = 1rem = 16px
+  function startResize(id: string, e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const layout = layouts.find((l) => l.id === id);
+    if (!layout) return; // nothing to anchor to — don't arm a resize
+    resizeId = id;
+    resizeAnchor = {
+      x: e.clientX,
+      y: e.clientY,
+      cols: layout.cols,
+      rows: layout.rows,
+      ...getGridMeasurements(),
+    };
+  }
 
   function handleResizeMove(e: MouseEvent) {
     if (!resizeId || !resizeAnchor) return;
-    const { colWidth, rowHeight, maxCols } = getGridMeasurements();
+    const { colWidth, rowHeight, maxCols, colGap, rowGap } = resizeAnchor;
     const dx = e.clientX - resizeAnchor.x;
     const dy = e.clientY - resizeAnchor.y;
     const newCols = Math.max(
       1,
-      Math.min(maxCols, resizeAnchor.cols + Math.round(dx / (colWidth + GAP))),
+      Math.min(maxCols, resizeAnchor.cols + Math.round(dx / (colWidth + colGap))),
     );
     const newRows = Math.max(
       1,
-      Math.min(6, resizeAnchor.rows + Math.round(dy / (rowHeight + GAP))),
+      Math.min(6, resizeAnchor.rows + Math.round(dy / (rowHeight + rowGap))),
     );
     applyLayouts(
       layouts.map((l) => (l.id === resizeId ? { ...l, cols: newCols, rows: newRows } : l)),
