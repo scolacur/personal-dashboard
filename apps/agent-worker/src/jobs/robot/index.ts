@@ -9,7 +9,7 @@ import { processRobotQueue } from './robot';
 
 /**
  * Start the Robot loop (D-055, PD-342): the in-house dispatcher. It
- * polls `robot_queue` tickets in the shared board DB and drives each through a coding session in
+ * polls `queue` tickets in the shared board DB and drives each through a coding session in
  * an isolated worktree, handing off a PR. Inert unless `robot.dispatchEnabled` — the image ships
  * with the loop OFF so it stays dark until a deploy flips the switch (C6).
  *
@@ -60,6 +60,6 @@ export function startRobotJob(db: Database.Database, config: AgentWorkerConfig):
       allowlist: config.robot.allowlist,
       uidSplit: config.robot.codingUid !== undefined,
     },
-    'robot loop ready — polling robot_queue (prove-on-one)',
+    'robot loop ready — polling queue (prove-on-one)',
   );
 }

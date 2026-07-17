@@ -1,8 +1,9 @@
 import type { AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
 
 // Statuses whose lane is owned by the agent pipeline. A ticket assigned to
-// `robot` in one of these is locked from manual edit/move on the board.
-export const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
+// `robot` in one of these is locked from manual edit/move on the board (D-058: the
+// single `queue` lane + robot assignee is the agent-controlled combination).
+export const AGENT_CONTROLLED: TicketStatus[] = ['queue', 'completed'];
 
 /**
  * A ticket is locked (not manually editable / draggable) when the robot owns it

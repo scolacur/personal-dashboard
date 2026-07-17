@@ -9,15 +9,14 @@ import type { RefineProposal } from '@dashboard/shared';
  * then approves on the board and the SERVER does the writes. Two modes:
  *   - refine_in_place: rewrite this ticket's body + route it (lane/assignee).
  *   - decompose: split into children; the server closes+links the parent (D-036).
- * Robot-bound targets MUST be isRobotReady-shaped (## Context / ## Task / ## Done When /
- * ## Out of scope, PD-177) or the server rejects the approval.
+ * Robot-bound targets SHOULD be Ready-shaped (## Context / ## Task / ## Done When /
+ * ## Out of scope, PD-177) so they are Ready the moment they're queued (D-058).
  */
 
 const STATUS = z.enum([
   'backlog',
   'prioritized',
-  'robot_queue',
-  'steve_queue',
+  'queue',
   'completed',
   'closed',
 ]);
@@ -58,11 +57,11 @@ const DESCRIPTION = [
   '## Task, ## Done When, ## Out of scope — so Steve can queue it as-is.',
 ].join(' ');
 
-/** Queue lanes the agent must not route into (D-057): entering a queue is Steve's explicit,
- *  post-approval act, not something Refine proposes. */
+/** The queue lane the agent must not route into (D-057/D-058): entering the queue is Steve's
+ *  explicit, post-approval act, not something Refine proposes. */
 function queueLaneError(where: string, status: string | undefined): string | null {
-  if (status === 'robot_queue' || status === 'steve_queue') {
-    return `${where} routes into the queue lane "${status}", but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" or "prioritized" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
+  if (status === 'queue') {
+    return `${where} routes into the "queue" lane, but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" or "prioritized" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
   }
   return null;
 }

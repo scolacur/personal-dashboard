@@ -32,7 +32,7 @@ export interface AgentWorkerConfig {
 
 /**
  * Config for the **Robot loop** (D-055, PD-342): the `robot` job that dispatches queued
- * tickets. It polls `robot_queue` tickets, opens a git worktree per
+ * tickets. It polls `queue` tickets, opens a git worktree per
  * ticket, and runs a write-enabled coding session (a **Robot**) that hands off a PR. All
  * env-driven; the whole loop is inert unless `dispatchEnabled` is true, so the image ships
  * with the loop dark until a deploy flips it on (C6).
@@ -42,7 +42,7 @@ export interface RobotConfig {
   dispatchEnabled: boolean;
   /**
    * Dispatch scope (`ROBOT_ALLOWLIST`), post-cutover semantics (C6/PD-347):
-   *   - `'all'`  — unset/empty ⇒ every eligible `robot_queue` ticket dispatches (normal operation,
+   *   - `'all'`  — unset/empty ⇒ every eligible `queue` ticket dispatches (normal operation,
    *                still bounded by `dispatchEnabled` + `concurrency`). This is the go-live default.
    *   - `'none'` — the literal `NONE` (or a garbage value) ⇒ dispatch nothing: a per-allowlist
    *                killswitch that halts new work without touching `dispatchEnabled`.
@@ -51,7 +51,7 @@ export interface RobotConfig {
   allowlist: number[] | 'all' | 'none';
   /** Max Robots in flight at once (PILOT default 1, the Robot loop's max-concurrent-agents cap). */
   concurrency: number;
-  /** How often to poll `robot_queue` for dispatchable tickets (ms). */
+  /** How often to poll `queue` for dispatchable tickets (ms). */
   intervalMs: number;
   /** Parent dir for per-ticket worktrees (`<dir>/robot-<n>`); on the persistent /data volume. */
   worktreesDir: string;

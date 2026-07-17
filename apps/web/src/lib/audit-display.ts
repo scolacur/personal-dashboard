@@ -58,8 +58,7 @@ export function formatTs(ts: number | null): string {
 const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
   backlog: 'Backlog',
   prioritized: 'Prioritized',
-  robot_queue: "Robot's Queue",
-  steve_queue: "Steve's Queue",
+  queue: 'Queue',
   completed: 'Completed',
   closed: 'Closed',
 };

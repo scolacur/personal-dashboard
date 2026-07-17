@@ -63,9 +63,9 @@
     // allowed, but confirm it's intentional (no auto-eviction).
     if (action.type === 'blocks') {
       const blocked = toId === source.id ? source : target;
-      if (blocked.status === 'robot_queue') {
+      if (blocked.status === 'queue') {
         const ok = confirm(
-          `${blocked.displayId ?? 'This ticket'} is already in Robot's Queue. Adding this blocker leaves blocked work queued — it won't be evicted. Add anyway?`,
+          `${blocked.displayId ?? 'This ticket'} is already in the Queue. Adding this blocker leaves blocked work queued — it won't be evicted. Add anyway?`,
         );
         if (!ok) return;
       }

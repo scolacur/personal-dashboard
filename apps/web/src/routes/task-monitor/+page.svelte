@@ -6,7 +6,7 @@
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isRobotReady } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
@@ -27,8 +27,7 @@
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
     { status: 'prioritized', label: 'Prioritized' },
-    { status: 'steve_queue', label: "Steve's Queue" },
-    { status: 'robot_queue', label: "Robot's Queue" },
+    { status: 'queue', label: 'Queue' },
     { status: 'completed', label: 'Completed' },
     { status: 'closed', label: 'Closed', defaultHidden: true },
   ];
@@ -357,8 +356,9 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
-    if (formStatus === 'robot_queue' && !isRobotReady(formBody.trim() || null)) {
-      showToast("Heads-up: this ticket isn't in Robot-ready shape — consider Refining it first.");
+    // D-058: soft not-Ready hint when queueing a robot-assigned ticket (the confirm modal is PD-399).
+    if (formStatus === 'queue' && formAssignee === 'robot' && !isReady(formBody.trim() || null)) {
+      showToast("Heads-up: this ticket isn't in Ready shape — consider Refining it first.");
     }
     error = null;
     try {
@@ -492,8 +492,8 @@
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
-    if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isRobotReady(ticket.body)) {
-      showToast("Heads-up: this ticket isn't in Robot-ready shape — consider Refining it first.");
+    if (status === 'queue' && ticket.status !== 'queue' && ticket.assignee === 'robot' && !isReady(ticket.body)) {
+      showToast("Heads-up: this ticket isn't in Ready shape — consider Refining it first.");
     }
     error = null;
     try {
@@ -910,7 +910,7 @@
         {@const items = byStatus(col.status)}
         <section
           class="ticket-cell"
-          class:robot-queue={col.status === 'robot_queue'}
+          class:robot-queue={col.status === 'queue'}
           class:drag-over={dropTarget?.status === col.status && draggingId !== null}
           style="grid-column: {i + 1}"
         >

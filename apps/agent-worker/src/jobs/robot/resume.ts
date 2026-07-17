@@ -42,12 +42,13 @@ export function askHumanResume(db: Database.Database, ticketId: number): AskHuma
   return { question: question?.detail.question ?? null, answer: reply.detail.text ?? '' };
 }
 
-/** Robot-lane tickets currently parked `awaiting-human` — the resume sweep's candidate set. */
+/** Robot-assigned queued tickets currently parked `awaiting-human` — the resume sweep's candidate
+ *  set (D-058: queue + robot). */
 export function ticketsAwaitingHuman(db: Database.Database): number[] {
   const rows = db
     .prepare(
       `SELECT id FROM agent_tickets
-        WHERE archived_at IS NULL AND status = 'robot_queue' AND agent_state = 'awaiting-human'`,
+        WHERE archived_at IS NULL AND status = 'queue' AND assignee = 'robot' AND agent_state = 'awaiting-human'`,
     )
     .all() as { id: number }[];
   return rows.map((r) => r.id);

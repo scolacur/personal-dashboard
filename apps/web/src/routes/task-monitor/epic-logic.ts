@@ -21,12 +21,13 @@ const LANE_LABEL: Record<EpicDerivedLane, string> = {
   closed: 'Closed',
 };
 
-/** Ticket-lane statuses each derived Epic lane sits over (in board order). `in_progress` collapses
- *  Steve's + Robot's queues (D-054) — an Epic is never *in* a queue, only over it. */
+/** Ticket-lane statuses each derived Epic lane sits over (in board order). `in_progress` sits over
+ *  the single `queue` column (D-058, collapsing the old two-queue span) — an Epic is never *in* the
+ *  queue, only over it. */
 const LANE_COLUMNS: Record<EpicDerivedLane, TicketStatus[]> = {
   backlog: ['backlog'],
   prioritized: ['prioritized'],
-  in_progress: ['steve_queue', 'robot_queue'],
+  in_progress: ['queue'],
   completed: ['completed'],
   closed: ['closed'],
 };

@@ -171,9 +171,9 @@ export async function postRefineReply(id: number, body: string): Promise<TicketE
 
 /** Approve the latest Refine commit proposal (PD-269, D-057): the server refines-in-place or
  *  decomposes and marks refined, but never dispatches. Pass `queue: true` (the "Approve & queue"
- *  button — non-Epic refine_in_place only) to also move the ticket into robot_queue. Throws on
+ *  button — non-Epic refine_in_place only) to also move the ticket into `queue`. Throws on
  *  409 (no proposal / Epic can't queue / blocked) / 422 (invalid proposal). Resolves with
- *  `{ queued }` so the caller can confirm whether it entered the Robot's Queue. */
+ *  `{ queued }` so the caller can confirm whether it entered the Queue. */
 export async function approveRefine(id: number, opts: { queue?: boolean } = {}): Promise<{ queued: boolean }> {
   const res = await fetch(`${BASE}/${id}/refine-approve`, {
     method: 'POST',
