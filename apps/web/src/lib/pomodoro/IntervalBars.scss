@@ -1,0 +1,89 @@
+.ib-bars {
+  display: flex;
+  gap: var(--space-sm);
+
+  &--disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+}
+
+.ib-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.ib-track {
+  width: 100%;
+  height: 88px;
+  position: relative;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: ns-resize;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+
+  &--active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  &--dragging {
+    cursor: grabbing;
+  }
+}
+
+.ib-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--fill, 0%);
+  background: var(--accent);
+}
+
+/* Two label layers produce split-text legibility: --bg shows the text in the
+   unfilled region (--text on surface), --fg is clipped to the filled region
+   only (--on-accent on the accent fill). */
+.ib-val {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  pointer-events: none;
+  letter-spacing: 0.02em;
+
+  &--bg {
+    color: var(--text);
+    z-index: 1;
+  }
+
+  &--fg {
+    color: var(--on-accent);
+    z-index: 2;
+    clip-path: inset(calc(100% - var(--fill, 0%)) 0 0 0);
+  }
+}
+
+.ib-name {
+  font-size: 0.6rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

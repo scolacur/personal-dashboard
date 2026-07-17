@@ -1,6 +1,7 @@
 <script lang="ts">
   import { formatTime, advancePhase, clampRoundsBeforeLongBreak } from './timer-logic';
   import type { PomodoroPhase } from './timer-logic';
+  import IntervalBars from '$lib/pomodoro/IntervalBars.svelte';
 
   let workMinutes = $state(40);
   let shortBreakMinutes = $state(10);
@@ -73,82 +74,20 @@
     {phase === 'done' ? 'Done!' : formatTime(secondsRemaining)}
   </div>
 
-  <div class="rows">
-    <div class="row" class:active={phase === 'work'}>
-      <span class="indicator">{phase === 'work' ? '●' : '○'}</span>
-      <span class="label">Work</span>
-      <input
-        class="time-input"
-        type="number"
-        min="1"
-        max="240"
-        disabled={running}
-        bind:value={workMinutes}
-        onchange={onWorkMinutesChange}
-      />
-      <span class="unit">min</span>
-    </div>
-
-    <div class="row" class:active={phase === 'short-break'}>
-      <span class="indicator">{phase === 'short-break' ? '●' : '○'}</span>
-      <span class="label">Short Break</span>
-      <input
-        class="time-input"
-        type="number"
-        min="1"
-        max="60"
-        disabled={running}
-        bind:value={shortBreakMinutes}
-        onchange={onShortBreakChange}
-      />
-      <span class="unit">min</span>
-    </div>
-
-    <div class="row" class:active={phase === 'long-break'}>
-      <span class="indicator">{phase === 'long-break' ? '●' : '○'}</span>
-      <span class="label">Long Break</span>
-      <input
-        class="time-input"
-        type="number"
-        min="1"
-        max="120"
-        disabled={running}
-        bind:value={longBreakMinutes}
-        onchange={onLongBreakChange}
-      />
-      <span class="unit">min</span>
-    </div>
-
-    <div class="row divider">
-      <span class="indicator"></span>
-      <span class="label">Rounds → Long Break</span>
-      <input
-        class="time-input"
-        type="number"
-        min="1"
-        max={totalRounds}
-        disabled={running}
-        bind:value={roundsBeforeLongBreak}
-        onchange={onRoundsBeforeLongBreakChange}
-      />
-      <span class="unit"></span>
-    </div>
-
-    <div class="row">
-      <span class="indicator"></span>
-      <span class="label">Total Rounds</span>
-      <input
-        class="time-input"
-        type="number"
-        min="1"
-        max="20"
-        disabled={running}
-        bind:value={totalRounds}
-        onchange={onTotalRoundsChange}
-      />
-      <span class="unit"></span>
-    </div>
-  </div>
+  <IntervalBars
+    bind:workMinutes
+    bind:shortBreakMinutes
+    bind:longBreakMinutes
+    bind:roundsBeforeLongBreak
+    bind:totalRounds
+    disabled={running}
+    activePhase={phase}
+    onWorkChange={onWorkMinutesChange}
+    onShortBreakChange={onShortBreakChange}
+    onLongBreakChange={onLongBreakChange}
+    onTotalRoundsChange={onTotalRoundsChange}
+    onRoundsBeforeLongBreakChange={onRoundsBeforeLongBreakChange}
+  />
 
   <div class="controls">
     <button

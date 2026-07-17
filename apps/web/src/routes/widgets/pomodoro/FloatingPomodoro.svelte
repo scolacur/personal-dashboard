@@ -6,6 +6,7 @@
     computeRemainingLegs,
   } from './timer-logic';
   import type { PomodoroPhase } from './timer-logic';
+  import IntervalBars from '$lib/pomodoro/IntervalBars.svelte';
 
   type Mode = 'closed' | 'expanded' | 'minimized';
 
@@ -146,82 +147,20 @@
       {phase === 'done' ? 'Done!' : formatTime(secondsRemaining)}
     </div>
 
-    <div class="fp-rows">
-      <div class="fp-row" class:active={phase === 'work'}>
-        <span class="fp-indicator">{phase === 'work' ? '●' : '○'}</span>
-        <span class="fp-label">Work</span>
-        <input
-          class="fp-time-input"
-          type="number"
-          min="1"
-          max="240"
-          disabled={running}
-          bind:value={workMinutes}
-          onchange={onWorkMinutesChange}
-        />
-        <span class="fp-unit">min</span>
-      </div>
-
-      <div class="fp-row" class:active={phase === 'short-break'}>
-        <span class="fp-indicator">{phase === 'short-break' ? '●' : '○'}</span>
-        <span class="fp-label">Short Break</span>
-        <input
-          class="fp-time-input"
-          type="number"
-          min="1"
-          max="60"
-          disabled={running}
-          bind:value={shortBreakMinutes}
-          onchange={onShortBreakChange}
-        />
-        <span class="fp-unit">min</span>
-      </div>
-
-      <div class="fp-row" class:active={phase === 'long-break'}>
-        <span class="fp-indicator">{phase === 'long-break' ? '●' : '○'}</span>
-        <span class="fp-label">Long Break</span>
-        <input
-          class="fp-time-input"
-          type="number"
-          min="1"
-          max="120"
-          disabled={running}
-          bind:value={longBreakMinutes}
-          onchange={onLongBreakChange}
-        />
-        <span class="fp-unit">min</span>
-      </div>
-
-      <div class="fp-row fp-row--divider">
-        <span class="fp-indicator"></span>
-        <span class="fp-label">Rounds → Long Break</span>
-        <input
-          class="fp-time-input"
-          type="number"
-          min="1"
-          max={totalRounds}
-          disabled={running}
-          bind:value={roundsBeforeLongBreak}
-          onchange={onRoundsBeforeLongBreakChange}
-        />
-        <span class="fp-unit"></span>
-      </div>
-
-      <div class="fp-row">
-        <span class="fp-indicator"></span>
-        <span class="fp-label">Total Rounds</span>
-        <input
-          class="fp-time-input"
-          type="number"
-          min="1"
-          max="20"
-          disabled={running}
-          bind:value={totalRounds}
-          onchange={onTotalRoundsChange}
-        />
-        <span class="fp-unit"></span>
-      </div>
-    </div>
+    <IntervalBars
+      bind:workMinutes
+      bind:shortBreakMinutes
+      bind:longBreakMinutes
+      bind:roundsBeforeLongBreak
+      bind:totalRounds
+      disabled={running}
+      activePhase={phase}
+      onWorkChange={onWorkMinutesChange}
+      onShortBreakChange={onShortBreakChange}
+      onLongBreakChange={onLongBreakChange}
+      onTotalRoundsChange={onTotalRoundsChange}
+      onRoundsBeforeLongBreakChange={onRoundsBeforeLongBreakChange}
+    />
 
     <div class="fp-controls">
       <button
