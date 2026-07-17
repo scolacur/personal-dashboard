@@ -2,7 +2,7 @@ import { loadConfig } from '../../shared/config';
 import { installProxy } from '../../shared/proxy';
 import { ensureCheckout } from '../../shared/checkout';
 import { buildContextPack } from '../../shared/context-pack';
-import { runGrillTurn } from './session';
+import { runRefineTurn } from './session';
 import { logger } from '../../shared/logger';
 
 /**
@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   await ensureCheckout(config);
   const contextPack = buildContextPack(config.checkoutDir);
 
-  const { text, sessionId } = await runGrillTurn({
+  const { text, sessionId } = await runRefineTurn({
     config,
     contextPack,
     prompt:
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
       'questions and reference the ACTUAL files you would touch, grounded in this repo.',
   });
 
-  logger.info({ sessionId }, 'grill turn complete');
+  logger.info({ sessionId }, 'refine turn complete');
   process.stdout.write(`\n${text}\n`);
 }
 

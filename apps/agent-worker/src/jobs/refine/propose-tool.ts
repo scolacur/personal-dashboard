@@ -4,7 +4,7 @@ import type { RefineProposal } from '@dashboard/shared';
 
 /**
  * The `propose_commit` SDK tool (D-044, PD-269). The agent-worker NEVER writes tickets — when a
- * grill has converged it calls this tool with a structured plan, which hands the proposal to
+ * refine session has converged it calls this tool with a structured plan, which hands the proposal to
  * the `onProposal` callback (the refine loop persists it as a `refine_proposal` event). Steve
  * then approves on the board and the SERVER does the writes. Two modes:
  *   - refine_in_place: rewrite this ticket's body + route it (lane/assignee).

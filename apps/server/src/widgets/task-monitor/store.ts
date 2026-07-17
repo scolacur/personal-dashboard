@@ -858,7 +858,7 @@ function findBlocksDependencyPath(
  * Link two tickets (idempotent via the UNIQUE(from,to,type) constraint). Direction is
  * `from = source, to = target`; for `blocks`, `from = blocker, to = blocked` (D-048).
  * Rejects self-relations (all types) and, for `blocks`, any edge that would close a cycle.
- * `origin` defaults to `'agent'` so the griller/audit callers need no change; the relations
+ * `origin` defaults to `'agent'` so the refine/audit callers need no change; the relations
  * UI passes `'human'`. Returns the relation id (existing id if the row was already present).
  */
 export function addRelation(
@@ -1114,7 +1114,7 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
 
 export type RejectRefineResult = { ok: true } | { ok: false; reason: 'not_found' | 'no_proposal' };
 
-/** Drop the latest actionable proposal (Steve rejected); the grill can propose again. */
+/** Drop the latest actionable proposal (Steve rejected); the refine session can propose again. */
 export function rejectRefine(db: Database.Database, ticketId: number): RejectRefineResult {
   if (getTicket(db, ticketId) === null) return { ok: false, reason: 'not_found' };
   const found = latestActionableProposal(listTicketEvents(db, ticketId));

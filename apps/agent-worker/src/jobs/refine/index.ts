@@ -14,7 +14,7 @@ import { processPendingRefines, WarmSessions } from './refine';
 export function startRefineJob(db: Database.Database, config: AgentWorkerConfig): void {
   const sessions = new WarmSessions();
 
-  // Refine poll loop. A grill turn can run for many seconds, so an in-flight guard skips
+  // Refine poll loop. A refine turn can run for many seconds, so an in-flight guard skips
   // overlapping ticks rather than double-processing a ticket.
   let running = false;
   setInterval(() => {

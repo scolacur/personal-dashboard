@@ -5,7 +5,7 @@ import { dbPathFor } from './config';
 /**
  * Open the SHARED dashboard SQLite file — the same DB the web server owns. WAL lets
  * the web process and this worker read/write concurrently (writes serialize). The
- * refine job reads Refine trigger rows and writes the grill conversation to
+ * refine job reads Refine trigger rows and writes the refine conversation to
  * `agent_ticket_events`; other jobs (audit, D-045) use their own tables.
  */
 export function openDb(config: AgentWorkerConfig): Database.Database {

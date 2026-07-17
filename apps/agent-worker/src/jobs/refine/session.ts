@@ -7,19 +7,19 @@ import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
 /** Read-only built-in tools — the agent-worker grounds against the checkout, never edits. */
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 
-export interface GrillTurnInput {
+export interface RefineTurnInput {
   config: AgentWorkerConfig;
   /** Compact, cached project-context prefix (glossary + building-block index). */
   contextPack: string;
   /** The human turn: the ticket body on the first turn, or a reply afterwards. */
   prompt: string;
-  /** Resume a prior grill session (async follow-up); omit to start fresh. */
+  /** Resume a prior refine session (async follow-up); omit to start fresh. */
   resumeSessionId?: string;
   /** Called when the agent invokes propose_commit (PD-269); records the commit proposal. */
   onProposal?: (proposal: RefineProposal) => void;
 }
 
-export interface GrillTurnResult {
+export interface RefineTurnResult {
   /** The assistant reply on success, or the error text when `ok` is false (for logging). */
   text: string;
   /** True only for a clean turn (result subtype 'success' AND not is_error). False for API
@@ -36,7 +36,7 @@ export interface GrillTurnResult {
 /** Project an SDK result message into our turn shape, distinguishing a clean reply from an
  *  error result (billing/rate-limit/max-turns). On error `ok` is false and `text` carries the
  *  error(s) so the loop can log why without persisting it as the agent's words. */
-function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): GrillTurnResult {
+function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): RefineTurnResult {
   const ok = message.subtype === 'success' && !message.is_error;
   const text = message.subtype === 'success' ? message.result : (message.errors ?? []).join('; ');
   return {
@@ -60,7 +60,7 @@ function systemPrompt(contextPack: string): string {
     'Sizing guidance: a small change (a design tweak, a simple display component, few files, no',
     'decomposition) is instantly plannable; medium or vague tickets need follow-up questions;',
     'large features (many files, front-end AND back-end, or anything touching critical infra)',
-    'warrant a full grill.',
+    'warrant a full refinement session.',
     '',
     'When you and Steve have converged on a concrete plan, call the propose_commit tool to',
     'record it (refine-in-place or decompose). You never write tickets yourself — the proposal',
@@ -74,7 +74,7 @@ function systemPrompt(contextPack: string): string {
 
 /** The SDK options shared by the one-shot and warm-streaming paths. When `onProposal` is
  *  given, the propose_commit tool (PD-269) is exposed and allowed alongside the read-only set. */
-function grillOptions(
+function refineOptions(
   config: AgentWorkerConfig,
   contextPack: string,
   resumeSessionId?: string,
@@ -97,18 +97,18 @@ function userMessage(text: string): SDKUserMessage {
 }
 
 /**
- * Run ONE grill turn via a fresh Agent SDK query (D-044). Opus, grounded in the read-only
+ * Run ONE refine turn via a fresh Agent SDK query (D-044). Opus, grounded in the read-only
  * checkout, read-only tools. Spawns a subprocess per call — used for cold one-shots and the
  * smoke script. The warm path (openWarmSession) keeps the process resident between turns.
  */
-export async function runGrillTurn(input: GrillTurnInput): Promise<GrillTurnResult> {
+export async function runRefineTurn(input: RefineTurnInput): Promise<RefineTurnResult> {
   // Defaults to a non-ok, empty result — so if no result message ever arrives (a hard
   // failure), the caller treats it as an errored turn rather than a bogus empty success.
-  let result: GrillTurnResult = { text: '', ok: false, sessionId: undefined };
+  let result: RefineTurnResult = { text: '', ok: false, sessionId: undefined };
 
   for await (const message of query({
     prompt: input.prompt,
-    options: grillOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
+    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
   })) {
     if (message.type === 'result') result = resultFrom(message);
   }
@@ -119,15 +119,15 @@ export async function runGrillTurn(input: GrillTurnInput): Promise<GrillTurnResu
 // ── Warm streaming session (D-044, PD-268) ───────────────────────────────────
 
 /**
- * A live grill session held resident between turns. Backed by a single streaming-input
+ * A live refine session held resident between turns. Backed by a single streaming-input
  * `query()`: the `claude` subprocess and the model's in-session context stay warm, so
  * back-and-forth turns skip subprocess re-spawn and full-history re-send — snappier than
- * a cold `runGrillTurn` per turn. Created cold from a persisted `resumeSessionId` after a
+ * a cold `runRefineTurn` per turn. Created cold from a persisted `resumeSessionId` after a
  * worker restart, then warm for the rest of the conversation.
  */
-export interface GrillSession {
+export interface RefineSession {
   /** Send one human turn; resolves with the agent's reply on the next result message. */
-  send(prompt: string): Promise<GrillTurnResult>;
+  send(prompt: string): Promise<RefineTurnResult>;
   /** End the input stream and interrupt the query. */
   close(): Promise<void>;
   /** The SDK session id (known after the first turn). */
@@ -146,7 +146,7 @@ export interface OpenSessionInput {
 }
 
 /** Factory type so the warm-session manager and its tests can swap the real SDK out. */
-export type OpenGrillSession = (input: OpenSessionInput) => GrillSession;
+export type OpenRefineSession = (input: OpenSessionInput) => RefineSession;
 
 /** A push-driven AsyncIterable of user messages that stays open until `end()`. */
 function createInputStream() {
@@ -189,23 +189,23 @@ function createInputStream() {
 }
 
 /**
- * Open a warm streaming grill session. Turns are strictly sequential (Steve replies one at a
+ * Open a warm streaming refine session. Turns are strictly sequential (Steve replies one at a
  * time), so a single in-flight `send` is tracked; the background consumer resolves it on the
  * next `result` message and accumulates that turn's assistant text.
  */
 interface PendingTurn {
-  resolve: (r: GrillTurnResult) => void;
+  resolve: (r: RefineTurnResult) => void;
   reject: (e: unknown) => void;
 }
 
-export const openWarmSession: OpenGrillSession = (input) => {
+export const openWarmSession: OpenRefineSession = (input) => {
   const input$ = createInputStream();
   let sessionId: string | undefined = input.resumeSessionId;
   // The single in-flight turn (turns are strictly sequential), or null when idle. Consumed
   // via the helpers below so the read happens at the declared union type (TS would otherwise
   // narrow it to `null` inside the drain loop, since `send` reassigns it further down).
   let pending: PendingTurn | null = null;
-  const settleTurn = (result: GrillTurnResult) => {
+  const settleTurn = (result: RefineTurnResult) => {
     const turn = pending;
     pending = null;
     turn?.resolve(result);
@@ -218,7 +218,7 @@ export const openWarmSession: OpenGrillSession = (input) => {
 
   const q = query({
     prompt: input$.stream,
-    options: grillOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
+    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
   });
 
   // Drain the query in the background, routing each completed turn back to its `send` caller.
@@ -237,14 +237,14 @@ export const openWarmSession: OpenGrillSession = (input) => {
     }
   })();
 
-  const session: GrillSession = {
+  const session: RefineSession = {
     get sessionId() {
       return sessionId;
     },
     lastUsedAt: Date.now(),
-    send(prompt: string): Promise<GrillTurnResult> {
+    send(prompt: string): Promise<RefineTurnResult> {
       session.lastUsedAt = Date.now();
-      return new Promise<GrillTurnResult>((resolve, reject) => {
+      return new Promise<RefineTurnResult>((resolve, reject) => {
         pending = { resolve, reject };
         input$.push(userMessage(prompt));
       });

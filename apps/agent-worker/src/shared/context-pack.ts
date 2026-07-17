@@ -3,7 +3,7 @@ import path from 'node:path';
 
 /**
  * Extract a top-level Markdown section by its `## ` heading prefix, up to the next
- * `## ` (or EOF). Used to pull the glossary (PROJECT.md §8) into the grill prompt
+ * `## ` (or EOF). Used to pull the glossary (PROJECT.md §8) into the refine prompt
  * without dragging the whole file along. Returns '' if not found.
  */
 export function extractSection(markdown: string, headingPrefix: string): string {
@@ -29,7 +29,7 @@ function listDir(dir: string): string[] {
 }
 
 /**
- * Build the compact, STABLE project-context prefix for the grill system prompt (D-044).
+ * Build the compact, STABLE project-context prefix for the refine system prompt (D-044).
  *
  * Deliberately small + deterministic so it prompt-caches: the PROJECT.md glossary
  * (§8) plus an index of what already exists (server widgets, web widget routes,

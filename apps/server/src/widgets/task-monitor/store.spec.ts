@@ -552,13 +552,13 @@ describe('startRefine + refineState (D-044, PD-268)', () => {
     expect(startRefine(db, 9999)).toEqual({ ok: false, reason: 'not_found' });
   });
 
-  it('derives refineState: null → grilling (after start) → awaiting-human (after agent turn)', () => {
+  it('derives refineState: null → refining (after start) → awaiting-human (after agent turn)', () => {
     const t = createTicket(db, { title: 'x', projectId: pd });
     expect(getTicket(db, t.id)?.refineState).toBeNull();
 
     startRefine(db, t.id);
-    expect(getTicket(db, t.id)?.refineState).toBe('grilling');
-    expect(listTickets(db).find((x) => x.id === t.id)?.refineState).toBe('grilling');
+    expect(getTicket(db, t.id)?.refineState).toBe('refining');
+    expect(listTickets(db).find((x) => x.id === t.id)?.refineState).toBe('refining');
 
     db.prepare(
       'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',

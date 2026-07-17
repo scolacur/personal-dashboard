@@ -5,9 +5,9 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { buildContextPack } from '../../shared/context-pack';
 import {
   openWarmSession,
-  type GrillSession,
-  type GrillTurnResult,
-  type OpenGrillSession,
+  type RefineSession,
+  type RefineTurnResult,
+  type OpenRefineSession,
   type OpenSessionInput,
 } from './session';
 import { logger } from '../../shared/logger';
@@ -16,7 +16,7 @@ import { logger } from '../../shared/logger';
  * The agent-worker's Refine loop (D-044, PD-267). Transport between the web app and this
  * worker is the SHARED SQLite DB — not HTTP: the web writes human turns as
  * `refine_human` events (POST /tickets/:id/refine-reply), this worker polls for them,
- * runs a grill turn, and writes the reply back as a `refine_agent` event plus an
+ * runs a refine turn, and writes the reply back as a `refine_agent` event plus an
  * `agent_refine` notification. The Claude Agent SDK session id is persisted IN the
  * agent turn's detail, so `resume` survives a worker restart with no separate table.
  *
@@ -221,17 +221,17 @@ export function notifyRefinePosted(
 // ── Warm session manager (D-044, PD-268) ─────────────────────────────────────
 
 /**
- * Holds the resident warm grill sessions, one per active ticket (Map<ticketId, session>).
+ * Holds the resident warm refine sessions, one per active ticket (Map<ticketId, session>).
  * A turn reuses the live session (snappy — no subprocess re-spawn / history re-send); the
  * first turn after a restart opens cold, rehydrating the persisted resumeSessionId from the
  * DB. Idle sessions are swept so the worker doesn't hoard subprocesses; a cold turn later
  * simply rehydrates again.
  */
 export class WarmSessions {
-  private readonly map = new Map<number, GrillSession>();
+  private readonly map = new Map<number, RefineSession>();
 
   constructor(
-    private readonly open: OpenGrillSession = openWarmSession,
+    private readonly open: OpenRefineSession = openWarmSession,
     /** Evict a session after this long without a turn (default 15 min). */
     private readonly idleMs = 15 * 60_000,
   ) {}
@@ -249,7 +249,7 @@ export class WarmSessions {
    * Run a turn, opening a session cold (rehydrating `resumeSessionId`) if none is resident.
    * `resumeSessionId` is honoured ONLY on a cold open — a live session already holds context.
    */
-  async turn(ticketId: number, input: OpenSessionInput, prompt: string): Promise<GrillTurnResult> {
+  async turn(ticketId: number, input: OpenSessionInput, prompt: string): Promise<RefineTurnResult> {
     let session = this.map.get(ticketId);
     if (!session) {
       session = this.open(input);
@@ -301,7 +301,7 @@ export interface ProcessDeps {
 }
 
 /**
- * One poll cycle: find tickets awaiting the agent, run a (warm-if-resident) grill turn for
+ * One poll cycle: find tickets awaiting the agent, run a (warm-if-resident) refine turn for
  * each, and write the reply + notification back to the shared DB. Returns how many turns were
  * posted. A failed or empty turn is logged and left pending (retried next cycle) rather than
  * writing a bogus agent turn. Tickets are processed sequentially, so a session never has two

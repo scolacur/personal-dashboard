@@ -153,7 +153,7 @@ export async function approveRefine(id: number): Promise<void> {
   if (!res.ok) return parseError(res);
 }
 
-/** Reject the latest Refine commit proposal (PD-269); the grill can propose again. */
+/** Reject the latest Refine commit proposal (PD-269); the refine session can propose again. */
 export async function rejectRefine(id: number): Promise<void> {
   const res = await fetch(`${BASE}/${id}/refine-reject`, { method: 'POST' });
   if (!res.ok) return parseError(res);

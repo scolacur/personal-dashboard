@@ -120,8 +120,8 @@
   {:else if activeTab === 'refinement'}
     <ul class="refinement-legend">
       <li>
-        <span class="refine-pill refine-grilling">{REFINE_STATE_LABELS['grilling']}</span>
-        <span class="legend-desc">{REFINE_STATE_DESCRIPTIONS['grilling']}</span>
+        <span class="refine-pill refine-refining">{REFINE_STATE_LABELS['refining']}</span>
+        <span class="legend-desc">{REFINE_STATE_DESCRIPTIONS['refining']}</span>
       </li>
       <li>
         <span class="refine-pill refine-awaiting-human">{REFINE_STATE_LABELS['awaiting-human']}</span>
