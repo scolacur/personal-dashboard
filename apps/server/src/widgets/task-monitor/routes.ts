@@ -51,6 +51,7 @@ import {
   startRefine,
   unreadNotificationCount,
   updateTicket,
+  ValidationError,
 } from './store';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
@@ -178,6 +179,7 @@ export function registerRoutes(
       return reply.status(201).send(createTicket(db, input));
     } catch (e) {
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
+      if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
     }
   });
@@ -332,6 +334,7 @@ export function registerRoutes(
       }
       // Epic invariants (D-054).
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
+      if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
     }
     if (!updated) {

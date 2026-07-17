@@ -73,6 +73,20 @@ export const TICKET_STATUSES: readonly TicketStatus[] = [
   'closed',
 ] as const;
 
+/**
+ * Coerce a possibly-legacy status string to a valid `TicketStatus`, or `null` if unrecognized
+ * (D-058, PD-417). The pre-D-058 queue lanes (`robot_queue` / `steve_queue`) collapse to the single
+ * `queue` lane — a stale Refine proposal or an un-redeployed agent may still carry them, and they'd
+ * otherwise be written verbatim into an invalid lane (renders in no board column, never dispatched,
+ * bypasses the epic/blocker gates). The write-boundary guard (`createTicket`/`updateTicket`) and
+ * `approveRefine` run every status through this so an invalid lane can never be persisted.
+ */
+export function coerceTicketStatus(status: string): TicketStatus | null {
+  if ((TICKET_STATUSES as readonly string[]).includes(status)) return status as TicketStatus;
+  if (status === 'robot_queue' || status === 'steve_queue') return 'queue';
+  return null;
+}
+
 export const TICKET_PRIORITIES: readonly TicketPriority[] = [
   'P0',
   'P1',

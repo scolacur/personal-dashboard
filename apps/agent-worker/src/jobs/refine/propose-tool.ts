@@ -60,10 +60,12 @@ const DESCRIPTION = [
 ].join(' ');
 
 /** The queue lane the agent must not route into (D-057/D-058): entering the queue is Steve's
- *  explicit, post-approval act, not something Refine proposes. */
+ *  explicit, post-approval act, not something Refine proposes. Also rejects the legacy pre-D-058
+ *  queue lanes (`robot_queue`/`steve_queue`, PD-417) — an un-redeployed agent may still emit them,
+ *  and they'd otherwise create an orphaned invalid lane on approval. */
 function queueLaneError(where: string, status: string | undefined): string | null {
-  if (status === 'queue') {
-    return `${where} routes into the "queue" lane, but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" or "prioritized" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
+  if (status === 'queue' || status === 'robot_queue' || status === 'steve_queue') {
+    return `${where} routes into a queue lane ("${status}"), but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" or "prioritized" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
   }
   return null;
 }
