@@ -17,6 +17,7 @@ import {
   addRelation,
   appendRefineReply,
   approveRefine,
+  type ApproveRefineResult,
   archiveTicket,
   computeEpicSummary,
   EpicGuardError,
@@ -219,6 +220,20 @@ export function registerRoutes(
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return { members: listEpicMembers(db, id), summary: computeEpicSummary(db, id) };
+  });
+
+  // A single ticket by id. The board fetches the full list, but the detail page and API clients
+  // want one ticket without filtering client-side.
+  app.get(`${base}/tickets/:id`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const ticket = getTicket(db, id);
+    if (!ticket) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    return ticket;
   });
 
   app.patch(`${base}/tickets/:id`, async (request, reply) => {
@@ -542,25 +557,35 @@ export function registerRoutes(
   /* ── Refine commit step (D-044, PD-269) ──────────────────────────────── */
 
   // Approve the latest actionable commit proposal. The server (not the agent-worker) does the
-  // writes: refine-in-place rewrites+routes+marks refined; decompose creates routed children,
-  // closes the parent (D-036), and links them via `split` relations. Robot-bound targets must
-  // be isSortieReady or the approval is rejected (422) with no writes.
+  // writes: refine-in-place rewrites+marks refined; decompose creates children (non-queue lanes),
+  // closes the parent (D-036), and links them via `split` relations. D-057: approval never
+  // dispatches — pass `{ queue: true }` (the "Approve & queue" button, non-Epic refine_in_place
+  // only) to also move the ticket into robot_queue in the same step.
   app.post(`${base}/tickets/:id/refine-approve`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
-    const result = approveRefine(db, id);
+    const queue = (request.body as { queue?: boolean } | undefined)?.queue === true;
+    let result: ApproveRefineResult;
+    try {
+      result = approveRefine(db, id, { queue });
+    } catch (e) {
+      // Defensive backstop: approveRefine pre-checks the Epic/blocker invariants, but if any
+      // store-level guard escapes we map it to a clean 4xx rather than a 500 (same as POST/PATCH).
+      if (e instanceof EpicGuardError) return sendEpicError(reply, e);
+      throw e;
+    }
     if (result.ok) return reply.status(201).send(result);
     switch (result.reason) {
       case 'not_found':
         return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
       case 'no_proposal':
         return reply.status(409).send({ error: 'no proposal to approve', code: 'NO_PROPOSAL' });
-      case 'child_not_sortie_ready':
-        return reply.status(422).send({
-          error: `not Sortie-ready for robot_queue: ${result.detail}`,
-          code: 'NOT_SORTIE_READY',
+      case 'epic_not_queueable':
+        return reply.status(409).send({
+          error: `an Epic cannot enter robot_queue: ${result.detail}`,
+          code: 'EPIC_NOT_QUEUEABLE',
         });
       case 'blocked_by_unresolved':
         return reply.status(409).send({

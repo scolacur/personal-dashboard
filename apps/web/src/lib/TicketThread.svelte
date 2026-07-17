@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { marked } from 'marked';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
-  import { latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
+  import { isSortieReady, latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
   import {
     approveRefine,
     fetchTicketEvents,
@@ -16,12 +16,20 @@
   // onChanged fires after an approve/reject so the parent can reload the ticket (PD-269).
   // onStart (C4 redesign): before a thread exists, the composer is replaced by a single
   // "Start Refine" button that calls this — the conversation only opens once there's one to hold.
+  // isEpic hides "Approve & queue" — an Epic can never enter the Robot's Queue (D-054/D-057).
   const {
     ticketId,
+    isEpic = false,
     onChanged,
     onStart,
     starting = false,
-  }: { ticketId: number; onChanged?: () => void; onStart?: () => void; starting?: boolean } = $props();
+  }: {
+    ticketId: number;
+    isEpic?: boolean;
+    onChanged?: () => void;
+    onStart?: () => void;
+    starting?: boolean;
+  } = $props();
 
   let messages = $state<RefineMessage[]>([]);
   let proposal = $state<RefineProposal | null>(null);
@@ -56,6 +64,14 @@
     return `${m}m ${s % 60}s`;
   }
 
+  // "Approve & queue" (D-057) is offered only for a non-Epic refine_in_place — decompose routes
+  // per-child and an Epic can never enter the Robot's Queue. `needsShaping` is a soft hint: the
+  // ticket can still be queued, but its body lacks the four Sortie sections.
+  const canQueue = $derived(proposal?.mode === 'refine_in_place' && !isEpic);
+  const needsShaping = $derived(
+    proposal?.mode === 'refine_in_place' && !isSortieReady(proposal.body ?? null),
+  );
+
   // Svelte action: renders markdown into a node's innerHTML without using {@html}.
   function applyMarkdown(node: HTMLElement, text: string) {
     node.innerHTML = marked.parse(text) as string;
@@ -87,12 +103,20 @@
     }
   }
 
-  async function decide(action: 'approve' | 'reject') {
+  async function decide(action: 'approve' | 'approve-queue' | 'reject') {
     if (deciding) return;
     deciding = true;
     decideMsg = null;
     try {
-      await (action === 'approve' ? approveRefine(ticketId) : rejectRefine(ticketId));
+      if (action === 'reject') {
+        await rejectRefine(ticketId);
+        decideMsg = 'Proposal rejected — the agent can propose again.';
+      } else {
+        const { queued } = await approveRefine(ticketId, { queue: action === 'approve-queue' });
+        decideMsg = queued
+          ? 'Approved & queued — Robot will pick it up.'
+          : "Approved. Drag to the Robot's Queue when you're ready to dispatch.";
+      }
       await load();
       onChanged?.();
     } catch (e) {
@@ -207,11 +231,27 @@
               <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
                 {deciding ? 'Working…' : 'Approve'}
               </button>
+              {#if canQueue}
+                <button
+                  class="approve-queue"
+                  onclick={() => decide('approve-queue')}
+                  disabled={deciding}
+                  title={needsShaping
+                    ? "Not in Sortie-ready shape (missing the four sections) — you can still queue it, but Robot works best from a shaped ticket."
+                    : "Approve and move into the Robot's Queue to dispatch now."}
+                >
+                  Approve &amp; queue
+                </button>
+                {#if needsShaping}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">needs shaping</span>{/if}
+              {/if}
               <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
-              {#if decideMsg}<span class="decide-msg" role="alert">{decideMsg}</span>{/if}
             </div>
           </div>
         </li>
+      {/if}
+
+      {#if decideMsg}
+        <li class="decide-msg" role="status">{decideMsg}</li>
       {/if}
 
       {#if awaitingAgent}

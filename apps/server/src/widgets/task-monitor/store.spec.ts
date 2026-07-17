@@ -746,15 +746,65 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(listTicketEvents(db, t.id).some((e) => e.type === 'refine_committed')).toBe(true);
   });
 
-  it('approveRefine refine_in_place into robot_queue requires a Sortie-ready body', () => {
+  it('approveRefine refine_in_place parks a proposed robot_queue in prioritized (D-057: no dispatch)', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'not shaped', status: 'robot_queue' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'robot_queue' });
     const res = approveRefine(db, t.id);
-    expect(res).toMatchObject({ ok: false, reason: 'child_not_sortie_ready' });
-    expect(getTicket(db, t.id)!.status).toBe('backlog'); // unchanged
+    expect(res).toMatchObject({ ok: true, queued: false });
+    const after = getTicket(db, t.id)!;
+    expect(after.status).toBe('prioritized'); // parked, not dispatched
+    expect(after.refined).toBe(true);
   });
 
-  it('approveRefine decompose creates routed children, closes+links the parent', () => {
+  it('approveRefine { queue: true } dispatches a non-Epic refine_in_place into robot_queue', () => {
+    const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    const res = approveRefine(db, t.id, { queue: true });
+    expect(res).toMatchObject({ ok: true, queued: true });
+    const after = getTicket(db, t.id)!;
+    expect(after.status).toBe('robot_queue');
+    expect(after.assignee).toBe('robot'); // lane invariant
+    expect(after.refined).toBe(true);
+  });
+
+  it('approveRefine { queue: true } queues even an unshaped body (isSortieReady is a soft hint, D-057)', () => {
+    const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'not shaped', status: 'prioritized' });
+    const res = approveRefine(db, t.id, { queue: true });
+    expect(res).toMatchObject({ ok: true, queued: true });
+    expect(getTicket(db, t.id)!.status).toBe('robot_queue');
+  });
+
+  it('approveRefine { queue: true } on an Epic is refused cleanly (EPIC_NOT_QUEUEABLE, no 500, no write)', () => {
+    const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
+    seedProposal(db, epic.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    const res = approveRefine(db, epic.id, { queue: true });
+    expect(res).toMatchObject({ ok: false, reason: 'epic_not_queueable' });
+    expect(getTicket(db, epic.id)!.status).toBe('prioritized'); // unchanged
+  });
+
+  it('approveRefine plain-approve on an Epic proposing robot_queue never queues it (bug PD-377)', () => {
+    const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
+    seedProposal(db, epic.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'robot_queue' });
+    const res = approveRefine(db, epic.id);
+    expect(res).toMatchObject({ ok: true, queued: false });
+    const after = getTicket(db, epic.id)!;
+    expect(after.status).toBe('prioritized'); // parked, never robot_queue
+    expect(after.isEpic).toBe(true);
+    expect(after.refined).toBe(true);
+  });
+
+  it('approveRefine { queue: true } is blocked by an unresolved blocker (D-048)', () => {
+    const t = createTicket(db, { title: 'x', body: SORTIE_BODY, status: 'prioritized', projectId: pd });
+    const blocker = createTicket(db, { title: 'blk', status: 'prioritized', projectId: pd });
+    addRelation(db, blocker.id, t.id, 'blocks');
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    const res = approveRefine(db, t.id, { queue: true });
+    expect(res).toMatchObject({ ok: false, reason: 'blocked_by_unresolved' });
+    expect(getTicket(db, t.id)!.status).toBe('prioritized'); // unchanged
+  });
+
+  it('approveRefine decompose parks robot-bound children in prioritized (Decompose-A), closes+links the parent', () => {
     const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
@@ -764,15 +814,18 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
       ],
     });
     const res = approveRefine(db, parent.id);
-    expect(res.ok).toBe(true);
+    expect(res).toMatchObject({ ok: true, queued: false });
     if (!res.ok) return;
     expect(res.childIds).toHaveLength(2);
     expect(getTicket(db, parent.id)!.status).toBe('closed'); // D-036
     const lineage = getLineage(db, parent.id);
     expect(lineage.splitInto.map((r) => r.title).sort()).toEqual(['robot part', 'steve part']);
+    // D-057: the proposed robot_queue child is parked in prioritized — never auto-dispatched.
     const robotChild = listTickets(db).find((t) => t.title === 'robot part')!;
-    expect(robotChild.status).toBe('robot_queue');
-    expect(robotChild.assignee).toBe('robot');
+    expect(robotChild.status).toBe('prioritized');
+    // A non-robot_queue lane (steve_queue) is honored as proposed.
+    const steveChild = listTickets(db).find((t) => t.title === 'steve part')!;
+    expect(steveChild.status).toBe('steve_queue');
   });
 
   it('approveRefine decompose carries each child priority (unset → null)', () => {
@@ -804,16 +857,18 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(getTicket(db, b.id)!.priority).toBe('P4'); // unchanged
   });
 
-  it('approveRefine decompose rejects a non-Sortie-ready robot child (no writes)', () => {
+  it('approveRefine decompose parks an unshaped robot child in prioritized (soft gate, D-057)', () => {
     const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [{ title: 'bad robot', body: 'no sections', status: 'robot_queue', assignee: 'robot' }],
     });
     const res = approveRefine(db, parent.id);
-    expect(res).toMatchObject({ ok: false, reason: 'child_not_sortie_ready', detail: 'bad robot' });
-    expect(getTicket(db, parent.id)!.status).toBe('prioritized'); // unchanged
-    expect(getLineage(db, parent.id).splitInto).toHaveLength(0);
+    expect(res.ok).toBe(true); // no longer rejected — the child is created, just not dispatched
+    expect(getTicket(db, parent.id)!.status).toBe('closed');
+    expect(getLineage(db, parent.id).splitInto).toHaveLength(1);
+    const child = listTickets(db).find((t) => t.title === 'bad robot')!;
+    expect(child.status).toBe('prioritized'); // parked despite the unshaped body
   });
 
   it('approveRefine returns no_proposal when nothing is pending, not_found for unknown', () => {

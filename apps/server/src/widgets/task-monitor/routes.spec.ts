@@ -512,6 +512,16 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('GET /tickets/:id returns the single ticket; 404 unknown; 400 bad id', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const ok = await app.inject({ method: 'GET', url: `${base}/tickets/${id}` });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().id).toBe(id);
+    expect((await app.inject({ method: 'GET', url: `${base}/tickets/9999` })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'GET', url: `${base}/tickets/abc` })).statusCode).toBe(400);
+  });
+
   it('POST /tickets/:id/refine-reply writes a refine_human event and echoes it', async () => {
     const { app, db } = freshSetup();
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
@@ -626,7 +636,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     expect(splitInto[0].origin).toBe('agent');
   });
 
-  it('POST /refine-approve 422s a non-Sortie-ready robot child', async () => {
+  it('POST /refine-approve parks an unshaped robot child instead of rejecting (201, D-057)', async () => {
     const { app, db } = freshSetup();
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
@@ -634,8 +644,41 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
       children: [{ title: 'bad', body: 'no sections', status: 'robot_queue', assignee: 'robot' }],
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
-    expect(res.statusCode).toBe(422);
-    expect(res.json().code).toBe('NOT_SORTIE_READY');
+    expect(res.statusCode).toBe(201);
+    expect(res.json().queued).toBe(false);
+  });
+
+  it('POST /refine-approve { queue: true } dispatches a refine_in_place into robot_queue (201)', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    seedProposal(db, id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    const res = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets/${id}/refine-approve`,
+      payload: { queue: true },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().queued).toBe(true);
+    const ticket = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}` })).json();
+    expect(ticket.status).toBe('robot_queue');
+  });
+
+  it('POST /refine-approve { queue: true } on an Epic is 409 EPIC_NOT_QUEUEABLE, not 500 (PD-377)', async () => {
+    const { app, db } = freshSetup();
+    const res0 = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets`,
+      payload: { title: 'epic', body: 'b', projectId: projectId(db, 'personal-dashboard'), status: 'prioritized', isEpic: true },
+    });
+    const id = res0.json().id as number;
+    seedProposal(db, id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    const res = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets/${id}/refine-approve`,
+      payload: { queue: true },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('EPIC_NOT_QUEUEABLE');
   });
 
   it('POST /refine-approve 409s with no proposal', async () => {
