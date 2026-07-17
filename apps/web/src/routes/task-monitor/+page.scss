@@ -253,16 +253,21 @@
 
 /* ── Board ─────────────────────────────────────── */
 // Two-band board (D-054): explicit grid so the Epic band's In-Progress cell can span the two
-// queue columns. Row 1 = lane headers, row 2 = Epic band, row 3 = Ticket band. Column-gap
-// separates lanes; no row-gap so a lane's three cells stack into one visual column.
+// queue columns. Row 1 = lane headers, row 2 = Epic band, row 3 = resize handle (D-058),
+// row 4 = Ticket band. Column-gap separates lanes; no row-gap so cells stack visually.
 .board {
   display: grid;
   grid-template-columns: repeat(var(--lanes, 6), minmax(205px, 1fr));
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto 8px minmax(0, 1fr);
   column-gap: var(--space-md);
   row-gap: 0;
   align-items: stretch;
   overflow-x: auto;
+}
+
+// When the Epic band is hidden, collapse the Epic and handle rows so no gap appears.
+.board.no-epics {
+  grid-template-rows: auto 0px 0px minmax(0, 1fr);
 }
 
 .lane-head {
@@ -273,16 +278,16 @@
   border-radius: var(--radius) var(--radius) 0 0;
 }
 
-// Epic band cell — stripe-tinted, non-draggable; its bottom border is the divider across the board.
+// Epic band cell — stripe-tinted, non-draggable; its bottom border is the visual divider.
 .epic-cell {
   grid-row: 2;
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
   min-height: 36px;
-  // Cap the Epic band so many epics scroll within the lane instead of shoving the
-  // ticket band down the page (12.5rem ≈ 200px, rem to match the spacing scale).
-  max-height: 12.5rem;
+  // Height is user-controlled via the resize handle (D-058); --epic-area-height is set inline
+  // on .board. Falls back to 200px (the previous hard-coded 12.5rem).
+  max-height: var(--epic-area-height, 200px);
   overflow-y: auto;
   padding: var(--space-sm);
   background: var(--surface-2);
@@ -306,8 +311,38 @@
   width: 100% !important;
 }
 
-.ticket-cell {
+// Drag handle between the Epic band (row 2) and the Ticket band (row 4) (D-058).
+// Spans the full board width; surface-2 background fills the gap between the epic cells'
+// bottom border and the top of the ticket cells so no page background shows through.
+.epic-resize-handle {
   grid-row: 3;
+  grid-column: 1 / -1;
+  cursor: ns-resize;
+  position: relative;
+  z-index: 10;
+  background: var(--surface-2);
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2px;
+    bottom: 2px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background 0.12s;
+  }
+
+  &:hover::after,
+  &.resizing::after {
+    background: var(--accent);
+    opacity: 0.5;
+  }
+}
+
+.ticket-cell {
+  grid-row: 4;
   background: var(--surface);
   border: 1px solid var(--border);
   border-top: none;

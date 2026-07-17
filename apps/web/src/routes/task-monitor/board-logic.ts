@@ -44,6 +44,15 @@ export function computeSortOrder(
   return (prev.sortOrder + next.sortOrder) / 2;
 }
 
+/** Minimum / maximum allowed heights (px) for the Epic area resize (D-058). */
+export const EPIC_HEIGHT_MIN = 36;
+export const EPIC_HEIGHT_MAX = 600;
+
+/** Clamp a candidate epic-area height in pixels to the valid range. */
+export function clampEpicHeight(height: number): number {
+  return Math.max(EPIC_HEIGHT_MIN, Math.min(EPIC_HEIGHT_MAX, height));
+}
+
 /**
  * Fractional `sortOrder` for reordering an item within a flat list (no priority banding) —
  * used for Epic reorder within a derived lane (D-054, PD-337 follow-up). `items` is the lane's

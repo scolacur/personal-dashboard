@@ -21,7 +21,7 @@
   import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
-  import { isStatusLocked, computeSortOrder, computeOrderWithin } from './board-logic';
+  import { isStatusLocked, computeSortOrder, computeOrderWithin, clampEpicHeight } from './board-logic';
   import Button from '$lib/Button.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
@@ -34,6 +34,8 @@
   ];
 
   const LANE_VISIBILITY_KEY = 'task-monitor:hidden-lanes';
+  const EPIC_HEIGHT_KEY = 'task-monitor:epic-area-height';
+  const EPIC_HEIGHT_DEFAULT = 200; // px — matches the previous hard-coded 12.5rem
 
   function loadHiddenLanes(): SvelteSet<TicketStatus> {
     const defaults = new SvelteSet(COLUMNS.filter((c) => c.defaultHidden).map((c) => c.status));
@@ -59,7 +61,47 @@
     }
   }
 
+  function loadEpicAreaHeight(): number {
+    if (!browser) return EPIC_HEIGHT_DEFAULT;
+    const stored = localStorage.getItem(EPIC_HEIGHT_KEY);
+    if (stored === null) return EPIC_HEIGHT_DEFAULT;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) && parsed > 0 ? clampEpicHeight(parsed) : EPIC_HEIGHT_DEFAULT;
+  }
+
+  function saveEpicAreaHeight(height: number) {
+    try {
+      localStorage.setItem(EPIC_HEIGHT_KEY, String(height));
+    } catch (err) {
+      console.warn('[task-monitor] failed to persist epic area height', err);
+    }
+  }
+
   let hiddenLanes = $state(loadHiddenLanes());
+  let epicAreaHeight = $state(loadEpicAreaHeight());
+  let resizing = $state(false);
+  let resizeStartY = 0;
+  let resizeStartHeight = 0;
+
+  function onResizeStart(e: PointerEvent) {
+    e.preventDefault();
+    resizing = true;
+    resizeStartY = e.clientY;
+    resizeStartHeight = epicAreaHeight;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onResizeMove(e: PointerEvent) {
+    if (!resizing) return;
+    epicAreaHeight = clampEpicHeight(resizeStartHeight + (e.clientY - resizeStartY));
+  }
+
+  function onResizeEnd() {
+    if (!resizing) return;
+    resizing = false;
+    saveEpicAreaHeight(epicAreaHeight);
+  }
+
   let laneMenuOpen = $state(false);
   let laneMenuRef = $state<HTMLElement | null>(null);
   let searchInputRef = $state<HTMLInputElement | null>(null);
@@ -825,7 +867,7 @@
 {:else}
   <!-- Two-band board (D-054): a derived, non-draggable Epic band on top; the normal Ticket band
        below. Only the Ticket band is a drop target, so an Epic can never enter Robot's Queue. -->
-  <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}">
+  <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}; --epic-area-height: {epicAreaHeight}px">
     <!-- Row 1: lane headers -->
     {#each visibleColumns as col, i (col.status)}
       {@const tItems = byStatus(col.status)}
@@ -875,6 +917,17 @@
           {/each}
         </div>
       {/each}
+      <!-- Row 3: Resize handle — drag up/down to adjust the Epic area height (D-058) -->
+      <div
+        class="epic-resize-handle"
+        class:resizing
+        role="separator"
+        aria-label="Drag to resize epic area"
+        onpointerdown={onResizeStart}
+        onpointermove={onResizeMove}
+        onpointerup={onResizeEnd}
+        onpointercancel={onResizeEnd}
+      ></div>
     {/if}
 
     <!-- Row 3: Ticket band (the only drop target) -->
