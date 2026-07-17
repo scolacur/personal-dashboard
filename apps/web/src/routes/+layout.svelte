@@ -7,6 +7,9 @@
   import NotificationBell from '$lib/NotificationBell.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
   import { resolvePageTitle } from '$lib/nav-utils';
+  import { widgets, widgetsForPage } from '$lib/widgets';
+  import { pages } from '$lib/pages';
+  import { arrangeMode } from '$lib/arrange.svelte';
   import FloatingPomodoro from './widgets/pomodoro/FloatingPomodoro.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -25,6 +28,26 @@
   // The pomodoro floats over the whole app, but on the ticket-detail page it overlaps the
   // Refine chat window on mobile — hide it there. Match on route id (exact) not pathname.
   const showPomodoro = $derived(page.route.id !== '/task-monitor/tickets/[ticketId]');
+
+  // Arrange button: shown only on widget-bearing pages at >=768px (enforced in CSS).
+  // task-monitor is a Kanban, not a widget grid — excluded.
+  const canArrange = $derived.by(() => {
+    const pathname = page.url.pathname;
+    if (pathname.startsWith('/task-monitor')) return false;
+    if (pathname === '/') return widgets.length > 0;
+    const p = pages.find(
+      (pg) =>
+        pg.route !== '/' && (pathname === pg.route || pathname.startsWith(pg.route + '/')),
+    );
+    return p ? widgetsForPage(p.id).length > 0 : false;
+  });
+
+  // Exit arrange mode whenever the page changes.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    page.url.pathname;
+    arrangeMode.exit();
+  });
 
   onMount(() => {
     const t = document.documentElement.getAttribute('data-theme');
@@ -69,6 +92,14 @@
       {/if}
       <div class="nav-spacer"></div>
       <NotificationBell />
+      {#if canArrange}
+        <button
+          class="arrange-btn"
+          class:active={arrangeMode.active}
+          onclick={arrangeMode.toggle}
+          aria-label={arrangeMode.active ? 'Exit arrange mode' : 'Arrange widgets'}
+        >Arrange</button>
+      {/if}
       <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
         {#if theme === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
       </button>

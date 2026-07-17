@@ -98,6 +98,14 @@ Newest decisions at the top.
 
 ---
 
+## D-056: Arrange mode drag-to-reorder uses native HTML5 DnD (commit-on-drop) rather than `svelte-dnd-action` (PD-331)
+
+**Decision:** D-053 specifies `svelte-dnd-action` for reorder, but adding it would touch `package.json` (dependencies), which is a guarded zone for autonomous agents (CLAUDE.md). Implemented reorder via the browser's native HTML5 drag-and-drop API instead: each widget is `draggable="true"` in arrange mode; `ondragover` highlights the drop target; `ondrop` splices the layouts array and persists to `localStorage`. This is commit-on-drop (the layout updates when the user releases the mouse over a target) rather than live-reorder during drag.
+
+**Alternatives:** `svelte-dnd-action` — better animation and live-reorder during drag, but requires adding a dependency. PD-333 (if/when the DnD libraries are evaluated) could upgrade this surface to `svelte-dnd-action` once the Svelte 5 compat question is answered and the package is added by a human.
+
+---
+
 ## D-052: Auto-merge bridge keys off `mergeStateStatus == CLEAN`, not specific check names (PD-211)
 
 **Decision:** `.github/workflows/sortie-auto-merge.yml` squash-merges a PR when it detects a standing authorized `APPROVED` review AND `mergeStateStatus == CLEAN` (GitHub's composite signal: no conflicts + all required CI checks green + review requirements satisfied). Deliberately does NOT enumerate specific check names like `verify`.

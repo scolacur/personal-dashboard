@@ -3,6 +3,7 @@
   min-height: 140px;
   grid-column: span var(--col-span, 1);
   grid-row: span var(--row-span, 1);
+  position: relative; // enables resize-handle positioning in arrange mode
 }
 
 /* Embedded live widget — no 3D flip; component fills the card */
@@ -163,5 +164,56 @@
   &:hover {
     border-color: var(--accent);
     background: var(--surface);
+  }
+}
+
+/* ── Arrange mode ────────────────────────────────────────────────────────── */
+
+.widget.arranging {
+  cursor: grab;
+  user-select: none;
+}
+
+.widget.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.widget.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+// Intrinsic geometry of the corner resize affordance / its dot-grid indicator.
+// Not spacing-scale values, so kept as local constants rather than global tokens.
+$resize-handle-size: 18px;
+$resize-dot: 1.5px;
+$resize-dot-gap: 6px;
+
+.resize-handle {
+  position: absolute;
+  bottom: var(--space-xs);
+  right: var(--space-xs);
+  width: $resize-handle-size;
+  height: $resize-handle-size;
+  z-index: 10;
+  cursor: se-resize;
+  // Dot-grid indicator pattern
+  background-image: radial-gradient(circle, var(--muted) $resize-dot, transparent $resize-dot),
+    radial-gradient(circle, var(--muted) $resize-dot, transparent $resize-dot);
+  background-size: $resize-dot-gap $resize-dot-gap;
+  background-position:
+    0 0,
+    ($resize-dot-gap * 0.5) ($resize-dot-gap * 0.5);
+  opacity: 0.55;
+
+  &:hover {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .widget {
+    grid-column: span 1;
   }
 }
