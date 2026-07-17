@@ -7,13 +7,25 @@
     ResolvedRelation,
     TicketRelation,
     TicketStatus,
+    TicketPriority,
+    TicketAssignee,
+    UpdateTicketInput,
   } from '@dashboard/shared';
-  import { PRIORITY_LABELS } from '@dashboard/shared';
+  import {
+    PRIORITY_LABELS,
+    AGENT_STATE_LABELS,
+    ASSIGNEE_LABELS,
+    TICKET_STATUSES,
+    TICKET_PRIORITIES,
+    TICKET_ASSIGNEES,
+  } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
+  import GithubMark from '$lib/icons/GithubMark.svelte';
   import TicketThread from '$lib/TicketThread.svelte';
   import RunHistory from '$lib/RunHistory.svelte';
   import ActivityTimeline from '$lib/ActivityTimeline.svelte';
+  import Collapsible from '$lib/Collapsible.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
@@ -25,6 +37,7 @@
 
   let ticket = $state<AgentTicket | null>(null);
   let project = $state<AgentProject | null>(null);
+  let allProjects = $state<AgentProject[]>([]);
   let allTickets = $state<AgentTicket[]>([]);
   let relations = $state<ResolvedRelation[]>([]);
   // Epic members + roll-up (D-054, PD-338), loaded only when this ticket is an Epic.
@@ -33,6 +46,12 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let notFound = $state(false);
+
+  // Option C layout (PD-345). Desktop: Overview is the always-on left column; the right column
+  // toggles between Details and Refine. Mobile: one pane at a time via the bottom nav. The two
+  // states are independent (they belong to different viewports) — CSS shows the relevant one.
+  let rightTab = $state<'details' | 'refine'>('details');
+  let mobilePane = $state<'overview' | 'details' | 'refine'>('overview');
 
   const STATUS_LABELS: Record<TicketStatus, string> = {
     backlog: 'Backlog',
@@ -53,6 +72,7 @@
     project = null;
     try {
       const [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
+      allProjects = projects;
       allTickets = tickets;
       const found = tickets.find((t) => t.displayId === id) ?? null;
       if (!found) {
@@ -86,6 +106,21 @@
     return new Date(ts).toLocaleString();
   }
 
+  // Inline attribute editing (PD-374) — the detail page can now edit what a card can, reusing
+  // the same updateTicket call. A non-empty Epic's lane is derived from its members (D-054), so
+  // status editing is disabled for Epics.
+  const statusLocked = $derived(ticket?.isEpic ?? false);
+  async function updateField(patch: UpdateTicketInput) {
+    if (!ticket || !ticketId) return;
+    error = null;
+    try {
+      await api.updateTicket(ticket.id, patch);
+      await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   // PD-250 inline reply: shown when the agent has parked for input on a linked issue.
   let replyText = $state('');
   let replying = $state(false);
@@ -94,6 +129,30 @@
   const isParked = $derived(
     ticket?.agentState === 'awaiting-human' || ticket?.agentState === 'needs-human',
   );
+
+  // A ticket the Robot loop has parked and won't retry on its own — the C4 remediation controls
+  // (Reset / Unstick) show on the Overview banner for exactly these states.
+  const isRobotParked = $derived(
+    ticket?.agentState === 'stuck' ||
+      ticket?.agentState === 'awaiting-human' ||
+      ticket?.agentState === 'needs-human',
+  );
+
+  // C4 remediation: clear a ticket's retry budget (reset) or a park (unstick) and re-queue it.
+  let remediating = $state(false);
+  async function remediate(kind: 'reset' | 'unstick') {
+    if (!ticket || remediating || !ticketId) return;
+    remediating = true;
+    error = null;
+    try {
+      await (kind === 'reset' ? api.resetTicketRuns(ticket.id) : api.unstickTicket(ticket.id));
+      await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      remediating = false;
+    }
+  }
 
   async function submitReply() {
     if (!ticket || !replyText.trim()) return;
@@ -245,37 +304,86 @@
     <p class="muted">No ticket with id <strong>{ticketId}</strong>.</p>
   </div>
 {:else if ticket}
-  <article class="ticket-detail">
-    <div class="ticket-left">
-      <header class="detail-head">
+  <article class="ticket-detail" data-rt={rightTab} data-pane={mobilePane}>
+    <!-- Header: full width, above the columns. -->
+    <header class="detail-head">
+      <div class="head-badges">
         <span class="detail-id">{ticket.displayId}</span>
         <span class="priority priority-{ticket.priority ?? 'none'}">{ticket.priority ?? '—'}</span>
         {#if ticket.priority}
           <span class="priority-name">{PRIORITY_LABELS[ticket.priority]}</span>
         {/if}
         <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
-        {#if project}
-          <span class="project-chip" style="--chip: {projectIdColor(project)}"
-            >{project.name}</span
-          >
+        {#if ticket.agentState}
+          <span class="agent-pill agent-{ticket.agentState}">
+            {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState}
+          </span>
         {/if}
-      </header>
-
-      <h1 class="detail-title">{ticket.title}</h1>
-
-      {#if ticket.body}
-        <p class="detail-body">{ticket.body}</p>
-      {:else}
-        <p class="muted">No description.</p>
-      {/if}
-
-      {#if ticket.githubIssueUrl}
-        <p>
-          <a class="issue-link" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer"
-            >GitHub issue #{ticket.githubIssueNumber}</a
+        {#if project}
+          <span class="project-chip" style="--chip: {projectIdColor(project)}">{project.name}</span>
+        {/if}
+        {#if ticket.githubIssueUrl}
+          <a
+            class="gh-link"
+            href={ticket.githubIssueUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="GitHub issue #{ticket.githubIssueNumber}"
+            aria-label="GitHub issue #{ticket.githubIssueNumber}"
           >
-        </p>
+            <GithubMark size={15} />
+          </a>
+        {/if}
+      </div>
+      <h1 class="detail-title">{ticket.title}</h1>
+    </header>
+
+    <!-- ── OVERVIEW (desktop left 70% · mobile tab 1) ── -->
+    <section class="pane pane-overview">
+      {#if isRobotParked}
+        <div class="parked-banner agent-{ticket.agentState}">
+          <span class="pb-lead">⛔ {AGENT_STATE_LABELS[ticket.agentState!] ?? ticket.agentState}</span>
+          <span class="pb-note">The Robot won't retry this on its own.</span>
+          <span class="pb-actions">
+            <button class="pb-btn unstick" type="button" onclick={() => remediate('unstick')} disabled={remediating}>
+              Unstick
+            </button>
+            <button class="pb-btn reset" type="button" onclick={() => remediate('reset')} disabled={remediating}>
+              Reset
+            </button>
+          </span>
+        </div>
       {/if}
+
+      {#if isParked && ticket.githubIssueNumber}
+        <section class="reply-box">
+          <h2>Reply to the agent</h2>
+          <p class="muted">
+            The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
+            reply is posted to the issue and re-queues it.
+          </p>
+          <textarea
+            bind:value={replyText}
+            rows="4"
+            placeholder="Type your answer…"
+            disabled={replying}
+          ></textarea>
+          <div class="reply-actions">
+            <button onclick={submitReply} disabled={replying || !replyText.trim()}>
+              {replying ? 'Sending…' : 'Send reply'}
+            </button>
+            {#if replyMsg}<span class="reply-msg">{replyMsg}</span>{/if}
+          </div>
+        </section>
+      {/if}
+
+      <Collapsible title="Description" storeKey="description">
+        {#if ticket.body}
+          <p class="detail-body">{ticket.body}</p>
+        {:else}
+          <p class="muted">No description.</p>
+        {/if}
+      </Collapsible>
 
       {#if !ticket.isEpic && ticket.epicId}
         {@const parent = allTickets.find((t) => t.id === ticket!.epicId)}
@@ -323,37 +431,8 @@
         </section>
       {/if}
 
-      {#if isParked && ticket.githubIssueNumber}
-        <section class="reply-box">
-          <h2>Reply to the agent</h2>
-          <p class="muted">
-            The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
-            reply is posted to the issue and re-queues it.
-          </p>
-          <textarea
-            bind:value={replyText}
-            rows="4"
-            placeholder="Type your answer…"
-            disabled={replying}
-          ></textarea>
-          <div class="reply-actions">
-            <button onclick={submitReply} disabled={replying || !replyText.trim()}>
-              {replying ? 'Sending…' : 'Send reply'}
-            </button>
-            {#if replyMsg}<span class="reply-msg">{replyMsg}</span>{/if}
-          </div>
-        </section>
-      {/if}
-
-      <dl class="detail-meta">
-        <div><dt>Source</dt><dd>{ticket.source}</dd></div>
-        <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
-        <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
-      </dl>
-
-      <section class="relations">
-        <div class="relations-head">
-          <h2>Relations</h2>
+      <Collapsible title="Relations" count={relations.length} storeKey="relations">
+        <div class="rel-add-row">
           <div class="add-rel-wrap">
             <button class="add-rel-btn" type="button" onclick={() => (addMenuOpen = !addMenuOpen)}
               >+ Add</button
@@ -400,43 +479,167 @@
             {/each}
           </ul>
         {/if}
+      </Collapsible>
+
+      <ActivityTimeline ticketId={ticket.id} />
+      <RunHistory ticketId={ticket.id} />
+    </section>
+
+    <!-- ── RIGHT COLUMN: Details | Refine (desktop toggle · mobile tabs 2 & 3) ── -->
+    <div class="right-col">
+      <div class="segbar" role="tablist" aria-label="Right panel">
+        <button
+          class="seg"
+          role="tab"
+          aria-selected={rightTab === 'details'}
+          onclick={() => (rightTab = 'details')}>Details</button
+        >
+        <button
+          class="seg"
+          role="tab"
+          aria-selected={rightTab === 'refine'}
+          onclick={() => (rightTab = 'refine')}>✦ Refine</button
+        >
+      </div>
+
+      <section class="pane pane-details">
+        <!-- Editable inline (PD-374): the detail page can now change attributes, not just cards. -->
+        <dl class="fields">
+          <div>
+            <dt>Status</dt>
+            <dd>
+              <select
+                class="field-select"
+                value={ticket.status}
+                disabled={statusLocked}
+                title={statusLocked ? "An Epic's lane is derived from its members" : 'Set status'}
+                onchange={(e) => updateField({ status: e.currentTarget.value as TicketStatus })}
+              >
+                {#each TICKET_STATUSES as s (s)}
+                  <option value={s}>{STATUS_LABELS[s] ?? s}</option>
+                {/each}
+              </select>
+            </dd>
+          </div>
+          <div>
+            <dt>Priority</dt>
+            <dd>
+              <select
+                class="field-select"
+                value={ticket.priority ?? ''}
+                title="Set priority"
+                onchange={(e) => updateField({ priority: (e.currentTarget.value || null) as TicketPriority | null })}
+              >
+                <option value="">—</option>
+                {#each TICKET_PRIORITIES as p (p)}
+                  <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+                {/each}
+              </select>
+            </dd>
+          </div>
+          <div>
+            <dt>Assignee</dt>
+            <dd>
+              <select
+                class="field-select"
+                value={ticket.assignee ?? ''}
+                title="Set assignee"
+                onchange={(e) => updateField({ assignee: (e.currentTarget.value || null) as TicketAssignee | null })}
+              >
+                <option value="">Unassigned</option>
+                {#each TICKET_ASSIGNEES as a (a)}
+                  <option value={a}>{ASSIGNEE_LABELS[a] ?? a}</option>
+                {/each}
+              </select>
+            </dd>
+          </div>
+          <div>
+            <dt>Project</dt>
+            <dd>
+              <select
+                class="field-select"
+                value={ticket.projectId ?? ''}
+                title="Set project"
+                onchange={(e) => e.currentTarget.value && updateField({ projectId: Number(e.currentTarget.value) })}
+              >
+                {#each allProjects as p (p.id)}
+                  <option value={p.id}>{p.name}</option>
+                {/each}
+              </select>
+            </dd>
+          </div>
+          <div>
+            <dt>Refinement</dt>
+            <dd>{ticket.refined ? '✓ Refined' : (ticket.refineState ?? 'Not started')}</dd>
+          </div>
+          <div><dt>Source</dt><dd>{ticket.source}</dd></div>
+          <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
+          <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
+        </dl>
+        {#if ticket.githubIssueUrl}
+          <p class="details-issue">
+            <a class="issue-link gh-inline" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
+              <GithubMark size={14} /> Issue #{ticket.githubIssueNumber}
+            </a>
+          </p>
+        {/if}
       </section>
 
-      <RunHistory ticketId={ticket.id} />
-    </div>
-
-    <div class="ticket-right">
-      {#if ticket.refined || ticket.refineState === null}
-        <div class="refine-controls">
-          {#if ticket.refined}
-            <span class="refined-badge" title="This ticket has been refined">✓ Refined</span>
-          {:else}
-            <button class="start-refine" type="button" onclick={startRefine} disabled={starting}>
-              {starting ? 'Starting…' : '✦ Start Refine'}
+      <section class="pane pane-refine">
+        {#if ticket.refined}
+          <div class="refine-controls"><span class="refined-badge" title="This ticket has been refined">✓ Refined</span></div>
+        {/if}
+        <TicketThread
+          ticketId={ticket.id}
+          onChanged={() => ticketId && load(ticketId)}
+          onStart={startRefine}
+          {starting}
+        />
+        <div class="refine-footer">
+          <button
+            class="info-btn"
+            type="button"
+            title="Refinement statuses"
+            aria-label="Refinement statuses"
+            onclick={() => (glossaryOpen = true)}>i</button
+          >
+          {#if !ticket.refined && ticket.refineState !== null}
+            <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
+              {markingRefined ? 'Marking…' : '✓ Mark refined'}
             </button>
           {/if}
         </div>
-      {/if}
-
-      <TicketThread ticketId={ticket.id} onChanged={() => ticketId && load(ticketId)} />
-
-      <ActivityTimeline ticketId={ticket.id} />
-
-      <div class="refine-footer">
-        <button
-          class="info-btn"
-          type="button"
-          title="Refinement statuses"
-          aria-label="Refinement statuses"
-          onclick={() => (glossaryOpen = true)}>i</button
-        >
-        {#if !ticket.refined && ticket.refineState !== null}
-          <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
-            {markingRefined ? 'Marking…' : '✓ Mark refined'}
-          </button>
-        {/if}
-      </div>
+      </section>
     </div>
+
+    <!-- ── Mobile bottom nav (hidden on desktop) ── -->
+    <nav class="botnav" aria-label="Ticket sections">
+      <button
+        class="botnav-btn"
+        aria-pressed={mobilePane === 'overview'}
+        onclick={() => (mobilePane = 'overview')}
+      >
+        <span class="ic" aria-hidden="true">▤</span>
+        <span>Overview</span>
+        {#if isRobotParked}<span class="attn-dot" title="Needs attention"></span>{/if}
+      </button>
+      <button
+        class="botnav-btn"
+        aria-pressed={mobilePane === 'details'}
+        onclick={() => (mobilePane = 'details')}
+      >
+        <span class="ic" aria-hidden="true">ℹ️</span>
+        <span>Details</span>
+      </button>
+      <button
+        class="botnav-btn"
+        aria-pressed={mobilePane === 'refine'}
+        onclick={() => (mobilePane = 'refine')}
+      >
+        <span class="ic" aria-hidden="true">✦</span>
+        <span>Refine</span>
+      </button>
+    </nav>
 
     <GlossaryModal open={glossaryOpen} tab="refinement" onClose={() => (glossaryOpen = false)} />
 

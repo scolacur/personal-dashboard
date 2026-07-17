@@ -31,6 +31,7 @@ import {
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
   REFINE_PROPOSAL_EVENT,
+  ROBOT_EVENT,
 } from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
@@ -1272,6 +1273,51 @@ export function getDispatchPauseState(db: Database.Database): DispatchPauseState
   })();
   if (!row || row.value === null) return { paused: false, reason: null, since: null };
   return { paused: true, reason: row.value, since: row.updated_at };
+}
+
+/** Ensure the worker-owned `robot_state` table exists before the server writes it — the server may
+ *  set the pause flag (C4 manual pause) before the worker has ever booted. Mirrors the worker's DDL. */
+function ensureRobotStateTable(db: Database.Database): void {
+  db.exec(
+    'CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)',
+  );
+}
+
+/** Human pause/resume of Robot dispatch (C4/PD-345). Unlike the worker's auto-pause (which keeps
+ *  the first fault reason), a human action overwrites unconditionally: Pause sets the flag with a
+ *  human reason, Resume clears it. The loop honors the flag on its next poll. */
+export function setDispatchPaused(
+  db: Database.Database,
+  paused: boolean,
+  reason: string | null = null,
+  now: number = Date.now(),
+): DispatchPauseState {
+  ensureRobotStateTable(db);
+  db.prepare(
+    `INSERT INTO robot_state (key, value, updated_at) VALUES ('dispatch_paused', ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(paused ? (reason ?? 'paused by human') : null, now);
+  return getDispatchPauseState(db);
+}
+
+export type RobotResetKind = 'reset' | 'unstick';
+
+/** Human per-ticket remediation (C4/PD-345). Writes a `robot_reset`/`robot_unstick` event — the
+ *  boundary the loop counts retries from, so the ticket's transient budget is cleared without
+ *  destroying its run history (C3) — and sets `agent_state = queued` so the loop re-dispatches it
+ *  on its next poll. Returns the updated ticket, or null if it doesn't exist. */
+export function resetRobotRuns(
+  db: Database.Database,
+  ticketId: number,
+  kind: RobotResetKind,
+  now: number = Date.now(),
+): AgentTicket | null {
+  const ticket = getTicket(db, ticketId);
+  if (!ticket) return null;
+  const type = kind === 'unstick' ? ROBOT_EVENT.unstick : ROBOT_EVENT.reset;
+  logEvent(db, ticketId, type, { reason: kind === 'unstick' ? 'unstuck by human' : 'reset by human' });
+  db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run('queued', now, ticketId);
+  return getTicket(db, ticketId);
 }
 
 /** Every known worker heartbeat, freshest first. The web server never talks to a

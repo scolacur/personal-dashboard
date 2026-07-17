@@ -109,4 +109,22 @@ describe('agent_runs', () => {
       { tier: 'system-wide', signature: 'auth', finishedAt: expect.any(Number) },
     ]);
   });
+
+  it('a human reset boundary drops earlier failures from the count (C4/PD-345)', () => {
+    db.exec(
+      'CREATE TABLE IF NOT EXISTS agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER, type TEXT, detail TEXT, created_at INTEGER)',
+    );
+    finishRun(db, startRun(db, { ticketId: 1, issueNumber: null, branch: 'b' }, 100), { status: 'error', faultTier: 'transient', faultSignature: 'x' }, 150);
+    finishRun(db, startRun(db, { ticketId: 1, issueNumber: null, branch: 'b' }, 200), { status: 'error', faultTier: 'transient', faultSignature: 'y' }, 250);
+    expect(failedRunsForTicket(db, 1).length).toBe(2);
+
+    // Reset at t=300 — everything before it stops counting, but the rows stay (history intact).
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, created_at) VALUES (1, 'robot_reset', 300)").run();
+    expect(failedRunsForTicket(db, 1)).toEqual([]);
+    expect(listRunsForTicket(db, 1).length).toBe(2); // rows preserved
+
+    // A failure after the reset counts again.
+    finishRun(db, startRun(db, { ticketId: 1, issueNumber: null, branch: 'b' }, 400), { status: 'error', faultTier: 'transient', faultSignature: 'z' }, 450);
+    expect(failedRunsForTicket(db, 1).length).toBe(1);
+  });
 });

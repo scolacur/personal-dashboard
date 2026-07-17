@@ -3,6 +3,7 @@ import type {
   AgentRun,
   AgentTicket,
   CreateTicketInput,
+  DispatchPauseState,
   EpicSummary,
   RelationType,
   ResolvedRelation,
@@ -130,6 +131,40 @@ export async function fetchSystemStatus(): Promise<SystemStatus> {
   const res = await fetch('/api/widgets/task-monitor/system-status');
   if (!res.ok) return parseError(res);
   return res.json() as Promise<SystemStatus>;
+}
+
+// ── Robot remediation (C4/PD-345) — plain DB writes the loop honors on its next poll. ──
+
+/** Clear a ticket's transient-retry budget and re-dispatch it (for a capped/backing-off ticket). */
+export async function resetTicketRuns(id: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/robot/reset`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
+/** Unstick a parked ticket (stuck / awaiting-human): clear the park + re-queue it. */
+export async function unstickTicket(id: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/robot/unstick`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
+/** Globally pause Robot dispatch (loop-wide). */
+export async function pauseDispatch(reason?: string): Promise<DispatchPauseState> {
+  const res = await fetch('/api/widgets/task-monitor/robot/pause', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<DispatchPauseState>;
+}
+
+/** Resume Robot dispatch — clears a manual pause or a system-wide fault pause (C2). */
+export async function resumeDispatch(): Promise<DispatchPauseState> {
+  const res = await fetch('/api/widgets/task-monitor/robot/resume', { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<DispatchPauseState>;
 }
 
 /**

@@ -14,7 +14,14 @@
   // component reads it via the generic events endpoint and renders the refine_* subset
   // (PD-267). PD-255 will extend the same endpoint/component to the rest of the log.
   // onChanged fires after an approve/reject so the parent can reload the ticket (PD-269).
-  const { ticketId, onChanged }: { ticketId: number; onChanged?: () => void } = $props();
+  // onStart (C4 redesign): before a thread exists, the composer is replaced by a single
+  // "Start Refine" button that calls this — the conversation only opens once there's one to hold.
+  const {
+    ticketId,
+    onChanged,
+    onStart,
+    starting = false,
+  }: { ticketId: number; onChanged?: () => void; onStart?: () => void; starting?: boolean } = $props();
 
   let messages = $state<RefineMessage[]>([]);
   let proposal = $state<RefineProposal | null>(null);
@@ -29,6 +36,25 @@
 
   // True while we're waiting on the agent-worker — the newest turn is Steve's.
   const awaitingAgent = $derived(messages.length > 0 && messages[messages.length - 1].role === 'human');
+
+  // Working indicator: while awaiting a reply, show that the Refine agent is processing, with the
+  // elapsed time since the turn we're waiting on — concrete feedback, no whimsy. Ticks each second.
+  let nowTs = $state(Date.now());
+  $effect(() => {
+    if (!awaitingAgent) return;
+    const t = setInterval(() => (nowTs = Date.now()), 1000);
+    return () => clearInterval(t);
+  });
+  const workingElapsed = $derived(
+    awaitingAgent && messages.length
+      ? Math.max(0, Math.floor((nowTs - messages[messages.length - 1].createdAt) / 1000))
+      : 0,
+  );
+  function fmtElapsed(s: number): string {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    return `${m}m ${s % 60}s`;
+  }
 
   // Svelte action: renders markdown into a node's innerHTML without using {@html}.
   function applyMarkdown(node: HTMLElement, text: string) {
@@ -119,8 +145,12 @@
   {:else if messages.length === 0}
     <ul class="thread" bind:this={threadEl}>
       <li class="muted empty-msg">
-        No Refine conversation yet. Use <strong>Refine</strong> on the board card (or the button
-        above) to start one — the agent-worker's turns and your replies appear here.
+        {#if onStart}
+          No Refine conversation yet. Start one below — the Refine agent grills the ticket into a
+          sharp spec, and its turns and your replies appear here.
+        {:else}
+          No Refine conversation yet.
+        {/if}
       </li>
     </ul>
   {:else}
@@ -185,26 +215,37 @@
       {/if}
 
       {#if awaitingAgent}
-        <li class="muted awaiting">Waiting for the Refine agent to reply…</li>
+        <li class="working" aria-live="polite">
+          <span class="working-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="working-text">Refine agent is working… · {fmtElapsed(workingElapsed)}</span>
+        </li>
       {/if}
     </ul>
   {/if}
 
   {#if !loading && !error}
-    <div class="reply">
-      <textarea
-        bind:value={replyText}
-        rows="3"
-        placeholder="Reply to the Refine agent…"
-        disabled={sending}
-      ></textarea>
-      <div class="reply-actions">
-        <button onclick={submit} disabled={sending || !replyText.trim()}>
-          {sending ? 'Sending…' : 'Send'}
+    {#if messages.length === 0 && onStart}
+      <div class="reply reply-start">
+        <button class="start-refine" type="button" onclick={onStart} disabled={starting}>
+          {starting ? 'Starting…' : '✦ Start Refine'}
         </button>
-        {#if sendMsg}<span class="send-msg">{sendMsg}</span>{/if}
       </div>
-    </div>
+    {:else}
+      <div class="reply">
+        <textarea
+          bind:value={replyText}
+          rows="3"
+          placeholder="Reply to the Refine agent…"
+          disabled={sending}
+        ></textarea>
+        <div class="reply-actions">
+          <button onclick={submit} disabled={sending || !replyText.trim()}>
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+          {#if sendMsg}<span class="send-msg">{sendMsg}</span>{/if}
+        </div>
+      </div>
+    {/if}
   {/if}
 </section>
 

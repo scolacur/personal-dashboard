@@ -2,6 +2,7 @@
   import { marked } from 'marked';
   import type { AgentRun, RobotFaultTier, RobotRunStatus } from '@dashboard/shared';
   import { fetchTicketRuns } from '../routes/task-monitor/api';
+  import Collapsible from './Collapsible.svelte';
 
   // Robot run history for a ticket (C3/PD-344). Self-fetching like TicketThread. The loop is
   // off by default, so most tickets have no runs — this renders nothing until there are any.
@@ -65,8 +66,8 @@
 
 {#if !loading && runs.length > 0}
   <section class="run-history">
-    <h2>Robot runs</h2>
-
+    <!-- The ask_human question stays always-visible (it needs an answer); the run table lives
+         inside the collapsible "Runs" section so a long history can be folded away. -->
     {#if askHuman}
       <div class="ask-human" role="status">
         <div class="ah-head">❓ The Robot asked for input</div>
@@ -82,6 +83,7 @@
       </div>
     {/if}
 
+    <Collapsible title="Runs" count={runs.length} storeKey="runs">
     <div class="runs-scroll">
       <table class="runs-table">
         <thead>
@@ -109,6 +111,7 @@
         </tbody>
       </table>
     </div>
+    </Collapsible>
   </section>
 {/if}
 

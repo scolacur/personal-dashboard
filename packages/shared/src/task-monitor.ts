@@ -692,7 +692,15 @@ export const ROBOT_EVENT = {
   parked: 'robot_parked',
   askHuman: 'robot_ask_human',
   paused: 'robot_paused',
+  // Human remediation actions (C4/PD-345). Written by the server when a button is clicked; they
+  // also mark the retry-budget reset boundary the loop counts failures from.
+  reset: 'robot_reset',
+  unstick: 'robot_unstick',
 } as const;
+
+/** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
+ *  failures with `started_at` AFTER the newest of these. */
+export const ROBOT_RESET_EVENTS: readonly string[] = [ROBOT_EVENT.reset, ROBOT_EVENT.unstick];
 
 export type RobotEventType = (typeof ROBOT_EVENT)[keyof typeof ROBOT_EVENT];
 

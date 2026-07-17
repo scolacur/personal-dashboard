@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { ROBOT_RESET_EVENTS } from '@dashboard/shared';
 import type { FailedRun, FaultTier } from './faults';
 
 /**
@@ -149,19 +150,41 @@ export function runCountForTicket(db: Database.Database, ticketId: number): numb
 }
 
 /**
+ * The retry-budget reset boundary for a ticket (C4/PD-345): the newest `robot_reset`/`robot_unstick`
+ * event's timestamp, or 0 if none. A human Reset/Unstick writes one of those events; failures
+ * BEFORE it stop counting so the ticket gets a fresh budget without destroying run history (C3).
+ * Tolerates a missing events table (some test DBs / worker-booted-before-server) → no boundary.
+ */
+export function resetBoundaryForTicket(db: Database.Database, ticketId: number): number {
+  try {
+    const placeholders = ROBOT_RESET_EVENTS.map(() => '?').join(', ');
+    const row = db
+      .prepare(
+        `SELECT MAX(created_at) AS t FROM agent_ticket_events WHERE ticket_id = ? AND type IN (${placeholders})`,
+      )
+      .get(ticketId, ...ROBOT_RESET_EVENTS) as { t: number | null } | undefined;
+    return row?.t ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * A ticket's FAILED runs as the fault engine (faults.ts) needs them — the `no-verify` and `error`
- * runs only (`ask-human` is a park, not a failure; successes don't count). A missing `fault_tier`
- * (a pre-C2 row) is treated as `transient`, the safe/retryable default.
+ * runs only (`ask-human` is a park, not a failure; successes don't count), and only those AFTER the
+ * latest human reset boundary (C4). A missing `fault_tier` (a pre-C2 row) is treated as `transient`,
+ * the safe/retryable default.
  */
 export function failedRunsForTicket(db: Database.Database, ticketId: number): FailedRun[] {
+  const boundary = resetBoundaryForTicket(db, ticketId);
   const rows = db
     .prepare(
       `SELECT fault_tier, fault_signature, status, finished_at
          FROM agent_runs
-        WHERE ticket_id = ? AND status IN ('no-verify', 'error')
+        WHERE ticket_id = ? AND status IN ('no-verify', 'error') AND started_at > ?
         ORDER BY started_at ASC, id ASC`,
     )
-    .all(ticketId) as { fault_tier: string | null; fault_signature: string | null; status: string; finished_at: number | null }[];
+    .all(ticketId, boundary) as { fault_tier: string | null; fault_signature: string | null; status: string; finished_at: number | null }[];
   return rows.map((r) => ({
     tier: (r.fault_tier as FaultTier | null) ?? 'transient',
     signature: r.fault_signature ?? r.status,
