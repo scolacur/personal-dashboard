@@ -66,8 +66,9 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
  * Decide which candidates the Robot loop may dispatch THIS cycle, given the current in-flight
  * count. Pure so it is unit-tested directly. Applies, in order:
  *  1. dispatch must be enabled;
- *  2. body must be Sortie-ready (defensive — robot_queue entry already checks this);
- *  3. prove-on-one allowlist (empty ⇒ nothing — a hard bring-up catch);
+ *  2. dispatch scope (C6/PD-347): `'none'` ⇒ nothing (killswitch); an id list ⇒ only those
+ *     (prove-on-N); `'all'` ⇒ no id restriction (go-live default);
+ *  3. body must be Sortie-ready (defensive — robot_queue entry already checks this);
  *  4. concurrency cap (leave room for `concurrency - inFlight` new Robots).
  */
 export function selectDispatchable(
@@ -76,11 +77,11 @@ export function selectDispatchable(
   inFlight: number,
 ): RobotCandidate[] {
   if (!config.dispatchEnabled) return [];
+  if (config.allowlist === 'none') return [];
 
-  const allow = new Set(config.allowlist);
-  const eligible = candidates.filter(
-    (c) => isSortieReady(c.body) && allow.has(c.id),
-  );
+  const { allowlist } = config;
+  const inScope = (id: number): boolean => allowlist === 'all' || allowlist.includes(id);
+  const eligible = candidates.filter((c) => isSortieReady(c.body) && inScope(c.id));
 
   const slots = Math.max(0, config.concurrency - inFlight);
   return eligible.slice(0, slots);

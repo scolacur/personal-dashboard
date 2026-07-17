@@ -55,11 +55,9 @@ import {
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import {
-  GITHUB_READ_TOKEN_ENV,
   GITHUB_WRITE_TOKEN_ENV,
   closeIssueNotPlanned,
   postIssueComment,
-  requestGithubSync,
 } from './github-sync';
 
 function isPriority(v: unknown): v is TicketPriority {
@@ -134,27 +132,13 @@ export function registerRoutes(
 
   app.get(`${base}/tickets`, async () => listTickets(db));
 
-  // PD-252: on-demand GitHub→board reconciliation. The board calls this on page load (and
-  // from a "Sync now" button) so a just-closed issue reflects without waiting up to a minute
-  // for the cron. Guarded/coalesced in `requestGithubSync`, so refresh spam can't hammer
-  // GitHub. Returns the outcome ('ran' | 'coalesced' | 'throttled'); the caller re-fetches
-  // tickets afterwards regardless. A missing read token (e.g. dev) is a benign 503 the client
-  // ignores — the board still loads from the current DB.
-  app.post(`${base}/sync`, async (_request, reply) => {
-    const token = deps.githubReadToken ?? process.env[GITHUB_READ_TOKEN_ENV];
-    if (!token) {
-      return reply
-        .status(503)
-        .send({ error: 'sync unavailable — no read token configured', code: 'NO_READ_TOKEN' });
-    }
-    const outcome = await requestGithubSync({
-      db,
-      token,
-      log: app.log,
-      fetchImpl: deps.fetchImpl ?? fetch,
-    });
-    return { outcome };
-  });
+  // On-demand GitHub→board reconciliation (PD-252) is RETIRED at cutover (C6/D-055/PD-347): the
+  // board DB is authoritative, so there is nothing to pull from GitHub — and running the old
+  // label→board sync here would re-introduce the very coupling bug the cutover fixes (it would
+  // overwrite the loop's `in-review`/terminal state from a stale `sortie:*` label). The endpoint is
+  // kept as a 200 no-op so the board's "Sync now" / page-load refresh keeps working — it just
+  // re-fetches the current (authoritative) DB rows. Removed entirely in C7's sweep.
+  app.post(`${base}/sync`, async () => ({ outcome: 'retired' as const }));
 
   app.post(`${base}/tickets`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;

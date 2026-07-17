@@ -4,7 +4,6 @@ import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes, type TaskMonitorRouteDeps } from './routes';
 import { createNotification, getProjectBySlug } from './store';
-import { __resetOnDemandSyncGuard } from './github-sync';
 
 function freshSetup(deps?: TaskMonitorRouteDeps) {
   const db = new Database(':memory:');
@@ -483,32 +482,14 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
   });
 });
 
-describe('POST /api/widgets/task-monitor/sync — on-demand GitHub reconciliation (PD-252)', () => {
-  it('503s when no read token is configured', async () => {
-    __resetOnDemandSyncGuard();
-    const { app } = freshSetup(); // no githubReadToken, and env token not injected
-    const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    expect(res.statusCode).toBe(503);
-    expect(res.json().code).toBe('NO_READ_TOKEN');
-  });
-
-  it('runs a pass when a read token is present and reports the outcome', async () => {
-    __resetOnDemandSyncGuard();
-    const { impl } = recordingFetch('ok');
-    const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
+describe('POST /api/widgets/task-monitor/sync — retired at cutover (C6/PD-347)', () => {
+  it('is a 200 no-op — the board DB is authoritative, nothing is pulled from GitHub', async () => {
+    // Post-cutover the endpoint stays only so the board\'s refresh keeps working; it never runs the
+    // old label→board derivation (that was the coupling bug the cutover fixes). No read token needed.
+    const { app } = freshSetup();
     const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
     expect(res.statusCode).toBe(200);
-    expect(res.json().outcome).toBe('ran');
-  });
-
-  it('throttles a second immediate call so refresh spam cannot hammer GitHub', async () => {
-    __resetOnDemandSyncGuard();
-    const { impl } = recordingFetch('ok');
-    const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
-    const first = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    const second = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    expect(first.json().outcome).toBe('ran');
-    expect(second.json().outcome).toBe('throttled');
+    expect(res.json().outcome).toBe('retired');
   });
 });
 

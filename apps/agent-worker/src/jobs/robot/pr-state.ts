@@ -6,7 +6,8 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { logMilestone } from './events';
 import { lastHandoffAt } from './runs';
-import { setAgentState } from './board';
+import { setAgentState, completeTicket } from './board';
+import { notifyNeedsHuman } from './notify';
 import { readStateNumber, writeState } from './state';
 
 const run = promisify(execFile);
@@ -36,6 +37,8 @@ export interface PrComment {
   createdAt: string;
 }
 export interface PrState {
+  /** `OPEN` | `MERGED` | `CLOSED` (gh's PR state). MERGED/CLOSED are terminal (C6/PD-347). */
+  state: string;
   mergeable: string;
   reviewDecision: string | null;
   reviews: PrReview[];
@@ -62,16 +65,18 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
       };
       const { stdout } = await run(
         'gh',
-        ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'mergeable,reviewDecision,reviews,comments'],
+        ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,mergeable,reviewDecision,reviews,comments'],
         { env },
       );
       const raw = JSON.parse(stdout) as {
+        state?: string;
         mergeable?: string;
         reviewDecision?: string | null;
         reviews?: { author?: { login?: string }; authorAssociation?: string; state?: string; body?: string; submittedAt?: string }[];
         comments?: { author?: { login?: string }; authorAssociation?: string; body?: string; createdAt?: string }[];
       };
       return {
+        state: raw.state ?? 'OPEN',
         mergeable: raw.mergeable ?? 'UNKNOWN',
         reviewDecision: raw.reviewDecision ?? null,
         reviews: (raw.reviews ?? []).map((r) => ({
@@ -181,10 +186,14 @@ export function inReviewPrTargets(db: Database.Database): InReviewTarget[] {
 const PR_POLL_LAST = 'pr_poll_last';
 
 /**
- * Poll in-review PRs and re-activate any that got human feedback or now conflict (C5/PD-346).
+ * Poll in-review PRs and drive their next transition (C5/PD-346, C6/PD-347):
+ *  - MERGED → complete the ticket (Completed lane);
+ *  - CLOSED unmerged → park needs-human;
+ *  - OPEN with trusted feedback or a conflict → re-activate for rework.
  * Throttled to `config.robot.prPollIntervalMs` via a `robot_state` timestamp — the dispatch loop
  * ticks every ~15s, but hitting the GitHub API that often per open PR is needless, so the poll runs
- * on its own slower cadence while still living inside the one loop. Returns the count re-activated.
+ * on its own slower cadence while still living inside the one loop. Returns the count re-activated
+ * for rework (terminal transitions are side effects, not counted).
  */
 export async function pollInReviewPrs(
   db: Database.Database,
@@ -200,6 +209,25 @@ export async function pollInReviewPrs(
   for (const target of inReviewPrTargets(db)) {
     const pr = await fetcher(target.repo, target.prNumber);
     if (!pr) continue;
+
+    // Terminal transitions first (C6/PD-347) — the DB-native replacement for github-sync's old
+    // closed-issue→completed derivation. A MERGED PR completes the ticket; a PR closed WITHOUT
+    // merging is a human abandoning it, so park needs-human rather than complete or re-dispatch.
+    // Only an OPEN PR is a rework candidate.
+    if (pr.state === 'MERGED') {
+      completeTicket(db, target.ticketId, now);
+      logMilestone(db, target.ticketId, ROBOT_EVENT.completed, { prNumber: target.prNumber }, now);
+      logger.info({ ticketId: target.ticketId, prNumber: target.prNumber }, 'robot: PR merged — ticket completed');
+      continue;
+    }
+    if (pr.state === 'CLOSED') {
+      setAgentState(db, target.ticketId, 'needs-human', now);
+      logMilestone(db, target.ticketId, ROBOT_EVENT.prClosed, { prNumber: target.prNumber }, now);
+      notifyNeedsHuman(db, target.ticketId, 'Robot PR closed unmerged', `PR #${target.prNumber} was closed without merging — needs a human.`, now);
+      logger.warn({ ticketId: target.ticketId, prNumber: target.prNumber }, 'robot: PR closed unmerged — parked needs-human');
+      continue;
+    }
+
     const decision = decideReactivation(pr, lastHandoffAt(db, target.ticketId));
     if (!decision.reactivate) continue;
     setAgentState(db, target.ticketId, 'queued', now);

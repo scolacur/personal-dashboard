@@ -706,6 +706,12 @@ export const ROBOT_EVENT = {
   resumed: 'robot_resumed',
   reactivated: 'robot_reactivated',
   stalled: 'robot_stalled',
+  // Cutover (C6/PD-347): the board DB is authoritative and github-sync is retired, so the loop's
+  // PR-state poll now owns TERMINAL transitions too (was github-sync's closed-issue→completed).
+  // `completed` = the ticket's PR merged → Completed lane. `prClosed` = the PR was closed WITHOUT
+  // merging → parked needs-human (a human abandoned it; the loop must not silently complete it).
+  completed: 'robot_completed',
+  prClosed: 'robot_pr_closed',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts

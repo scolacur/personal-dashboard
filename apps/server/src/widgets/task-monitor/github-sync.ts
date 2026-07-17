@@ -373,32 +373,22 @@ export const GITHUB_WRITE_TOKEN_ENV = 'GITHUB_WRITE_TOKEN';
 const SYNC_SCHEDULE = '* * * * *';
 
 /**
- * Register the GitHub sync jobs. Each direction is gated on its own token and is a
- * no-op (with a log line) when that token is unset, so dev and partially-provisioned
- * deploys boot cleanly:
- *   - GITHUB_READ_TOKEN  → label→board status sync (PD-165, read)
- *   - GITHUB_WRITE_TOKEN → queued ticket → GitHub issue+label (PD-164, write)
+ * CUTOVER (C6/D-055/PD-347): the board DB is now authoritative — the GitHub sync jobs are RETIRED,
+ * so this registers nothing. Both directions are gone by design:
+ *   - label→board read sync (`runGithubSync`) derived ticket state FROM `sortie:*` labels. That is
+ *     the coupling bug the cutover fixes: it overwrote the Robot loop's `in-review` hand-off back to
+ *     `queued` from a stale label, re-dispatching the same ticket (PD-347 field note).
+ *   - queued→issue write sync (`runQueuedSync`) minted GitHub issues to feed Sortie's label poll.
+ *     Issue-minting is retired (PD-164): the board Ticket is the durable spec and the PR is the
+ *     execution lease + review surface; no issues are created.
+ * The Robot loop owns every transition natively now — dispatch, rework, and terminal completion (its
+ * PR-state poll marks a ticket completed when the PR merges). The dead `deriveState`/`runGithubSync`/
+ * `runQueuedSync` code and the `sortie:*` label strings are swept out in C7's dead-config pass; they
+ * are left in place here (still unit-tested) so this cutover PR is a pure behavioural flip.
  */
-export function registerGithubSyncJob(cron: CronRegistry, log: CronLogger, db: Database.Database): void {
-  const readToken = process.env[GITHUB_READ_TOKEN_ENV];
-  if (readToken) {
-    cron.register('task-monitor:github-sync', SYNC_SCHEDULE, () =>
-      runGithubSync({ db, token: readToken, log }),
-    );
-  } else {
-    log.info(
-      `github-sync: ${GITHUB_READ_TOKEN_ENV} not set — label→board sync disabled (set it to enable derived status).`,
-    );
-  }
-
-  const writeToken = process.env[GITHUB_WRITE_TOKEN_ENV];
-  if (writeToken) {
-    cron.register('task-monitor:queued-sync', SYNC_SCHEDULE, () =>
-      runQueuedSync({ db, token: writeToken, log }),
-    );
-  } else {
-    log.info(
-      `queued-sync: ${GITHUB_WRITE_TOKEN_ENV} not set — queued→issue sync disabled (set it to enable issue creation + labelling).`,
-    );
-  }
+export function registerGithubSyncJob(_cron: CronRegistry, log: CronLogger, _db: Database.Database): void {
+  void SYNC_SCHEDULE; // retained for the C7 sweep; no job is scheduled at cutover
+  log.info(
+    'github-sync: RETIRED at cutover (C6/D-055) — board DB is authoritative; GitHub labels/issues are no longer read or written for ticket state.',
+  );
 }

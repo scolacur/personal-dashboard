@@ -125,11 +125,20 @@ describe('selectDispatchable', () => {
     expect(selectDispatchable([cand(1)], robotCfg({ dispatchEnabled: false, allowlist: [1] }), 0)).toEqual([]);
   });
 
-  it('dispatches nothing when the allowlist is empty (bring-up catch)', () => {
-    expect(selectDispatchable([cand(1)], robotCfg({ dispatchEnabled: true, allowlist: [] }), 0)).toEqual([]);
+  it('dispatches nothing when the scope is "none" (killswitch, C6/PD-347)', () => {
+    expect(selectDispatchable([cand(1), cand(2)], robotCfg({ dispatchEnabled: true, allowlist: 'none' }), 0)).toEqual([]);
   });
 
-  it('dispatches only allowlisted, Sortie-ready candidates', () => {
+  it('dispatches all Sortie-ready candidates when the scope is "all" (go-live default, C6/PD-347)', () => {
+    const out = selectDispatchable(
+      [cand(1), cand(2), cand(3, 'not ready')],
+      robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 5 }),
+      0,
+    );
+    expect(out.map((c) => c.id)).toEqual([1, 2]); // 3 not ready is still excluded
+  });
+
+  it('dispatches only allowlisted, Sortie-ready candidates when given an id list', () => {
     const out = selectDispatchable(
       [cand(1), cand(2), cand(3, 'not ready')],
       robotCfg({ dispatchEnabled: true, allowlist: [1, 3], concurrency: 5 }),
