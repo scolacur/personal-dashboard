@@ -220,7 +220,7 @@ export function inReviewPrTargets(db: Database.Database): InReviewTarget[] {
             WHERE ticket_id = t.id AND status = 'handed-off' AND pr_url IS NOT NULL
             ORDER BY finished_at DESC, id DESC LIMIT 1
          )
-        WHERE t.archived_at IS NULL AND t.status = 'robot_queue' AND t.agent_state = 'in-review'`,
+        WHERE t.archived_at IS NULL AND t.status = 'queue' AND t.assignee = 'robot' AND t.agent_state = 'in-review'`,
     )
     .all() as { ticket_id: number; pr_url: string | null }[];
   const targets: InReviewTarget[] = [];

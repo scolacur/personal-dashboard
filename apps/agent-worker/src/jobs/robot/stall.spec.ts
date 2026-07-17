@@ -10,7 +10,7 @@ const POLICY: FaultPolicy = { retryCap: 3, promoteAfter: 2, backoffBaseMs: 0, ba
 function db(): Database.Database {
   const d = new Database(':memory:');
   d.exec(`
-    CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
   `);
@@ -18,7 +18,7 @@ function db(): Database.Database {
   return d;
 }
 function working(d: Database.Database, id: number): void {
-  d.prepare("INSERT INTO agent_tickets (id, status, agent_state) VALUES (?, 'robot_queue', 'working')").run(id);
+  d.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (?, 'queue', 'robot', 'working')").run(id);
 }
 function state(d: Database.Database, id: number): string | null {
   return (d.prepare('SELECT agent_state AS s FROM agent_tickets WHERE id = ?').get(id) as { s: string | null }).s;

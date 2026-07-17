@@ -25,7 +25,7 @@ import type {
   DispatchPauseState,
 } from '@dashboard/shared';
 import {
-  laneForcedAssignee,
+  isReady,
   latestActionableProposal,
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
@@ -51,6 +51,8 @@ interface TicketRow {
   github_issue_url: string | null;
   agent_state: string | null;
   refined: number;
+  ready: number;
+  ready_bypassed: number;
   is_epic: number;
   epic_id: number | null;
   archived_at: number | null;
@@ -102,6 +104,8 @@ function rowToTicket(row: TicketRow): AgentTicket {
     agentState: row.agent_state as AgentTicket['agentState'],
     refineState: refineStateFromLatestType(row.latest_refine_type),
     refined: row.refined === 1,
+    ready: row.ready === 1,
+    readyBypassed: row.ready_bypassed === 1,
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
     archivedAt: row.archived_at,
@@ -193,11 +197,10 @@ export function listTickets(db: Database.Database): AgentTicket[] {
          CASE status
            WHEN 'backlog' THEN 0
            WHEN 'prioritized' THEN 1
-           WHEN 'robot_queue' THEN 2
-           WHEN 'steve_queue' THEN 3
-           WHEN 'completed' THEN 4
-           WHEN 'closed' THEN 5
-           ELSE 6
+           WHEN 'queue' THEN 2
+           WHEN 'completed' THEN 3
+           WHEN 'closed' THEN 4
+           ELSE 5
          END,
          sort_order ASC,
          id ASC`,
@@ -251,25 +254,26 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     } else {
       displayId = nextDisplayId(db, input.projectId);
     }
-    // D-044: a queue lane forces its assignee on entry, overriding any hint the
-    // caller passed; non-queue lanes keep the requested value (a free hint / null).
-    const requestedAssignee: TicketAssignee | null =
+    // D-058: assignee is a free axis — no lane forces it. Keep the requested value (a hint / null).
+    const assignee: TicketAssignee | null =
       input.assignee === undefined ? null : input.assignee;
-    const assignee: TicketAssignee | null = laneForcedAssignee(status) ?? requestedAssignee;
-    // D-054: an Epic never nests (its own epic_id stays null) and can never be created into
-    // robot_queue; a member's epic_id is validated against the target Epic.
+    // D-058: `ready` is computed from the body on every write and persisted (server-authoritative,
+    // never client-set). A create always writes a body (possibly null), so always recompute.
+    const readyFlag = isReady(input.body ?? null) ? 1 : 0;
+    // D-054/D-058: an Epic never nests (its own epic_id stays null) and can never be created into
+    // `queue` (regardless of assignee); a member's epic_id is validated against the target Epic.
     const isEpic = input.isEpic === true;
     const epicId = isEpic ? null : (input.epicId ?? null);
-    if (isEpic && status === 'robot_queue') {
-      throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter robot_queue');
+    if (isEpic && status === 'queue') {
+      throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter the queue');
     }
     validateEpicMembership(db, { epicId, projectId: input.projectId });
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, is_epic, epic_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, is_epic, epic_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, isEpic ? 1 : 0, epicId, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, isEpic ? 1 : 0, epicId, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     return id;
@@ -311,17 +315,30 @@ export function updateTicket(
     githubIssueUrl:
       patch.githubIssueUrl === undefined ? existing.githubIssueUrl : patch.githubIssueUrl,
     refined: patch.refined === undefined ? existing.refined : patch.refined,
+    // D-058: `ready` is server-computed from the body (recomputed below when body is in the patch),
+    // never client-set. `readyBypassed` IS client-settable (the confirm-modal flag), defaults to
+    // the existing value.
+    ready: existing.ready,
+    readyBypassed: patch.readyBypassed === undefined ? existing.readyBypassed : patch.readyBypassed,
     isEpic: patch.isEpic === undefined ? existing.isEpic : patch.isEpic,
     // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
     epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
     updatedAt: Date.now(),
   };
 
-  // D-054 epic invariants. An Epic never nests (its own epic_id is forced null) and can never
-  // enter robot_queue; a member's epic_id is validated against the target Epic.
+  // D-058: recompute `ready` whenever the body is written (create always; update when `body` is in
+  // the patch). It always reflects the CURRENT body — editing a Ready ticket keeps it Ready as long
+  // as the four sections survive, and drops it the instant one is lost. `ready_bypassed` is left as
+  // set above (D-058: it goes moot once the body is fixed since the gate is `ready OR bypassed`).
+  if (patch.body !== undefined) {
+    next.ready = isReady(next.body);
+  }
+
+  // D-054/D-058 epic invariants. An Epic never nests (its own epic_id is forced null) and can never
+  // enter `queue` (regardless of assignee); a member's epic_id is validated against the target Epic.
   if (next.isEpic) next.epicId = null;
-  if (next.isEpic && next.status === 'robot_queue') {
-    throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter robot_queue');
+  if (next.isEpic && next.status === 'queue') {
+    throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter the queue');
   }
   // Un-flagging an Epic that still owns members would orphan their epic_id — refuse it.
   if (existing.isEpic && !next.isEpic && epicMemberCount(db, id) > 0) {
@@ -331,19 +348,15 @@ export function updateTicket(
     validateEpicMembership(db, { epicId: next.epicId, projectId: next.projectId, selfId: id });
   }
 
-  // D-044: entering a queue lane forces the matching assignee, overriding any prior
-  // value or hint — so "queued = assigned" holds regardless of who writes (the
-  // agent-worker, a manual board drag, the API). Non-queue lanes leave assignee as set above.
-  const forcedAssignee = laneForcedAssignee(next.status);
-  if (forcedAssignee !== null) {
-    next.assignee = forcedAssignee;
-  }
+  // D-058: assignee is a free axis — the lane no longer forces it (reverses D-044/D-055).
+  // `next.assignee` is whatever the caller set (or the existing value); left untouched here.
 
-  // Blocker gate (D-048): a ticket cannot ENTER robot_queue while it has unresolved blockers.
-  // This (and the Epic guard above) are the hard queue-entry invariants; isRobotReady is only a
-  // soft UI shape hint (D-057), not enforced here. Entry-only: an already-queued ticket that
-  // later gains a blocker is not evicted here (PD-322's confirm covers that at add time).
-  if (next.status === 'robot_queue' && existing.status !== 'robot_queue') {
+  // Blocker gate (D-051, retargeted to `queue` by D-058): a ticket cannot ENTER `queue` while it
+  // has unresolved blockers. This (and the Epic guard above) are the hard queue-entry invariants;
+  // `ready` is the dispatch gate for the robot loop (read from the persisted flag), not enforced
+  // here. Entry-only: an already-queued ticket that later gains a blocker is not evicted here
+  // (PD-322's confirm covers that at add time).
+  if (next.status === 'queue' && existing.status !== 'queue') {
     const blockers = unresolvedBlockers(db, id);
     if (blockers.length > 0) throw new QueueBlockedError(blockers);
   }
@@ -351,7 +364,7 @@ export function updateTicket(
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, is_epic = ?, epic_id = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, is_epic = ?, epic_id = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -364,6 +377,8 @@ export function updateTicket(
       next.githubIssueNumber,
       next.githubIssueUrl,
       next.refined ? 1 : 0,
+      next.ready ? 1 : 0,
+      next.readyBypassed ? 1 : 0,
       next.isEpic ? 1 : 0,
       next.epicId,
       next.updatedAt,
@@ -440,10 +455,9 @@ export function listSyncTargets(db: Database.Database): SyncTarget[] {
  * Write a GitHub-derived (status, agentState, assignee) onto a ticket. Poller-only:
  * unlike `updateTicket` it also sets `agent_state`, and it's a no-op (returns false)
  * when nothing changed, so an unchanged poll writes nothing and logs no event.
- * `assignee` is optional — when absent, the ticket's assignee is left alone, EXCEPT
- * that a queue-lane target still forces its assignee (D-044): entering `robot_queue`/
- * `steve_queue` sets robot/steve even when the derived rule carries no assignee (e.g.
- * an `in-review` state), so the poller can't leave a queue lane mis-assigned.
+ * `assignee` is optional — when absent, the ticket's assignee is left alone. D-058:
+ * the lane no longer forces an assignee (assignee is an independent axis), so the
+ * derived `assignee` (when provided) is written as-is.
  */
 export function applyDerivedState(
   db: Database.Database,
@@ -454,8 +468,8 @@ export function applyDerivedState(
 ): boolean {
   const existing = getTicket(db, id);
   if (!existing) return false;
-  // Lane wins; else the derived assignee; else undefined = leave alone.
-  const effectiveAssignee = laneForcedAssignee(status) ?? assignee;
+  // The derived assignee when provided; else undefined = leave alone (D-058: no lane force).
+  const effectiveAssignee = assignee;
   const assigneeChanged = effectiveAssignee !== undefined && existing.assignee !== effectiveAssignee;
   if (existing.status === status && existing.agentState === agentState && !assigneeChanged) return false;
   const now = Date.now();
@@ -478,8 +492,8 @@ export function applyDerivedState(
   return true;
 }
 
-/** A ticket in the `robot_queue` lane whose project is robot-enabled with a repo — the
- *  input for the board→GitHub queued-issue sync (PD-164). `githubIssueNumber` is null
+/** A ticket in the `queue` lane assigned to the robot, whose project is robot-enabled with a
+ *  repo — the input for the board→GitHub queued-issue sync (PD-164). `githubIssueNumber` is null
  *  when no issue has been created/linked yet. */
 export interface QueuedIssueTarget {
   id: number;
@@ -490,10 +504,10 @@ export interface QueuedIssueTarget {
 }
 
 /**
- * Tickets currently in `robot_queue` (the D-040 dispatch lane), in a robot-enabled
- * project with a repo — both already-linked and not-yet-linked. PD-164 ensured each had
- * a queued GitHub issue (creating + linking one when absent). Entering `robot_queue` is
- * therefore the dispatch trigger.
+ * Tickets currently in `queue` assigned to `robot` (D-058: queue + robot = the dispatch axis),
+ * in a robot-enabled project with a repo — both already-linked and not-yet-linked. PD-164 ensured
+ * each had a queued GitHub issue (creating + linking one when absent). A robot-assigned queued
+ * ticket is therefore the dispatch trigger.
  */
 export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget[] {
   const rows = db
@@ -502,7 +516,8 @@ export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
         WHERE t.archived_at IS NULL
-          AND t.status = 'robot_queue'
+          AND t.status = 'queue'
+          AND t.assignee = 'robot'
           AND p.robot_enabled = 1
           AND p.github_repo IS NOT NULL`,
     )
@@ -637,12 +652,13 @@ export function listEpicMembers(db: Database.Database, epicId: number): AgentTic
 }
 
 /** Derive an Epic's board lane from its members (D-054). With no members, fall back to the Epic's
- *  own hand-set status (an Epic can never be `robot_queue`, so a queue status → in_progress). */
+ *  own hand-set status (an Epic can never be `queue`, so a queue status → in_progress). */
 function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus): EpicDerivedLane {
   if (memberStatuses.length === 0) {
+    // D-058: an Epic can never be `queue`, so a hand-set `queue` should never reach here; map it
+    // defensively to in_progress (it never gets past the queue guard anyway).
     switch (ownStatus) {
-      case 'robot_queue':
-      case 'steve_queue':
+      case 'queue':
         return 'in_progress';
       case 'completed':
         return 'completed';
@@ -654,7 +670,7 @@ function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus)
         return 'backlog';
     }
   }
-  if (memberStatuses.some((s) => s === 'robot_queue' || s === 'steve_queue')) return 'in_progress';
+  if (memberStatuses.some((s) => s === 'queue')) return 'in_progress';
   const allDone = memberStatuses.every((s) => s === 'completed' || s === 'closed');
   if (allDone) return memberStatuses.some((s) => s === 'completed') ? 'completed' : 'closed';
   // Nobody in a queue, not all done → least-advanced pending lane.
@@ -822,8 +838,8 @@ export class SelfRelationError extends Error {
   }
 }
 
-/** The blocker gate (D-048): a ticket cannot enter `robot_queue` while it has unresolved
- *  blockers. Thrown from `updateTicket`; the PATCH route maps it to 409. */
+/** The blocker gate (D-051, retargeted to `queue` by D-058): a ticket cannot enter `queue` while
+ *  it has unresolved blockers. Thrown from `updateTicket`; the PATCH route maps it to 409. */
 export class QueueBlockedError extends Error {
   constructor(public readonly blockers: LineageRef[]) {
     super(`blocked by unresolved: ${blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`);
@@ -1045,7 +1061,7 @@ export type ApproveRefineResult =
       mode: RefineCommitMode;
       refinedTicketId?: number;
       childIds?: number[];
-      /** True when the approval also moved the ticket into robot_queue (`queue: true`). */
+      /** True when the approval also moved the ticket into `queue` (`queue: true`). */
       queued?: boolean;
     }
   | {
@@ -1064,11 +1080,11 @@ export type ApproveRefineResult =
  * agent-worker only proposes; this is the single place tickets are written, so the lane→assignee
  * invariant is enforced here.
  *
- * D-057: **approval never dispatches on its own.** A plain approve rewrites/creates tickets and
- * marks them refined but never enters robot_queue — an agent-proposed robot_queue is parked in
- * `prioritized`. Entering the Robot's Queue is a separate, explicit act: a board drag, or the
+ * D-057/D-058: **approval never dispatches on its own.** A plain approve rewrites/creates tickets
+ * and marks them refined but never enters `queue` — an agent-proposed `queue` is parked in
+ * `prioritized`. Entering the Queue is a separate, explicit act: a board drag, or the
  * "Approve & queue" button (`opts.queue`), which is offered only for a non-Epic refine_in_place.
- * `isRobotReady` is a soft shape hint surfaced in the UI, not a gate here (matches the drag path).
+ * `ready` is recomputed from the body on write (surfaced in the UI), not a gate here.
  *
  * Refine-in-place rewrites the ticket; decompose creates children in non-queue lanes, closes the
  * parent (D-036), and links each via a `split` relation. All-or-nothing (one transaction).
@@ -1091,14 +1107,14 @@ export function approveRefine(
     const wantQueue = opts.queue === true;
 
     if (wantQueue) {
-      // Explicit dispatch intent ("Approve & queue"). An Epic can never enter robot_queue
-      // (D-054) — refuse cleanly so approveRefine keeps its no-throw contract rather than
+      // Explicit dispatch intent ("Approve & queue"). An Epic can never enter `queue`
+      // (D-054/D-058) — refuse cleanly so approveRefine keeps its no-throw contract rather than
       // letting updateTicket's EpicGuardError escape the transaction.
       if (parent.isEpic) {
         return { ok: false, reason: 'epic_not_queueable', detail: parent.displayId ?? String(ticketId) };
       }
-      // Blocker gate (D-048): pre-check here for the same no-throw reason (QueueBlockedError).
-      if (parent.status !== 'robot_queue') {
+      // Blocker gate (D-051): pre-check here for the same no-throw reason (QueueBlockedError).
+      if (parent.status !== 'queue') {
         const blockers = unresolvedBlockers(db, ticketId);
         if (blockers.length > 0) {
           return {
@@ -1110,10 +1126,10 @@ export function approveRefine(
       }
     }
 
-    // D-057: plain approve parks a proposed robot_queue in `prioritized`; only `queue: true`
-    // dispatches. isRobotReady stays soft (surfaced in the UI, never enforced here).
-    const status = wantQueue ? 'robot_queue' : proposed === 'robot_queue' ? 'prioritized' : proposed;
-    const queued = status === 'robot_queue';
+    // D-057/D-058: plain approve parks a proposed `queue` in `prioritized`; only `queue: true`
+    // dispatches. `ready` is recomputed from the body on write (never enforced here).
+    const status = wantQueue ? 'queue' : proposed === 'queue' ? 'prioritized' : proposed;
+    const queued = status === 'queue';
 
     const run = db.transaction(() => {
       updateTicket(db, ticketId, {
@@ -1144,10 +1160,10 @@ export function approveRefine(
   const childIds: number[] = [];
   const run = db.transaction(() => {
     for (const c of children) {
-      // Decompose-A (D-057): a child never enters robot_queue at approval — an agent-proposed
-      // robot_queue is parked in `prioritized`; Steve drags the ready ones in. The shaped body
-      // is preserved, so a downgraded child stays one drag away from dispatch.
-      const childStatus = c.status === 'robot_queue' ? 'prioritized' : c.status;
+      // Decompose-A (D-057/D-058): a child never enters `queue` at approval — an agent-proposed
+      // `queue` is parked in `prioritized`; Steve drags the ready ones in. The shaped body is
+      // preserved, so a downgraded child stays one drag away from dispatch.
+      const childStatus = c.status === 'queue' ? 'prioritized' : c.status;
       const child = createTicket(db, {
         title: c.title,
         body: c.body,

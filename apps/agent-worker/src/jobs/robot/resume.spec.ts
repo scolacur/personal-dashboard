@@ -7,7 +7,7 @@ function db(): Database.Database {
   const d = new Database(':memory:');
   d.exec(`
     CREATE TABLE agent_tickets (
-      id INTEGER PRIMARY KEY, title TEXT, body TEXT, status TEXT NOT NULL,
+      id INTEGER PRIMARY KEY, title TEXT, body TEXT, status TEXT NOT NULL, assignee TEXT,
       agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
@@ -16,7 +16,7 @@ function db(): Database.Database {
 }
 
 function parked(d: Database.Database, id: number, state = 'awaiting-human'): void {
-  d.prepare("INSERT INTO agent_tickets (id, status, agent_state) VALUES (?, 'robot_queue', ?)").run(id, state);
+  d.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (?, 'queue', 'robot', ?)").run(id, state);
 }
 function ev(d: Database.Database, id: number, type: string, detail: unknown, at: number): void {
   d.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(id, type, JSON.stringify(detail), at);

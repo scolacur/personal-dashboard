@@ -23,15 +23,15 @@ describe('validateProposalShape', () => {
     expect(validateProposalShape(p)).toBeNull();
   });
 
-  it('rejects a decompose child routed into a queue lane (D-057: Refine never queues)', () => {
+  it('rejects a decompose child routed into a queue lane (D-057/D-058: Refine never queues)', () => {
     const robot: RefineProposal = {
       mode: 'decompose',
-      children: [{ title: 'c', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' }],
+      children: [{ title: 'c', body: ROBOT_BODY, status: 'queue', assignee: 'robot' }],
     };
     expect(validateProposalShape(robot)).toMatch(/does not queue tickets/);
     const steve: RefineProposal = {
       mode: 'decompose',
-      children: [{ title: 'c', body: ROBOT_BODY, status: 'steve_queue', assignee: 'steve' }],
+      children: [{ title: 'c', body: ROBOT_BODY, status: 'queue', assignee: 'steve' }],
     };
     expect(validateProposalShape(steve)).toMatch(/does not queue tickets/);
   });
@@ -48,12 +48,9 @@ describe('validateProposalShape', () => {
     ).toBeNull();
   });
 
-  it('rejects a refine_in_place routed into a queue lane (D-057)', () => {
+  it('rejects a refine_in_place routed into a queue lane (D-057/D-058)', () => {
     expect(
-      validateProposalShape({ mode: 'refine_in_place', body: ROBOT_BODY, status: 'robot_queue' }),
-    ).toMatch(/does not queue tickets/);
-    expect(
-      validateProposalShape({ mode: 'refine_in_place', body: ROBOT_BODY, status: 'steve_queue' }),
+      validateProposalShape({ mode: 'refine_in_place', body: ROBOT_BODY, status: 'queue' }),
     ).toMatch(/does not queue tickets/);
   });
 });

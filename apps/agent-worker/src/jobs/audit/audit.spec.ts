@@ -167,7 +167,7 @@ describe('getAuditableTickets', () => {
     db.prepare("INSERT INTO agent_tickets (title, status, project_id) VALUES ('a', 'backlog', 1)").run();
     db.prepare("INSERT INTO agent_tickets (title, status, project_id) VALUES ('b', 'completed', 1)").run();
     db.prepare("INSERT INTO agent_tickets (title, status, project_id, archived_at) VALUES ('c', 'backlog', 1, 123)").run();
-    db.prepare("INSERT INTO agent_tickets (title, status, project_id) VALUES ('d', 'steve_queue', 1)").run();
+    db.prepare("INSERT INTO agent_tickets (title, status, project_id) VALUES ('d', 'queue', 1)").run();
     const rows = getAuditableTickets(db, 1);
     expect(rows.map((r) => r.title).sort()).toEqual(['a', 'd']);
   });

@@ -13,7 +13,8 @@ function boardDb(): Database.Database {
   db.exec(`
     CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
-      id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL,
+      id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
+      ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
@@ -37,8 +38,8 @@ function eventTypes(db: Database.Database, ticketId: number): string[] {
 
 function addQueued(db: Database.Database, id: number, issue: number | null = id): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, project_id, github_issue_number, agent_state)
-     VALUES (?, ?, ?, 'robot_queue', 1, ?, NULL)`,
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, project_id, github_issue_number, agent_state)
+     VALUES (?, ?, ?, 'queue', 'robot', 1, 1, ?, NULL)`,
   ).run(id, `T${id}`, READY, issue);
 }
 

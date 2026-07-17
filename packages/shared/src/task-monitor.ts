@@ -16,38 +16,31 @@ export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
 /**
  * The assignee a lane forces on entry, or `null` if the lane leaves assignee free.
  *
- * D-044: entering a queue lane makes "queued = assigned" true in the data layer —
- * `robot_queue` ⇒ `robot`, `steve_queue` ⇒ `steve` — overriding any prior value or
- * hint, so the invariant holds no matter who writes (the agent-worker, a manual board
- * drag, or the API). In `backlog`/`prioritized`/`completed`/`closed`, assignee is a
- * free optional hint and this returns `null` (leave it as provided). The store layer
- * (createTicket/updateTicket) is the single enforcement point.
+ * D-058 REVERSES D-055/D-044: assignee is no longer forced by the lane. The two queue
+ * lanes collapsed into one `queue` status and `assignee` became an independent axis —
+ * settable at any stage, never overridden by the lane. So this returns `null` for
+ * EVERY status now (kept as a function so callers need no signature change; a later
+ * cleanup ticket may drop it entirely). Dispatch is decided by
+ * `status='queue' AND assignee='robot' AND (ready OR ready_bypassed) AND unblocked`,
+ * not by a lane forcing the assignee.
  */
-export function laneForcedAssignee(status: TicketStatus): TicketAssignee | null {
-  switch (status) {
-    case 'robot_queue':
-      return 'robot';
-    case 'steve_queue':
-      return 'steve';
-    default:
-      return null;
-  }
+export function laneForcedAssignee(_status: TicketStatus): TicketAssignee | null {
+  return null;
 }
 
-// The Kanban lanes (DECISIONS D-040 board redesign, PD-245). All six are the `status`.
+// The Kanban lanes (DECISIONS D-040 board redesign, PD-245; D-058 collapse). Five statuses.
 //  - backlog / prioritized: set by hand (prioritized = pre-refine triage, "do this next").
-//  - robot_queue: ONE lane for a ticket dispatched to the Robot loop — every non-terminal
-//    agent state lives here; the fine state (queued/in-progress/in-review/…) is
-//    carried by `agentState` and shown as a status pill. Entering this lane is the
-//    dispatch trigger.
-//  - steve_queue: work Steve does under his own supervision (manual, never agent-locked).
+//  - queue: ONE queue lane (D-058, collapses the old robot_queue + steve_queue). Who does the
+//    work is the independent `assignee` axis: `robot` + queued + Ready = fair game for the loop;
+//    `steve` + queued = the personal to-do lane; `null` + queued = queued-but-unassigned. Every
+//    non-terminal agent state lives here; the fine state (queued/in-progress/in-review/…) is
+//    carried by `agentState` and shown as a status pill.
 //  - completed: agent-set terminal (the Robot loop's PR merged). closed: manual/wontfix
 //    terminal (D-036), hidden by default.
 export type TicketStatus =
   | 'backlog'
   | 'prioritized'
-  | 'robot_queue'
-  | 'steve_queue'
+  | 'queue'
   | 'completed'
   | 'closed';
 
@@ -56,7 +49,7 @@ export type TicketStatus =
 export type TicketPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
 
 // Fine-grained agent state, owned by the Robot loop (D-055). In the redesigned board
-// (D-040) every non-terminal agent state maps to the single `robot_queue` status, so
+// (D-040/D-058) every non-terminal agent state maps to the single `queue` status, so
 // `agentState` is what distinguishes them on the card (rendered as a status pill). Only
 // 'working' drives the active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are
 // paused-need-attention; 'queued'/'in-review' are informational; 'done' is terminal (the
@@ -75,8 +68,7 @@ export type AgentState =
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
   'prioritized',
-  'robot_queue',
-  'steve_queue',
+  'queue',
   'completed',
   'closed',
 ] as const;
@@ -212,8 +204,16 @@ export interface AgentTicket {
    *  Persistent marker: gates the Refine button (hidden once true) and shows a ✓. Flipped
    *  by the commit/approval step (PD-269) or the manual "Mark refined" control. */
   refined: boolean;
+  /** Whether the body is Robot-ready — the mechanical 4-section shape check (`isReady`),
+   *  recomputed on every body write and persisted (D-058). Server-computed, NOT client-settable
+   *  (absent from Create/UpdateTicketInput). The one hard dispatch gate for the robot loop. */
+  ready: boolean;
+  /** Set when a human queued a not-Ready robot ticket through the confirm modal (D-058, PD-399).
+   *  The loop gate is `ready || readyBypassed`; goes moot once the body is fixed (recompute makes
+   *  `ready` true). Never fakes `ready`, so the board can show an honest "⚠ bypassed" badge. */
+  readyBypassed: boolean;
   /** True when this Ticket is an Epic umbrella (D-054, PD-336). An Epic groups member Tickets,
-   *  is never dispatched (cannot enter `robot_queue`), and its board status is derived. */
+   *  is never dispatched (cannot enter `queue`), and its board status is derived. */
   isEpic: boolean;
   /** The single parent Epic this Ticket belongs to, or null. An Epic itself always has this null
    *  (no nesting). "Belongs to" — not "child of"; parent/child is reserved for `split` lineage. */
@@ -268,14 +268,18 @@ export interface UpdateTicketInput {
   githubIssueUrl?: string | null;
   /** Mark the ticket refined (D-044, PD-268). Omit to leave unchanged. */
   refined?: boolean;
+  /** Set when a human queued a not-Ready robot ticket via the confirm modal (D-058, PD-399);
+   *  defaults false. Omit to leave unchanged. `ready` is NOT client-settable (server-computed
+   *  from the body), so it is deliberately absent here. */
+  readyBypassed?: boolean;
   /** Flag/unflag as an Epic (D-054). Omit to leave unchanged. */
   isEpic?: boolean;
   /** Set (via id) or clear (via null) the parent Epic. Omit to leave unchanged. */
   epicId?: number | null;
 }
 
-/** An Epic's derived board lane (D-054, PD-336). `in_progress` is the synthetic cell spanning the
- *  two queue columns in the Epic band — an Epic is never *in* `robot_queue`/`steve_queue` itself. */
+/** An Epic's derived board lane (D-054, PD-336). `in_progress` is the synthetic cell over the
+ *  single `queue` column in the Epic band (D-058) — an Epic is never *in* `queue` itself. */
 export type EpicDerivedLane = 'backlog' | 'prioritized' | 'in_progress' | 'completed' | 'closed';
 
 /** Per-Epic roll-up the board reads to place the Epic card + show `done/total` (D-054, PD-336).
@@ -295,7 +299,7 @@ export interface EpicSummary {
  * `## Done When` also accepts a `(acceptance checklist)` suffix.
  * All matched case-insensitively, tolerant of trailing text on the heading line.
  */
-const ROBOT_REQUIRED_HEADERS = [
+const REQUIRED_HEADERS = [
   /^## context/im,
   /^## task/im,
   /^## done when/im,
@@ -303,12 +307,14 @@ const ROBOT_REQUIRED_HEADERS = [
 ] as const;
 
 /**
- * Returns true iff `body` contains all four Robot-ready section headers.
- * The standard hand-off shape a ticket must carry before it can enter `robot_queue`.
+ * Returns true iff `body` contains all four Ready section headers (D-058: `ready`). The standard
+ * hand-off shape a ticket's body must carry. Recomputed on every body write and persisted as the
+ * `ready` column; the robot loop's hard dispatch gate reads that persisted flag (renamed from the
+ * former `isRobotReady`; the check itself is unchanged — only the name + persist-on-write changed).
  */
-export function isRobotReady(body: string | null): boolean {
+export function isReady(body: string | null): boolean {
   if (!body) return false;
-  return ROBOT_REQUIRED_HEADERS.every((re) => re.test(body));
+  return REQUIRED_HEADERS.every((re) => re.test(body));
 }
 
 // ── Notification Center (D-040) ──────────────────────────────────────────────
@@ -482,8 +488,8 @@ export const REFINE_PROPOSAL_EVENT = {
 
 export type RefineCommitMode = 'refine_in_place' | 'decompose';
 
-/** A proposed child ticket in a decompose. Robot-bound children MUST be isRobotReady-shaped
- *  (four sections, PD-177) — the server rejects the approval otherwise. */
+/** A proposed child ticket in a decompose. Robot-bound children SHOULD be `isReady`-shaped
+ *  (four sections, PD-177) so they are Ready the moment they're created (D-058). */
 export interface RefineChildProposal {
   title: string;
   body: string;

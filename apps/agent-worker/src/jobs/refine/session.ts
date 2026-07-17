@@ -65,7 +65,7 @@ function systemPrompt(contextPack: string): string {
     'When you and Steve have converged on a concrete plan, call the propose_commit tool to',
     'record it (refine-in-place or decompose). You never write tickets yourself — the proposal',
     'is what Steve approves on the board. Refine does NOT dispatch (D-057): never route a ticket',
-    'into a queue lane (robot_queue / steve_queue) — set a pre-queue lane (backlog / prioritized)',
+    'into the queue lane — set a pre-queue lane (backlog / prioritized)',
     "and let Steve queue it himself after approving. A ticket you intend for the robot MUST still",
     'carry the four sections (## Context, ## Task, ## Done When, ## Out of scope) so it is ready to',
     'queue as-is. Do not propose prematurely.',

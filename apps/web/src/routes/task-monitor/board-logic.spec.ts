@@ -22,6 +22,8 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
     refined: false,
     isEpic: false,
     epicId: null,
+    ready: false,
+    readyBypassed: false,
     archivedAt: null,
     createdAt: 0,
     updatedAt: 0,
@@ -31,18 +33,17 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
 
 describe('isStatusLocked', () => {
   it('locks a robot-owned ticket in an agent-controlled lane', () => {
-    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'robot_queue' }))).toBe(true);
+    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'queue' }))).toBe(true);
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'completed' }))).toBe(true);
   });
 
   it('does not lock a robot-owned ticket outside an agent-controlled lane', () => {
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'backlog' }))).toBe(false);
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'prioritized' }))).toBe(false);
-    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'steve_queue' }))).toBe(false);
   });
 
   it('does not lock a ticket in an agent-controlled lane unless robot owns it', () => {
-    expect(isStatusLocked(makeTicket({ assignee: 'steve', status: 'robot_queue' }))).toBe(false);
+    expect(isStatusLocked(makeTicket({ assignee: 'steve', status: 'queue' }))).toBe(false);
     expect(isStatusLocked(makeTicket({ assignee: null, status: 'completed' }))).toBe(false);
   });
 });

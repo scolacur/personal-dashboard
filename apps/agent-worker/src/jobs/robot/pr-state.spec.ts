@@ -87,13 +87,13 @@ describe('pollInReviewPrs', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec(`
-      CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
     `);
     ensureRunsTable(db);
     ensureRobotStateTable(db);
-    db.prepare("INSERT INTO agent_tickets (id, status, agent_state) VALUES (1, 'robot_queue', 'in-review')").run();
+    db.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (1, 'queue', 'robot', 'in-review')").run();
     const runId = startRun(db, { ticketId: 1, issueNumber: 220, branch: 'robot/220' }, 10);
     finishRun(db, runId, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 100);
   });
@@ -132,7 +132,7 @@ describe('pollInReviewPrs', () => {
     const n = await pollInReviewPrs(db, cfg(), 5000, fetcher);
     expect(n).toBe(0);
     const row = db.prepare('SELECT status AS st, agent_state AS ag FROM agent_tickets WHERE id = 1').get() as { st: string; ag: string };
-    expect(row.st).toBe('robot_queue'); // stays in the lane; it's a park, not a terminal
+    expect(row.st).toBe('queue'); // stays in the lane; it's a park, not a terminal
     expect(row.ag).toBe('needs-human');
     const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = 1').all() as { type: string }[]).map((r) => r.type);
     expect(types).toContain('robot_pr_closed');

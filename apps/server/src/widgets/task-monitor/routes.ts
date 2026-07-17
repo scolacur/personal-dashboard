@@ -295,6 +295,16 @@ export function registerRoutes(
       }
       patch.refined = body.refined;
     }
+    // D-058: `readyBypassed` is the confirm-modal flag (PD-399). `ready` itself is server-computed
+    // from the body and is NOT accepted from the client.
+    if (body.readyBypassed !== undefined) {
+      if (typeof body.readyBypassed !== 'boolean') {
+        return reply
+          .status(400)
+          .send({ error: 'readyBypassed must be a boolean', code: 'INVALID_READY_BYPASSED' });
+      }
+      patch.readyBypassed = body.readyBypassed;
+    }
     if (body.isEpic !== undefined) {
       if (typeof body.isEpic !== 'boolean') {
         return reply.status(400).send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
@@ -312,7 +322,7 @@ export function registerRoutes(
     try {
       updated = updateTicket(db, id, patch);
     } catch (e) {
-      // Blocker gate (D-048): can't enter robot_queue with unresolved blockers.
+      // Blocker gate (D-051): can't enter `queue` with unresolved blockers.
       if (e instanceof QueueBlockedError) {
         return reply.status(409).send({
           error: `blocked by unresolved: ${e.blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`,
@@ -537,7 +547,7 @@ export function registerRoutes(
   // writes: refine-in-place rewrites+marks refined; decompose creates children (non-queue lanes),
   // closes the parent (D-036), and links them via `split` relations. D-057: approval never
   // dispatches — pass `{ queue: true }` (the "Approve & queue" button, non-Epic refine_in_place
-  // only) to also move the ticket into robot_queue in the same step.
+  // only) to also move the ticket into `queue` in the same step.
   app.post(`${base}/tickets/:id/refine-approve`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -561,7 +571,7 @@ export function registerRoutes(
         return reply.status(409).send({ error: 'no proposal to approve', code: 'NO_PROPOSAL' });
       case 'epic_not_queueable':
         return reply.status(409).send({
-          error: `an Epic cannot enter robot_queue: ${result.detail}`,
+          error: `an Epic cannot enter the queue: ${result.detail}`,
           code: 'EPIC_NOT_QUEUEABLE',
         });
       case 'blocked_by_unresolved':

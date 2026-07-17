@@ -326,7 +326,7 @@ describe('notifications endpoints (PD-250)', () => {
     const pid = projectId(db, 'personal-dashboard');
     const t = db
       .prepare(
-        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','robot_queue','none',?, 'manual', 1, 1)",
+        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','queue','none',?, 'manual', 1, 1)",
       )
       .run(pid);
     const ticketId = Number(t.lastInsertRowid);
@@ -356,7 +356,7 @@ describe('notifications endpoints (PD-250)', () => {
     const pid = projectId(db, 'personal-dashboard');
     const t = db
       .prepare(
-        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','robot_queue','none',?, 'manual', 1, 1)",
+        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','queue','none',?, 'manual', 1, 1)",
       )
       .run(pid);
     createNotification(db, { kind: 'agent_awaiting_human', ticketId: Number(t.lastInsertRowid), title: 'a' });
@@ -615,7 +615,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
-      children: [{ title: 'robot', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' }],
+      children: [{ title: 'robot', body: ROBOT_BODY, status: 'queue', assignee: 'robot' }],
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(201);
@@ -634,14 +634,14 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
-      children: [{ title: 'bad', body: 'no sections', status: 'robot_queue', assignee: 'robot' }],
+      children: [{ title: 'bad', body: 'no sections', status: 'queue', assignee: 'robot' }],
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(201);
     expect(res.json().queued).toBe(false);
   });
 
-  it('POST /refine-approve { queue: true } dispatches a refine_in_place into robot_queue (201)', async () => {
+  it('POST /refine-approve { queue: true } dispatches a refine_in_place into queue (201)', async () => {
     const { app, db } = freshSetup();
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
@@ -653,7 +653,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().queued).toBe(true);
     const ticket = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}` })).json();
-    expect(ticket.status).toBe('robot_queue');
+    expect(ticket.status).toBe('queue');
   });
 
   it('POST /refine-approve { queue: true } on an Epic is 409 EPIC_NOT_QUEUEABLE, not 500 (PD-377)', async () => {
@@ -833,7 +833,7 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     expect(again.statusCode).toBe(404);
   });
 
-  it('PATCH to robot_queue is 409 while blocked, 200 once the blocker resolves', async () => {
+  it('PATCH to queue is 409 while blocked, 200 once the blocker resolves', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const a = await mk(app, pid, 'a');
@@ -846,7 +846,7 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     const blocked = await app.inject({
       method: 'PATCH',
       url: `${B}/tickets/${a.id}`,
-      payload: { status: 'robot_queue' },
+      payload: { status: 'queue' },
     });
     expect(blocked.statusCode).toBe(409);
     expect(blocked.json().code).toBe('BLOCKED_BY_UNRESOLVED');
@@ -856,10 +856,10 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     const ok = await app.inject({
       method: 'PATCH',
       url: `${B}/tickets/${a.id}`,
-      payload: { status: 'robot_queue' },
+      payload: { status: 'queue' },
     });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json().status).toBe('robot_queue');
+    expect(ok.json().status).toBe('queue');
   });
 
   it('GET /relations returns the full resolved list including split (PD-269 lineage derivable)', async () => {

@@ -52,7 +52,7 @@ export function firstProjectWithActiveTickets(
         WHERE EXISTS (
           SELECT 1 FROM agent_tickets t
            WHERE t.project_id = p.id AND t.archived_at IS NULL
-             AND t.status IN ('backlog', 'prioritized', 'steve_queue')
+             AND t.status IN ('backlog', 'prioritized', 'queue')
         )
         ORDER BY p.id ASC
         LIMIT 1`,
@@ -68,7 +68,7 @@ export function getAuditableTickets(db: Database.Database, projectId: number): A
       `SELECT id, display_id, title, body, status, priority
          FROM agent_tickets
         WHERE project_id = ? AND archived_at IS NULL
-          AND status IN ('backlog', 'prioritized', 'steve_queue')
+          AND status IN ('backlog', 'prioritized', 'queue')
         ORDER BY id ASC`,
     )
     .all(projectId) as {

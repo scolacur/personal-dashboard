@@ -20,8 +20,8 @@ describe('isResolvedStatus (D-051 "done or gone")', () => {
     expect(isResolvedStatus('closed')).toBe(true);
     expect(isResolvedStatus(undefined)).toBe(true);
   });
-  it('treats the four active lanes as unresolved', () => {
-    for (const s of ['backlog', 'prioritized', 'robot_queue', 'steve_queue'] as TicketStatus[]) {
+  it('treats the three active lanes as unresolved', () => {
+    for (const s of ['backlog', 'prioritized', 'queue'] as TicketStatus[]) {
       expect(isResolvedStatus(s)).toBe(false);
     }
   });

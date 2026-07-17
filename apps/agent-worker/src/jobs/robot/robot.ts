@@ -22,7 +22,7 @@ export { setAgentState, branchFor };
 
 /**
  * The Robot loop orchestration (D-055, PD-342): one poll cycle. Selects dispatchable
- * `robot_queue` tickets, and for each runs the full tracer-bullet path — worktree → coding
+ * `queue` tickets, and for each runs the full tracer-bullet path — worktree → coding
  * session → observe the filesystem hand-off → record the run → write the board state. The LOOP
  * is the sole `dashboard.db` writer; the coding session (uid-split) never touches it.
  *

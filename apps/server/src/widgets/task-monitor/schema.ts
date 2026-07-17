@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { isReady } from '@dashboard/shared';
 import { migrate, addColumn, columnExists } from '../../migrate';
 
 // Task Monitor schema: a cross-project Ticket backlog (Kanban), the projects those
@@ -74,6 +75,8 @@ export function bootstrapSchema(db: Database.Database): void {
       github_issue_url    TEXT,
       agent_state         TEXT,                     -- Robot loop agent state (D-055); NULL = none
       refined             INTEGER NOT NULL DEFAULT 0, -- 1 once refined to completion (D-044, PD-268)
+      ready               INTEGER NOT NULL DEFAULT 0, -- 1 iff body is 4-section Ready (D-058); recomputed on body write
+      ready_bypassed      INTEGER NOT NULL DEFAULT 0, -- 1 when a human queued a not-Ready robot ticket via confirm modal (D-058)
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       archived_at         INTEGER,                  -- soft delete; NULL = active
@@ -198,6 +201,14 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'agent_tickets_add_refined', (d) => {
     addColumn(d, 'agent_tickets', 'refined', 'INTEGER NOT NULL DEFAULT 0');
   });
+  // D-058: `ready` (persisted 4-section shape check, recomputed on body write) + `ready_bypassed`
+  // (human queued a not-Ready robot ticket via the confirm modal). Both default 0 so every
+  // existing row back-fills to not-ready/not-bypassed; the queue-model migration below recomputes
+  // `ready` from each row's body.
+  migrate(db, 'agent_tickets_add_ready_fields', (d) => {
+    addColumn(d, 'agent_tickets', 'ready', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'agent_tickets', 'ready_bypassed', 'INTEGER NOT NULL DEFAULT 0');
+  });
   // D-054: Epic umbrella primitive (PD-336). `is_epic` flags an umbrella; `epic_id` is a member's
   // single parent Epic. Both default to non-epic / no-parent so every existing row back-fills.
   migrate(db, 'agent_tickets_add_epic_fields', (d) => {
@@ -246,6 +257,29 @@ export function bootstrapSchema(db: Database.Database): void {
     d.prepare(
       "UPDATE agent_tickets SET status = 'robot_queue' WHERE status IN ('queued', 'in_progress', 'in_review')",
     ).run();
+  });
+
+  // D-058 queue model: collapse the two queue lanes into one `queue` status and make `assignee`
+  // the independent dispatch axis. `robot_queue` → `queue` + assignee `robot`; `steve_queue` →
+  // `queue` + assignee `steve`. Then back-fill the persisted `ready` flag from every row's body
+  // via the SAME shared 4-section `isReady` the store now recomputes on write. Data-only,
+  // non-destructive; the status UPDATEs are naturally idempotent and the migrate ledger runs the
+  // ready back-fill exactly once.
+  // DEPLOY ORDER: the server (bootstrapSchema) MUST apply this BEFORE the agent-worker queries
+  // `status='queue'`, or the loop greps a status no row carries yet (D-058: slices 1–3 deploy
+  // atomically — no partial deploy where the server writes `queue` while the loop still greps
+  // `robot_queue`).
+  migrate(db, 'agent_tickets_queue_model_d058', (d) => {
+    d.prepare("UPDATE agent_tickets SET status = 'queue', assignee = 'robot' WHERE status = 'robot_queue'").run();
+    d.prepare("UPDATE agent_tickets SET status = 'queue', assignee = 'steve' WHERE status = 'steve_queue'").run();
+    const rows = d.prepare('SELECT id, body FROM agent_tickets').all() as {
+      id: number;
+      body: string | null;
+    }[];
+    const setReady = d.prepare('UPDATE agent_tickets SET ready = ? WHERE id = ?');
+    for (const r of rows) {
+      setReady.run(isReady(r.body) ? 1 : 0, r.id);
+    }
   });
 
   // Seed the known projects once (with display-id keys). Idempotent, and backfills

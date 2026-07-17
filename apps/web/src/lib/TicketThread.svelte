@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { marked } from 'marked';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
-  import { isRobotReady, latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
+  import { isReady, latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
   import {
     approveRefine,
     fetchTicketEvents,
@@ -65,11 +65,11 @@
   }
 
   // "Approve & queue" (D-057) is offered only for a non-Epic refine_in_place — decompose routes
-  // per-child and an Epic can never enter the Robot's Queue. `needsShaping` is a soft hint: the
-  // ticket can still be queued, but its body lacks the four Robot sections.
+  // per-child and an Epic can never enter the Queue. `needsShaping` is a soft hint: the
+  // ticket can still be queued, but its body lacks the four Ready sections.
   const canQueue = $derived(proposal?.mode === 'refine_in_place' && !isEpic);
   const needsShaping = $derived(
-    proposal?.mode === 'refine_in_place' && !isRobotReady(proposal.body ?? null),
+    proposal?.mode === 'refine_in_place' && !isReady(proposal.body ?? null),
   );
 
   // Svelte action: renders markdown into a node's innerHTML without using {@html}.
