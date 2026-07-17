@@ -487,20 +487,16 @@
     queueConfirm = null;
   }
 
-  // Shared write path for a drag/drop move; surfaces the D-051 blocker-gate refusal as a toast
-  // (the card snaps back since nothing moved optimistically) and anything else as the error banner.
+  // Shared write path for a drag/drop move. A blocked ticket may now sit in the queue (D-051 amended
+  // by PD-408 — the loop skips it at selection), so a drop into the queue is no longer refused; any
+  // remaining error (epic guard, etc.) surfaces in the banner.
   async function applyTicketMove(id: number, patch: UpdateTicketInput) {
     error = null;
     try {
       await api.updateTicket(id, patch);
       await load(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.toLowerCase().startsWith('blocked by unresolved')) {
-        showToast(`⛔ Can't queue — ${msg}`);
-      } else {
-        error = msg;
-      }
+      error = err instanceof Error ? err.message : String(err);
     }
   }
 

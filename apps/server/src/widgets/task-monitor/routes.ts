@@ -41,7 +41,6 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   projectExists,
-  QueueBlockedError,
   rejectRefine,
   RelationCycleError,
   removeRelationById,
@@ -324,15 +323,8 @@ export function registerRoutes(
     try {
       updated = updateTicket(db, id, patch);
     } catch (e) {
-      // Blocker gate (D-051): can't enter `queue` with unresolved blockers.
-      if (e instanceof QueueBlockedError) {
-        return reply.status(409).send({
-          error: `blocked by unresolved: ${e.blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`,
-          code: 'BLOCKED_BY_UNRESOLVED',
-          blockers: e.blockers,
-        });
-      }
-      // Epic invariants (D-054).
+      // Epic invariants (D-054). (D-051 blocker gate no longer refuses queue entry — PD-408; a
+      // blocked ticket may sit in the queue and the loop skips it at selection.)
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
       if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
@@ -576,11 +568,6 @@ export function registerRoutes(
         return reply.status(409).send({
           error: `an Epic cannot enter the queue: ${result.detail}`,
           code: 'EPIC_NOT_QUEUEABLE',
-        });
-      case 'blocked_by_unresolved':
-        return reply.status(409).send({
-          error: `blocked by unresolved: ${result.detail}`,
-          code: 'BLOCKED_BY_UNRESOLVED',
         });
       default:
         return reply

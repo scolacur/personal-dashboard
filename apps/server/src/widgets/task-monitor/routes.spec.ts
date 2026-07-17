@@ -833,7 +833,7 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     expect(again.statusCode).toBe(404);
   });
 
-  it('PATCH to queue is 409 while blocked, 200 once the blocker resolves', async () => {
+  it('PATCH to queue succeeds even while blocked (D-051 amended, PD-408 — loop skips at selection)', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const a = await mk(app, pid, 'a');
@@ -843,23 +843,14 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
       url: `${B}/tickets/${a.id}/relations`,
       payload: { fromId: blocker.id, toId: a.id, type: 'blocks' },
     });
+    // Queue entry is no longer refused for a blocked ticket — it sits in the queue, de-emphasized.
     const blocked = await app.inject({
       method: 'PATCH',
       url: `${B}/tickets/${a.id}`,
       payload: { status: 'queue' },
     });
-    expect(blocked.statusCode).toBe(409);
-    expect(blocked.json().code).toBe('BLOCKED_BY_UNRESOLVED');
-    expect(blocked.json().blockers[0].ticketId).toBe(blocker.id);
-
-    await app.inject({ method: 'PATCH', url: `${B}/tickets/${blocker.id}`, payload: { status: 'completed' } });
-    const ok = await app.inject({
-      method: 'PATCH',
-      url: `${B}/tickets/${a.id}`,
-      payload: { status: 'queue' },
-    });
-    expect(ok.statusCode).toBe(200);
-    expect(ok.json().status).toBe('queue');
+    expect(blocked.statusCode).toBe(200);
+    expect(blocked.json().status).toBe('queue');
   });
 
   it('GET /relations returns the full resolved list including split (PD-269 lineage derivable)', async () => {

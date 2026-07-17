@@ -18,7 +18,6 @@ import {
   removeRelation,
   removeRelationById,
   unresolvedBlockers,
-  QueueBlockedError,
   RelationCycleError,
   SelfRelationError,
   getProjectBySlug,
@@ -862,19 +861,20 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(unresolvedBlockers(db, a.id).map((b) => b.ticketId)).toEqual([open.id]);
   });
 
-  it('blocker gate: cannot enter queue with an unresolved blocker; lifts once resolved', () => {
+  it('blocked tickets may enter the queue (D-051 amended, PD-408); unresolvedBlockers still reports it', () => {
     const a = createTicket(db, { title: 'a', projectId: pd });
     const blocker = createTicket(db, { title: 'blocker', projectId: pd });
     addRelation(db, blocker.id, a.id, 'blocks'); // a blocked by blocker
-    expect(() => updateTicket(db, a.id, { status: 'queue' })).toThrow(QueueBlockedError);
-    // A different (non-queue) transition is unaffected.
-    expect(() => updateTicket(db, a.id, { status: 'prioritized' })).not.toThrow();
-    // Resolve the blocker → gate lifts.
-    updateTicket(db, blocker.id, { status: 'completed' });
+    // Queue entry is NO LONGER refused — the loop's selection query is the sole dispatch guard.
     expect(updateTicket(db, a.id, { status: 'queue' })?.status).toBe('queue');
+    // …but it's still reported as blocked (drives the loop's skip + the board's de-emphasis badge).
+    expect(unresolvedBlockers(db, a.id).map((b) => b.ticketId)).toEqual([blocker.id]);
+    // Once the blocker goes terminal, it's no longer reported (loop picks it up next cycle).
+    updateTicket(db, blocker.id, { status: 'completed' });
+    expect(unresolvedBlockers(db, a.id)).toHaveLength(0);
   });
 
-  it('blocker gate is entry-only: blocking an already-queued ticket is allowed at the store level', () => {
+  it('blocking an already-queued ticket is allowed at the store level', () => {
     const a = createTicket(db, { title: 'a', projectId: pd, status: 'queue' });
     const blocker = createTicket(db, { title: 'blocker', projectId: pd });
     // Adding the blocker does not throw (PD-322 gates this with a confirm in the UI), and does
@@ -956,14 +956,16 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(after.refined).toBe(true);
   });
 
-  it('approveRefine { queue: true } is blocked by an unresolved blocker (D-048)', () => {
+  it('approveRefine { queue: true } queues even a blocked ticket (D-051 amended, PD-408)', () => {
     const t = createTicket(db, { title: 'x', body: ROBOT_BODY, status: 'prioritized', projectId: pd });
     const blocker = createTicket(db, { title: 'blk', status: 'prioritized', projectId: pd });
     addRelation(db, blocker.id, t.id, 'blocks');
     seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
+    // Queue entry is no longer refused for a blocked ticket — the loop skips it at selection.
     const res = approveRefine(db, t.id, { queue: true });
-    expect(res).toMatchObject({ ok: false, reason: 'blocked_by_unresolved' });
-    expect(getTicket(db, t.id)!.status).toBe('prioritized'); // unchanged
+    expect(res).toMatchObject({ ok: true, queued: true });
+    expect(getTicket(db, t.id)!.status).toBe('queue');
+    expect(unresolvedBlockers(db, t.id).map((b) => b.ticketId)).toEqual([blocker.id]);
   });
 
   it('approveRefine decompose parks queue-bound children in prioritized (Decompose-A), closes+links the parent', () => {
