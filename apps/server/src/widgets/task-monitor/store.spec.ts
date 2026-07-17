@@ -33,7 +33,9 @@ import {
   startRefine,
   unreadNotificationCount,
   updateTicket,
+  ValidationError,
 } from './store';
+import type { TicketStatus } from '@dashboard/shared';
 
 const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
@@ -604,6 +606,53 @@ describe('startRefine + refineState (D-044, PD-268)', () => {
       'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
     ).run(t.id, 'refine_agent', JSON.stringify({ text: 'plan', sessionId: 's' }), Date.now() + 1000);
     expect(getTicket(db, t.id)?.refineState).toBe('awaiting-human');
+  });
+});
+
+describe('legacy/invalid status guard (D-058, PD-417)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('createTicket normalizes a legacy robot_queue/steve_queue → queue', () => {
+    const r = createTicket(db, { title: 'r', projectId: pd, status: 'robot_queue' as TicketStatus });
+    expect(r.status).toBe('queue');
+    const s = createTicket(db, { title: 's', projectId: pd, status: 'steve_queue' as TicketStatus });
+    expect(s.status).toBe('queue');
+  });
+
+  it('createTicket rejects a truly-invalid status with ValidationError', () => {
+    expect(() => createTicket(db, { title: 'x', projectId: pd, status: 'bogus' as TicketStatus })).toThrow(
+      ValidationError,
+    );
+  });
+
+  it('updateTicket normalizes a legacy status and rejects an invalid one', () => {
+    const t = createTicket(db, { title: 'x', status: 'backlog', projectId: pd });
+    expect(updateTicket(db, t.id, { status: 'robot_queue' as TicketStatus })!.status).toBe('queue');
+    expect(() => updateTicket(db, t.id, { status: 'nope' as TicketStatus })).toThrow(ValidationError);
+  });
+
+  it('approveRefine parks a decompose child proposed as robot_queue in prioritized (the PD-412 bug)', () => {
+    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [{ title: 'foundation', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' }],
+    });
+    expect(approveRefine(db, parent.id).ok).toBe(true);
+    const child = listTickets(db).find((t) => t.title === 'foundation')!;
+    expect(child.status).toBe('prioritized'); // NOT the orphaned robot_queue
+    expect(child.assignee).toBe('robot');
+  });
+
+  it('approveRefine refine_in_place coerces a legacy robot_queue proposal (parks in prioritized, D-057)', () => {
+    const t = createTicket(db, { title: 'x', status: 'prioritized', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'robot_queue' });
+    expect(approveRefine(db, t.id).ok).toBe(true);
+    expect(getTicket(db, t.id)!.status).toBe('prioritized');
   });
 });
 

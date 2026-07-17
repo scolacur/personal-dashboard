@@ -36,6 +36,19 @@ describe('validateProposalShape', () => {
     expect(validateProposalShape(steve)).toMatch(/does not queue tickets/);
   });
 
+  it('rejects a legacy robot_queue/steve_queue child status (PD-417)', () => {
+    const robot = {
+      mode: 'decompose',
+      children: [{ title: 'c', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' }],
+    } as unknown as RefineProposal;
+    expect(validateProposalShape(robot)).toMatch(/does not queue tickets/);
+    const steve = {
+      mode: 'decompose',
+      children: [{ title: 'c', body: ROBOT_BODY, status: 'steve_queue', assignee: 'steve' }],
+    } as unknown as RefineProposal;
+    expect(validateProposalShape(steve)).toMatch(/does not queue tickets/);
+  });
+
   it('rejects a refine_in_place with no body', () => {
     const p: RefineProposal = { mode: 'refine_in_place', status: 'prioritized' };
     expect(validateProposalShape(p)).toMatch(/refine_in_place requires the rewritten `body`/);

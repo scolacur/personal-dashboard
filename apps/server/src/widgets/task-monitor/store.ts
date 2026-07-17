@@ -25,6 +25,7 @@ import type {
   DispatchPauseState,
 } from '@dashboard/shared';
 import {
+  coerceTicketStatus,
   isReady,
   latestActionableProposal,
   refineStateFromLatestType,
@@ -238,12 +239,35 @@ function nextDisplayId(db: Database.Database, projectId: number): string {
   return `${prefix}-${seq}`;
 }
 
+/** A write-boundary validation failure (D-058, PD-417) — e.g. a status outside `TICKET_STATUSES`
+ *  that isn't a coercible legacy alias. Surfaced by the routes as a 400. */
+export class ValidationError extends Error {
+  constructor(
+    public readonly code: 'INVALID_STATUS',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ValidationError';
+  }
+}
+
+/** Coerce a caller-supplied status to a valid lane, normalizing legacy `robot_queue`/`steve_queue`
+ *  → `queue` (D-058, PD-417). Throws `ValidationError` on an unrecognized value so an invalid lane
+ *  can never be persisted — the durable backstop for internal callers (e.g. `approveRefine`) that
+ *  bypass the route-layer validation. */
+function coerceStatusOrThrow(status: string): TicketStatus {
+  const coerced = coerceTicketStatus(status);
+  if (coerced === null) throw new ValidationError('INVALID_STATUS', `invalid status: ${status}`);
+  return coerced;
+}
+
 export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
   const insert = db.transaction((): number => {
     const now = Date.now();
     // New tickets default to unset priority (the user assigns it deliberately).
     const priority = toDbPriority(input.priority ?? null);
-    const status: TicketStatus = input.status ?? 'backlog';
+    // D-058/PD-417: normalize legacy queue statuses + reject anything invalid at the write boundary.
+    const status: TicketStatus = input.status === undefined ? 'backlog' : coerceStatusOrThrow(input.status);
     const source = input.source ?? 'manual';
     // Seed restores can force an id; otherwise allocate the next per-project id.
     // When forced, advance the project's seq past it so future auto-ids don't collide.
@@ -306,11 +330,15 @@ export function updateTicket(
   const existing = getTicket(db, id);
   if (!existing) return null;
 
+  // D-058/PD-417: normalize a legacy `robot_queue`/`steve_queue` patch → `queue`, reject an invalid
+  // status. Keeps a stale client / caller from writing an orphaned lane past the route validation.
+  const patchedStatus = patch.status === undefined ? existing.status : coerceStatusOrThrow(patch.status);
+
   const next: AgentTicket = {
     ...existing,
     title: patch.title ?? existing.title,
     body: patch.body === undefined ? existing.body : patch.body,
-    status: patch.status ?? existing.status,
+    status: patchedStatus,
     // `null` is a meaningful value (unset), so distinguish it from "not provided".
     priority: patch.priority === undefined ? existing.priority : patch.priority,
     assignee: patch.assignee === undefined ? existing.assignee : patch.assignee,
@@ -1152,7 +1180,10 @@ export function approveRefine(
 
   if (p.mode === 'refine_in_place') {
     const body = p.body ?? parent.body;
-    const proposed = p.status ?? parent.status;
+    // PD-417: a stale proposal may carry a legacy `robot_queue`/`steve_queue` — normalize it to
+    // `queue` so the D-057 parking below (queue → prioritized) catches it, instead of writing an
+    // orphaned lane verbatim. An unrecognized status falls back to the parent's current lane.
+    const proposed = p.status === undefined ? parent.status : (coerceTicketStatus(p.status) ?? parent.status);
     const wantQueue = opts.queue === true;
 
     if (wantQueue) {
@@ -1213,8 +1244,12 @@ export function approveRefine(
     for (const c of children) {
       // Decompose-A (D-057/D-058): a child never enters `queue` at approval — an agent-proposed
       // `queue` is parked in `prioritized`; Steve drags the ready ones in. The shaped body is
-      // preserved, so a downgraded child stays one drag away from dispatch.
-      const childStatus = c.status === 'queue' ? 'prioritized' : c.status;
+      // preserved, so a downgraded child stays one drag away from dispatch. PD-417: normalize a
+      // legacy `robot_queue`/`steve_queue` first (→ `queue` → parked) so a stale proposal never
+      // creates an orphaned lane; an unrecognized status falls back to `backlog`.
+      const coercedChild = coerceTicketStatus(c.status);
+      const childStatus =
+        coercedChild === null ? 'backlog' : coercedChild === 'queue' ? 'prioritized' : coercedChild;
       const child = createTicket(db, {
         title: c.title,
         body: c.body,
