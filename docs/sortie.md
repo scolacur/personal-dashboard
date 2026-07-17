@@ -1,5 +1,13 @@
 # Sortie integration
 
+> **⚠️ Being retired (D-055).** The third-party Sortie runtime is superseded by the in-house
+> **Robot loop** (`apps/agent-worker`, job `robot`). As of **C5/PD-346** the four `sortie-*.yml`
+> reaction bridges (watchdog, ask-human, review-rework, conflict-rework) are **deleted** and folded
+> into the loop as native, DB-driven behavior — dispatch keys off the board DB, not `sortie:*`
+> labels. The Sortie container is stopped. This page still describes the retired Sortie mechanics for
+> historical reference; the live design is D-055 + the Robot glossary in `PROJECT.md`. Full doc/label
+> cleanup lands in C7. **`sortie-auto-merge.yml` remains active** (a pure GitHub-side merge).
+
 Sortie is the autonomous coding-agent loop that picks up GitHub issues and produces PRs
 for the Personal Dashboard. The Task Monitor board (`/task-monitor`) is the human-facing
 control surface; a linked GitHub issue is the execution lease Sortie actually works.

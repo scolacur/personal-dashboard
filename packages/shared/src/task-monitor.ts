@@ -696,6 +696,16 @@ export const ROBOT_EVENT = {
   // also mark the retry-budget reset boundary the loop counts failures from.
   reset: 'robot_reset',
   unstick: 'robot_unstick',
+  // Fold-the-bridges (C5/PD-346). `humanReply` is the DB-native ask_human answer, written by the
+  // server's inline-reply route (replaces the sortie-ask-human GitHub Action). `resumed` /
+  // `reactivated` / `stalled` are loop-written milestones: resumed = an ask_human ticket re-queued
+  // after a human reply; reactivated = an in-review ticket re-queued for rework (PR feedback or a
+  // merge conflict — replaces the review-/conflict-rework Actions); stalled = the in-process
+  // watchdog parked an orphaned/over-long run (replaces sortie-watchdog).
+  humanReply: 'robot_human_reply',
+  resumed: 'robot_resumed',
+  reactivated: 'robot_reactivated',
+  stalled: 'robot_stalled',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -712,4 +722,10 @@ export interface RobotEventDetail {
   reason?: string;
   question?: string;
   state?: string;
+  /** The human's answer text (`robot_human_reply`). */
+  text?: string;
+  /** PR number a rework was triggered from (`robot_reactivated`). */
+  prNumber?: number;
+  /** How long a stalled run had been running before the watchdog parked it, ms (`robot_stalled`). */
+  ageMs?: number;
 }

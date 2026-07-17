@@ -246,10 +246,14 @@ _Avoid_: "grill" — the settled name for the whole thing (interrogation include
 and don't use it for a question an agent asks mid-run (that is **ask_human**).
 
 **ask_human**:
-A question a **dispatched Sortie worker** raises mid-run when it hits real ambiguity —
-it posts `### ❓ ask_human`, self-labels `sortie:awaiting-human`, parks, and resumes
-after a human replies async. Clarifies the *current* ticket in place; it does **not**
-produce new tickets and does **not** route anything.
+A question a **dispatched worker** raises mid-run when it hits real ambiguity, parking the ticket
+`awaiting-human` until a human replies async. Clarifies the *current* ticket in place; it does
+**not** produce new tickets and does **not** route anything. Under the Robot loop (C5/PD-346) this
+is **DB-native**: the Robot writes its question to `.robot/ask-human` → the loop parks the ticket +
+surfaces a Notification-Center entry; the human's reply is recorded as a `robot_human_reply` event
+(not a GitHub comment), the loop re-queues the ticket, and — since the coding uid is DB-blind —
+injects the Q&A into the resume prompt. (The retired Sortie path used a `### ❓ ask_human` issue
+comment + `sortie:awaiting-human` label + the `sortie-ask-human` Action.)
 _Avoid_: calling this a "refine".
 
 **Auto-routing**:
@@ -360,10 +364,12 @@ handoff shape" — no separate frontmatter schema.
 _Avoid_: treating it as a quality/AI review — it is a pure structural check, not a judgement.
 
 **Sortie watchdog**:
-The in-repo Actions job (`.github/workflows/sortie-watchdog.yml`) that surfaces a job which has
-run too long or stalled — it labels the issue **`sortie:stuck`** and @mentions Steve so a
-capped/parked issue is *visible* rather than silently grinding. Also carries a **label-rescue**
-backstop that re-applies a hand-off label the agent's turn failed to set.
+The in-repo Actions job (`sortie-watchdog.yml`) that surfaced a job which had run too long or
+stalled — it labelled the issue **`sortie:stuck`** and @mentioned Steve, plus a **label-rescue**
+backstop. **Superseded (C5/PD-346):** deleted and folded into the loop as **in-process stall
+detection** (`robot/stall.ts`) — an orphaned `working` run past the threshold is closed through the
+C2 fault guardrail and surfaced via the Notification Center. The queued-staleness sweep and
+label-rescue are dropped as obsolete (the loop *is* the dispatcher; the DB, not labels, is state).
 _Avoid_: conflating `sortie:stuck` (watchdog, automatic) with `sortie:needs-human` (a manual
 escalation) or `sortie:awaiting-human` (an **ask_human** park).
 
@@ -391,11 +397,15 @@ locally up to `max_iterations`. It does **not** hard-block the PR — it's a flo
 _Avoid_: confusing with the human PR review that follows hand-off, or with the **rework bridges**.
 
 **Rework bridge**:
-An in-repo Actions workflow that re-activates a handed-off job by flipping its issue
-`sortie:in-review` → `sortie:queued` so Sortie re-dispatches (`before_run` reuses the branch).
-Two exist: **review-rework** (`sortie-review-rework.yml`, on trusted human PR feedback, [[D-042]])
-and **conflict-rework** (`sortie-conflict-rework.yml`, on a CONFLICTING/DIRTY PR). Replaced the
-native `reactions.review_comments`, which was coupled to container restarts.
+An in-repo Actions workflow that re-activated a handed-off job by flipping its issue
+`sortie:in-review` → `sortie:queued` so Sortie re-dispatched. Two existed: **review-rework** (on
+trusted human PR feedback, [[D-042]]) and **conflict-rework** (on a CONFLICTING/DIRTY PR).
+**Superseded (C5/PD-346):** both deleted and collapsed into one DB-native **PR-state poll**
+(`robot/pr-state.ts`) — for each `in-review` ticket the loop reads the PR's review decision,
+comments, and merge status via the GitHub read API and re-activates it in-DB (`agent_state=queued`),
+with the reused branch + a resume-aware prompt driving the fix. Same trust model (OWNER, or
+COLLABORATOR + human-reply marker); bounded by the last hand-off timestamp so stale feedback can't
+re-trigger. **`sortie-auto-merge.yml` stays** — a pure GitHub-side merge, no agent involvement.
 
 **Egress proxy** (squid sidecar):
 The only network route out of the egress-hardened Sortie container — a squid sidecar

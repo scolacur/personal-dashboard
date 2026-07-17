@@ -387,7 +387,16 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     return id;
   }
 
-  it('posts a marked comment via the write token and returns 201', async () => {
+  // C5/PD-346: the inline reply is now DB-native — it records a robot_human_reply event (the loop's
+  // resume signal) and returns 201, then best-effort mirrors to the linked GitHub issue for the
+  // Sortie transition window. A missing issue/token or a GitHub failure no longer fails the reply.
+  function replyEvent(db: Database.Database, id: number): { detail: string } | undefined {
+    return db
+      .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = 'robot_human_reply'")
+      .get(id) as { detail: string } | undefined;
+  }
+
+  it('records a robot_human_reply event and mirrors a marked comment when linked + token present', async () => {
     const { impl, calls } = recordingFetch('ok');
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await linkedTicket(app, db, 55);
@@ -398,6 +407,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       payload: { body: 'go with blue' },
     });
     expect(res.statusCode).toBe(201);
+    expect(JSON.parse(replyEvent(db, id)!.detail)).toMatchObject({ text: 'go with blue' });
     const post = calls.find((c) => c.method === 'POST' && /\/issues\/55\/comments$/.test(c.url));
     expect(post).toBeDefined();
     expect((post!.body as { body: string }).body).toContain('go with blue');
@@ -416,7 +426,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('409s when the ticket has no linked issue', async () => {
+  it('still records the reply (201) when the ticket has no linked issue — DB-native, no GitHub needed', async () => {
     const { impl } = recordingFetch('ok');
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const pid = projectId(db, 'personal-dashboard');
@@ -425,16 +435,17 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'unlinked', projectId: pid },
     });
+    const id: number = create.json().id;
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/task-monitor/tickets/${create.json().id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().code).toBe('NO_LINKED_ISSUE');
+    expect(res.statusCode).toBe(201);
+    expect(replyEvent(db, id)).toBeDefined();
   });
 
-  it('503s when no write token is configured', async () => {
+  it('still records the reply (201) when no write token is configured', async () => {
     const { impl } = recordingFetch('ok');
     const { app, db } = freshSetup({ fetchImpl: impl }); // no token
     const id = await linkedTicket(app, db, 57);
@@ -443,11 +454,11 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
-    expect(res.statusCode).toBe(503);
-    expect(res.json().code).toBe('NO_WRITE_TOKEN');
+    expect(res.statusCode).toBe(201);
+    expect(replyEvent(db, id)).toBeDefined();
   });
 
-  it('502s when GitHub rejects the comment', async () => {
+  it('still records the reply (201) even if the GitHub mirror is rejected', async () => {
     const { impl } = recordingFetch('notok');
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await linkedTicket(app, db, 58);
@@ -456,7 +467,19 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
-    expect(res.statusCode).toBe(502);
+    expect(res.statusCode).toBe(201);
+    expect(replyEvent(db, id)).toBeDefined();
+  });
+
+  it('404s for an unknown ticket', async () => {
+    const { impl } = recordingFetch('ok');
+    const { app } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/task-monitor/tickets/999999/reply`,
+      payload: { body: 'hi' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 

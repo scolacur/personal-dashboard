@@ -5,7 +5,7 @@ import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { makeCodingSpawn } from './privilege';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from './prompt';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 
@@ -92,6 +92,7 @@ export async function runRobotSession(
   config: AgentWorkerConfig,
   candidate: RobotCandidate,
   worktree: Worktree,
+  resume: ResumeContext | undefined = undefined,
   runQuery: RunQuery = query,
 ): Promise<RobotSessionResult> {
   const prompt = buildTaskPrompt({
@@ -101,6 +102,7 @@ export async function runRobotSession(
     repo: candidate.repo,
     issueNumber: candidate.issueNumber,
     proxy: config.httpsProxy,
+    resume,
   });
 
   let ok = false;

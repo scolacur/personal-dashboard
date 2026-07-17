@@ -73,6 +73,14 @@ export interface RobotConfig {
   /** First transient-retry backoff step (ms); doubles per attempt up to `backoffMaxMs`. */
   backoffBaseMs: number;
   backoffMaxMs: number;
+  /** In-process stall watchdog (C5/PD-346): a `working` ticket whose run has been `running` longer
+   *  than this is an orphan (process died mid-run) — closed + re-queued/parked. Default 2h (matches
+   *  sortie-watchdog's 120m in-progress threshold). A healthy run finishes in minutes. */
+  stallThresholdMs: number;
+  /** How often the loop polls each in-review PR's review/merge state for rework (C5/PD-346). The
+   *  dispatch loop ticks far faster (`intervalMs`); this throttles the GitHub API hit to its own
+   *  slower cadence. Default 3 min. */
+  prPollIntervalMs: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -107,6 +115,8 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
     backoffBaseMs: Number(env.ROBOT_BACKOFF_BASE_MS ?? 60_000),
     backoffMaxMs: Number(env.ROBOT_BACKOFF_MAX_MS ?? 15 * 60_000),
+    stallThresholdMs: Number(env.ROBOT_STALL_THRESHOLD_MS ?? 2 * 60 * 60_000),
+    prPollIntervalMs: Number(env.ROBOT_PR_POLL_INTERVAL_MS ?? 3 * 60_000),
   };
 }
 

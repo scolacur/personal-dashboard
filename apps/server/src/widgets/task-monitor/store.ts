@@ -776,6 +776,33 @@ export function appendRefineReply(
   return row ? rowToTicketEvent(row) : null;
 }
 
+/**
+ * Append a human answer to a Robot `ask_human` question as a DB-native `robot_human_reply` event
+ * (C5/PD-346). The Robot loop's resume sweep detects a reply newer than the ticket's last
+ * `robot_ask_human` event, re-queues the ticket, and injects the Q&A into the resume prompt (the
+ * coding uid is DB-blind, so the loop hands it the answer). Returns the created event, or null if
+ * the ticket is unknown.
+ *
+ * This is the DB-native replacement for the `sortie-ask-human` GitHub Action: the answer no longer
+ * has to round-trip through a GitHub issue comment + label flip. The server does NOT touch
+ * `agent_state` here — the loop owns that transition, same as it owns every other state write.
+ */
+export function appendRobotReply(
+  db: Database.Database,
+  ticketId: number,
+  text: string,
+): TicketEvent | null {
+  if (getTicket(db, ticketId) === null) return null;
+  const now = Date.now();
+  const res = db
+    .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+    .run(ticketId, ROBOT_EVENT.humanReply, JSON.stringify({ text }), now);
+  const row = db
+    .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
+    .get(Number(res.lastInsertRowid)) as TicketEventRow | undefined;
+  return row ? rowToTicketEvent(row) : null;
+}
+
 /* ── Ticket relations + Refine commit (D-020 table, D-044/PD-269, D-048) ────── */
 
 /** A `blocks` relation would create a cycle (D-048) — refused so the hard queue-entry gate can

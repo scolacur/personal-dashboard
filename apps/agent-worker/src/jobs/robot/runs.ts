@@ -192,6 +192,54 @@ export function failedRunsForTicket(db: Database.Database, ticketId: number): Fa
   }));
 }
 
+/**
+ * When a ticket last handed off a PR — the `finished_at` of its newest `handed-off` run, or 0 if
+ * none (C5/PD-346). The PR-state poll uses this as the boundary: only human feedback (reviews /
+ * comments) submitted AFTER the last hand-off re-activates the ticket, so a stale CHANGES_REQUESTED
+ * review from a prior rework episode can't re-trigger forever (its timestamp predates the new
+ * hand-off). Newest handoff wins, so each in-review episode gets a fresh boundary.
+ */
+export function lastHandoffAt(db: Database.Database, ticketId: number): number {
+  const row = db
+    .prepare(
+      `SELECT MAX(finished_at) AS t FROM agent_runs WHERE ticket_id = ? AND status = 'handed-off'`,
+    )
+    .get(ticketId) as { t: number | null } | undefined;
+  return row?.t ?? 0;
+}
+
+/** A still-`running` run row for the in-process stall watchdog (C5/PD-346). */
+export interface OrphanRun {
+  runId: number;
+  ticketId: number;
+  branch: string;
+  issueNumber: number | null;
+  startedAt: number;
+}
+
+/**
+ * Runs still marked `running` whose ticket is still `working` and that started before `cutoff` —
+ * the stall watchdog's targets (C5/PD-346). Because the loop runs sessions sequentially and awaits
+ * each one, no session of THIS process is in flight at a cycle boundary; so a `running` row past the
+ * cutoff is an orphan (the process died/restarted mid-run, leaving a zombie run + a `working` ticket
+ * that `robotQueueCandidates` will never re-pick). This is the DB-native replacement for
+ * sortie-watchdog's in-progress staleness sweep.
+ */
+export function orphanedRunningRuns(db: Database.Database, cutoff: number): OrphanRun[] {
+  const rows = db
+    .prepare(
+      `SELECT r.id AS id, r.ticket_id AS ticket_id, r.branch AS branch, r.issue_number AS n, r.started_at AS started_at
+         FROM agent_runs r
+         JOIN agent_tickets t ON t.id = r.ticket_id
+        WHERE r.status = 'running'
+          AND r.started_at < ?
+          AND t.agent_state = 'working'
+        ORDER BY r.started_at ASC`,
+    )
+    .all(cutoff) as { id: number; ticket_id: number; branch: string; n: number | null; started_at: number }[];
+  return rows.map((r) => ({ runId: r.id, ticketId: r.ticket_id, branch: r.branch, issueNumber: r.n, startedAt: r.started_at }));
+}
+
 function rowToRun(r: Record<string, unknown>): RunRow {
   return {
     id: r.id as number,
