@@ -102,7 +102,14 @@ function rowToTicket(row: TicketRow): AgentTicket {
     githubIssueNumber: row.github_issue_number,
     githubIssueUrl: row.github_issue_url,
     agentState: row.agent_state as AgentTicket['agentState'],
-    refineState: refineStateFromLatestType(row.latest_refine_type),
+    // PD-400: a terminal ticket carries no live refine session — never project a
+    // refining/awaiting-human pill on a completed/closed ticket, regardless of its last refine_*
+    // event. (agent_state is cleared as a real write on the terminal transition; refineState is
+    // purely derived, so guarding it here also covers tickets closed before this landed.)
+    refineState:
+      row.status === 'completed' || row.status === 'closed'
+        ? null
+        : refineStateFromLatestType(row.latest_refine_type),
     refined: row.refined === 1,
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
@@ -361,6 +368,19 @@ export function updateTicket(
     if (blockers.length > 0) throw new QueueBlockedError(blockers);
   }
 
+  // PD-400: manually moving a ticket to a terminal lane (`completed`/`closed`) ends any lingering
+  // agent session cleanly — clear `agent_state`, resolve open needs/awaiting-human notifications,
+  // and (via rowToTicket) stop projecting a refine pill. Reflect it in the returned object too so a
+  // terminal ticket never carries a stale human-attention state.
+  const enteringTerminal =
+    (next.status === 'completed' || next.status === 'closed') &&
+    existing.status !== 'completed' &&
+    existing.status !== 'closed';
+  if (enteringTerminal) {
+    next.agentState = null;
+    next.refineState = null;
+  }
+
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
@@ -386,6 +406,30 @@ export function updateTicket(
     );
     if (next.status !== existing.status) {
       logEvent(db, id, 'status_changed', { from: existing.status, to: next.status });
+    }
+    // PD-400: tear down a lingering agent session on the terminal transition. Idempotent — a
+    // ticket that's already clean (no agent_state, no open notification, no active refine) logs
+    // no `session_ended` event.
+    if (enteringTerminal) {
+      const hadAgentState = existing.agentState !== null;
+      if (hadAgentState) {
+        db.prepare('UPDATE agent_tickets SET agent_state = NULL WHERE id = ?').run(id);
+      }
+      const resolved = db
+        .prepare(
+          `UPDATE agent_notifications SET read_at = ?
+             WHERE ticket_id = ? AND kind IN ('agent_needs_human', 'agent_awaiting_human') AND read_at IS NULL`,
+        )
+        .run(next.updatedAt, id);
+      const endedRefine = existing.refineState !== null;
+      if (hadAgentState || resolved.changes > 0 || endedRefine) {
+        logEvent(db, id, ROBOT_EVENT.sessionEnded, {
+          to: next.status,
+          clearedAgentState: existing.agentState ?? undefined,
+          resolvedNotifications: resolved.changes || undefined,
+          endedRefine: endedRefine || undefined,
+        });
+      }
     }
     // Covers both an explicit assignee change and a lane-forced one (D-044).
     if (next.assignee !== existing.assignee) {
