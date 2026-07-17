@@ -140,6 +140,7 @@
 
 .priority-filter,
 .refinement-filter,
+.assignee-filter,
 .project-filter,
 .type-filter {
   select {
@@ -181,7 +182,8 @@
   line-height: 1.5;
 }
 
-.archive-epic-actions {
+.archive-epic-actions,
+.queue-confirm-actions {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -190,6 +192,13 @@
   .spacer {
     flex: 1;
   }
+}
+
+.queue-confirm-msg {
+  margin: 0 0 var(--space-lg);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  line-height: 1.5;
 }
 
 /* ── Add / edit form (rendered inside the generic Modal) ── */
@@ -552,8 +561,18 @@
     }
   }
 
-  .refinement-filter {
+  .assignee-filter {
     order: 6;
+    flex: 1 1 auto;
+    min-width: 0;
+
+    select {
+      width: 100%;
+    }
+  }
+
+  .refinement-filter {
+    order: 7;
     flex: 0 0 100%;
 
     select {

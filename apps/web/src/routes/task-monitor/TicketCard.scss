@@ -133,6 +133,32 @@
   }
 }
 
+// Readiness badges (D-058, PD-399): "needs shaping" (soft) / "⚠ bypassed" (honest override).
+.card-readiness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.ready-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius);
+  border: 1px solid var(--status-warn, #b7791f);
+  color: var(--status-warn, #b7791f);
+  background: var(--surface-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  cursor: help;
+
+  &.bypassed {
+    // A conscious override — slightly stronger than the soft hint.
+    font-weight: 600;
+  }
+}
+
 .card-actions {
   display: flex;
   align-items: center;
