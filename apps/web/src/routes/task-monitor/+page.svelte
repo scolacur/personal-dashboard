@@ -618,9 +618,17 @@
 <section class="tickets-section" id="tickets">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
-    <label class="ticket-search">
+    <label class="ticket-search" class:has-text={search !== ''}>
       <span class="sr-label">Search tickets</span>
       <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
+      {#if search}
+        <button
+          type="button"
+          class="search-clear"
+          aria-label="Clear search"
+          onclick={() => { search = ''; searchInputRef?.focus(); }}
+        >×</button>
+      {/if}
       <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
     </label>
     <div class="head-actions">
