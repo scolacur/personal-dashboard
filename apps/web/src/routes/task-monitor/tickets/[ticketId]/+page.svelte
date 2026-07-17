@@ -9,6 +9,8 @@
     TicketStatus,
     TicketPriority,
     TicketAssignee,
+    TicketEvent,
+    RobotEventDetail,
     UpdateTicketInput,
   } from '@dashboard/shared';
   import {
@@ -18,6 +20,7 @@
     TICKET_STATUSES,
     TICKET_PRIORITIES,
     TICKET_ASSIGNEES,
+    ROBOT_EVENT,
   } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
@@ -43,6 +46,9 @@
   // Epic members + roll-up (D-054, PD-338), loaded only when this ticket is an Epic.
   let epicMembers = $state<AgentTicket[]>([]);
   let epicSummary = $state<EpicSummary | null>(null);
+  // Activity events — used to surface the outstanding ask_human question at the reply box (PD-393).
+  // (ActivityTimeline fetches its own copy for the timeline render; this is the page's own slice.)
+  let events = $state<TicketEvent[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let notFound = $state(false);
@@ -83,6 +89,7 @@
       project =
         found.projectId !== null ? (projects.find((p) => p.id === found.projectId) ?? null) : null;
       relations = await api.fetchRelations(found.id);
+      events = await api.fetchTicketEvents(found.id).catch(() => [] as TicketEvent[]);
       if (found.isEpic) {
         const m = await api.fetchEpicMembers(found.id);
         epicMembers = m.members;
@@ -130,13 +137,27 @@
     ticket?.agentState === 'awaiting-human' || ticket?.agentState === 'needs-human',
   );
 
-  // A ticket the Robot loop has parked and won't retry on its own — the C4 remediation controls
-  // (Reset / Unstick) show on the Overview banner for exactly these states.
+  // A ticket the Robot loop STALLED and won't retry on its own — the C4 remediation controls
+  // (Reset / Unstick) show on the Overview banner for exactly these states. `awaiting-human` is
+  // deliberately EXCLUDED (PD-393): a deliberate ask_human pause isn't a stall — the right action
+  // there is to reply, not to unstick — so it gets the reply box, not the remediation banner.
   const isRobotParked = $derived(
-    ticket?.agentState === 'stuck' ||
-      ticket?.agentState === 'awaiting-human' ||
-      ticket?.agentState === 'needs-human',
+    ticket?.agentState === 'stuck' || ticket?.agentState === 'needs-human',
   );
+
+  // The Robot's outstanding ask_human question (PD-393): the newest `robot_ask_human` event's text,
+  // shown at the reply box so the human sees what they're answering. Gated on the LIVE awaiting-human
+  // state, so it clears the moment the loop resumes the ticket (unlike the old run-scan callout).
+  const askHumanQuestion = $derived.by(() => {
+    if (ticket?.agentState !== 'awaiting-human') return null;
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === ROBOT_EVENT.askHuman) {
+        const q = (events[i].detail as RobotEventDetail | null)?.question;
+        return typeof q === 'string' && q.trim() ? q : null;
+      }
+    }
+    return null;
+  });
 
   // C4 remediation: clear a ticket's retry budget (reset) or a park (unstick) and re-queue it.
   let remediating = $state(false);
@@ -362,6 +383,12 @@
             The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
             reply is recorded on the ticket and re-queues it for the Robot.
           </p>
+          {#if askHumanQuestion}
+            <blockquote class="ask-question">
+              <span class="aq-label">The Robot asked:</span>
+              {askHumanQuestion}
+            </blockquote>
+          {/if}
           <textarea
             bind:value={replyText}
             rows="4"

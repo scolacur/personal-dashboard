@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { marked } from 'marked';
   import type { AgentRun, RobotFaultTier, RobotRunStatus } from '@dashboard/shared';
   import { fetchTicketRuns } from '../routes/task-monitor/api';
   import Collapsible from './Collapsible.svelte';
@@ -39,8 +38,10 @@
     'system-wide': 'System-wide',
   };
 
-  // The Robot's outstanding question, from the newest ask-human run (PD-255 — render inline).
-  const askHuman = $derived(runs.find((r) => r.status === 'ask-human' && r.faultReason)?.faultReason ?? null);
+  // The Robot's outstanding ask_human question moved to the reply box on the ticket-detail page
+  // (PD-393) — gated on the LIVE awaiting-human state so it clears the moment the loop resumes.
+  // (The old run-scan callout that lived here lingered forever: a parked run keeps its 'ask-human'
+  // status even after the human answers and a newer run starts.)
 
   // The most recent failed run's reason, surfaced as a callout so "why did it fail" is one glance.
   const latestFailure = $derived(
@@ -57,24 +58,12 @@
     if (s < 60) return `${s}s`;
     return `${Math.floor(s / 60)}m ${s % 60}s`;
   }
-
-  function renderMd(node: HTMLElement, text: string) {
-    node.innerHTML = marked.parse(text) as string;
-    return { update: (t: string) => (node.innerHTML = marked.parse(t) as string) };
-  }
 </script>
 
 {#if !loading && runs.length > 0}
   <section class="run-history">
-    <!-- The ask_human question stays always-visible (it needs an answer); the run table lives
-         inside the collapsible "Runs" section so a long history can be folded away. -->
-    {#if askHuman}
-      <div class="ask-human" role="status">
-        <div class="ah-head">❓ The Robot asked for input</div>
-        <div class="ah-body prose" use:renderMd={askHuman}></div>
-      </div>
-    {/if}
-
+    <!-- The run table lives inside the collapsible "Runs" section so a long history folds away.
+         The outstanding ask_human question is shown at the reply box (ticket detail), not here. -->
     {#if latestFailure}
       <div class="latest-failure tier-{latestFailure.faultTier ?? 'transient'}">
         <span class="lf-label">Latest failure</span>

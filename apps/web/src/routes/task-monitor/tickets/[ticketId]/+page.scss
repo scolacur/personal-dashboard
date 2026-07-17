@@ -435,6 +435,23 @@
     font-size: var(--font-size-md);
   }
 
+  .ask-question {
+    margin: var(--space-sm) 0 0;
+    padding: var(--space-sm) var(--space-md);
+    border-left: 3px solid var(--accent, #1d76db);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--surface, rgba(0, 0, 0, 0.15));
+    font-size: var(--font-size-sm);
+    white-space: pre-wrap;
+
+    .aq-label {
+      display: block;
+      margin-bottom: 2px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+  }
+
   textarea {
     width: 100%;
     box-sizing: border-box;
