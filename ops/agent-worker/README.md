@@ -12,14 +12,20 @@ as `/data`, or it opens a different DB and never sees your tickets.
 
 ## Prerequisites
 
-- Prod host = the **NAS** (`192.168.68.50`), Synology `/volume1/...` layout. (On the Mac Mini /
-  Colima, adjust the host paths per DECISIONS **D-035**.)
+- Prod host = the **NAS** (`192.168.68.50`), Synology `/volume1/...` layout — being migrated to an
+  always-on **Mac Mini M4 / Colima** (epic PD-188, mechanics in DECISIONS **D-035**). The deploy
+  steps are the same on either host; the host-forced differences are called out inline below.
 - The repo is checked out on the host at
-  `/volume1/docker/personal-dashboard/personal-dashboard/`.
+  `/volume1/docker/personal-dashboard/personal-dashboard/` **(NAS)**. On the **Mini**, adjust the
+  compose's host paths per D-035, and **`/data` must be a Colima VM-native volume, not a macOS-host
+  bind mount** — a host mount's virtiofs layer flattens Linux mode/uid semantics and breaks the
+  uid-split (`robot` uid-1500 exclusion), quietly gutting the kernel-enforced half of D-039.
 - Two secrets (see [Secrets & tokens](#secrets--tokens)): a Claude credential (a metered
   `ANTHROPIC_API_KEY` **or** a Pro `CLAUDE_CODE_OAUTH_TOKEN`) and a GitHub token with
   **Contents: Read** on `scolacur/personal-dashboard`.
-- `docker` on the host needs `sudo` (interactive — the NAS sudo is password-gated).
+- `docker` on the host: on the **NAS** it needs `sudo` (interactive — the NAS sudo is
+  password-gated, so a container can't be killed over non-interactive SSH). On the **Mini**, Colima
+  runs `docker` **sudoless per-user** — drop the `sudo` from the commands below.
 
 ## Deploy
 
