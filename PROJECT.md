@@ -259,9 +259,30 @@ comment + `sortie:awaiting-human` label + the `sortie-ask-human` Action.)
 _Avoid_: calling this a "refine".
 
 **Auto-routing**:
-Assigning each ticket a queue lane (**Robot's Queue** or **Steve's Queue**) and the
-matching **assignee** (`robot` / `steve`). "Refine auto-routing" = doing this to the
-tickets a Refine session produces.
+Setting a ticket's lane + **assignee** (`robot` / `steve`). Under the single **Queue**
+(D-058) the two are independent — routing to the queue no longer picks the worker; the
+assignee does. Moot for Refine output anyway (approval never dispatches, D-057).
+
+**Ready** (`ready` boolean, D-058):
+A **computed** property — the ticket body carries the required formatting (the four
+sections `## Context` / `## Task` / `## Done When` / `## Out of scope`; the check formerly
+called `isSortieReady`). **Recomputed on every body edit**, so it always reflects the
+*current* body — editing a Ready ticket keeps it Ready as long as the formatting survives,
+and breaks it the moment a section is lost. Persisted so the loop reads a cheap flag that
+can't drift (it's a pure function of the body). It is the **robot loop's hard dispatch
+gate** (dispatch a robot-assigned queued ticket only if `ready || ready_bypassed`) and a
+**soft gate for Steve** (he may queue a not-Ready robot ticket past a confirm modal).
+Distinct from **Refine**: a Refine session *produces* Ready tickets, but a hand-formatted
+ticket is equally Ready — "Ready" is about the body's shape, not about a session having run.
+_Avoid_: "isSortieReady" (renamed `ready`); calling a ticket "refined" (that named a session
+that ran, not a body property).
+
+**ready_bypassed** (`ready_bypassed` boolean, D-058):
+Steve's explicit, persisted override: confirming the "not Ready — output may be suboptimal"
+modal when queueing a not-Ready robot ticket. Clears the loop's hard gate for that one
+ticket **without** faking its `ready` state — a **separate** flag so the card shows an
+honest "⚠ bypassed" badge. Moot once the body is fixed (recompute flips `ready` true).
+Persists because the loop polls later.
 
 **Autonomous agent** (e.g. a dispatched **Robot**):
 An agent operating *unsupervised*. **May not queue tickets** — it can create tickets into
@@ -273,7 +294,7 @@ governs.
 **Interactive agent** (e.g. the **Refine** agent):
 An agent that is *always working with Steve in the loop*. **May queue tickets — but only
 after Steve's explicit approval.** Human-in-the-loop is the enforcement, so it is safe in
-a way an autonomous agent is not. This is why Refine can route into queue lanes without
+a way an autonomous agent is not. This is why Refine can route into the queue lane without
 waiting on PD-244.
 
 **Prioritized**:
@@ -281,19 +302,23 @@ The pre-refine triage lane — "this matters, do it next." Renames the old `read
 Refine may launch from a **backlog or prioritized** ticket (amends D-044); "Send to Refine"
 on an audit finding moves a backlog ticket here as part of the handoff.
 
-**Robot's Queue** (`robot_queue`, assignee `robot`):
-The single lane for all in-flight Robot work (collapses queued + in_progress +
-in_review); the fine-grained agent state shows as a status pill. Routing/dragging a
-ticket here is the dispatch trigger.
-
-**Steve's Queue** (`steve_queue`, assignee `steve`):
-Tasks that must be done under Steve's supervision. No sub-states.
+**Queue** (`queue`):
+The single "ready to be worked" lane, collapsing the former **Robot's Queue** + **Steve's
+Queue** into one (D-058, supersedes the two-lane split of D-055). Who works a queued ticket
+is decided by its **assignee**, not by the lane: `assignee=robot` + `queue` + `ready`
+(or `ready_bypassed`) + unblocked = **fair game for the robot loop to dispatch**;
+`assignee=steve` + `queue` = Steve's personal to-do. A robot ticket's fine-grained run
+state shows as a status pill. **An Epic can never enter the Queue** (barred
+outright — the Epic is an umbrella, only its member Tickets are ever dispatched).
+_Avoid_: "Robot's Queue" / "Steve's Queue" as *lanes* — there is one lane; those now name
+the assignee-filtered *views* of it.
 
 **Assignee** (`steve` | `robot` | null):
-Who owns a ticket. **Optional hint pre-queue** (in backlog/prioritized Steve may set it
-early when he already knows who'll do the work, or leave it null), then **forced by the
-lane on queue entry** — entering `robot_queue` sets `robot`, entering `steve_queue` sets
-`steve`, overriding any prior hint. The lane is authoritative once queued.
+Who does the work — an **independent axis from the lane** (D-058, reverses D-055's
+"lane forces assignee"). Set freely at any stage (a pre-queue hint or left null); it is
+**no longer overwritten on queue entry**. It is the assignee — not the lane — that makes a
+queued ticket robot-dispatchable. On an Epic it is a *signal only* ("the whole Epic is
+robot-doable") and never dispatches, since an Epic can't be queued.
 
 **Ticket**:
 The durable spec for a unit of work, owned by the dashboard board (`agent_tickets`).
@@ -356,13 +381,14 @@ Ticket Audit, PD-281). Jobs share the worker's checkout/proxy/key/context-pack b
 independent trigger sources and codepaths. **Autonomy mode is a per-job property, not a
 worker property** — the same worker safely hosts an interactive job and an autonomous one.
 
-**isRobotReady**:
+**isReady** *(the readiness check; formerly `isSortieReady` → `isRobotReady` (C7) → now `isReady`)*:
 A Claude-free mechanical validator (`packages/shared/src/task-monitor.ts`) that checks a ticket
-body carries the four required sections — `## Context` / `## Task` / `## Done When` /
-`## Out of scope`. The **shape gate at queue entry**: a ticket can only enter `robot_queue`
-(and decomposed robot-bound children can only be emitted) if it passes. This is the "standard
-handoff shape" — no separate frontmatter schema.
-_Avoid_: treating it as a quality/AI review — it is a pure structural check, not a judgement.
+body carries the four sections — `## Context` / `## Task` / `## Done When` / `## Out of scope`.
+**D-058** makes it the definition of the persisted **`ready`** flag: recomputed on every body
+write and persisted, so it always reflects the current body. The robot loop's **hard** dispatch
+gate is the `ready` flag; for a human it's a **soft** hint (D-057). The mechanical check *lives* —
+only the name + the recompute-on-write changed. Not a quality/AI review — a pure structural check.
+_Avoid_: "isSortieReady" / "isRobotReady" in new work — the function is `isReady`, the concept is **Ready** / `ready`.
 
 **Stall detection**:
 In-process detection (`robot/stall.ts`) of a run that has gone too long or stalled: an orphaned
