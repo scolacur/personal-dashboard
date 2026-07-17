@@ -48,7 +48,7 @@ function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): RefineTur
   };
 }
 
-function systemPrompt(contextPack: string): string {
+function systemPrompt(contextPack: string, maxTurns: number): string {
   return [
     'You are the Refine agent for the Personal Dashboard board (see DECISIONS.md D-044).',
     'You work INTERACTIVELY with Steve to sharpen a Prioritized ticket BEFORE any Robot run',
@@ -57,10 +57,17 @@ function systemPrompt(contextPack: string): string {
     'read-only Read/Grep/Glob tools against the checkout, and check whether a tool/widget already',
     'exists before proposing new work. You only read, plan, and propose; you never write or edit.',
     '',
-    'Sizing guidance: a small change (a design tweak, a simple display component, few files, no',
-    'decomposition) is instantly plannable; medium or vague tickets need follow-up questions;',
-    'large features (many files, front-end AND back-end, or anything touching critical infra)',
-    'warrant a full refinement session.',
+    'Sizing guidance — respect the Robot worker\'s turn budget. Any ticket you route toward the',
+    `robot is executed by ONE autonomous coding session with a HARD ceiling of ${maxTurns} turns`,
+    '(a turn is roughly one tool call — a file read, an edit, or a command). A run that hits the',
+    'ceiling is killed mid-build with NO pull request and the work is wasted, so every robot-bound',
+    'ticket must be scoped to finish comfortably within that budget — including the grounding reads',
+    'and the final `npm run verify`. Aim well under the cap to leave headroom. A small change (a',
+    'design tweak, a simple display component, a few files) fits easily. A feature that spans',
+    'multiple subsystems — e.g. a brand-new integration/client AND backend AND frontend — will NOT',
+    'fit one run: DECOMPOSE it into vertical slices that each fit, wired as a prerequisite chain',
+    'with `blocks` relations, rather than proposing one oversized ticket. This applies to both',
+    'modes: a refine_in_place ticket must itself fit the budget, and every decompose child must fit.',
     '',
     'When you and Steve have converged on a concrete plan, call the propose_commit tool to',
     'record it (refine-in-place or decompose). You never write tickets yourself — the proposal',
@@ -86,7 +93,7 @@ function refineOptions(
   return {
     model: config.model,
     cwd: config.checkoutDir,
-    systemPrompt: systemPrompt(contextPack),
+    systemPrompt: systemPrompt(contextPack, config.robot.maxTurns),
     allowedTools: onProposal ? [...READ_ONLY_TOOLS, PROPOSE_TOOL_NAME] : READ_ONLY_TOOLS,
     // Headless: deny any tool outside the allowlist without prompting (would hang).
     permissionMode: 'dontAsk' as const,
