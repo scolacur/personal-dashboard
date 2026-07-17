@@ -718,6 +718,10 @@ export const ROBOT_EVENT = {
   // merging → parked needs-human (a human abandoned it; the loop must not silently complete it).
   completed: 'robot_completed',
   prClosed: 'robot_pr_closed',
+  // Manual terminal cleanup (PD-400): logged when a ticket is manually moved to `completed`/`closed`
+  // and its lingering agent session is torn down (agent_state cleared, needs/awaiting-human
+  // notifications resolved). Not written by the loop — by the server's terminal-transition path.
+  sessionEnded: 'robot_session_ended',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -740,4 +744,12 @@ export interface RobotEventDetail {
   prNumber?: number;
   /** How long a stalled run had been running before the watchdog parked it, ms (`robot_stalled`). */
   ageMs?: number;
+  /** Terminal lane a manual close/complete moved the ticket to (`robot_session_ended`, PD-400). */
+  to?: string;
+  /** The agent_state that was cleared, if any (`robot_session_ended`). */
+  clearedAgentState?: string;
+  /** How many needs/awaiting-human notifications were resolved (`robot_session_ended`). */
+  resolvedNotifications?: number;
+  /** True when an active refine session was ended by the terminal transition (`robot_session_ended`). */
+  endedRefine?: boolean;
 }

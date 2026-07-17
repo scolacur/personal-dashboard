@@ -61,6 +61,8 @@
         return '🏁';
       case ROBOT_EVENT.prClosed:
         return '🚫';
+      case ROBOT_EVENT.sessionEnded:
+        return '🧹';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -101,6 +103,8 @@
         return 'PR merged — ticket completed';
       case ROBOT_EVENT.prClosed:
         return 'PR closed without merging — needs human';
+      case ROBOT_EVENT.sessionEnded:
+        return `Agent session ended${d.to ? ` (moved to ${d.to})` : ''}`;
       case 'created':
         return 'Ticket created';
       case 'status_changed':

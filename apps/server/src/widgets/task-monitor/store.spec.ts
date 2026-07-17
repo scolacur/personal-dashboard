@@ -607,6 +607,76 @@ describe('startRefine + refineState (D-044, PD-268)', () => {
   });
 });
 
+describe('terminal-transition cleanup (PD-400)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  // Stand in for the loop's agent_state writes (updateTicket never sets it directly).
+  function setAgentState(id: number, state: string): void {
+    db.prepare('UPDATE agent_tickets SET agent_state = ? WHERE id = ?').run(state, id);
+  }
+
+  it('completing a ticket clears agent_state + resolves notifications + logs session_ended', () => {
+    const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
+    setAgentState(t.id, 'needs-human');
+    createNotification(db, { kind: 'agent_needs_human', ticketId: t.id, title: 'stuck' });
+    expect(unreadNotificationCount(db)).toBe(1);
+
+    updateTicket(db, t.id, { status: 'completed' });
+
+    const after = getTicket(db, t.id)!;
+    expect(after.agentState).toBeNull();
+    expect(unreadNotificationCount(db)).toBe(0);
+    const ended = listTicketEvents(db, t.id).filter((e) => e.type === 'robot_session_ended');
+    expect(ended).toHaveLength(1);
+    expect(ended[0].detail).toMatchObject({ to: 'completed', clearedAgentState: 'needs-human', resolvedNotifications: 1 });
+  });
+
+  it('reproduces the PD-392 flow: closing an awaiting-human ticket leaves it clean', () => {
+    const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
+    setAgentState(t.id, 'awaiting-human');
+    createNotification(db, { kind: 'agent_awaiting_human', ticketId: t.id, title: 'which?' });
+    // An in-flight refine session (latest refine_* is an agent turn → awaiting-human).
+    startRefine(db, t.id);
+    db.prepare(
+      'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+    ).run(t.id, 'refine_agent', JSON.stringify({ text: 'q', sessionId: 's' }), Date.now() + 1000);
+    expect(getTicket(db, t.id)!.refineState).toBe('awaiting-human');
+
+    updateTicket(db, t.id, { status: 'closed' });
+
+    const after = getTicket(db, t.id)!;
+    expect(after.agentState).toBeNull();
+    expect(after.refineState).toBeNull(); // terminal ticket never projects a refine pill
+    expect(unreadNotificationCount(db)).toBe(0);
+    expect(listTicketEvents(db, t.id).some((e) => e.type === 'robot_session_ended')).toBe(true);
+  });
+
+  it('is idempotent: closing an already-clean ticket logs no session_ended', () => {
+    const t = createTicket(db, { title: 'x', status: 'prioritized', projectId: pd });
+    updateTicket(db, t.id, { status: 'closed' });
+    expect(listTicketEvents(db, t.id).some((e) => e.type === 'robot_session_ended')).toBe(false);
+    expect(getTicket(db, t.id)!.agentState).toBeNull();
+  });
+
+  it('the refineState guard also covers a ticket that reached a terminal lane', () => {
+    const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
+    startRefine(db, t.id);
+    db.prepare(
+      'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+    ).run(t.id, 'refine_agent', JSON.stringify({ text: 'q' }), Date.now() + 1000);
+    expect(getTicket(db, t.id)!.refineState).toBe('awaiting-human');
+    updateTicket(db, t.id, { status: 'completed' });
+    // Even though the newest refine_* event is still an agent turn, a completed ticket reads null.
+    expect(getTicket(db, t.id)!.refineState).toBeNull();
+    expect(listTickets(db).find((x) => x.id === t.id)!.refineState).toBeNull();
+  });
+});
+
 describe('relations + Refine commit (D-044, PD-269)', () => {
   let db: Database.Database;
   let pd: number;
