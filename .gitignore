@@ -8,9 +8,9 @@ node_modules/
 dist/
 .env
 data/
-# Sortie's per-run workspace scratch (scm.json, the verify-ok hand-off marker) — never
-# belongs in a commit; keeping it ignored hardens the after_run hand-off logic (D-046).
-.sortie/
+# The Robot loop's per-run workspace scratch (.robot/scm.json, verify-ok, ask-human) — never
+# belongs in a commit; keeping it ignored hardens the hand-off logic (D-046, D-055).
+.robot/
 apps/web/.svelte-kit/
 apps/web/build/
 

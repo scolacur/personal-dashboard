@@ -21,7 +21,7 @@ that board and archived to `Dev/archive/`.
 | **Music Discovery** | Groups music-discovery widgets: Concert Discovery, Festival Follower, and a release radar. | Not built |
 | **Event Tracker** | Unified calendar view combining Concert Discovery and Festival Follower events. | Not built |
 | **Inboxes** | Review queues for filing Spotify likes, Shazams, Ableton bounces, and DJ library tracks. | Not built |
-| **Agent Dashboard** | Mission Control for the Sortie AI agent system: job kanban, activity feed, error log, and inbox for agent messages. | Not built |
+| **Agent Dashboard** | Mission Control for the Robot AI agent system: job kanban, activity feed, error log, and inbox for agent messages. | Not built |
 
 ---
 

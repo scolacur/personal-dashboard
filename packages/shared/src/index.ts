@@ -64,7 +64,7 @@ export {
   laneForcedAssignee,
   AGENT_STATE_LABELS,
   AGENT_STATE_DESCRIPTIONS,
-  isSortieReady,
+  isReady,
   NOTIFICATION_KINDS,
   HUMAN_REPLY_MARKER,
   REFINE_EVENT_TYPE,

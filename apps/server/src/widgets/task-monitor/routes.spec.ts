@@ -4,7 +4,6 @@ import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes, type TaskMonitorRouteDeps } from './routes';
 import { createNotification, getProjectBySlug } from './store';
-import { __resetOnDemandSyncGuard } from './github-sync';
 
 function freshSetup(deps?: TaskMonitorRouteDeps) {
   const db = new Database(':memory:');
@@ -327,7 +326,7 @@ describe('notifications endpoints (PD-250)', () => {
     const pid = projectId(db, 'personal-dashboard');
     const t = db
       .prepare(
-        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','robot_queue','none',?, 'manual', 1, 1)",
+        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','queue','none',?, 'manual', 1, 1)",
       )
       .run(pid);
     const ticketId = Number(t.lastInsertRowid);
@@ -357,7 +356,7 @@ describe('notifications endpoints (PD-250)', () => {
     const pid = projectId(db, 'personal-dashboard');
     const t = db
       .prepare(
-        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','robot_queue','none',?, 'manual', 1, 1)",
+        "INSERT INTO agent_tickets (title, status, priority, project_id, source, created_at, updated_at) VALUES ('x','queue','none',?, 'manual', 1, 1)",
       )
       .run(pid);
     createNotification(db, { kind: 'agent_awaiting_human', ticketId: Number(t.lastInsertRowid), title: 'a' });
@@ -387,7 +386,16 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     return id;
   }
 
-  it('posts a marked comment via the write token and returns 201', async () => {
+  // C5/PD-346: the inline reply is now DB-native — it records a robot_human_reply event (the loop's
+  // resume signal) and returns 201, then best-effort mirrors to any linked GitHub issue. A missing
+  // issue/token or a GitHub failure no longer fails the reply.
+  function replyEvent(db: Database.Database, id: number): { detail: string } | undefined {
+    return db
+      .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = 'robot_human_reply'")
+      .get(id) as { detail: string } | undefined;
+  }
+
+  it('records a robot_human_reply event and mirrors a marked comment when linked + token present', async () => {
     const { impl, calls } = recordingFetch('ok');
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await linkedTicket(app, db, 55);
@@ -398,10 +406,11 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       payload: { body: 'go with blue' },
     });
     expect(res.statusCode).toBe(201);
+    expect(JSON.parse(replyEvent(db, id)!.detail)).toMatchObject({ text: 'go with blue' });
     const post = calls.find((c) => c.method === 'POST' && /\/issues\/55\/comments$/.test(c.url));
     expect(post).toBeDefined();
     expect((post!.body as { body: string }).body).toContain('go with blue');
-    expect((post!.body as { body: string }).body).toContain('<!-- sortie:human-reply -->');
+    expect((post!.body as { body: string }).body).toContain('<!-- robot:human-reply -->');
   });
 
   it('rejects an empty body with 400', async () => {
@@ -416,7 +425,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('409s when the ticket has no linked issue', async () => {
+  it('still records the reply (201) when the ticket has no linked issue — DB-native, no GitHub needed', async () => {
     const { impl } = recordingFetch('ok');
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const pid = projectId(db, 'personal-dashboard');
@@ -425,16 +434,17 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       url: '/api/widgets/task-monitor/tickets',
       payload: { title: 'unlinked', projectId: pid },
     });
+    const id: number = create.json().id;
     const res = await app.inject({
       method: 'POST',
-      url: `/api/widgets/task-monitor/tickets/${create.json().id}/reply`,
+      url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
-    expect(res.statusCode).toBe(409);
-    expect(res.json().code).toBe('NO_LINKED_ISSUE');
+    expect(res.statusCode).toBe(201);
+    expect(replyEvent(db, id)).toBeDefined();
   });
 
-  it('503s when no write token is configured', async () => {
+  it('still records the reply (201) when no write token is configured', async () => {
     const { impl } = recordingFetch('ok');
     const { app, db } = freshSetup({ fetchImpl: impl }); // no token
     const id = await linkedTicket(app, db, 57);
@@ -443,11 +453,11 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
-    expect(res.statusCode).toBe(503);
-    expect(res.json().code).toBe('NO_WRITE_TOKEN');
+    expect(res.statusCode).toBe(201);
+    expect(replyEvent(db, id)).toBeDefined();
   });
 
-  it('502s when GitHub rejects the comment', async () => {
+  it('still records the reply (201) even if the GitHub mirror is rejected', async () => {
     const { impl } = recordingFetch('notok');
     const { app, db } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
     const id = await linkedTicket(app, db, 58);
@@ -456,36 +466,19 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       url: `/api/widgets/task-monitor/tickets/${id}/reply`,
       payload: { body: 'hi' },
     });
-    expect(res.statusCode).toBe(502);
-  });
-});
-
-describe('POST /api/widgets/task-monitor/sync — on-demand GitHub reconciliation (PD-252)', () => {
-  it('503s when no read token is configured', async () => {
-    __resetOnDemandSyncGuard();
-    const { app } = freshSetup(); // no githubReadToken, and env token not injected
-    const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    expect(res.statusCode).toBe(503);
-    expect(res.json().code).toBe('NO_READ_TOKEN');
+    expect(res.statusCode).toBe(201);
+    expect(replyEvent(db, id)).toBeDefined();
   });
 
-  it('runs a pass when a read token is present and reports the outcome', async () => {
-    __resetOnDemandSyncGuard();
+  it('404s for an unknown ticket', async () => {
     const { impl } = recordingFetch('ok');
-    const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
-    const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().outcome).toBe('ran');
-  });
-
-  it('throttles a second immediate call so refresh spam cannot hammer GitHub', async () => {
-    __resetOnDemandSyncGuard();
-    const { impl } = recordingFetch('ok');
-    const { app } = freshSetup({ githubReadToken: 'read-tok', fetchImpl: impl });
-    const first = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    const second = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    expect(first.json().outcome).toBe('ran');
-    expect(second.json().outcome).toBe('throttled');
+    const { app } = freshSetup({ githubWriteToken: 'wtok', fetchImpl: impl });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/task-monitor/tickets/999999/reply`,
+      payload: { body: 'hi' },
+    });
+    expect(res.statusCode).toBe(404);
   });
 });
 
@@ -601,7 +594,7 @@ describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', 
 
 describe('Refine commit endpoints (D-044, PD-269)', () => {
   const base = '/api/widgets/task-monitor';
-  const SORTIE_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
+  const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
   async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, status = 'prioritized') {
     const res = await app.inject({
@@ -622,7 +615,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
-      children: [{ title: 'robot', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot' }],
+      children: [{ title: 'robot', body: ROBOT_BODY, status: 'queue', assignee: 'robot' }],
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(201);
@@ -641,17 +634,17 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
-      children: [{ title: 'bad', body: 'no sections', status: 'robot_queue', assignee: 'robot' }],
+      children: [{ title: 'bad', body: 'no sections', status: 'queue', assignee: 'robot' }],
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(201);
     expect(res.json().queued).toBe(false);
   });
 
-  it('POST /refine-approve { queue: true } dispatches a refine_in_place into robot_queue (201)', async () => {
+  it('POST /refine-approve { queue: true } dispatches a refine_in_place into queue (201)', async () => {
     const { app, db } = freshSetup();
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
-    seedProposal(db, id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-approve`,
@@ -660,7 +653,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().queued).toBe(true);
     const ticket = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}` })).json();
-    expect(ticket.status).toBe('robot_queue');
+    expect(ticket.status).toBe('queue');
   });
 
   it('POST /refine-approve { queue: true } on an Epic is 409 EPIC_NOT_QUEUEABLE, not 500 (PD-377)', async () => {
@@ -671,7 +664,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
       payload: { title: 'epic', body: 'b', projectId: projectId(db, 'personal-dashboard'), status: 'prioritized', isEpic: true },
     });
     const id = res0.json().id as number;
-    seedProposal(db, id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-approve`,
@@ -840,7 +833,7 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     expect(again.statusCode).toBe(404);
   });
 
-  it('PATCH to robot_queue is 409 while blocked, 200 once the blocker resolves', async () => {
+  it('PATCH to queue is 409 while blocked, 200 once the blocker resolves', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
     const a = await mk(app, pid, 'a');
@@ -853,7 +846,7 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     const blocked = await app.inject({
       method: 'PATCH',
       url: `${B}/tickets/${a.id}`,
-      payload: { status: 'robot_queue' },
+      payload: { status: 'queue' },
     });
     expect(blocked.statusCode).toBe(409);
     expect(blocked.json().code).toBe('BLOCKED_BY_UNRESOLVED');
@@ -863,10 +856,10 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     const ok = await app.inject({
       method: 'PATCH',
       url: `${B}/tickets/${a.id}`,
-      payload: { status: 'robot_queue' },
+      payload: { status: 'queue' },
     });
     expect(ok.statusCode).toBe(200);
-    expect(ok.json().status).toBe('robot_queue');
+    expect(ok.json().status).toBe('queue');
   });
 
   it('GET /relations returns the full resolved list including split (PD-269 lineage derivable)', async () => {

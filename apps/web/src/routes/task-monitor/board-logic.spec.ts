@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentTicket, TicketPriority } from '@dashboard/shared';
-import { isStatusLocked, computeSortOrder } from './board-logic';
+import { isStatusLocked, computeSortOrder, clampEpicHeight, EPIC_HEIGHT_MIN, EPIC_HEIGHT_MAX } from './board-logic';
 
 function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
   return {
@@ -22,6 +22,8 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
     refined: false,
     isEpic: false,
     epicId: null,
+    ready: false,
+    readyBypassed: false,
     archivedAt: null,
     createdAt: 0,
     updatedAt: 0,
@@ -31,18 +33,17 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
 
 describe('isStatusLocked', () => {
   it('locks a robot-owned ticket in an agent-controlled lane', () => {
-    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'robot_queue' }))).toBe(true);
+    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'queue' }))).toBe(true);
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'completed' }))).toBe(true);
   });
 
   it('does not lock a robot-owned ticket outside an agent-controlled lane', () => {
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'backlog' }))).toBe(false);
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'prioritized' }))).toBe(false);
-    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'steve_queue' }))).toBe(false);
   });
 
   it('does not lock a ticket in an agent-controlled lane unless robot owns it', () => {
-    expect(isStatusLocked(makeTicket({ assignee: 'steve', status: 'robot_queue' }))).toBe(false);
+    expect(isStatusLocked(makeTicket({ assignee: 'steve', status: 'queue' }))).toBe(false);
     expect(isStatusLocked(makeTicket({ assignee: null, status: 'completed' }))).toBe(false);
   });
 });
@@ -96,5 +97,24 @@ describe('computeSortOrder', () => {
   it('handles the null (unset) priority band', () => {
     const b = band([0, 1], null);
     expect(computeSortOrder(b, null, null, 99)).toBe(2);
+  });
+});
+
+describe('clampEpicHeight', () => {
+  it('passes through heights within the valid range', () => {
+    expect(clampEpicHeight(200)).toBe(200);
+    expect(clampEpicHeight(EPIC_HEIGHT_MIN)).toBe(EPIC_HEIGHT_MIN);
+    expect(clampEpicHeight(EPIC_HEIGHT_MAX)).toBe(EPIC_HEIGHT_MAX);
+  });
+
+  it('clamps values below the minimum to EPIC_HEIGHT_MIN', () => {
+    expect(clampEpicHeight(0)).toBe(EPIC_HEIGHT_MIN);
+    expect(clampEpicHeight(-100)).toBe(EPIC_HEIGHT_MIN);
+    expect(clampEpicHeight(EPIC_HEIGHT_MIN - 1)).toBe(EPIC_HEIGHT_MIN);
+  });
+
+  it('clamps values above the maximum to EPIC_HEIGHT_MAX', () => {
+    expect(clampEpicHeight(EPIC_HEIGHT_MAX + 1)).toBe(EPIC_HEIGHT_MAX);
+    expect(clampEpicHeight(9999)).toBe(EPIC_HEIGHT_MAX);
   });
 });

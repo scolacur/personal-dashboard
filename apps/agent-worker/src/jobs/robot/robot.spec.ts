@@ -11,16 +11,18 @@ const READY = ['## Context', 'c', '## Task', 't', '## Done When', 'd', '## Out o
 function boardDb(): Database.Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, sortie_enabled INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
-      id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL,
+      id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
+      ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_relations (id INTEGER PRIMARY KEY, from_ticket_id INTEGER, to_ticket_id INTEGER, type TEXT);
     CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
+    CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
   `);
-  db.prepare('INSERT INTO agent_projects (id, github_repo, sortie_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
+  db.prepare('INSERT INTO agent_projects (id, github_repo, robot_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
   ensureRunsTable(db);
   return db;
 }
@@ -36,8 +38,8 @@ function eventTypes(db: Database.Database, ticketId: number): string[] {
 
 function addQueued(db: Database.Database, id: number, issue: number | null = id): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, project_id, github_issue_number, agent_state)
-     VALUES (?, ?, ?, 'robot_queue', 1, ?, NULL)`,
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, project_id, github_issue_number, agent_state)
+     VALUES (?, ?, ?, 'queue', 'robot', 1, 1, ?, NULL)`,
   ).run(id, `T${id}`, READY, issue);
 }
 
@@ -288,5 +290,34 @@ describe('processRobotQueue', () => {
     expect(agentState(db, 1)).toBe('in-review');
     expect(agentState(db, 2)).toBeNull(); // untouched
     expect(listRunsForTicket(db, 2)).toEqual([]);
+  });
+
+  // ---- C5 (PD-346): fold ask_human resume into the loop ----
+
+  it('resumes an ask_human ticket after a DB reply lands, injecting the answer into the next run', async () => {
+    addQueued(db, 1);
+    // Cycle 1: the run parks with a question (now = 1000 via deps()).
+    await processRobotQueue(db, cfg(), deps({ ok: true, verifyOk: false, prNumber: undefined, askHuman: 'Design A or B?' }));
+    expect(agentState(db, 1)).toBe('awaiting-human');
+
+    // The human answers via the Notification-Center reply (server writes a robot_human_reply event).
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_human_reply', ?, 2000)").run(
+      JSON.stringify({ text: 'Go with B.' }),
+    );
+
+    // Cycle 2: the resume sweep re-queues it and the dispatch injects the Q&A into the prompt.
+    let seenResume: unknown;
+    const d = deps();
+    d.now = () => 3000;
+    d.runSession = async (_c, _cand, _wt, resume) => {
+      seenResume = resume;
+      return { ok: true, sessionId: 's2', verifyOk: true, prNumber: 7 };
+    };
+    const n = await processRobotQueue(db, cfg(), d);
+    expect(n).toBe(1);
+    expect(seenResume).toEqual({ askHumanQuestion: 'Design A or B?', askHumanAnswer: 'Go with B.' });
+    expect(agentState(db, 1)).toBe('in-review');
+    // The robot_resumed milestone is on the timeline.
+    expect(eventTypes(db, 1)).toContain('robot_resumed');
   });
 });

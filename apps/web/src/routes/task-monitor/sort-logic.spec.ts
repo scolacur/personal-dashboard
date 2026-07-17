@@ -22,6 +22,8 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
     refined: false,
     isEpic: false,
     epicId: null,
+    ready: false,
+    readyBypassed: false,
     archivedAt: null,
     createdAt: 0,
     updatedAt: 0,
@@ -71,14 +73,14 @@ describe('compareTicketsInColumn', () => {
     it('sorts by sortOrder within the same priority band', () => {
       const first = makeTicket({ priority: 'P2', sortOrder: 10 });
       const second = makeTicket({ priority: 'P2', sortOrder: 20 });
-      expect(compareTicketsInColumn('robot_queue', first, second)).toBeLessThan(0);
+      expect(compareTicketsInColumn('queue', first, second)).toBeLessThan(0);
     });
 
     it('places unset priority after all explicit levels', () => {
       const p5 = makeTicket({ priority: 'P5', sortOrder: 0 });
       const unset = makeTicket({ priority: null, sortOrder: 0 });
-      expect(compareTicketsInColumn('steve_queue', p5, unset)).toBeLessThan(0);
-      expect(compareTicketsInColumn('robot_queue', unset, p5)).toBeGreaterThan(0);
+      expect(compareTicketsInColumn('queue', p5, unset)).toBeLessThan(0);
+      expect(compareTicketsInColumn('queue', unset, p5)).toBeGreaterThan(0);
     });
 
     it('returns 0 for equal priority and sortOrder', () => {

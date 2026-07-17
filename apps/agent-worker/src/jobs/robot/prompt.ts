@@ -1,12 +1,13 @@
 /**
- * The Robot coding prompt (D-055, PD-342) — ported from ops/sortie/WORKFLOW.md, adapted for the
- * DB-blind hand-off model.
+ * The Robot coding prompt (D-055, PD-342) — adapted for the DB-blind hand-off model.
  *
- * KEY DIFFERENCE FROM SORTIE: a Robot cannot touch the board (uid-split, D-039). Under Sortie the
- * agent relabelled its own issue to `sortie:in-review` as the final step. A Robot instead ends at
- * a filesystem + GitHub hand-off: green verify → write `.robot/verify-ok` marker → commit → push →
- * open PR → write `.robot/scm.json`. The LOOP (sole DB writer) then observes the marker + PR and
- * writes the board state transition. So there is no "relabel" step here — that is the loop's job.
+ * The Robot is DB-blind by design: it cannot touch the board (uid-split, D-039). Rather than
+ * change any ticket/board state itself, a Robot ends at a filesystem + GitHub hand-off: green
+ * verify → write `.robot/verify-ok` marker → commit → push → open PR → write `.robot/scm.json`.
+ * The LOOP (sole DB writer) then observes the marker + PR and writes the board state transition,
+ * so there is no "relabel" step here — that is the loop's job. (Historically, under the retired
+ * Sortie runtime the agent relabelled its own issue as the final step; the DB-blind hand-off
+ * replaces that.)
  *
  * The `verify-ok` marker gate (D-046) is preserved verbatim: the loop only completes a hand-off if
  * the Robot left the marker, so a turn that dies before a green verify leaves WIP for retry rather
@@ -39,6 +40,15 @@ export function robotSystemPrompt(): string {
   ].join('\n');
 }
 
+/** Why a run is a re-run, when it is (C5/PD-346). The coding session is DB-blind, so any context it
+ *  can't read off the branch/PR itself — chiefly the human's ask_human answer — is injected here. */
+export interface ResumeContext {
+  /** The Robot's earlier ask_human question, for context (may be null if not recorded). */
+  askHumanQuestion?: string | null;
+  /** The human's answer to that question — surfaced to the session so it doesn't ask again. */
+  askHumanAnswer?: string;
+}
+
 export interface TaskPromptInput {
   title: string;
   body: string | null;
@@ -48,14 +58,31 @@ export interface TaskPromptInput {
   issueNumber: number | null;
   /** Squid proxy URL, or '' for direct egress (dev). Passed inline to git/gh in the finish steps. */
   proxy: string;
+  /** Present when the loop is re-dispatching a parked/handed-off ticket (C5/PD-346). */
+  resume?: ResumeContext;
 }
 
 /** Build the per-run task prompt (the user turn) with the ticket and the DB-blind Finish sequence. */
 export function buildTaskPrompt(input: TaskPromptInput): string {
-  const { title, body, branch, repo, issueNumber, proxy } = input;
+  const { title, body, branch, repo, issueNumber, proxy, resume } = input;
   // git needs the proxy inline (an exported *_proxy is not honored for git); npm/gh honor env.
   const pxFlag = proxy ? `-c http.proxy=${proxy} ` : '';
   const closes = issueNumber !== null ? `Closes #${issueNumber}\n\n` : '';
+
+  // ask_human answer injection (C5): the session can't read the DB, so the loop hands it the human's
+  // reply directly. Surfaced up top so it's impossible to miss.
+  const answerBlock = resume?.askHumanAnswer
+    ? [
+        '## A human answered your earlier question',
+        'You previously paused with an `ask_human` question. Do NOT ask it again — use this answer and continue:',
+        '',
+        `> **Your question:** ${resume.askHumanQuestion ?? '(not recorded)'}`,
+        `> **The human's answer:** ${resume.askHumanAnswer}`,
+        '',
+        '---',
+        '',
+      ]
+    : [];
 
   return [
     `# Ticket: ${title}`,
@@ -63,6 +90,20 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     body ?? '(no description)',
     '',
     '---',
+    '',
+    ...answerBlock,
+    '## Step 0 — Resuming an earlier attempt?',
+    `Your branch (\`${branch}\`) may already have an open PR from a previous run — this happens when a`,
+    'human requested changes, left review comments, or the branch fell into conflict with main. Check:',
+    '```sh',
+    `gh pr view ${branch} --repo ${repo} --json number >/dev/null 2>&1 && echo PR_EXISTS`,
+    '```',
+    'If a PR EXISTS you are **reworking** it — before implementing anything:',
+    `- Read the feedback: \`gh pr view ${branch} --repo ${repo} --json reviews,comments\` (and \`gh api\``,
+    '  `repos/OWNER/REPO/pulls/N/comments` for inline review threads). Address every requested change.',
+    `- If it conflicts with main, integrate and resolve: \`git ${pxFlag}fetch origin main && git merge origin/main\`.`,
+    '- Your push in Step 3 updates the SAME PR — do NOT open a second one (skip the `gh pr create` sub-step).',
+    'If NO PR exists, this is a fresh attempt — proceed normally.',
     '',
     '## Step 1 — Orient',
     'Read `PROJECT.md`, `CLAUDE.md`, and (as needed) `DECISIONS.md`. They define the stack,',
@@ -111,7 +152,8 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     `   git ${pxFlag}push -u origin ${branch}`,
     '   ```',
     '',
-    '4. **Open the PR** with a descriptive conventional-commit title (NOT "automated changes").',
+    '4. **Open the PR** — SKIP this sub-step if Step 0 found an existing PR (your push already updated',
+    '   it). Otherwise create it with a descriptive conventional-commit title (NOT "automated changes").',
     '   The body must follow this envelope — fill in every placeholder:',
     '   ```sh',
     `   gh pr create --repo ${repo} --base main --head ${branch} \\`,

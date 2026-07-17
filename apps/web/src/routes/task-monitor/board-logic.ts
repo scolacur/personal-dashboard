@@ -1,8 +1,9 @@
 import type { AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
 
 // Statuses whose lane is owned by the agent pipeline. A ticket assigned to
-// `robot` in one of these is locked from manual edit/move on the board.
-export const AGENT_CONTROLLED: TicketStatus[] = ['robot_queue', 'completed'];
+// `robot` in one of these is locked from manual edit/move on the board (D-058: the
+// single `queue` lane + robot assignee is the agent-controlled combination).
+export const AGENT_CONTROLLED: TicketStatus[] = ['queue', 'completed'];
 
 /**
  * A ticket is locked (not manually editable / draggable) when the robot owns it
@@ -42,6 +43,15 @@ export function computeSortOrder(
   if (!prev) return next.sortOrder - 1;
   if (!next) return prev.sortOrder + 1;
   return (prev.sortOrder + next.sortOrder) / 2;
+}
+
+/** Minimum / maximum allowed heights (px) for the Epic area resize (D-058). */
+export const EPIC_HEIGHT_MIN = 36;
+export const EPIC_HEIGHT_MAX = 600;
+
+/** Clamp a candidate epic-area height in pixels to the valid range. */
+export function clampEpicHeight(height: number): number {
+  return Math.max(EPIC_HEIGHT_MIN, Math.min(EPIC_HEIGHT_MAX, height));
 }
 
 /**

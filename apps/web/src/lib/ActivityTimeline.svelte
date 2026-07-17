@@ -49,6 +49,18 @@
         return '❓';
       case ROBOT_EVENT.paused:
         return '⛔';
+      case ROBOT_EVENT.humanReply:
+        return '💬';
+      case ROBOT_EVENT.resumed:
+        return '▶️';
+      case ROBOT_EVENT.reactivated:
+        return '🔄';
+      case ROBOT_EVENT.stalled:
+        return '⏱️';
+      case ROBOT_EVENT.completed:
+        return '🏁';
+      case ROBOT_EVENT.prClosed:
+        return '🚫';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -77,6 +89,18 @@
         return `Asked for human input${d.question ? `: ${d.question}` : ''}`;
       case ROBOT_EVENT.paused:
         return `System-wide fault — dispatch paused${d.reason ? `: ${d.reason}` : ''}`;
+      case ROBOT_EVENT.humanReply:
+        return `You replied${d.text ? `: ${d.text}` : ''}`;
+      case ROBOT_EVENT.resumed:
+        return 'Resumed after your reply';
+      case ROBOT_EVENT.reactivated:
+        return `Re-activated for rework${d.reason ? `: ${d.reason}` : ''}`;
+      case ROBOT_EVENT.stalled:
+        return `Stalled run ${d.state === 'stuck' ? 'parked (stuck)' : 're-queued'}${d.reason ? `: ${d.reason}` : ''}`;
+      case ROBOT_EVENT.completed:
+        return 'PR merged — ticket completed';
+      case ROBOT_EVENT.prClosed:
+        return 'PR closed without merging — needs human';
       case 'created':
         return 'Ticket created';
       case 'status_changed':

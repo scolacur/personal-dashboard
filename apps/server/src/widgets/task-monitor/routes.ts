@@ -16,6 +16,7 @@ import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import {
   addRelation,
   appendRefineReply,
+  appendRobotReply,
   approveRefine,
   type ApproveRefineResult,
   archiveTicket,
@@ -54,11 +55,9 @@ import {
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import {
-  GITHUB_READ_TOKEN_ENV,
   GITHUB_WRITE_TOKEN_ENV,
   closeIssueNotPlanned,
   postIssueComment,
-  requestGithubSync,
 } from './github-sync';
 
 function isPriority(v: unknown): v is TicketPriority {
@@ -88,10 +87,9 @@ function sendEpicError(reply: FastifyReply, e: EpicGuardError) {
 
 /** Injectable deps for the routes — defaults resolve from the environment / global fetch. */
 export interface TaskMonitorRouteDeps {
-  /** Write-scoped GitHub token for close-on-delete (PD-207 A). Defaults to `GITHUB_WRITE_TOKEN`. */
+  /** Write-scoped GitHub token for close-on-delete (PD-207 A) + the reply mirror (PD-250).
+   *  Defaults to `GITHUB_WRITE_TOKEN`. */
   githubWriteToken?: string;
-  /** Read-scoped GitHub token for the on-demand sync endpoint (PD-252). Defaults to `GITHUB_READ_TOKEN`. */
-  githubReadToken?: string;
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -123,7 +121,7 @@ export function registerRoutes(
         slug: body.slug.trim(),
         name: body.name.trim(),
         githubRepo: typeof body.githubRepo === 'string' ? body.githubRepo : null,
-        sortieEnabled: body.sortieEnabled === true,
+        robotEnabled: body.robotEnabled === true,
         color: typeof body.color === 'string' ? body.color : null,
       }),
     );
@@ -132,28 +130,6 @@ export function registerRoutes(
   /* ── Tickets ────────────────────────────────── */
 
   app.get(`${base}/tickets`, async () => listTickets(db));
-
-  // PD-252: on-demand GitHub→board reconciliation. The board calls this on page load (and
-  // from a "Sync now" button) so a just-closed issue reflects without waiting up to a minute
-  // for the cron. Guarded/coalesced in `requestGithubSync`, so refresh spam can't hammer
-  // GitHub. Returns the outcome ('ran' | 'coalesced' | 'throttled'); the caller re-fetches
-  // tickets afterwards regardless. A missing read token (e.g. dev) is a benign 503 the client
-  // ignores — the board still loads from the current DB.
-  app.post(`${base}/sync`, async (_request, reply) => {
-    const token = deps.githubReadToken ?? process.env[GITHUB_READ_TOKEN_ENV];
-    if (!token) {
-      return reply
-        .status(503)
-        .send({ error: 'sync unavailable — no read token configured', code: 'NO_READ_TOKEN' });
-    }
-    const outcome = await requestGithubSync({
-      db,
-      token,
-      log: app.log,
-      fetchImpl: deps.fetchImpl ?? fetch,
-    });
-    return { outcome };
-  });
 
   app.post(`${base}/tickets`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -319,6 +295,16 @@ export function registerRoutes(
       }
       patch.refined = body.refined;
     }
+    // D-058: `readyBypassed` is the confirm-modal flag (PD-399). `ready` itself is server-computed
+    // from the body and is NOT accepted from the client.
+    if (body.readyBypassed !== undefined) {
+      if (typeof body.readyBypassed !== 'boolean') {
+        return reply
+          .status(400)
+          .send({ error: 'readyBypassed must be a boolean', code: 'INVALID_READY_BYPASSED' });
+      }
+      patch.readyBypassed = body.readyBypassed;
+    }
     if (body.isEpic !== undefined) {
       if (typeof body.isEpic !== 'boolean') {
         return reply.status(400).send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
@@ -336,7 +322,7 @@ export function registerRoutes(
     try {
       updated = updateTicket(db, id, patch);
     } catch (e) {
-      // Blocker gate (D-048): can't enter robot_queue with unresolved blockers.
+      // Blocker gate (D-051): can't enter `queue` with unresolved blockers.
       if (e instanceof QueueBlockedError) {
         return reply.status(409).send({
           error: `blocked by unresolved: ${e.blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`,
@@ -368,9 +354,9 @@ export function registerRoutes(
     if (!archiveTicket(db, id, { cascadeMembers })) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
-    // PD-207 A: best-effort close the linked issue as "not planned" so Sortie stops
-    // building a ticket that was just archived. Never blocks the 204 — a GitHub failure
-    // is logged and swallowed (deletion is ticket-authoritative, D-039).
+    // PD-207 A: best-effort close the linked issue as "not planned" so any pre-cutover
+    // dispatch candidate for a ticket that was just archived leaves the set. Never blocks
+    // the 204 — a GitHub failure is logged and swallowed (deletion is ticket-authoritative, D-039).
     const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
     if (ref?.githubIssueNumber != null && ref.githubRepo && token) {
       try {
@@ -425,9 +411,12 @@ export function registerRoutes(
 
   app.post(`${base}/notifications/read-all`, async () => ({ marked: markAllNotificationsRead(db) }));
 
-  // Inline reply to a parked agent (PD-250). Posts the reply as a GitHub issue comment
-  // carrying the human-reply marker, so the sortie-ask-human Action (PD-133) re-queues the
-  // agent. Requires the ticket to have a linked issue and a write token to be configured.
+  // Inline reply to a parked agent (PD-250). DB-native as of C5/PD-346: the reply is recorded as a
+  // `robot_human_reply` event the Robot loop's resume sweep detects to re-queue the ticket and hand
+  // the answer to the (DB-blind) coding session — no GitHub round-trip required. We ALSO mirror the
+  // reply to any linked GitHub issue with the human-reply marker, best-effort (harmless for pre-cutover
+  // issues that still carry a comment thread); a missing issue/token or a GitHub failure no longer
+  // fails the reply.
   app.post(`${base}/tickets/:id/reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -437,35 +426,33 @@ export function registerRoutes(
     if (typeof body.body !== 'string' || body.body.trim() === '') {
       return reply.status(400).send({ error: 'reply body is required', code: 'INVALID_BODY' });
     }
-    const ref = getTicketIssueRef(db, id);
-    if (!ref) {
+    const text = body.body.trim();
+
+    // 1) DB-native record — the authoritative signal the loop resumes on. 404 iff the ticket is gone.
+    const event = appendRobotReply(db, id, text);
+    if (!event) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
-    if (ref.githubIssueNumber == null || !ref.githubRepo) {
-      return reply
-        .status(409)
-        .send({ error: 'ticket has no linked GitHub issue', code: 'NO_LINKED_ISSUE' });
-    }
+
+    // 2) Best-effort GitHub mirror onto any linked issue. Skipped silently when the ticket
+    //    isn't linked or no write token is set; a GitHub failure is logged, never surfaced.
+    const ref = getTicketIssueRef(db, id);
     const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
-    if (!token) {
-      return reply
-        .status(503)
-        .send({ error: 'reply unavailable — no write token configured', code: 'NO_WRITE_TOKEN' });
+    if (ref?.githubIssueNumber != null && ref.githubRepo && token) {
+      const commentBody = `${text}\n\n${HUMAN_REPLY_MARKER}`;
+      const ok = await postIssueComment(
+        ref.githubRepo,
+        ref.githubIssueNumber,
+        commentBody,
+        token,
+        deps.fetchImpl ?? fetch,
+      );
+      if (!ok) {
+        app.log.warn(`task-monitor: GitHub reply mirror to ${ref.githubRepo}#${ref.githubIssueNumber} failed (reply still recorded in DB)`);
+      }
     }
-    const commentBody = `${body.body.trim()}\n\n${HUMAN_REPLY_MARKER}`;
-    const ok = await postIssueComment(
-      ref.githubRepo,
-      ref.githubIssueNumber,
-      commentBody,
-      token,
-      deps.fetchImpl ?? fetch,
-    );
-    if (!ok) {
-      app.log.error(`task-monitor: reply to ${ref.githubRepo}#${ref.githubIssueNumber} failed`);
-      return reply.status(502).send({ error: 'GitHub rejected the reply', code: 'GITHUB_ERROR' });
-    }
-    app.log.info(`task-monitor: replied to ${ref.githubRepo}#${ref.githubIssueNumber} (ticket ${id})`);
-    return reply.status(201).send({ ok: true });
+    app.log.info(`task-monitor: recorded reply on ticket ${id}`);
+    return reply.status(201).send(event);
   });
 
   /* ── Ticket activity log + Refine thread (D-044, PD-267) ─────────────── */
@@ -535,8 +522,8 @@ export function registerRoutes(
     return reply.status(201).send(result.event);
   });
 
-  // Post a human Refine reply. Unlike /reply (which forwards to a GitHub issue to re-queue a
-  // parked Sortie agent), this stays entirely in the DB: it writes a refine_human event the
+  // Post a human Refine reply. Unlike /reply (which re-queues a parked Robot run), this stays
+  // entirely in the DB: it writes a refine_human event the
   // agent-worker consumes on its next poll and resumes the refine session on. No GitHub, no token.
   app.post(`${base}/tickets/:id/refine-reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
@@ -560,7 +547,7 @@ export function registerRoutes(
   // writes: refine-in-place rewrites+marks refined; decompose creates children (non-queue lanes),
   // closes the parent (D-036), and links them via `split` relations. D-057: approval never
   // dispatches — pass `{ queue: true }` (the "Approve & queue" button, non-Epic refine_in_place
-  // only) to also move the ticket into robot_queue in the same step.
+  // only) to also move the ticket into `queue` in the same step.
   app.post(`${base}/tickets/:id/refine-approve`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -584,7 +571,7 @@ export function registerRoutes(
         return reply.status(409).send({ error: 'no proposal to approve', code: 'NO_PROPOSAL' });
       case 'epic_not_queueable':
         return reply.status(409).send({
-          error: `an Epic cannot enter robot_queue: ${result.detail}`,
+          error: `an Epic cannot enter the queue: ${result.detail}`,
           code: 'EPIC_NOT_QUEUEABLE',
         });
       case 'blocked_by_unresolved':
@@ -718,7 +705,7 @@ export function registerRoutes(
   });
 
   // ── System status (Site Status section) ──────────────────────────────────────
-  // Two cheap runtime signals for the board header: Sortie fleet counts (pure
+  // Two cheap runtime signals for the board header: Robot fleet counts (pure
   // aggregation over agent_state) + worker liveness (the heartbeat rows workers upsert).
   app.get(`${base}/system-status`, async () => ({
     sortie: getSortieFleet(db),

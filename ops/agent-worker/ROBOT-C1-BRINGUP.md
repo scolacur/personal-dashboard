@@ -39,6 +39,11 @@ laptop — it needs the container (for the uid drop) and a real GitHub push.
 
 ---
 
+> **Squid path change (PD-348):** the agent-worker's `squid.conf` mount moved from
+> `ops/sortie/squid.conf` to `ops/agent-worker/squid.conf`. After `git pull`, redeploy the
+> agent-worker (`docker compose -f ops/agent-worker/docker-compose.egress.yml up -d`) so the
+> new host path resolves — the old path no longer exists.
+
 ## Container prerequisites (one-time, before the flag goes on)
 
 The loop process runs privileged (as today); the coding session runs as a dedicated low-priv uid.
@@ -67,15 +72,33 @@ The loop process runs privileged (as today); the coding session runs as a dedica
 ## Environment (agent-worker's own env file — never the web process)
 
 ```sh
-ROBOT_DISPATCH_ENABLED=1            # arm the loop (default off)
-ROBOT_ALLOWLIST=<ticketId>          # prove-on-one: exactly ONE board ticket id (e.g. 429). Empty ⇒ nothing runs.
+ROBOT_DISPATCH_ENABLED=1            # arm the loop (default off) — the master switch
+ROBOT_ALLOWLIST=<ticketId>          # dispatch scope. PROVE-ON-ONE: one id (e.g. 429). See scope note below.
 ROBOT_CONCURRENCY=1                 # one Robot at a time (pilot)
 ROBOT_GITHUB_TOKEN=<bot PAT>        # WRITE-scoped (public_repo) — push + PR. Distinct from GITHUB_READ_TOKEN.
 ROBOT_CODING_UID=1500               # the low-priv coding uid (enables the kernel privilege drop)
 ROBOT_CODING_GID=1500
 # optional: ROBOT_CODING_HOME (default /home/robot — matches the image), ROBOT_INTERVAL_MS,
 #           ROBOT_WORKTREES_DIR, ROBOT_MAX_TURNS, ROBOT_BOT_NAME, ROBOT_BOT_EMAIL
+# C2 fault guardrail: ROBOT_RETRY_CAP (3), ROBOT_PROMOTE_AFTER (2), ROBOT_BACKOFF_BASE_MS (60000),
+#           ROBOT_BACKOFF_MAX_MS (900000)
+# C5 folded-in bridges: ROBOT_STALL_THRESHOLD_MS (default 7200000 = 2h — a working run running longer
+#           is treated as a restart orphan), ROBOT_PR_POLL_INTERVAL_MS (default 180000 = 3m — how
+#           often each in-review PR is polled for review feedback / merge conflicts / MERGE|CLOSE).
+#           The PR poll uses GITHUB_READ_TOKEN (read-only); no write token needed to observe PR state.
 ```
+
+### `ROBOT_ALLOWLIST` scope (C6/PD-347 go-live semantics)
+
+| Value                | Meaning                                                                 |
+|----------------------|-------------------------------------------------------------------------|
+| unset / empty        | **`all`** — dispatch every eligible `robot_queue` ticket (go-live default; still bounded by `ROBOT_DISPATCH_ENABLED` + `ROBOT_CONCURRENCY`) |
+| `NONE`               | **killswitch** — dispatch nothing. Halts new work without touching the master switch or restarting anything |
+| `429` / `429,431`    | **prove-on-N** — only those ids (the bring-up gate)                     |
+| garbage (`x,y`)      | fails safe to `NONE` (blocks, never opens)                              |
+
+Two independent brakes: `ROBOT_DISPATCH_ENABLED=` (unset) turns the whole loop off; `ROBOT_ALLOWLIST=NONE`
+leaves the loop running (still doing rework/completion polls on in-review PRs) but dispatches no new tickets.
 
 ## Avoiding Sortie contention (C1 is supervised)
 
@@ -111,6 +134,41 @@ double-dispatch produces separate branches/PRs rather than clobbering — but av
 
 ## Rollback
 
-Unset `ROBOT_DISPATCH_ENABLED` (or clear `ROBOT_ALLOWLIST`) and redeploy — the loop goes inert and
-Sortie remains primary. No board or GitHub state needs undoing; a leftover worktree is
+Unset `ROBOT_DISPATCH_ENABLED` (or set `ROBOT_ALLOWLIST=NONE` — **not** empty, which now means *all*)
+and redeploy — the loop goes inert. No board or GitHub state needs undoing; a leftover worktree is
 pristine-cleaned on next reuse or removed with `git worktree remove --force`.
+
+---
+
+## C6 cutover runbook (PD-347 — supervised, one-time)
+
+The board DB is authoritative once the C6 build (this PR) is deployed: `github-sync` is retired
+(labels are no longer read or written) and no GitHub issues are minted. **Order matters** — the
+label-sync must be dead *before* the loop is armed, or the old sync would re-dispatch. The C6 build
+enforces the first half (github-sync is unregistered at deploy); the arming is the manual step.
+
+1. **Reconcile once (optional).** With Sortie stopped, board `agent_state` already tracks the last
+   label state. Eyeball `robot_queue` tickets — anything mid-flight (`working`/`in-review`) whose
+   Sortie run is long dead should be nudged to `queued` (re-dispatch) or the PR merged/closed (the
+   poll will then complete/park it). Nothing automated is required.
+2. **Deploy the C6 build.** Confirm the server boot log shows
+   `github-sync: RETIRED at cutover` and the board still loads (it now reads only the DB).
+3. **Arm the loop.** Set `ROBOT_DISPATCH_ENABLED=1` and `ROBOT_ALLOWLIST=` (empty ⇒ all) — or start
+   with a short prove-on-N id list and widen. Keep `ROBOT_CONCURRENCY=1` for the pilot. Redeploy
+   agent-worker; confirm `robot loop ready`.
+4. **Watch one pilot cycle.** A `robot_queue` ticket dispatches → PR → `in-review`; on merge the
+   PR-state poll flips it to `completed`/`done`; feedback re-activates it for rework. The killswitch
+   is `ROBOT_ALLOWLIST=NONE` (halts new dispatch, keeps rework/completion polls running).
+5. **Rollback window.** Leave the Sortie container **stopped but present** for one pilot cycle.
+
+### Decommission (only after N clean completions — deferred, not part of the C6 PR)
+
+Once the loop has cleanly completed N tickets and you trust it:
+
+- [ ] Delete the Sortie container + image (`docker rm sortie` / `docker image rm ghcr.io/sortie-ai/sortie`).
+- [ ] Remove the second squid sidecar (Sortie's egress proxy) — the agent-worker has its own.
+- [ ] Delete `.sortie.db`, the `sortie-reset` script, and `ops/sortie/WORKFLOW.md`.
+- [ ] The four `sortie-*.yml` bridges are already gone (C5); the auto-merge bridge **stays**
+      (renamed `sortie-auto-merge.yml` → `robot-auto-merge.yml` in C7/PD-348).
+- [ ] Codebase `sortie`→`robot` terminology + dead-code sweep (the retired `deriveState`/`runGithubSync`/
+      `runQueuedSync`, `sortie:*` strings) is **C7 / PD-348** — a separate low-risk mechanical PR.

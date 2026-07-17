@@ -48,7 +48,7 @@ describe('buildTaskPrompt', () => {
   it('is DB-blind: never tells the Robot to relabel or change ticket/board state', () => {
     const p = buildTaskPrompt(base);
     expect(p).toMatch(/Do NOT change any GitHub labels or ticket state/);
-    expect(p).not.toMatch(/sortie:in-review|robot_queue|agent_state|dashboard\.db/);
+    expect(p).not.toMatch(/robot_reset|agent_state|dashboard\.db/);
   });
 
   it('includes Closes #N when linked, omits it when not', () => {
@@ -60,5 +60,30 @@ describe('buildTaskPrompt', () => {
     const p = buildTaskPrompt({ ...base, proxy: '' });
     expect(p).toContain('git push -u origin robot/220');
     expect(p).not.toContain('http.proxy');
+  });
+
+  // ---- C5 (PD-346) resume-aware prompting ----
+
+  it('always includes the Step 0 resume check (read PR feedback / resolve conflict) for rework', () => {
+    const p = buildTaskPrompt(base);
+    expect(p).toContain('## Step 0 — Resuming an earlier attempt?');
+    expect(p).toContain('gh pr view robot/220 --repo scolacur/personal-dashboard --json number');
+    expect(p).toMatch(/reviews,comments/); // read the feedback off the PR
+    expect(p).toMatch(/git .*merge origin\/main/); // resolve a conflict
+    expect(p).toMatch(/do NOT open a second/i); // push updates the same PR
+  });
+
+  it('injects the human ask_human answer when resuming, and omits the block otherwise', () => {
+    const withAnswer = buildTaskPrompt({
+      ...base,
+      resume: { askHumanQuestion: 'Design A or B?', askHumanAnswer: 'Go with B.' },
+    });
+    expect(withAnswer).toContain('A human answered your earlier question');
+    expect(withAnswer).toContain('Design A or B?');
+    expect(withAnswer).toContain('Go with B.');
+    expect(withAnswer).toMatch(/Do NOT ask it again/i);
+
+    // No resume context ⇒ no answer block.
+    expect(buildTaskPrompt(base)).not.toContain('A human answered your earlier question');
   });
 });

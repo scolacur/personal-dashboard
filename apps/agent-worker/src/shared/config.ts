@@ -26,26 +26,32 @@ export interface AgentWorkerConfig {
   auditIntervalMs: number;
   /** Squid proxy URL when egress-hardened; empty in local dev (direct egress). */
   httpsProxy: string;
-  /** The Robot loop (D-055, PD-342) — the in-house Sortie replacement. Off by default. */
+  /** The Robot loop (D-055, PD-342) — the in-house dispatcher. Off by default. */
   robot: RobotConfig;
 }
 
 /**
- * Config for the **Robot loop** (D-055, PD-342): the `robot` job that replaces the
- * third-party Sortie dispatcher. It polls `robot_queue` tickets, opens a git worktree per
+ * Config for the **Robot loop** (D-055, PD-342): the `robot` job that dispatches queued
+ * tickets. It polls `queue` tickets, opens a git worktree per
  * ticket, and runs a write-enabled coding session (a **Robot**) that hands off a PR. All
  * env-driven; the whole loop is inert unless `dispatchEnabled` is true, so the image ships
- * with Sortie still primary until cutover (C6).
+ * with the loop dark until a deploy flips it on (C6).
  */
 export interface RobotConfig {
   /** Master switch — the loop does nothing unless true (default off). C6 flips it on. */
   dispatchEnabled: boolean;
-  /** Prove-on-one gate: only these ticket ids may dispatch. Empty ⇒ nothing dispatches,
-   *  even when enabled — a second safety catch during bring-up. */
-  allowlist: number[];
-  /** Max Robots in flight at once (PILOT default 1, mirrors Sortie's max_concurrent_agents). */
+  /**
+   * Dispatch scope (`ROBOT_ALLOWLIST`), post-cutover semantics (C6/PD-347):
+   *   - `'all'`  — unset/empty ⇒ every eligible `queue` ticket dispatches (normal operation,
+   *                still bounded by `dispatchEnabled` + `concurrency`). This is the go-live default.
+   *   - `'none'` — the literal `NONE` (or a garbage value) ⇒ dispatch nothing: a per-allowlist
+   *                killswitch that halts new work without touching `dispatchEnabled`.
+   *   - `number[]` — an explicit id list ⇒ only those tickets (the prove-on-one / prove-on-N gate).
+   */
+  allowlist: number[] | 'all' | 'none';
+  /** Max Robots in flight at once (PILOT default 1, the Robot loop's max-concurrent-agents cap). */
   concurrency: number;
-  /** How often to poll `robot_queue` for dispatchable tickets (ms). */
+  /** How often to poll `queue` for dispatchable tickets (ms). */
   intervalMs: number;
   /** Parent dir for per-ticket worktrees (`<dir>/robot-<n>`); on the persistent /data volume. */
   worktreesDir: string;
@@ -64,7 +70,7 @@ export interface RobotConfig {
    *  NOT inherit the loop's HOME (root's — unreadable to it); git/gh/npm write their config +
    *  cache here instead. Matches the `robot` user's home created in the image. */
   codingHome: string;
-  /** Hard turn ceiling for one coding session (mirrors Sortie's max_turns). */
+  /** Hard turn ceiling for one coding session (the Robot loop's max-turns cap). */
   maxTurns: number;
   /** Fault-tier retry guardrail (D-055, PD-343 / C2). Consumed by faults.ts as its `FaultPolicy`. */
   retryCap: number;
@@ -73,6 +79,15 @@ export interface RobotConfig {
   /** First transient-retry backoff step (ms); doubles per attempt up to `backoffMaxMs`. */
   backoffBaseMs: number;
   backoffMaxMs: number;
+  /** In-process stall watchdog (C5/PD-346): a `working` ticket whose run has been `running` longer
+   *  than this is an orphan (process died mid-run) — closed + re-queued/parked. Default 2h
+   *  (the in-progress staleness threshold, carried over from the retired sortie-watchdog.yml's 120m).
+   *  A healthy run finishes in minutes. */
+  stallThresholdMs: number;
+  /** How often the loop polls each in-review PR's review/merge state for rework (C5/PD-346). The
+   *  dispatch loop ticks far faster (`intervalMs`); this throttles the GitHub API hit to its own
+   *  slower cadence. Default 3 min. */
+  prPollIntervalMs: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -82,17 +97,30 @@ function optInt(raw: string | undefined): number | undefined {
   return Number.isInteger(n) ? n : undefined;
 }
 
+/**
+ * Parse `ROBOT_ALLOWLIST` into the dispatch scope (C6/PD-347). Unset/empty ⇒ `'all'` (go-live
+ * default: dispatch everything eligible). The literal `NONE` ⇒ `'none'` (killswitch). Otherwise
+ * "429,431" → [429, 431]; empties are filtered first so a trailing comma / blank segment doesn't
+ * coerce to 0 (Number('') === 0). A non-empty value that yields NO valid ids fails safe to `'none'`
+ * — a typo'd allowlist blocks rather than silently opening the floodgates.
+ */
+function parseAllowlist(raw: string | undefined): number[] | 'all' | 'none' {
+  const v = (raw ?? '').trim();
+  if (v === '') return 'all';
+  if (v.toUpperCase() === 'NONE') return 'none';
+  const ids = v
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+    .map((s) => Number(s))
+    .filter((n) => Number.isInteger(n));
+  return ids.length > 0 ? ids : 'none';
+}
+
 export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
   return {
     dispatchEnabled: env.ROBOT_DISPATCH_ENABLED === '1' || env.ROBOT_DISPATCH_ENABLED === 'true',
-    // "429,431" → [429, 431]; blank ⇒ []. Filter empties first so a trailing comma / blank
-    // segment doesn't coerce to 0 (Number('') === 0).
-    allowlist: (env.ROBOT_ALLOWLIST ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s !== '')
-      .map((s) => Number(s))
-      .filter((n) => Number.isInteger(n)),
+    allowlist: parseAllowlist(env.ROBOT_ALLOWLIST),
     concurrency: Number(env.ROBOT_CONCURRENCY ?? 1),
     intervalMs: Number(env.ROBOT_INTERVAL_MS ?? 15_000),
     worktreesDir: env.ROBOT_WORKTREES_DIR ?? '/data/robot-worktrees',
@@ -107,6 +135,8 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
     backoffBaseMs: Number(env.ROBOT_BACKOFF_BASE_MS ?? 60_000),
     backoffMaxMs: Number(env.ROBOT_BACKOFF_MAX_MS ?? 15 * 60_000),
+    stallThresholdMs: Number(env.ROBOT_STALL_THRESHOLD_MS ?? 2 * 60 * 60_000),
+    prPollIntervalMs: Number(env.ROBOT_PR_POLL_INTERVAL_MS ?? 3 * 60_000),
   };
 }
 

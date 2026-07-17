@@ -110,6 +110,37 @@
 .scrim {
   display: none;
 }
+.arrange-btn {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+
+  &.active {
+    background: var(--accent);
+    color: var(--on-accent);
+    border-color: var(--accent);
+  }
+}
+
+// Hidden on mobile — arrange mode is desktop/tablet only (D-053).
+@media (max-width: 768px) {
+  .arrange-btn {
+    display: none;
+  }
+}
 .content {
   padding: var(--space-xl) var(--space-lg);
 }

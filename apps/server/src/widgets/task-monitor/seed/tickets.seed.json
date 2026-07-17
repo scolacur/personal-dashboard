@@ -1822,7 +1822,7 @@
     "title": "PR-reaction feedback loop",
     "body": "Sortie watches reactions on the PR and feeds them into a follow-up attempt.",
     "priority": "P3",
-    "status": "robot_queue",
+    "status": "queue",
     "source": "seed:core/META-TODOS.md",
     "displayId": "C-48"
   },

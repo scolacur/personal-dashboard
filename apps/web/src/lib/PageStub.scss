@@ -1,11 +1,1 @@
-.page-empty {
-  color: var(--muted);
-  font-size: var(--font-size-sm);
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  grid-auto-rows: 140px;
-  gap: var(--space-md);
-}
+// Grid styles live in WidgetGrid.scss. PageStub is now a thin wrapper.

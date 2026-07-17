@@ -29,4 +29,43 @@ export function logMilestone(
   }
 }
 
+/** Timestamp of the newest event of `type` for a ticket, or 0 if none. Tolerates a missing events
+ *  table (worker booted before the server bootstrapped it) → 0. Read side of the C5 resume sweeps. */
+export function latestEventAt(db: Database.Database, ticketId: number, type: RobotEventType): number {
+  try {
+    const row = db
+      .prepare('SELECT MAX(created_at) AS t FROM agent_ticket_events WHERE ticket_id = ? AND type = ?')
+      .get(ticketId, type) as { t: number | null } | undefined;
+    return row?.t ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** The newest event of `type` for a ticket (detail parsed), or null. Used to recover the ask_human
+ *  question + the human's answer for the resume prompt. */
+export function latestEvent(
+  db: Database.Database,
+  ticketId: number,
+  type: RobotEventType,
+): { createdAt: number; detail: RobotEventDetail } | null {
+  try {
+    const row = db
+      .prepare(
+        'SELECT detail, created_at FROM agent_ticket_events WHERE ticket_id = ? AND type = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+      )
+      .get(ticketId, type) as { detail: string | null; created_at: number } | undefined;
+    if (!row) return null;
+    let detail: RobotEventDetail = {};
+    try {
+      detail = row.detail ? (JSON.parse(row.detail) as RobotEventDetail) : {};
+    } catch {
+      detail = {};
+    }
+    return { createdAt: row.created_at, detail };
+  } catch {
+    return null;
+  }
+}
+
 export { ROBOT_EVENT };

@@ -1,17 +1,18 @@
-# Sortie auto-merge bridge: squash-merges any PR an authorized human has approved
+# Robot auto-merge bridge: squash-merges any PR an authorized human has approved
 # once it is fully mergeable (all required checks green, no conflicts, reviews satisfied).
 #
 # WHY THIS EXISTS: branch protection on `main` requires the `verify` check + 1 approving
-# review + no merge conflicts, but a pure APPROVED review triggers nothing today —
-# sortie-review-rework.yml deliberately ignores APPROVED reviews (they mean "ready to merge",
-# not "re-work"). So Steve merges every green PR by hand. This bridge closes that gap and
-# follows the house pattern (D-042): in-repo Actions bridges are preferred over Sortie's
-# flaky native `reactions`, including its restart-coupled native `auto_merge`.
+# review + no merge conflicts, but a pure APPROVED review triggers nothing on its own.
+# Without this, Steve would merge every green PR by hand. This bridge closes that gap and
+# follows the house pattern (D-042): a pure GitHub-side Actions bridge, no external runtime.
 #
 # AUTHORIZATION: repo OWNER (scolacur) directly, OR a COLLABORATOR review carrying the
-# <!-- sortie:human-reply --> marker (same trust boundary as sortie-review-rework.yml and
-# sortie-conflict-rework.yml). The Sortie bot (sortie-bot-55) is a COLLABORATOR without the
-# marker, so its own reviews never qualify.
+# <!-- robot:human-reply --> marker. The bot account (sortie-bot-55) is a COLLABORATOR
+# without the marker, so its own reviews never qualify.
+# (The marker string tracks HUMAN_REPLY_MARKER in @dashboard/shared — the board's reply
+# mirror stamps it and this workflow + the Robot loop's pr-state trust check consume it, so
+# all three must use the same value. The sortie-bot-55 login is kept verbatim — it is a real
+# GitHub identity — so this cleanup leaves it literal.)
 #
 # MERGE CONDITION: state == OPEN, a standing authorized APPROVED review, and
 # mergeStateStatus == CLEAN (GitHub's "no conflicts + all required checks green + reviews
@@ -35,7 +36,7 @@
 # bot's own workflow activity never passes the authorized-review gate. A `ci` run on push
 # to main resolves to no open PR head → "No open PRs found" → no-op.
 
-name: sortie-auto-merge
+name: robot-auto-merge
 
 on:
   # Fires when a human approves a PR — merge immediately if already CLEAN.
@@ -57,7 +58,7 @@ permissions:
 
 # One in-flight merge attempt per PR (or per commit SHA when the PR number is unknown).
 concurrency:
-  group: sortie-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || 'global' }}
+  group: robot-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || 'global' }}
   cancel-in-progress: false
 
 jobs:
@@ -74,7 +75,7 @@ jobs:
           github.event.review.author_association == 'OWNER' ||
           (
             github.event.review.author_association == 'COLLABORATOR' &&
-            contains(github.event.review.body, '<!-- sortie:human-reply -->')
+            contains(github.event.review.body, '<!-- robot:human-reply -->')
           )
         )
       ) ||
@@ -144,7 +145,7 @@ jobs:
                     .authorAssociation == "OWNER" or
                     (
                       .authorAssociation == "COLLABORATOR" and
-                      ((.body // "") | contains("<!-- sortie:human-reply -->"))
+                      ((.body // "") | contains("<!-- robot:human-reply -->"))
                     )
                   )
                 ))
@@ -158,7 +159,7 @@ jobs:
 
             echo "PR #$PR has an authorized APPROVED review — checking mergeability."
 
-            # ── 4. Poll mergeStateStatus past UNKNOWN (mirrors sortie-conflict-rework) ──
+            # ── 4. Poll mergeStateStatus past UNKNOWN ──
             MERGE_STATE="UNKNOWN"
             CLOSED_DURING_POLL=false
             for _ in 1 2 3 4 5; do

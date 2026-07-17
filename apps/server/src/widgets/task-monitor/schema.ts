@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
-import { migrate, addColumn } from '../../migrate';
+import { isReady } from '@dashboard/shared';
+import { migrate, addColumn, columnExists } from '../../migrate';
 
 // Task Monitor schema: a cross-project Ticket backlog (Kanban), the projects those
 // Tickets belong to, plus relations / tags / events / reminders. All evolution goes
@@ -52,7 +53,7 @@ export function bootstrapSchema(db: Database.Database): void {
       key            TEXT,                          -- display-id prefix, e.g. 'PD'
       seq            INTEGER NOT NULL DEFAULT 0,    -- last-issued display-id number
       github_repo    TEXT,
-      sortie_enabled INTEGER NOT NULL DEFAULT 0,
+      robot_enabled  INTEGER NOT NULL DEFAULT 0,
       color          TEXT,
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL
@@ -72,8 +73,10 @@ export function bootstrapSchema(db: Database.Database): void {
       sort_order          REAL    NOT NULL DEFAULT 0,
       github_issue_number INTEGER,
       github_issue_url    TEXT,
-      agent_state         TEXT,                     -- derived sortie:* agent state (PD-165); NULL = none
+      agent_state         TEXT,                     -- Robot loop agent state (D-055); NULL = none
       refined             INTEGER NOT NULL DEFAULT 0, -- 1 once refined to completion (D-044, PD-268)
+      ready               INTEGER NOT NULL DEFAULT 0, -- 1 iff body is 4-section Ready (D-058); recomputed on body write
+      ready_bypassed      INTEGER NOT NULL DEFAULT 0, -- 1 when a human queued a not-Ready robot ticket via confirm modal (D-058)
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       archived_at         INTEGER,                  -- soft delete; NULL = active
@@ -169,6 +172,16 @@ export function bootstrapSchema(db: Database.Database): void {
 
   // Bring pre-existing tables (older dev DBs) up to the current schema. Each is a
   // no-op on a fresh DB where the CREATE above already included the column.
+
+  // D-055 / C7: rename the legacy `sortie_enabled` column to `robot_enabled`. On a fresh DB the
+  // CREATE above already made `robot_enabled`, so the guard skips; on an existing DB it renames
+  // once. DEPLOY ORDER: the server (which runs bootstrapSchema) MUST boot and apply this migration
+  // BEFORE the agent-worker queries `robot_enabled`, or the worker will hit a missing column.
+  migrate(db, 'agent_projects_rename_sortie_enabled_to_robot', (d) => {
+    if (columnExists(d, 'agent_projects', 'sortie_enabled') && !columnExists(d, 'agent_projects', 'robot_enabled')) {
+      d.exec('ALTER TABLE agent_projects RENAME COLUMN sortie_enabled TO robot_enabled');
+    }
+  });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');
     addColumn(d, 'agent_projects', 'seq', 'INTEGER NOT NULL DEFAULT 0');
@@ -187,6 +200,14 @@ export function bootstrapSchema(db: Database.Database): void {
   });
   migrate(db, 'agent_tickets_add_refined', (d) => {
     addColumn(d, 'agent_tickets', 'refined', 'INTEGER NOT NULL DEFAULT 0');
+  });
+  // D-058: `ready` (persisted 4-section shape check, recomputed on body write) + `ready_bypassed`
+  // (human queued a not-Ready robot ticket via the confirm modal). Both default 0 so every
+  // existing row back-fills to not-ready/not-bypassed; the queue-model migration below recomputes
+  // `ready` from each row's body.
+  migrate(db, 'agent_tickets_add_ready_fields', (d) => {
+    addColumn(d, 'agent_tickets', 'ready', 'INTEGER NOT NULL DEFAULT 0');
+    addColumn(d, 'agent_tickets', 'ready_bypassed', 'INTEGER NOT NULL DEFAULT 0');
   });
   // D-054: Epic umbrella primitive (PD-336). `is_epic` flags an umbrella; `epic_id` is a member's
   // single parent Epic. Both default to non-epic / no-parent so every existing row back-fills.
@@ -238,12 +259,35 @@ export function bootstrapSchema(db: Database.Database): void {
     ).run();
   });
 
+  // D-058 queue model: collapse the two queue lanes into one `queue` status and make `assignee`
+  // the independent dispatch axis. `robot_queue` → `queue` + assignee `robot`; `steve_queue` →
+  // `queue` + assignee `steve`. Then back-fill the persisted `ready` flag from every row's body
+  // via the SAME shared 4-section `isReady` the store now recomputes on write. Data-only,
+  // non-destructive; the status UPDATEs are naturally idempotent and the migrate ledger runs the
+  // ready back-fill exactly once.
+  // DEPLOY ORDER: the server (bootstrapSchema) MUST apply this BEFORE the agent-worker queries
+  // `status='queue'`, or the loop greps a status no row carries yet (D-058: slices 1–3 deploy
+  // atomically — no partial deploy where the server writes `queue` while the loop still greps
+  // `robot_queue`).
+  migrate(db, 'agent_tickets_queue_model_d058', (d) => {
+    d.prepare("UPDATE agent_tickets SET status = 'queue', assignee = 'robot' WHERE status = 'robot_queue'").run();
+    d.prepare("UPDATE agent_tickets SET status = 'queue', assignee = 'steve' WHERE status = 'steve_queue'").run();
+    const rows = d.prepare('SELECT id, body FROM agent_tickets').all() as {
+      id: number;
+      body: string | null;
+    }[];
+    const setReady = d.prepare('UPDATE agent_tickets SET ready = ? WHERE id = ?');
+    for (const r of rows) {
+      setReady.run(isReady(r.body) ? 1 : 0, r.id);
+    }
+  });
+
   // Seed the known projects once (with display-id keys). Idempotent, and backfills
   // the key on any project a prior seed created before `key` existed.
   migrate(db, 'seed_projects', (d) => {
     const now = Date.now();
     const insert = d.prepare(
-      `INSERT OR IGNORE INTO agent_projects (slug, name, key, github_repo, sortie_enabled, color, created_at, updated_at)
+      `INSERT OR IGNORE INTO agent_projects (slug, name, key, github_repo, robot_enabled, color, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     insert.run('personal-dashboard', 'Personal Dashboard', 'PD', 'scolacur/personal-dashboard', 1, '#7c3aed', now, now);

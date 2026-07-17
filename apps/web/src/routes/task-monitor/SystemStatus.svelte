@@ -69,7 +69,7 @@
 {#if status}
   <div class="system-status">
     <div class="ss-line">
-      <span class="ss-label">Sortie</span>
+      <span class="ss-label">Robot</span>
       {#if activeStates.length === 0}
         <span class="ss-idle">idle</span>
       {:else}
@@ -85,7 +85,7 @@
 
     {#if dispatch}
       <div class="ss-line">
-        <span class="ss-label">Robot</span>
+        <span class="ss-label">Dispatch</span>
         <span class="ss-dispatch" class:paused={dispatch.paused}>
           <span class="dot" aria-hidden="true"></span>
           <span class="name">{dispatch.paused ? 'dispatch paused' : 'dispatch running'}</span>

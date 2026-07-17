@@ -87,7 +87,7 @@
 
 .card-status-row {
   display: flex;
-  // Refine-agent state sits left, Sortie state sits right (PD card status row).
+  // Refine-agent state sits left, Robot state sits right (PD card status row).
   justify-content: space-between;
   align-items: center;
   gap: var(--space-xs);
@@ -95,7 +95,7 @@
 }
 
 // Left slot: holds the refine pill / refined-mark, or nothing. Kept in the DOM even
-// when empty so the Sortie badge stays pinned to the right edge.
+// when empty so the Robot badge stays pinned to the right edge.
 .status-left {
   display: inline-flex;
   align-items: center;
@@ -254,7 +254,7 @@
 }
 
 // Agent-state badge — mirrors .priority pill patterns. In Robot's Queue (D-040) it shows
-// the fine sortie:* state: info (queued/in progress/in review), attention
+// the fine agent state: info (queued/in progress/in review), attention
 // (stuck/needs-human/awaiting-human), or wontfix.
 // Rendered as a <button> so it opens the status-legend modal on click.
 .agent-state-badge {
@@ -264,7 +264,7 @@
   padding: 0 var(--space-sm);
   border: 1px solid;
   white-space: nowrap;
-  // Filled treatment: the Sortie badge is a solid (tinted) chip, visually distinct from
+  // Filled treatment: the Robot badge is a solid (tinted) chip, visually distinct from
   // the outlined Refine pill on the same row. currentColor is set per-state below, so the
   // tint tracks each state's hue automatically.
   background: color-mix(in srgb, currentColor 16%, transparent);
@@ -321,7 +321,7 @@
 }
 
 // Refine-agent pill on a card (D-044, PD-268). Outlined — visually distinct from the
-// filled Sortie badge on the same row. Rendered as an <a> (active session → thread) or a
+// filled Robot badge on the same row. Rendered as an <a> (active session → thread) or a
 // <button> (the "Not refined" call-to-action that starts a Refine session).
 .refine-pill {
   font-family: var(--font-sans);
@@ -340,7 +340,7 @@
     border-color: var(--status-working);
   }
   // Pink "Needs you": the Refine agent wants your input. Attention-grabbing but
-  // less urgent than a red stuck/needs-human Sortie job. Outlined (it's a Refine pill).
+  // less urgent than a red stuck/needs-human Robot job. Outlined (it's a Refine pill).
   &.refine-awaiting-human {
     color: var(--status-refine-needs);
     border-color: var(--status-refine-needs);

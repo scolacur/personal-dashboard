@@ -28,7 +28,6 @@ export function projectIdColor(project: AgentProject | undefined | null): string
 
 const BASE = '/api/widgets/task-monitor/tickets';
 const PROJECTS = '/api/widgets/task-monitor/projects';
-const SYNC = '/api/widgets/task-monitor/sync';
 
 async function parseError(res: Response): Promise<never> {
   let message = `${res.status} ${res.statusText}`;
@@ -51,17 +50,6 @@ export async function fetchTickets(): Promise<AgentTicket[]> {
   const res = await fetch(BASE);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<AgentTicket[]>;
-}
-
-/**
- * Trigger an immediate server→GitHub reconciliation (PD-252). Resolves once the pass (if one
- * ran) has landed in the DB, so the caller can then re-fetch fresh tickets. Server-side
- * guarded/coalesced, so calling it on mount or via the button never hammers GitHub. A 503
- * (no read token configured, e.g. in dev) is swallowed — the board still shows current data.
- */
-export async function syncNow(): Promise<void> {
-  const res = await fetch(SYNC, { method: 'POST' });
-  if (!res.ok && res.status !== 503) return parseError(res);
 }
 
 export async function createTicket(input: CreateTicketInput): Promise<AgentTicket> {
@@ -126,7 +114,7 @@ export async function fetchTicketRuns(id: number): Promise<AgentRun[]> {
   return res.json() as Promise<AgentRun[]>;
 }
 
-/** The board's Site Status snapshot — Sortie fleet + worker liveness + Robot dispatch state. */
+/** The board's Site Status snapshot — Robot fleet + worker liveness + Robot dispatch state. */
 export async function fetchSystemStatus(): Promise<SystemStatus> {
   const res = await fetch('/api/widgets/task-monitor/system-status');
   if (!res.ok) return parseError(res);
@@ -183,9 +171,9 @@ export async function postRefineReply(id: number, body: string): Promise<TicketE
 
 /** Approve the latest Refine commit proposal (PD-269, D-057): the server refines-in-place or
  *  decomposes and marks refined, but never dispatches. Pass `queue: true` (the "Approve & queue"
- *  button — non-Epic refine_in_place only) to also move the ticket into robot_queue. Throws on
+ *  button — non-Epic refine_in_place only) to also move the ticket into `queue`. Throws on
  *  409 (no proposal / Epic can't queue / blocked) / 422 (invalid proposal). Resolves with
- *  `{ queued }` so the caller can confirm whether it entered the Robot's Queue. */
+ *  `{ queued }` so the caller can confirm whether it entered the Queue. */
 export async function approveRefine(id: number, opts: { queue?: boolean } = {}): Promise<{ queued: boolean }> {
   const res = await fetch(`${BASE}/${id}/refine-approve`, {
     method: 'POST',

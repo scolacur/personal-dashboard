@@ -16,7 +16,7 @@ import { startHeartbeat } from './heartbeat';
  * checkout, proxy, config, and DB set up here.
  *
  * Jobs: `refine` (interactive, D-044), `audit` (autonomous, weekly, D-045/PD-283), and
- * `robot` (the in-house Sortie replacement, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED).
+ * `robot` (the in-house dispatcher, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED).
  */
 async function main(): Promise<void> {
   const config = loadConfig();

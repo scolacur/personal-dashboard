@@ -1,17 +1,17 @@
-# /to-sortie-issues
+# /to-robot-issues
 
-Turn a board ticket (or a plain description / PRD) into one or more **Sortie-ready GitHub issues**,
-sized as atomic vertical slices, drafted in the format Sortie agents consume, shown for approval,
-then created and labeled `sortie:queued`.
+Turn a board ticket (or a plain description / PRD) into one or more **Robot-ready GitHub issues**,
+sized as atomic vertical slices, drafted in the format the Robot loop's coding sessions consume,
+shown for approval, then created and routed into the Robot's Queue (`robot_queue`).
 
 Takes an argument: a board ticket id (e.g. `PD-160`), a GitHub-flavored description, or a path/paste
 of a small spec. If none is given, ask what to convert.
 
-## Background — how Sortie consumes an issue (why the format is what it is)
+## Background — how the Robot loop consumes an issue (why the format is what it is)
 
-`ops/sortie/WORKFLOW.md` injects the issue into the agent prompt as **just** the title +
-`{{ .issue.description }}` verbatim — there is **no structured field parsing**. So no schema is
-*required*, but the prompt imposes behaviors that specific sections feed directly:
+The Robot loop injects the ticket into the coding session's prompt as **just** the title + body
+verbatim — there is **no structured field parsing**. So no schema is *required*, but the prompt
+imposes behaviors that specific sections feed directly:
 
 - It enforces **scope discipline** ("stay within the scope of this one issue; do not refactor
   unrelated code") → an explicit **Out of scope / guardrails** section maps onto this and curbs bad
@@ -20,7 +20,7 @@ of a small spec. If none is given, ask what to convert.
   target and makes its PR acceptance-echo meaningful.
 - Exact **file paths** in Context keep it from hunting (saves tokens + wrong-file risk).
 
-Do **NOT** put a "Return"/PR-envelope section in the issue — the `WORKFLOW.md` prompt already mandates
+Do **NOT** put a "Return"/PR-envelope section in the issue — the Robot prompt already mandates
 the PR output envelope (Closes # / Status / Summary / Acceptance / Files changed / **Testing** /
 Assumptions). That envelope requires the agent to include **testing instructions** (how a human
 verifies the change) in *every* PR, so you never need to ask for it per-issue — an issue-level
@@ -49,11 +49,11 @@ The change to make, as concrete bullets. Reference existing patterns to mirror.
 
 ### Step 1 — Resolve the input
 
-- If given a board ticket id (`PD-\d+`, `C-\d+`, `NSW-\d+`): fetch it from the Agent Dashboard API
+- If given a board ticket id (`PD-\d+`, `C-\d+`, `NSW-\d+`): fetch it from the Task Monitor API
   and read its title + body:
   ```sh
-  BOARD="${SORTIE_BOARD_URL:-http://192.168.68.50:8088}"   # prod on the LAN; dev = http://localhost:8080
-  curl -s "$BOARD/api/widgets/agent-dashboard/tickets" \
+  BOARD="${ROBOT_BOARD_URL:-http://192.168.68.50:8088}"   # prod on the LAN; dev = http://localhost:8080
+  curl -s "$BOARD/api/widgets/task-monitor/tickets" \
     | python3 -c "import json,sys; t=[x for x in json.load(sys.stdin) if x['displayId']=='PD-160']; print(json.dumps(t[0],indent=2) if t else 'NOT FOUND')"
   ```
 - If given a description/spec: use it directly.
@@ -68,7 +68,7 @@ pattern to mirror. Prefer an `Explore` subagent for wide reads.
 
 ### Step 3 — Decide atomicity (split if needed)
 
-Sortie wants **small PRs**. Split the work into independent **vertical slices** — each one
+The Robot loop wants **small PRs**. Split the work into independent **vertical slices** — each one
 shippable, testable, and reviewable on its own. Split when a ticket spans multiple layers/deliverables
 (e.g. backend wiring + a data-entry UI + a display UI + an interaction rule). Prefer 2–3 focused
 issues over one sprawling one. When you split, make dependencies explicit (see Step 6).
@@ -94,15 +94,16 @@ Out of scope with the exclusions + standing guardrails. **No Return section.**
 Print every drafted issue in full and the atomicity decision (how many, and why). **Do not create
 anything yet.** Wait for explicit approval. Offer: create as-is / tweak / keep as one issue.
 
-### Step 6 — On approval, create + label
+### Step 6 — On approval, create + queue
 
 - Create each issue: `gh issue create --repo scolacur/personal-dashboard --title "…" --body-file …`.
-- **Label `sortie:queued` ONLY the issues with no unmet dependency.** For a dependent issue, create it
-  **un-queued** (no `sortie:*` label) with `Depends on #<N>` in its Context, and tell the user to
-  queue it after the dependency's PR merges. Queuing a dependent burns a Sortie session on work it
-  can't complete (it lacks the predecessor's API) and counts against `max_sessions: 3`.
-- `sortie:queued` is picked up within ~30s (Sortie polls) and flips to `sortie:in-progress` — expect
-  that, it means dispatch worked.
+- **Queue ONLY the issues with no unmet dependency** — route them into the Robot's Queue
+  (`robot_queue`) on the board so the Robot loop dispatches them. For a dependent issue, leave it
+  **un-queued** (out of `robot_queue`) with `Depends on #<N>` in its Context, and tell the user to
+  queue it after the dependency's PR merges. Queuing a dependent wastes a Robot run on work it can't
+  complete (it lacks the predecessor's API) and burns against the loop's per-ticket fault budget.
+- A queued ticket is picked up on the loop's next poll and flips to `working` — expect that, it
+  means dispatch worked.
 
 ### Step 7 — Report
 

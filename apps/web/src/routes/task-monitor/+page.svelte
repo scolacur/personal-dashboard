@@ -6,7 +6,7 @@
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isSortieReady } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
@@ -21,19 +21,20 @@
   import type { RefineFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
-  import { isStatusLocked, computeSortOrder, computeOrderWithin } from './board-logic';
+  import { isStatusLocked, computeSortOrder, computeOrderWithin, clampEpicHeight } from './board-logic';
   import Button from '$lib/Button.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
     { status: 'prioritized', label: 'Prioritized' },
-    { status: 'steve_queue', label: "Steve's Queue" },
-    { status: 'robot_queue', label: "Robot's Queue" },
+    { status: 'queue', label: 'Queue' },
     { status: 'completed', label: 'Completed' },
     { status: 'closed', label: 'Closed', defaultHidden: true },
   ];
 
   const LANE_VISIBILITY_KEY = 'task-monitor:hidden-lanes';
+  const EPIC_HEIGHT_KEY = 'task-monitor:epic-area-height';
+  const EPIC_HEIGHT_DEFAULT = 200; // px — matches the previous hard-coded 12.5rem
 
   function loadHiddenLanes(): SvelteSet<TicketStatus> {
     const defaults = new SvelteSet(COLUMNS.filter((c) => c.defaultHidden).map((c) => c.status));
@@ -59,7 +60,47 @@
     }
   }
 
+  function loadEpicAreaHeight(): number {
+    if (!browser) return EPIC_HEIGHT_DEFAULT;
+    const stored = localStorage.getItem(EPIC_HEIGHT_KEY);
+    if (stored === null) return EPIC_HEIGHT_DEFAULT;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) && parsed > 0 ? clampEpicHeight(parsed) : EPIC_HEIGHT_DEFAULT;
+  }
+
+  function saveEpicAreaHeight(height: number) {
+    try {
+      localStorage.setItem(EPIC_HEIGHT_KEY, String(height));
+    } catch (err) {
+      console.warn('[task-monitor] failed to persist epic area height', err);
+    }
+  }
+
   let hiddenLanes = $state(loadHiddenLanes());
+  let epicAreaHeight = $state(loadEpicAreaHeight());
+  let resizing = $state(false);
+  let resizeStartY = 0;
+  let resizeStartHeight = 0;
+
+  function onResizeStart(e: PointerEvent) {
+    e.preventDefault();
+    resizing = true;
+    resizeStartY = e.clientY;
+    resizeStartHeight = epicAreaHeight;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+
+  function onResizeMove(e: PointerEvent) {
+    if (!resizing) return;
+    epicAreaHeight = clampEpicHeight(resizeStartHeight + (e.clientY - resizeStartY));
+  }
+
+  function onResizeEnd() {
+    if (!resizing) return;
+    resizing = false;
+    saveEpicAreaHeight(epicAreaHeight);
+  }
+
   let laneMenuOpen = $state(false);
   let laneMenuRef = $state<HTMLElement | null>(null);
   let searchInputRef = $state<HTMLInputElement | null>(null);
@@ -91,15 +132,14 @@
     }
   }
 
-  // Glossary modal (unified: priority levels, refinement statuses, sortie statuses).
+  // Glossary modal (unified: priority levels, refinement statuses, robot statuses).
   let glossaryOpen = $state(false);
-  let glossaryTab = $state<'priority' | 'refinement' | 'sortie'>('priority');
+  let glossaryTab = $state<'priority' | 'refinement' | 'robot'>('priority');
   let glossaryHighlightState = $state<AgentState | null>(null);
 
   let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
   let loading = $state(true);
-  let syncing = $state(false);
   let error = $state<string | null>(null);
 
   // null = "All projects"
@@ -257,32 +297,14 @@
     }
   }
 
-  // PD-252: pull GitHub→DB on demand, then re-read. Issue status/labels are owned by GitHub
-  // and only land in the DB via the server's once-a-minute cron; without this, neither a poll
-  // nor a hard refresh could surface a just-closed issue any sooner. The server guards/coalesces
-  // the pull, so this is safe to fire on mount and from the button. Never throws to the caller —
-  // a failed sync just falls back to whatever the DB already has.
-  async function syncThenLoad(silent = false) {
-    syncing = true;
-    try {
-      await api.syncNow();
-    } catch (e) {
-      console.warn('[task-monitor] sync failed; showing current data', e);
-    } finally {
-      syncing = false;
-    }
-    await load(silent);
-  }
-
   onMount(() => {
-    // Paint the board immediately from the current DB, then reconcile with GitHub and
-    // refresh in place — so a hard refresh reflects a just-closed issue within ~seconds.
+    // Paint the board from the current DB. The server cron keeps the DB reconciled with
+    // GitHub, and the background auto-refresh below re-reads it periodically.
     load();
-    void syncThenLoad(true);
     window.addEventListener('click', handleWindowClick);
     window.addEventListener('keydown', handleWindowKeydown);
     // Background auto-refresh every 30 s. Reads the DB only; the server cron keeps it fresh
-    // for idle tabs. On-demand sync (mount + button) covers the "I just changed something" case.
+    // for idle tabs.
     const refreshTimer = setInterval(() => load(true), 30_000);
     return () => {
       window.removeEventListener('click', handleWindowClick);
@@ -334,8 +356,9 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
-    if (formStatus === 'robot_queue' && !isSortieReady(formBody.trim() || null)) {
-      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    // D-058: soft not-Ready hint when queueing a robot-assigned ticket (the confirm modal is PD-399).
+    if (formStatus === 'queue' && formAssignee === 'robot' && !isReady(formBody.trim() || null)) {
+      showToast("Heads-up: this ticket isn't in Ready shape — consider Refining it first.");
     }
     error = null;
     try {
@@ -469,8 +492,8 @@
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
-    if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isSortieReady(ticket.body)) {
-      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    if (status === 'queue' && ticket.status !== 'queue' && ticket.assignee === 'robot' && !isReady(ticket.body)) {
+      showToast("Heads-up: this ticket isn't in Ready shape — consider Refining it first.");
     }
     error = null;
     try {
@@ -618,9 +641,17 @@
 <section class="tickets-section" id="tickets">
   <div class="section-head">
     <h2 class="section-title">Tickets</h2>
-    <label class="ticket-search">
+    <label class="ticket-search" class:has-text={search !== ''}>
       <span class="sr-label">Search tickets</span>
       <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
+      {#if search}
+        <button
+          type="button"
+          class="search-clear"
+          aria-label="Clear search"
+          onclick={() => { search = ''; searchInputRef?.focus(); }}
+        >×</button>
+      {/if}
       <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
     </label>
     <div class="head-actions">
@@ -629,13 +660,6 @@
         title="Glossary"
         onclick={() => { glossaryTab = 'priority'; glossaryOpen = true; }}
       >Glossary</Button>
-      <Button
-        variant="ghost"
-        title="Fetch the latest issue status &amp; labels from GitHub now"
-        onclick={() => syncThenLoad(true)}
-        disabled={syncing}
-        style={syncing ? 'cursor: progress; opacity: 0.6' : undefined}
-      >{syncing ? 'Syncing…' : 'Sync now'}</Button>
       <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
         <Button
           variant="ghost"
@@ -817,7 +841,7 @@
 {:else}
   <!-- Two-band board (D-054): a derived, non-draggable Epic band on top; the normal Ticket band
        below. Only the Ticket band is a drop target, so an Epic can never enter Robot's Queue. -->
-  <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}">
+  <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}; --epic-area-height: {epicAreaHeight}px">
     <!-- Row 1: lane headers -->
     {#each visibleColumns as col, i (col.status)}
       {@const tItems = byStatus(col.status)}
@@ -867,6 +891,17 @@
           {/each}
         </div>
       {/each}
+      <!-- Row 3: Resize handle — drag up/down to adjust the Epic area height (D-058) -->
+      <div
+        class="epic-resize-handle"
+        class:resizing
+        role="separator"
+        aria-label="Drag to resize epic area"
+        onpointerdown={onResizeStart}
+        onpointermove={onResizeMove}
+        onpointerup={onResizeEnd}
+        onpointercancel={onResizeEnd}
+      ></div>
     {/if}
 
     <!-- Row 3: Ticket band (the only drop target) -->
@@ -875,7 +910,7 @@
         {@const items = byStatus(col.status)}
         <section
           class="ticket-cell"
-          class:robot-queue={col.status === 'robot_queue'}
+          class:robot-queue={col.status === 'queue'}
           class:drag-over={dropTarget?.status === col.status && draggingId !== null}
           style="grid-column: {i + 1}"
         >
@@ -914,7 +949,7 @@
                 onRefine={() => refine(ticket)}
                 onOpenStatusLegend={(state) => {
                   glossaryHighlightState = state;
-                  glossaryTab = 'sortie';
+                  glossaryTab = 'robot';
                   glossaryOpen = true;
                 }}
                 onUpdate={() => load(true)}

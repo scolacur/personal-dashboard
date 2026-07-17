@@ -75,9 +75,9 @@ app's `.env`. The Claude credential must never reach the user-facing web process
   agent-worker logs a turn error `Credit balance is too low`. Cost-isolated; no shared quota. A
   dedicated key also gives its own rate-limit budget + a revocation blast-radius limited to the
   agent-worker.
-- **`CLAUDE_CODE_OAUTH_TOKEN`** — your Claude Pro/Max subscription token (the same one Sortie
-  uses; copy from `sortie.env` or run `claude setup-token`). No extra billing, but it **shares
-  the Pro session quota with Sortie** — and the agent-worker defaults to **Opus**, which is heavy on
+- **`CLAUDE_CODE_OAUTH_TOKEN`** — your Claude Pro/Max subscription token (the same one the
+  Robot loop uses; run `claude setup-token`). No extra billing, but it **shares the Pro session
+  quota with the Robot loop** — and the agent-worker defaults to **Opus**, which is heavy on
   that quota, so set `AGENT_WORKER_MODEL=claude-sonnet-4-6` to ease it. An exhausted quota surfaces
   as an errored turn (left pending + logged, not written to the thread).
 
@@ -101,7 +101,7 @@ sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d   # recr
 ## Troubleshooting
 
 - **Turns hang / API errors** — the agent-worker reaches `api.anthropic.com` only through the squid
-  sidecar (reuses Sortie's `ops/sortie/squid.conf`, which allowlists `.anthropic.com` +
+  sidecar (`ops/agent-worker/squid.conf`, which allowlists `.anthropic.com` +
   `.github.com`). Check the proxy env vars in the compose and the squid allowlist.
 - **`no such table` / agent-worker sees no tickets** — the `/data` mount isn't the web app's DB
   dir, so the agent-worker opened an empty DB (it doesn't run schema bootstrap). Both must mount the

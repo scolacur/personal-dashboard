@@ -6,10 +6,8 @@
 # grounding checkout). This contains token exfiltration: the agent can read
 # ANTHROPIC_API_KEY / GITHUB_READ_TOKEN but can't send them off-allowlist.
 #
-# Self-contained (own proxy + networks) rather than sharing Sortie's proxy container,
-# to avoid cross-compose network/ordering coupling — but it REUSES the same
-# squid.conf, so there's no allowlist duplication. (Trade-off: one extra lightweight
-# squid container.)
+# Self-contained (own proxy + networks), to avoid cross-compose network/ordering
+# coupling. (Trade-off: one extra lightweight squid container.)
 #
 # Apply (repo checked out on the host):
 #   sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d
@@ -33,8 +31,8 @@ services:
     restart: unless-stopped
     networks: [egress_out, egress_internal]
     volumes:
-      # Reuse Sortie's allowlist (.anthropic.com + .github.com already permitted).
-      - /volume1/docker/personal-dashboard/personal-dashboard/ops/sortie/squid.conf:/etc/squid/squid.conf:ro
+      # Egress allowlist (.anthropic.com + .github.com already permitted).
+      - /volume1/docker/personal-dashboard/personal-dashboard/ops/agent-worker/squid.conf:/etc/squid/squid.conf:ro
 
   agent-worker:
     image: agent-worker-dashboard

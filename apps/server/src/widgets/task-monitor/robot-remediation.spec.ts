@@ -22,7 +22,7 @@ function seedStuck(db: Database.Database): number {
   const p = getProjectBySlug(db, 'personal-dashboard');
   if (!p) throw new Error('no PD project');
   const t = createTicket(db, { title: 'stuck one', projectId: p.id });
-  db.prepare("UPDATE agent_tickets SET status = 'robot_queue', agent_state = 'stuck' WHERE id = ?").run(t.id);
+  db.prepare("UPDATE agent_tickets SET status = 'queue', assignee = 'robot', agent_state = 'stuck' WHERE id = ?").run(t.id);
   return t.id;
 }
 
