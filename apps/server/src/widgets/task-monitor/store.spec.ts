@@ -917,6 +917,50 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(child.status).toBe('prioritized'); // parked despite the unshaped body
   });
 
+  it('approveRefine reinterprets a decompose on an Epic as Populate (D-058): members via epic_id, Epic stays open, no split', () => {
+    const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
+    seedProposal(db, epic.id, {
+      mode: 'decompose',
+      children: [
+        { title: 'member robot', body: ROBOT_BODY, status: 'queue', assignee: 'robot' },
+        { title: 'member steve', body: 'loose is fine', status: 'backlog', assignee: 'steve' },
+      ],
+    });
+    const res = approveRefine(db, epic.id);
+    expect(res).toMatchObject({ ok: true, mode: 'decompose', queued: false, populated: true });
+    if (!res.ok) return;
+    expect(res.childIds).toHaveLength(2);
+    // Epic is LEFT OPEN (not closed) and its members point back at it via epic_id.
+    expect(getTicket(db, epic.id)!.status).toBe('prioritized');
+    expect(getTicket(db, epic.id)!.isEpic).toBe(true);
+    for (const id of res.childIds!) {
+      expect(getTicket(db, id)!.epicId).toBe(epic.id);
+    }
+    // Populate links by membership only — no `split` lineage is written.
+    expect(getLineage(db, epic.id).splitInto).toHaveLength(0);
+    // Decompose-A still applies: a proposed `queue` member is parked in prioritized.
+    const robotMember = listTickets(db).find((t) => t.title === 'member robot')!;
+    expect(robotMember.status).toBe('prioritized');
+    expect(robotMember.assignee).toBe('robot');
+    const steveMember = listTickets(db).find((t) => t.title === 'member steve')!;
+    expect(steveMember.status).toBe('backlog');
+  });
+
+  it('approveRefine Populate leaves a non-Epic decompose behaviour unchanged (closes + splits, no populated flag)', () => {
+    const parent = createTicket(db, { title: 'plain big', status: 'prioritized', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [{ title: 'slice', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' }],
+    });
+    const res = approveRefine(db, parent.id);
+    expect(res).toMatchObject({ ok: true, mode: 'decompose' });
+    if (!res.ok) return;
+    expect(res.populated).toBeUndefined();
+    expect(getTicket(db, parent.id)!.status).toBe('closed'); // D-036
+    expect(getLineage(db, parent.id).splitInto).toHaveLength(1);
+    expect(getTicket(db, res.childIds![0])!.epicId).toBeNull();
+  });
+
   it('approveRefine returns no_proposal when nothing is pending, not_found for unknown', () => {
     const t = createTicket(db, { title: 'x', projectId: pd });
     expect(approveRefine(db, t.id)).toMatchObject({ ok: false, reason: 'no_proposal' });
@@ -1148,16 +1192,19 @@ describe('epics (D-054, PD-336)', () => {
     expect(getTicket(db, m2.id)!.archivedAt).not.toBeNull();
   });
 
-  it('decompose is refused on an Epic; split children inherit the parent member\'s epic_id', () => {
-    // decompose refused on an epic
+  it('decompose on an Epic populates members (D-058); a member decompose still splits + inherits epic_id', () => {
+    // D-058: decompose on an epic is reinterpreted as Populate — the child becomes a member.
     const e = epic();
     seedProposal(db,e, {
       mode: 'decompose',
       children: [{ title: 'c', body: '## Context\n## Task\n## Done When\n## Out of scope', status: 'backlog' }],
     });
     const r = approveRefine(db, e);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.detail).toMatch(/Epic/);
+    expect(r).toMatchObject({ ok: true, populated: true });
+    if (r.ok && r.childIds) {
+      for (const cid of r.childIds) expect(getTicket(db, cid)!.epicId).toBe(e);
+    }
+    expect(getTicket(db, e)!.status).not.toBe('closed'); // Epic left open
 
     // a member decomposed → children stay under the same epic
     const member = createTicket(db, { title: 'member', projectId: pd, epicId: e });
