@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentTicket, TicketPriority } from '@dashboard/shared';
-import { isStatusLocked, computeSortOrder } from './board-logic';
+import { isStatusLocked, computeSortOrder, clampEpicHeight, EPIC_HEIGHT_MIN, EPIC_HEIGHT_MAX } from './board-logic';
 
 function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
   return {
@@ -96,5 +96,24 @@ describe('computeSortOrder', () => {
   it('handles the null (unset) priority band', () => {
     const b = band([0, 1], null);
     expect(computeSortOrder(b, null, null, 99)).toBe(2);
+  });
+});
+
+describe('clampEpicHeight', () => {
+  it('passes through heights within the valid range', () => {
+    expect(clampEpicHeight(200)).toBe(200);
+    expect(clampEpicHeight(EPIC_HEIGHT_MIN)).toBe(EPIC_HEIGHT_MIN);
+    expect(clampEpicHeight(EPIC_HEIGHT_MAX)).toBe(EPIC_HEIGHT_MAX);
+  });
+
+  it('clamps values below the minimum to EPIC_HEIGHT_MIN', () => {
+    expect(clampEpicHeight(0)).toBe(EPIC_HEIGHT_MIN);
+    expect(clampEpicHeight(-100)).toBe(EPIC_HEIGHT_MIN);
+    expect(clampEpicHeight(EPIC_HEIGHT_MIN - 1)).toBe(EPIC_HEIGHT_MIN);
+  });
+
+  it('clamps values above the maximum to EPIC_HEIGHT_MAX', () => {
+    expect(clampEpicHeight(EPIC_HEIGHT_MAX + 1)).toBe(EPIC_HEIGHT_MAX);
+    expect(clampEpicHeight(9999)).toBe(EPIC_HEIGHT_MAX);
   });
 });
