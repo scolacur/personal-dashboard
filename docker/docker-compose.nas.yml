@@ -27,7 +27,8 @@ services:
     restart: unless-stopped
     labels:
       # Opt THIS container into Watchtower (with WATCHTOWER_LABEL_ENABLE below,
-      # only labelled containers are watched — so Watchtower never touches Sortie).
+      # only labelled containers are watched — so Watchtower never touches the
+      # agent-worker / robot-loop containers).
       - 'com.centurylinklabs.watchtower.enable=true'
 
   watchtower:

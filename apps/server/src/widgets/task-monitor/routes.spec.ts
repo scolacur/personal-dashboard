@@ -387,8 +387,8 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
   }
 
   // C5/PD-346: the inline reply is now DB-native — it records a robot_human_reply event (the loop's
-  // resume signal) and returns 201, then best-effort mirrors to the linked GitHub issue for the
-  // Sortie transition window. A missing issue/token or a GitHub failure no longer fails the reply.
+  // resume signal) and returns 201, then best-effort mirrors to any linked GitHub issue. A missing
+  // issue/token or a GitHub failure no longer fails the reply.
   function replyEvent(db: Database.Database, id: number): { detail: string } | undefined {
     return db
       .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = 'robot_human_reply'")
@@ -410,7 +410,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const post = calls.find((c) => c.method === 'POST' && /\/issues\/55\/comments$/.test(c.url));
     expect(post).toBeDefined();
     expect((post!.body as { body: string }).body).toContain('go with blue');
-    expect((post!.body as { body: string }).body).toContain('<!-- sortie:human-reply -->');
+    expect((post!.body as { body: string }).body).toContain('<!-- robot:human-reply -->');
   });
 
   it('rejects an empty body with 400', async () => {
@@ -479,17 +479,6 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
       payload: { body: 'hi' },
     });
     expect(res.statusCode).toBe(404);
-  });
-});
-
-describe('POST /api/widgets/task-monitor/sync — retired at cutover (C6/PD-347)', () => {
-  it('is a 200 no-op — the board DB is authoritative, nothing is pulled from GitHub', async () => {
-    // Post-cutover the endpoint stays only so the board\'s refresh keeps working; it never runs the
-    // old label→board derivation (that was the coupling bug the cutover fixes). No read token needed.
-    const { app } = freshSetup();
-    const res = await app.inject({ method: 'POST', url: '/api/widgets/task-monitor/sync' });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().outcome).toBe('retired');
   });
 });
 
@@ -605,7 +594,7 @@ describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', 
 
 describe('Refine commit endpoints (D-044, PD-269)', () => {
   const base = '/api/widgets/task-monitor';
-  const SORTIE_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
+  const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
   async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, status = 'prioritized') {
     const res = await app.inject({
@@ -626,7 +615,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
-      children: [{ title: 'robot', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot' }],
+      children: [{ title: 'robot', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' }],
     });
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(201);
@@ -655,7 +644,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
   it('POST /refine-approve { queue: true } dispatches a refine_in_place into robot_queue (201)', async () => {
     const { app, db } = freshSetup();
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
-    seedProposal(db, id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-approve`,
@@ -675,7 +664,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
       payload: { title: 'epic', body: 'b', projectId: projectId(db, 'personal-dashboard'), status: 'prioritized', isEpic: true },
     });
     const id = res0.json().id as number;
-    seedProposal(db, id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-approve`,

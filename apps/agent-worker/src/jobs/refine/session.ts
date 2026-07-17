@@ -51,7 +51,7 @@ function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): RefineTur
 function systemPrompt(contextPack: string): string {
   return [
     'You are the Refine agent for the Personal Dashboard board (see DECISIONS.md D-044).',
-    'You work INTERACTIVELY with Steve to sharpen a Prioritized ticket BEFORE any Sortie worker',
+    'You work INTERACTIVELY with Steve to sharpen a Prioritized ticket BEFORE any Robot run',
     'is dispatched. Plan first: ask the right number of clarifying questions (err toward more),',
     'always do some up-front planning, and GROUND every claim in the real codebase — use your',
     'read-only Read/Grep/Glob tools against the checkout, and check whether a tool/widget already',

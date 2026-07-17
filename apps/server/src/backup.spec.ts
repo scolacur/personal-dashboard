@@ -62,7 +62,7 @@ describe('runBackup', () => {
 
   it('snapshots extra DB paths read-only and survives an unreachable one', async () => {
     const primary = seededDb('dashboard.db', 3);
-    const extra = seededDb('.sortie.db', 7);
+    const extra = seededDb('.extra.db', 7);
     extra.close(); // opened read-only by runBackup, mimicking a foreign DB
 
     const results = await runBackup(silentLog, {
@@ -70,14 +70,14 @@ describe('runBackup', () => {
       retainDays: 14,
       primarySource: primary,
       primaryLabel: 'dashboard',
-      extraDbPaths: [path.join(workDir, '.sortie.db'), path.join(workDir, 'nope.db')],
+      extraDbPaths: [path.join(workDir, '.extra.db'), path.join(workDir, 'nope.db')],
     });
 
     expect(results).toHaveLength(3);
     const byLabel = Object.fromEntries(results.map((r) => [r.label, r]));
     expect(byLabel['dashboard'].ok).toBe(true);
-    expect(byLabel['sortie'].ok).toBe(true);
-    expect(rowCount(byLabel['sortie'].file!)).toBe(7);
+    expect(byLabel['extra'].ok).toBe(true);
+    expect(rowCount(byLabel['extra'].file!)).toBe(7);
     // Missing path is logged + skipped, never fatal.
     expect(byLabel['nope'].ok).toBe(false);
     primary.close();
@@ -106,7 +106,7 @@ describe('pruneOldBackups', () => {
     mkdirSync(backupDir, { recursive: true });
     const old = path.join(backupDir, 'dashboard.2000-01-01.db');
     const recent = path.join(backupDir, 'dashboard.2099-01-01.db');
-    const otherLabel = path.join(backupDir, 'sortie.2000-01-01.db');
+    const otherLabel = path.join(backupDir, 'extra.2000-01-01.db');
     const foreign = path.join(backupDir, 'notes.txt');
     for (const f of [old, recent, otherLabel, foreign]) writeFileSync(f, 'x');
 

@@ -171,7 +171,7 @@
   {#if ticket.refined || ticket.refineState || ticket.agentState || (ticket.status !== 'completed' && ticket.status !== 'closed')}
     <div class="card-status-row">
       <!-- Left: Refine-agent state (outlined pill). Always occupies the left slot so the
-           Sortie badge stays right-aligned even when there's no refine state. -->
+           Robot badge stays right-aligned even when there's no refine state. -->
       <span class="status-left">
         {#if ticket.refined}
           <span class="refined-mark" title="Refined">✓ Refined</span>
@@ -191,12 +191,12 @@
           >Not refined</button>
         {/if}
       </span>
-      <!-- Right: Sortie agent state (filled pill). -->
+      <!-- Right: Robot agent state (filled pill). -->
       {#if ticket.agentState}
         <button
           class="agent-state-badge {agentStateClass(ticket.agentState)}"
           type="button"
-          aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Sortie status guide."
+          aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Robot status guide."
           onclick={() => onOpenStatusLegend(ticket.agentState!)}
         >{AGENT_STATE_LABELS[ticket.agentState]}</button>
       {/if}

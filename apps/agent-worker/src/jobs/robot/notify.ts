@@ -6,8 +6,9 @@ import { logger } from '../../shared/logger';
  * Notification Center writes from the Robot loop (D-055, C5/PD-346). When the loop parks a ticket
  * for a human it surfaces a notification so the park is *visible* in the dashboard inbox — an
  * `agent_needs_human` for a stuck/faulted/stalled ticket, or `agent_awaiting_human` for a deliberate
- * ask_human pause. This is the DB-native replacement for sortie-watchdog's @-mention/Discord ping and
- * the github-sync-derived notifications (which key off labels; C6 inverts that).
+ * ask_human pause. This is the Robot loop's DB-native park notification (it replaced the retired
+ * sortie-watchdog.yml's @-mention/Discord ping and the github-sync-derived, label-keyed
+ * notifications; C6 inverts that).
  *
  * Best-effort: a failed write (e.g. the server hasn't bootstrapped the table yet) is logged and
  * swallowed — surfacing must never break a dispatch cycle. Mirrors the server's `createNotification`

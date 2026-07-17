@@ -6,7 +6,7 @@
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isSortieReady } from '@dashboard/shared';
+  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isRobotReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from './TicketCard.svelte';
@@ -133,15 +133,14 @@
     }
   }
 
-  // Glossary modal (unified: priority levels, refinement statuses, sortie statuses).
+  // Glossary modal (unified: priority levels, refinement statuses, robot statuses).
   let glossaryOpen = $state(false);
-  let glossaryTab = $state<'priority' | 'refinement' | 'sortie'>('priority');
+  let glossaryTab = $state<'priority' | 'refinement' | 'robot'>('priority');
   let glossaryHighlightState = $state<AgentState | null>(null);
 
   let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
   let loading = $state(true);
-  let syncing = $state(false);
   let error = $state<string | null>(null);
 
   // null = "All projects"
@@ -299,32 +298,14 @@
     }
   }
 
-  // PD-252: pull GitHub→DB on demand, then re-read. Issue status/labels are owned by GitHub
-  // and only land in the DB via the server's once-a-minute cron; without this, neither a poll
-  // nor a hard refresh could surface a just-closed issue any sooner. The server guards/coalesces
-  // the pull, so this is safe to fire on mount and from the button. Never throws to the caller —
-  // a failed sync just falls back to whatever the DB already has.
-  async function syncThenLoad(silent = false) {
-    syncing = true;
-    try {
-      await api.syncNow();
-    } catch (e) {
-      console.warn('[task-monitor] sync failed; showing current data', e);
-    } finally {
-      syncing = false;
-    }
-    await load(silent);
-  }
-
   onMount(() => {
-    // Paint the board immediately from the current DB, then reconcile with GitHub and
-    // refresh in place — so a hard refresh reflects a just-closed issue within ~seconds.
+    // Paint the board from the current DB. The server cron keeps the DB reconciled with
+    // GitHub, and the background auto-refresh below re-reads it periodically.
     load();
-    void syncThenLoad(true);
     window.addEventListener('click', handleWindowClick);
     window.addEventListener('keydown', handleWindowKeydown);
     // Background auto-refresh every 30 s. Reads the DB only; the server cron keeps it fresh
-    // for idle tabs. On-demand sync (mount + button) covers the "I just changed something" case.
+    // for idle tabs.
     const refreshTimer = setInterval(() => load(true), 30_000);
     return () => {
       window.removeEventListener('click', handleWindowClick);
@@ -376,8 +357,8 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
-    if (formStatus === 'robot_queue' && !isSortieReady(formBody.trim() || null)) {
-      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    if (formStatus === 'robot_queue' && !isRobotReady(formBody.trim() || null)) {
+      showToast("Heads-up: this ticket isn't in Robot-ready shape — consider Refining it first.");
     }
     error = null;
     try {
@@ -511,8 +492,8 @@
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
-    if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isSortieReady(ticket.body)) {
-      showToast("Heads-up: this ticket isn't in Sortie-ready shape — consider Refining it first.");
+    if (status === 'robot_queue' && ticket.status !== 'robot_queue' && !isRobotReady(ticket.body)) {
+      showToast("Heads-up: this ticket isn't in Robot-ready shape — consider Refining it first.");
     }
     error = null;
     try {
@@ -679,13 +660,6 @@
         title="Glossary"
         onclick={() => { glossaryTab = 'priority'; glossaryOpen = true; }}
       >Glossary</Button>
-      <Button
-        variant="ghost"
-        title="Fetch the latest issue status &amp; labels from GitHub now"
-        onclick={() => syncThenLoad(true)}
-        disabled={syncing}
-        style={syncing ? 'cursor: progress; opacity: 0.6' : undefined}
-      >{syncing ? 'Syncing…' : 'Sync now'}</Button>
       <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
         <Button
           variant="ghost"
@@ -975,7 +949,7 @@
                 onRefine={() => refine(ticket)}
                 onOpenStatusLegend={(state) => {
                   glossaryHighlightState = state;
-                  glossaryTab = 'sortie';
+                  glossaryTab = 'robot';
                   glossaryOpen = true;
                 }}
                 onUpdate={() => load(true)}

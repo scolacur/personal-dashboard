@@ -36,7 +36,7 @@ function makeProject(overrides: Partial<AgentProject> = {}): AgentProject {
     name: 'Personal Dashboard',
     key: 'PD',
     githubRepo: null,
-    sortieEnabled: false,
+    robotEnabled: false,
     color: null,
     createdAt: 0,
     updatedAt: 0,

@@ -1,11 +1,11 @@
 import type Database from 'better-sqlite3';
-import { isSortieReady } from '@dashboard/shared';
+import { isRobotReady } from '@dashboard/shared';
 import type { RobotConfig } from '../../shared/config';
 
 /**
  * Dispatch selection for the Robot loop (D-055, PD-342). The board DB is the queue: a ticket
- * is dispatchable when it sits in the `robot_queue` lane of a sortie-enabled project with a
- * repo, its body is Sortie-ready (has the four sections), and it is not blocked by an open
+ * is dispatchable when it sits in the `robot_queue` lane of a robot-enabled project with a
+ * repo, its body is Robot-ready (has the four sections), and it is not blocked by an open
  * `blocks` relation (dogfooding D-051 — the same gate the board enforces on lane entry).
  *
  * The SQL mirrors the server store's `listQueuedIssueTargets` so the loop and the board agree
@@ -28,7 +28,7 @@ interface CandidateRow {
   body: string | null;
 }
 
-/** Tickets in `robot_queue` of a sortie-enabled repo project — the raw candidate set. A ticket
+/** Tickets in `robot_queue` of a robot-enabled repo project — the raw candidate set. A ticket
  *  blocked by an unresolved `blocks` relation is excluded here (D-051): a `blocks` row is
  *  `from`=blocker → `to`=blocked, so `t` is blocked when it is some open blocker's `to` end.
  *
@@ -45,7 +45,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
         WHERE t.archived_at IS NULL
           AND t.status = 'robot_queue'
           AND (t.agent_state IS NULL OR t.agent_state = 'queued')
-          AND p.sortie_enabled = 1
+          AND p.robot_enabled = 1
           AND p.github_repo IS NOT NULL
           AND NOT EXISTS (
             SELECT 1
@@ -68,7 +68,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
  *  1. dispatch must be enabled;
  *  2. dispatch scope (C6/PD-347): `'none'` ⇒ nothing (killswitch); an id list ⇒ only those
  *     (prove-on-N); `'all'` ⇒ no id restriction (go-live default);
- *  3. body must be Sortie-ready (defensive — robot_queue entry already checks this);
+ *  3. body must be Robot-ready (defensive — robot_queue entry already checks this);
  *  4. concurrency cap (leave room for `concurrency - inFlight` new Robots).
  */
 export function selectDispatchable(
@@ -81,7 +81,7 @@ export function selectDispatchable(
 
   const { allowlist } = config;
   const inScope = (id: number): boolean => allowlist === 'all' || allowlist.includes(id);
-  const eligible = candidates.filter((c) => isSortieReady(c.body) && inScope(c.id));
+  const eligible = candidates.filter((c) => isRobotReady(c.body) && inScope(c.id));
 
   const slots = Math.max(0, config.concurrency - inFlight);
   return eligible.slice(0, slots);

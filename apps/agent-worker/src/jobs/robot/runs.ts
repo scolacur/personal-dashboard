@@ -222,8 +222,8 @@ export interface OrphanRun {
  * the stall watchdog's targets (C5/PD-346). Because the loop runs sessions sequentially and awaits
  * each one, no session of THIS process is in flight at a cycle boundary; so a `running` row past the
  * cutoff is an orphan (the process died/restarted mid-run, leaving a zombie run + a `working` ticket
- * that `robotQueueCandidates` will never re-pick). This is the DB-native replacement for
- * sortie-watchdog's in-progress staleness sweep.
+ * that `robotQueueCandidates` will never re-pick). This is the Robot loop's in-process
+ * in-progress staleness sweep (it replaced the retired sortie-watchdog.yml Action).
  */
 export function orphanedRunningRuns(db: Database.Database, cutoff: number): OrphanRun[] {
   const rows = db

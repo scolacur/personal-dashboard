@@ -87,10 +87,9 @@ function sendEpicError(reply: FastifyReply, e: EpicGuardError) {
 
 /** Injectable deps for the routes — defaults resolve from the environment / global fetch. */
 export interface TaskMonitorRouteDeps {
-  /** Write-scoped GitHub token for close-on-delete (PD-207 A). Defaults to `GITHUB_WRITE_TOKEN`. */
+  /** Write-scoped GitHub token for close-on-delete (PD-207 A) + the reply mirror (PD-250).
+   *  Defaults to `GITHUB_WRITE_TOKEN`. */
   githubWriteToken?: string;
-  /** Read-scoped GitHub token for the on-demand sync endpoint (PD-252). Defaults to `GITHUB_READ_TOKEN`. */
-  githubReadToken?: string;
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -122,7 +121,7 @@ export function registerRoutes(
         slug: body.slug.trim(),
         name: body.name.trim(),
         githubRepo: typeof body.githubRepo === 'string' ? body.githubRepo : null,
-        sortieEnabled: body.sortieEnabled === true,
+        robotEnabled: body.robotEnabled === true,
         color: typeof body.color === 'string' ? body.color : null,
       }),
     );
@@ -131,14 +130,6 @@ export function registerRoutes(
   /* ── Tickets ────────────────────────────────── */
 
   app.get(`${base}/tickets`, async () => listTickets(db));
-
-  // On-demand GitHub→board reconciliation (PD-252) is RETIRED at cutover (C6/D-055/PD-347): the
-  // board DB is authoritative, so there is nothing to pull from GitHub — and running the old
-  // label→board sync here would re-introduce the very coupling bug the cutover fixes (it would
-  // overwrite the loop's `in-review`/terminal state from a stale `sortie:*` label). The endpoint is
-  // kept as a 200 no-op so the board's "Sync now" / page-load refresh keeps working — it just
-  // re-fetches the current (authoritative) DB rows. Removed entirely in C7's sweep.
-  app.post(`${base}/sync`, async () => ({ outcome: 'retired' as const }));
 
   app.post(`${base}/tickets`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -353,9 +344,9 @@ export function registerRoutes(
     if (!archiveTicket(db, id, { cascadeMembers })) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
-    // PD-207 A: best-effort close the linked issue as "not planned" so Sortie stops
-    // building a ticket that was just archived. Never blocks the 204 — a GitHub failure
-    // is logged and swallowed (deletion is ticket-authoritative, D-039).
+    // PD-207 A: best-effort close the linked issue as "not planned" so any pre-cutover
+    // dispatch candidate for a ticket that was just archived leaves the set. Never blocks
+    // the 204 — a GitHub failure is logged and swallowed (deletion is ticket-authoritative, D-039).
     const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
     if (ref?.githubIssueNumber != null && ref.githubRepo && token) {
       try {
@@ -412,10 +403,10 @@ export function registerRoutes(
 
   // Inline reply to a parked agent (PD-250). DB-native as of C5/PD-346: the reply is recorded as a
   // `robot_human_reply` event the Robot loop's resume sweep detects to re-queue the ticket and hand
-  // the answer to the (DB-blind) coding session — no GitHub round-trip required. This replaces the
-  // `sortie-ask-human` Action. During the transition (Sortie still primary, loop off) we ALSO mirror
-  // the reply to the linked GitHub issue with the human-reply marker, best-effort, so a parked Sortie
-  // agent still resumes; a missing issue/token or a GitHub failure no longer fails the reply.
+  // the answer to the (DB-blind) coding session — no GitHub round-trip required. We ALSO mirror the
+  // reply to any linked GitHub issue with the human-reply marker, best-effort (harmless for pre-cutover
+  // issues that still carry a comment thread); a missing issue/token or a GitHub failure no longer
+  // fails the reply.
   app.post(`${base}/tickets/:id/reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -433,7 +424,7 @@ export function registerRoutes(
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
 
-    // 2) Best-effort GitHub mirror for the Sortie transition window. Skipped silently when the ticket
+    // 2) Best-effort GitHub mirror onto any linked issue. Skipped silently when the ticket
     //    isn't linked or no write token is set; a GitHub failure is logged, never surfaced.
     const ref = getTicketIssueRef(db, id);
     const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
@@ -521,8 +512,8 @@ export function registerRoutes(
     return reply.status(201).send(result.event);
   });
 
-  // Post a human Refine reply. Unlike /reply (which forwards to a GitHub issue to re-queue a
-  // parked Sortie agent), this stays entirely in the DB: it writes a refine_human event the
+  // Post a human Refine reply. Unlike /reply (which re-queues a parked Robot run), this stays
+  // entirely in the DB: it writes a refine_human event the
   // agent-worker consumes on its next poll and resumes the refine session on. No GitHub, no token.
   app.post(`${base}/tickets/:id/refine-reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
@@ -704,7 +695,7 @@ export function registerRoutes(
   });
 
   // ── System status (Site Status section) ──────────────────────────────────────
-  // Two cheap runtime signals for the board header: Sortie fleet counts (pure
+  // Two cheap runtime signals for the board header: Robot fleet counts (pure
   // aggregation over agent_state) + worker liveness (the heartbeat rows workers upsert).
   app.get(`${base}/system-status`, async () => ({
     sortie: getSortieFleet(db),

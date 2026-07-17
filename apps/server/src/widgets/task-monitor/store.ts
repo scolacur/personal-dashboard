@@ -68,7 +68,7 @@ interface ProjectRow {
   key: string | null;
   seq: number;
   github_repo: string | null;
-  sortie_enabled: number;
+  robot_enabled: number;
   color: string | null;
   created_at: number;
   updated_at: number;
@@ -117,7 +117,7 @@ function rowToProject(row: ProjectRow): AgentProject {
     name: row.name,
     key: row.key,
     githubRepo: row.github_repo,
-    sortieEnabled: row.sortie_enabled === 1,
+    robotEnabled: row.robot_enabled === 1,
     color: row.color,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -156,14 +156,14 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
   const now = Date.now();
   const result = db
     .prepare(
-      `INSERT INTO agent_projects (slug, name, github_repo, sortie_enabled, color, created_at, updated_at)
+      `INSERT INTO agent_projects (slug, name, github_repo, robot_enabled, color, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.slug,
       input.name,
       input.githubRepo ?? null,
-      input.sortieEnabled ? 1 : 0,
+      input.robotEnabled ? 1 : 0,
       input.color ?? null,
       now,
       now,
@@ -340,7 +340,7 @@ export function updateTicket(
   }
 
   // Blocker gate (D-048): a ticket cannot ENTER robot_queue while it has unresolved blockers.
-  // This (and the Epic guard above) are the hard queue-entry invariants; isSortieReady is only a
+  // This (and the Epic guard above) are the hard queue-entry invariants; isRobotReady is only a
   // soft UI shape hint (D-057), not enforced here. Entry-only: an already-queued ticket that
   // later gains a blocker is not evicted here (PD-322's confirm covers that at add time).
   if (next.status === 'robot_queue' && existing.status !== 'robot_queue') {
@@ -443,7 +443,7 @@ export function listSyncTargets(db: Database.Database): SyncTarget[] {
  * `assignee` is optional — when absent, the ticket's assignee is left alone, EXCEPT
  * that a queue-lane target still forces its assignee (D-044): entering `robot_queue`/
  * `steve_queue` sets robot/steve even when the derived rule carries no assignee (e.g.
- * the `sortie:in-review` label), so the poller can't leave a queue lane mis-assigned.
+ * an `in-review` state), so the poller can't leave a queue lane mis-assigned.
  */
 export function applyDerivedState(
   db: Database.Database,
@@ -478,7 +478,7 @@ export function applyDerivedState(
   return true;
 }
 
-/** A ticket in the `robot_queue` lane whose project is sortie-enabled with a repo — the
+/** A ticket in the `robot_queue` lane whose project is robot-enabled with a repo — the
  *  input for the board→GitHub queued-issue sync (PD-164). `githubIssueNumber` is null
  *  when no issue has been created/linked yet. */
 export interface QueuedIssueTarget {
@@ -490,10 +490,10 @@ export interface QueuedIssueTarget {
 }
 
 /**
- * Tickets currently in `robot_queue` (the D-040 dispatch lane), in a sortie-enabled
- * project with a repo — both already-linked and not-yet-linked. PD-164 ensures each has
- * a `sortie:queued` GitHub issue (creating + linking one when absent). Entering
- * `robot_queue` is therefore the dispatch trigger.
+ * Tickets currently in `robot_queue` (the D-040 dispatch lane), in a robot-enabled
+ * project with a repo — both already-linked and not-yet-linked. PD-164 ensured each had
+ * a queued GitHub issue (creating + linking one when absent). Entering `robot_queue` is
+ * therefore the dispatch trigger.
  */
 export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget[] {
   const rows = db
@@ -503,7 +503,7 @@ export function listQueuedIssueTargets(db: Database.Database): QueuedIssueTarget
          JOIN agent_projects p ON p.id = t.project_id
         WHERE t.archived_at IS NULL
           AND t.status = 'robot_queue'
-          AND p.sortie_enabled = 1
+          AND p.robot_enabled = 1
           AND p.github_repo IS NOT NULL`,
     )
     .all() as { id: number; n: number | null; title: string; body: string | null; repo: string }[];
@@ -757,8 +757,8 @@ export function startRefine(db: Database.Database, ticketId: number): StartRefin
 /**
  * Append a human Refine turn (Steve's reply) as a `refine_human` event the agent-worker
  * consumes on its next poll. Returns the created event, or null if the ticket is unknown.
- * This is the Refine reply path — distinct from the GitHub-issue `/reply` (PD-250), which
- * re-queues a parked Sortie agent; a Refine reply stays entirely in the DB.
+ * This is the Refine reply path — distinct from the ask_human `/reply` (PD-250), which
+ * re-queues a parked Robot run; a Refine reply stays entirely in the DB.
  */
 export function appendRefineReply(
   db: Database.Database,
@@ -783,8 +783,8 @@ export function appendRefineReply(
  * coding uid is DB-blind, so the loop hands it the answer). Returns the created event, or null if
  * the ticket is unknown.
  *
- * This is the DB-native replacement for the `sortie-ask-human` GitHub Action: the answer no longer
- * has to round-trip through a GitHub issue comment + label flip. The server does NOT touch
+ * The answer no longer has to round-trip through a GitHub issue comment + label flip (as the
+ * retired ask_human path did). The server does NOT touch
  * `agent_state` here — the loop owns that transition, same as it owns every other state write.
  */
 export function appendRobotReply(
@@ -1068,7 +1068,7 @@ export type ApproveRefineResult =
  * marks them refined but never enters robot_queue — an agent-proposed robot_queue is parked in
  * `prioritized`. Entering the Robot's Queue is a separate, explicit act: a board drag, or the
  * "Approve & queue" button (`opts.queue`), which is offered only for a non-Epic refine_in_place.
- * `isSortieReady` is a soft shape hint surfaced in the UI, not a gate here (matches the drag path).
+ * `isRobotReady` is a soft shape hint surfaced in the UI, not a gate here (matches the drag path).
  *
  * Refine-in-place rewrites the ticket; decompose creates children in non-queue lanes, closes the
  * parent (D-036), and links each via a `split` relation. All-or-nothing (one transaction).
@@ -1111,7 +1111,7 @@ export function approveRefine(
     }
 
     // D-057: plain approve parks a proposed robot_queue in `prioritized`; only `queue: true`
-    // dispatches. isSortieReady stays soft (surfaced in the UI, never enforced here).
+    // dispatches. isRobotReady stays soft (surfaced in the UI, never enforced here).
     const status = wantQueue ? 'robot_queue' : proposed === 'robot_queue' ? 'prioritized' : proposed;
     const queued = status === 'robot_queue';
 
@@ -1295,9 +1295,10 @@ interface WorkerHeartbeatRow {
   model: string | null;
 }
 
-/** Count active (non-archived) tickets by Sortie `agent_state`. Only states that
+/** Count active (non-archived) tickets by Robot loop `agent_state`. Only states that
  *  actually occur appear in the map — a state with zero tickets is simply absent.
- *  Pure aggregation over existing rows; no new data source. */
+ *  Pure aggregation over existing rows; no new data source. (Kept as `getSortieFleet`
+ *  to match the stable `sortie` Site Status wire field.) */
 export function getSortieFleet(db: Database.Database): Partial<Record<AgentState, number>> {
   const rows = db
     .prepare(

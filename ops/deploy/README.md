@@ -49,8 +49,9 @@ a few runs prove the `verify` job name is stable.
 ## CD half — one-time NAS setup 🧑
 
 > **Prerequisite that does not exist yet:** the app has never been deployed to the NAS
-> (only Sortie has). Watchtower auto-*updates* a running container — there must first be
-> one. Steps 1-4 below ARE that first deploy; after them, every future merge is hands-off.
+> (only the agent runtime has). Watchtower auto-*updates* a running container — there must
+> first be one. Steps 1-4 below ARE that first deploy; after them, every future merge is
+> hands-off.
 
 ### Step 0 — Confirm the GHCR package is reachable 🤖/🧑
 
@@ -68,7 +69,7 @@ no login. If you'd rather keep it private, see "Private package" at the bottom.
 
 ### Step 1 — Place the compose + env on the NAS 🧑
 
-Reuse the existing base dir from the Sortie runbook:
+Reuse the existing base dir from the agent-worker runbook (`ops/agent-worker/README.md`):
 
 ```sh
 cd /volume1/docker/personal-dashboard/personal-dashboard

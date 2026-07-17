@@ -8,8 +8,8 @@ import { logger } from './logger';
 const run = promisify(execFile);
 
 /**
- * git `-c` overrides that route git through the squid proxy. Mirrors Sortie's
- * WORKFLOW.md hook: the proxy is passed INLINE (not just via env) so it applies
+ * git `-c` overrides that route git through the squid proxy. The proxy is passed
+ * INLINE (not just via env) so it applies
  * even in restricted execution contexts. Empty when there's no proxy (dev).
  */
 export function proxyGitArgs(config: AgentWorkerConfig): string[] {

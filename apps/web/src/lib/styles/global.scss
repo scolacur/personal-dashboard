@@ -11,7 +11,7 @@
   --accent-3: #c2410c; /* orange */
   --on-accent: #f0f0f0;
 
-  /* Agent-state / Sortie status pill colours (see .agent-state-badge). Each state
+  /* Agent-state / Robot status pill colours (see .agent-state-badge). Each state
      has its own hue; theme-agnostic (chosen to read on both light and dark). */
   --status-queued: #1d76db; /* blue */
   --status-working: #b08800; /* yellow */
@@ -22,7 +22,7 @@
   --status-done: #1a7f37; /* green */
   /* wontfix reuses the neutral --muted / --border tokens. */
   /* Refine "Needs you" — the agent asked for your input. Pink: wants attention,
-     but less urgent than a red stuck/needs-human Sortie job. */
+     but less urgent than a red stuck/needs-human Robot job. */
   --status-refine-needs: #d6336c; /* pink */
 
   /* Typography */

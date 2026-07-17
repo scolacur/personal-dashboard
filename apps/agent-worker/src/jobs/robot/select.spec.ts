@@ -9,7 +9,7 @@ const READY = ['## Context', 'ctx', '## Task', 'do it', '## Done When', 'done', 
 function boardDb(): Database.Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, sortie_enabled INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
       id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER
@@ -18,8 +18,8 @@ function boardDb(): Database.Database {
       id INTEGER PRIMARY KEY, from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL, type TEXT NOT NULL
     );
   `);
-  db.prepare('INSERT INTO agent_projects (id, github_repo, sortie_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
-  db.prepare('INSERT INTO agent_projects (id, github_repo, sortie_enabled) VALUES (2, ?, 0)').run('scolacur/other'); // sortie-disabled
+  db.prepare('INSERT INTO agent_projects (id, github_repo, robot_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
+  db.prepare('INSERT INTO agent_projects (id, github_repo, robot_enabled) VALUES (2, ?, 0)').run('scolacur/other'); // robot-disabled
   return db;
 }
 
@@ -66,10 +66,10 @@ describe('robotQueueCandidates', () => {
     db = boardDb();
   });
 
-  it('returns only robot_queue tickets in a sortie-enabled repo project', () => {
+  it('returns only robot_queue tickets in a robot-enabled repo project', () => {
     addTicket(db, { id: 1, status: 'robot_queue', issue: 220 });
     addTicket(db, { id: 2, status: 'prioritized' }); // wrong lane
-    addTicket(db, { id: 3, status: 'robot_queue', projectId: 2 }); // sortie-disabled project
+    addTicket(db, { id: 3, status: 'robot_queue', projectId: 2 }); // robot-disabled project
     const c = robotQueueCandidates(db);
     expect(c.map((x) => x.id)).toEqual([1]);
     expect(c[0]).toMatchObject({ id: 1, issueNumber: 220, repo: 'scolacur/personal-dashboard' });
@@ -129,7 +129,7 @@ describe('selectDispatchable', () => {
     expect(selectDispatchable([cand(1), cand(2)], robotCfg({ dispatchEnabled: true, allowlist: 'none' }), 0)).toEqual([]);
   });
 
-  it('dispatches all Sortie-ready candidates when the scope is "all" (go-live default, C6/PD-347)', () => {
+  it('dispatches all Robot-ready candidates when the scope is "all" (go-live default, C6/PD-347)', () => {
     const out = selectDispatchable(
       [cand(1), cand(2), cand(3, 'not ready')],
       robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 5 }),
@@ -138,7 +138,7 @@ describe('selectDispatchable', () => {
     expect(out.map((c) => c.id)).toEqual([1, 2]); // 3 not ready is still excluded
   });
 
-  it('dispatches only allowlisted, Sortie-ready candidates when given an id list', () => {
+  it('dispatches only allowlisted, Robot-ready candidates when given an id list', () => {
     const out = selectDispatchable(
       [cand(1), cand(2), cand(3, 'not ready')],
       robotCfg({ dispatchEnabled: true, allowlist: [1, 3], concurrency: 5 }),

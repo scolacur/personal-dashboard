@@ -211,11 +211,13 @@ Exposes one port (default 8080). No external auth — relies on LAN-only access.
 ## 7. Dev Tooling
 
 Custom shell commands for operating the NAS deployment are defined in
-`scripts/pd-aliases.sh`. Source that file in your shell profile to get:
+`scripts/pd-aliases.sh`. Source that file in your shell profile to use them:
 
-- `sortie-uptime`, `sortie-healthcheck`, `sortie-refresh`, `sortie-refresh-proxy`,
-  `sortie-refresh-no-proxy`, `sortie-reset <issue-id>`
 - `pd-help` — prints a formatted table of all available commands with descriptions
+
+The old `sortie-*` container helpers (`sortie-uptime`, `sortie-healthcheck`, `sortie-refresh*`,
+`sortie-reset`) targeted the now-retired Sortie container and have been removed. NAS / Robot-loop
+operational helpers are tracked separately (PD-391).
 
 See the migration comments at the top of `scripts/pd-aliases.sh` for NAS and Mac setup.
 
@@ -229,7 +231,7 @@ See the migration comments at the top of `scripts/pd-aliases.sh` for NAS and Mac
 
 ## 9. Glossary / Domain Language
 
-Definitions of the domain language used across the board and the Sortie agent pipeline.
+Definitions of the domain language used across the board and the Robot agent pipeline.
 Definitions only — no implementation detail. Decisions live in `DECISIONS.md` (`D-NNN`).
 
 ### Agent pipeline
@@ -240,7 +242,7 @@ agent works *with Steve* to sharpen a ticket: it interrogates, plans, decomposes
 more well-shaped tickets, suggests assignments, and — after Steve's approval — creates and
 routes them. Runs on a **backlog or prioritized** ticket (relaxed from prioritized-only;
 amends D-044 so the Ticket Audit's "Send to Refine" can escalate a backlog finding, PD-281),
-*before* a Sortie worker is dispatched. The interrogation/decomposition is just the activity
+*before* a Robot is dispatched. The interrogation/decomposition is just the activity
 inside a Refine session — there is no separate "Grill" term.
 _Avoid_: "grill" — the settled name for the whole thing (interrogation included) is **Refine**;
 and don't use it for a question an agent asks mid-run (that is **ask_human**).
@@ -261,7 +263,7 @@ Assigning each ticket a queue lane (**Robot's Queue** or **Steve's Queue**) and 
 matching **assignee** (`robot` / `steve`). "Refine auto-routing" = doing this to the
 tickets a Refine session produces.
 
-**Autonomous agent** (e.g. a dispatched **Sortie worker**):
+**Autonomous agent** (e.g. a dispatched **Robot**):
 An agent operating *unsupervised*. **May not queue tickets** — it can create tickets into
 `backlog` only (D-039). Prompt-based limits are not trustworthy for an unsupervised agent
 (token-blowout risk), so queuing stays forbidden until a depth cap is enforced by
@@ -280,8 +282,8 @@ Refine may launch from a **backlog or prioritized** ticket (amends D-044); "Send
 on an audit finding moves a backlog ticket here as part of the handoff.
 
 **Robot's Queue** (`robot_queue`, assignee `robot`):
-The single lane for all in-flight Sortie work (collapses queued + in_progress +
-in_review); the fine-grained `sortie:*` state shows as a status pill. Routing/dragging a
+The single lane for all in-flight Robot work (collapses queued + in_progress +
+in_review); the fine-grained agent state shows as a status pill. Routing/dragging a
 ticket here is the dispatch trigger.
 
 **Steve's Queue** (`steve_queue`, assignee `steve`):
@@ -304,35 +306,34 @@ spec. Deletion is ticket-authoritative (D-039).
 
 ### Agent execution
 
-> **D-055 (in progress):** the third-party **Sortie** runtime is being absorbed into `agent-worker`
-> as the **Sentinel loop**. The *Sortie*-prefixed terms below (Sortie watchdog, hand-off-via-hook,
-> the reaction bridges) are being retired/rehomed by that work; they stay documented until the C6
-> cutover + C7 terminology sweep land.
+> **D-055:** the third-party **Sortie** runtime has been retired and replaced by the in-house
+> **Robot loop** in `agent-worker` (cutover complete). All agent state is now DB-native. See
+> `DECISIONS.md` D-055.
 
-**Sentinel**:
-A **dispatched ticket-completing coding agent** — the `agent-worker` counterpart to what the
-third-party Sortie runtime used to spawn (D-055). One Sentinel works one `robot_queue` ticket:
-it gets a per-ticket **worktree**, runs an Agent-SDK coding session against the ticket body, and
-runs the durable **hand-off** (verify → commit → push → PR → relabel). Runs as a lower-privilege
-uid with **no `dashboard.db` reach** (worktree-only), which structurally enforces D-039 (a Sentinel
-can't queue or self-complete). Autonomous — backlog-only ticket creation still applies.
-_Avoid_: calling it "sortie" (the retired product name) or "the loop" (that's the Sentinel loop).
+**Robot**:
+A **dispatched ticket-completing coding agent** in `agent-worker` (D-055). One Robot works one
+`robot_queue` ticket: it gets a per-ticket **worktree**, runs an Agent-SDK coding session against
+the ticket body, and runs the durable **hand-off** (verify → commit → push → PR). Runs as a
+lower-privilege uid with **no `dashboard.db` reach** (worktree-only), which structurally enforces
+D-039 (a Robot can't queue or self-complete). Autonomous — backlog-only ticket creation still
+applies.
+_Avoid_: calling it "sortie" (the retired product name) or "the loop" (that's the Robot loop).
 
-**Sentinel loop**:
-The `sentinel` **job** in `agent-worker` (D-055) that replaces the Sortie dispatcher: polls
-`robot_queue` tickets in the board DB (the DB is the queue), spawns **Sentinels** under a
+**Robot loop**:
+The `robot` **job** in `agent-worker` (D-055) that replaced the Sortie dispatcher: polls
+`robot_queue` tickets in the board DB (the DB is the queue), spawns **Robots** under a
 concurrency cap, applies the three-tier **fault-tier** retry policy, and owns the agent-state
-machine (writing DB state, pushing `sentinel:*` labels as a best-effort projection). The **sole
-`dashboard.db` writer**.
-_Avoid_: "the dispatcher" is fine informally, but the canonical noun is the Sentinel loop.
+machine. The **sole `dashboard.db` writer** — it pushes agent state into the DB (state is
+DB-native; it no longer pushes `sentinel:*`/`sortie:*` labels).
+_Avoid_: "the dispatcher" is fine informally, but the canonical noun is the Robot loop.
 
 **run**:
-One **Sentinel attempt on a ticket** (the counterpart to a Sortie "session"; recorded in the
+One **Robot attempt on a ticket** (what the retired runtime called a "session"; recorded in the
 `agent_runs` table). Retries produce further runs against the per-ticket retry cap.
-_Avoid_: "session" (Sortie's term) and "sortie" (retired).
+_Avoid_: "session" and "sortie" (both retired terms).
 
 **Fault tier**:
-How the Sentinel loop classifies a failed **run** (D-055), deciding whether to retry: **transient**
+How the Robot loop classifies a failed **run** (D-055), deciding whether to retry: **transient**
 (no-output turn, network/CI flake → retry, per-ticket cap 3), **deterministic** (repeated identical
 signature, path-guard rejection, setup fault → 0 retries, park + surface), or **system-wide**
 (GitHub/Anthropic auth 401/403 → pause the whole loop + alert, zero per-ticket burn). Identical
@@ -355,7 +356,7 @@ Ticket Audit, PD-281). Jobs share the worker's checkout/proxy/key/context-pack b
 independent trigger sources and codepaths. **Autonomy mode is a per-job property, not a
 worker property** — the same worker safely hosts an interactive job and an autonomous one.
 
-**isSortieReady**:
+**isRobotReady**:
 A Claude-free mechanical validator (`packages/shared/src/task-monitor.ts`) that checks a ticket
 body carries the four required sections — `## Context` / `## Task` / `## Done When` /
 `## Out of scope`. The **shape gate at queue entry**: a ticket can only enter `robot_queue`
@@ -363,32 +364,32 @@ body carries the four required sections — `## Context` / `## Task` / `## Done 
 handoff shape" — no separate frontmatter schema.
 _Avoid_: treating it as a quality/AI review — it is a pure structural check, not a judgement.
 
-**Sortie watchdog**:
-The in-repo Actions job (`sortie-watchdog.yml`) that surfaced a job which had run too long or
-stalled — it labelled the issue **`sortie:stuck`** and @mentioned Steve, plus a **label-rescue**
-backstop. **Superseded (C5/PD-346):** deleted and folded into the loop as **in-process stall
-detection** (`robot/stall.ts`) — an orphaned `working` run past the threshold is closed through the
-C2 fault guardrail and surfaced via the Notification Center. The queued-staleness sweep and
-label-rescue are dropped as obsolete (the loop *is* the dispatcher; the DB, not labels, is state).
-_Avoid_: conflating `sortie:stuck` (watchdog, automatic) with `sortie:needs-human` (a manual
-escalation) or `sortie:awaiting-human` (an **ask_human** park).
+**Stall detection**:
+In-process detection (`robot/stall.ts`) of a run that has gone too long or stalled: an orphaned
+`working` run past the threshold is closed through the C2 fault guardrail and surfaced via the
+Notification Center. DB-native — stall state lives in the DB, not in labels. **Supersedes
+(C5/PD-346)** the retired external **Sortie watchdog** (`sortie-watchdog.yml`), an Actions job that
+labelled the issue `sortie:stuck` and @mentioned Steve plus a label-rescue backstop; the watchdog,
+its queued-staleness sweep, and label-rescue are all dropped as obsolete (the loop *is* the
+dispatcher; the DB, not labels, is state).
+_Avoid_: reaching for the old label-based signals — a stalled run is detected and parked in-DB, not
+via a `sortie:stuck` label.
 
 **Hand-off**:
-The durable finish sequence a Sortie worker runs **in-turn** at the end of a job: `npm run verify`
-→ commit → push → `gh pr create` → write `.sortie/scm.json` → relabel `sortie:in-review` (LAST).
-Done in-turn (not in a hook) because the post-run hook races a context-cancel that can kill it
-mid-step ([[D-046]]); the `after_run` hook is only a backstop.
+The durable finish sequence a Robot runs **in-turn** at the end of a job: `npm run verify`
+→ commit → push → `gh pr create` → write `.robot/scm.json` → mark the ticket `in-review` in-DB
+(LAST). Done in-turn (not in a hook) because the post-run hook races a context-cancel that can kill
+it mid-step ([[D-046]]); the `after_run` hook is only a backstop.
 
 **verify-ok marker**:
-`.sortie/verify-ok`, written the instant `npm run verify` goes green. The one positive signal the
+`.robot/verify-ok`, written the instant `npm run verify` goes green. The one positive signal the
 `after_run` safety-net trusts (the **hand-off-earned gate**, D-046): no marker ⇒ the turn ended
 before a green verify ⇒ the backstop leaves the WIP for retry instead of opening a red PR.
 
 **scm.json**:
-`.sortie/scm.json` — the small record (`pr_number` / owner / repo / branch / sha) that lets
-Sortie's reaction features (review-feedback / CI-failure) locate a job's PR. Regenerated by
-`before_run` on a follow-up and written by the agent during **hand-off**. Gitignored (never
-committed).
+`.robot/scm.json` — the small record (`pr_number` / owner / repo / branch / sha) that lets the
+Robot loop's PR-state poll locate a job's PR. Regenerated by `before_run` on a follow-up and written
+by the agent during **hand-off**. Gitignored (never committed).
 
 **Self-Review**:
 The in-worker review pass (`self_review`, reviewer `"same"`) that runs **before** push/PR: it
@@ -398,24 +399,25 @@ _Avoid_: confusing with the human PR review that follows hand-off, or with the *
 
 **Rework bridge**:
 An in-repo Actions workflow that re-activated a handed-off job by flipping its issue
-`sortie:in-review` → `sortie:queued` so Sortie re-dispatched. Two existed: **review-rework** (on
-trusted human PR feedback, [[D-042]]) and **conflict-rework** (on a CONFLICTING/DIRTY PR).
+`sortie:in-review` → `sortie:queued` so the retired Sortie runtime re-dispatched. Two existed:
+**review-rework** (on trusted human PR feedback, [[D-042]]) and **conflict-rework** (on a
+CONFLICTING/DIRTY PR).
 **Superseded (C5/PD-346):** both deleted and collapsed into one DB-native **PR-state poll**
 (`robot/pr-state.ts`) — for each `in-review` ticket the loop reads the PR's review decision,
 comments, and merge status via the GitHub read API and re-activates it in-DB (`agent_state=queued`),
 with the reused branch + a resume-aware prompt driving the fix. Same trust model (OWNER, or
 COLLABORATOR + human-reply marker); bounded by the last hand-off timestamp so stale feedback can't
-re-trigger. **`sortie-auto-merge.yml` stays** — a pure GitHub-side merge, no agent involvement.
+re-trigger. **`robot-auto-merge.yml` stays** — a pure GitHub-side merge, no agent involvement.
 
 **Egress proxy** (squid sidecar):
-The only network route out of the egress-hardened Sortie container — a squid sidecar
-(`ops/sortie/squid.conf`, reached at `egress-proxy:3128`) with a **domain allowlist**
+The only network route out of the egress-hardened agent-worker — a squid sidecar
+(`ops/agent-worker/squid.conf`, reached at `egress-proxy:3128`) with a **domain allowlist**
 (`.anthropic.com`, `.github.com`, `.githubusercontent.com`, `.npmjs.org`, …). Contains
 token-exfil risk (PD-30) and is why git/gh/npm commands pass the proxy explicitly.
 
 ### Guardrails
 
-Definitions for the Sortie sensitive-path guardrail model (D-047).
+Definitions for the sensitive-path guardrail model (D-047).
 
 **Sensitive path**:
 A repo path whose modification is high-risk for an unsupervised agent — CI workflows,
@@ -446,7 +448,7 @@ swap silently removes it.
 **`sensitive-change-approved`**:
 The GitHub label a write+ collaborator applies to consciously ack a PR that touches a
 **sensitive path**, turning the **path-guard** from red to green. Collaborator-gated (the same
-trust boundary Sortie already relies on for issue labels); a stranger cannot apply it.
+trust boundary the Robot loop relies on for issue labels); a stranger cannot apply it.
 
 ### Ticket relations
 
@@ -466,7 +468,7 @@ _Avoid_: reading the direction backwards — the `from` side is the thing doing 
 
 **Blocker gate**:
 The rule that a ticket **cannot enter `robot_queue`** while it has an unresolved blocker — a
-second queue-entry precondition beside **isSortieReady** (D-051). Hard-refused on entry; entry-only
+second queue-entry precondition beside **isRobotReady** (D-051). Hard-refused on entry; entry-only
 (does not evict an already-queued ticket, but blocking a queued ticket needs a confirm). Enforced
 in `updateTicket`. Cycle-safe (adding a `blocks` edge that closes a cycle is refused).
 _Avoid_: treating "blocked" as merely a badge — it refuses dispatch.

@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { migrate, addColumn } from '../../migrate';
+import { migrate, addColumn, columnExists } from '../../migrate';
 
 // Task Monitor schema: a cross-project Ticket backlog (Kanban), the projects those
 // Tickets belong to, plus relations / tags / events / reminders. All evolution goes
@@ -52,7 +52,7 @@ export function bootstrapSchema(db: Database.Database): void {
       key            TEXT,                          -- display-id prefix, e.g. 'PD'
       seq            INTEGER NOT NULL DEFAULT 0,    -- last-issued display-id number
       github_repo    TEXT,
-      sortie_enabled INTEGER NOT NULL DEFAULT 0,
+      robot_enabled  INTEGER NOT NULL DEFAULT 0,
       color          TEXT,
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL
@@ -72,7 +72,7 @@ export function bootstrapSchema(db: Database.Database): void {
       sort_order          REAL    NOT NULL DEFAULT 0,
       github_issue_number INTEGER,
       github_issue_url    TEXT,
-      agent_state         TEXT,                     -- derived sortie:* agent state (PD-165); NULL = none
+      agent_state         TEXT,                     -- Robot loop agent state (D-055); NULL = none
       refined             INTEGER NOT NULL DEFAULT 0, -- 1 once refined to completion (D-044, PD-268)
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
@@ -169,6 +169,16 @@ export function bootstrapSchema(db: Database.Database): void {
 
   // Bring pre-existing tables (older dev DBs) up to the current schema. Each is a
   // no-op on a fresh DB where the CREATE above already included the column.
+
+  // D-055 / C7: rename the legacy `sortie_enabled` column to `robot_enabled`. On a fresh DB the
+  // CREATE above already made `robot_enabled`, so the guard skips; on an existing DB it renames
+  // once. DEPLOY ORDER: the server (which runs bootstrapSchema) MUST boot and apply this migration
+  // BEFORE the agent-worker queries `robot_enabled`, or the worker will hit a missing column.
+  migrate(db, 'agent_projects_rename_sortie_enabled_to_robot', (d) => {
+    if (columnExists(d, 'agent_projects', 'sortie_enabled') && !columnExists(d, 'agent_projects', 'robot_enabled')) {
+      d.exec('ALTER TABLE agent_projects RENAME COLUMN sortie_enabled TO robot_enabled');
+    }
+  });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');
     addColumn(d, 'agent_projects', 'seq', 'INTEGER NOT NULL DEFAULT 0');
@@ -243,7 +253,7 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'seed_projects', (d) => {
     const now = Date.now();
     const insert = d.prepare(
-      `INSERT OR IGNORE INTO agent_projects (slug, name, key, github_repo, sortie_enabled, color, created_at, updated_at)
+      `INSERT OR IGNORE INTO agent_projects (slug, name, key, github_repo, robot_enabled, color, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     insert.run('personal-dashboard', 'Personal Dashboard', 'PD', 'scolacur/personal-dashboard', 1, '#7c3aed', now, now);
