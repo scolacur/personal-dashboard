@@ -33,7 +33,17 @@ export interface FailedRun {
   tier: FaultTier;
   signature: string;
   finishedAt: number | null;
+  /** Hash of the ticket body this run ran against (PD-406) — lets a max-turns fault tell an
+   *  unchanged-body retry (futile → park) from a genuinely re-scoped one. Null for legacy rows. */
+  bodyHash?: string | null;
 }
+
+/** The stable signature for a per-run turn-limit cutoff (PD-406). Set explicitly (not derived via
+ *  `normalizeSignature`) so it's a reliable key for the unchanged-body deterministic promotion. */
+export const MAX_TURNS_SIGNATURE = 'max-turns';
+
+/** "Reached maximum number of turns (N)" — the Agent SDK's per-run turn-ceiling error. */
+const MAX_TURNS_PATTERN = /maximum number of turns|max_turns|reached the turn limit/i;
 
 /** Tunable policy (all env-driven via RobotConfig). */
 export interface FaultPolicy {
@@ -97,6 +107,12 @@ export function classifyFault(input: { verifyOk: boolean; error?: string | null 
     // flake worth another turn; two identical ones get promoted below.
     return { tier: 'transient', signature: 'no-verify', reason: 'session ended without a green verify' };
   }
+  if (MAX_TURNS_PATTERN.test(err)) {
+    // Transient at classification time — `decideFault` promotes it to a deterministic park when the
+    // body is unchanged since the last failed run (PD-406), since re-running the same oversized body
+    // just re-hits the ceiling.
+    return { tier: 'transient', signature: MAX_TURNS_SIGNATURE, reason: `reached the per-run turn limit: ${firstLine(err)}` };
+  }
   return { tier: 'transient', signature: normalizeSignature(err), reason: `transient fault: ${firstLine(err)}` };
 }
 
@@ -125,16 +141,58 @@ export type FaultDecision =
   | { action: 'park'; tier: FaultTier; signature: string; reason: string }
   | { action: 'pause'; tier: FaultTier; signature: string; reason: string };
 
+/** True when the ticket body CHANGED since its most recent countable failure (PD-406). A genuinely
+ *  re-scoped ticket deserves a fresh transient attempt; an untouched one does not. No prior failure
+ *  (nothing to compare) or a missing hash on either side ⇒ treat as UNCHANGED, so a max-turns fault
+ *  parks rather than burning a futile retry. */
+function bodyChangedSinceLastFailure(priorFailures: FailedRun[], currentBodyHash: string | null): boolean {
+  const c = countable(priorFailures);
+  if (c.length === 0) return false;
+  const last = c.reduce((a, b) => ((b.finishedAt ?? 0) >= (a.finishedAt ?? 0) ? b : a));
+  if (currentBodyHash == null || last.bodyHash == null) return false;
+  return last.bodyHash !== currentBodyHash;
+}
+
 /**
  * Decide what to do after a FRESH failure, given the ticket's PRIOR failures.
  *   - system-wide  → pause the loop (this run does not count against the ticket).
  *   - deterministic→ park now (0 retries).
+ *   - max-turns on an unchanged body (PD-406) → park now (deterministic) — a retry would re-hit the
+ *     ceiling; only a body change since the last failed run earns the transient budget.
  *   - transient    → promote to deterministic-park if this signature has now repeated
  *                    `promoteAfter` times; else park if the cap is hit; else retry.
+ * `currentBodyHash` is the hash of the body THIS run ran against (PD-406); omit for callers that
+ * don't track it (the max-turns branch then treats the body as unchanged).
  */
-export function decideFault(cls: FaultClassification, priorFailures: FailedRun[], policy: FaultPolicy): FaultDecision {
+export function decideFault(
+  cls: FaultClassification,
+  priorFailures: FailedRun[],
+  policy: FaultPolicy,
+  currentBodyHash: string | null = null,
+): FaultDecision {
   if (cls.tier === 'system-wide') return { action: 'pause', ...cls };
   if (cls.tier === 'deterministic') return { action: 'park', ...cls };
+
+  // PD-406: a max-turns cutoff means the ticket is too big for one run. Handled in its own branch so
+  // the same-signature promotion (`promoteAfter`) can't park a genuinely re-scoped retry.
+  if (cls.signature === MAX_TURNS_SIGNATURE) {
+    // Unchanged body ⇒ retrying just re-hits the wall (PD-377 run 7 burned ~1h) → park now.
+    if (!bodyChangedSinceLastFailure(priorFailures, currentBodyHash)) {
+      return {
+        action: 'park',
+        tier: 'deterministic',
+        signature: cls.signature,
+        reason: `max-turns on an unchanged body — parking without a futile retry (${cls.reason})`,
+      };
+    }
+    // Body changed (scope trimmed) ⇒ a real new attempt; retry until the overall cap bounds an
+    // endless edit loop.
+    const total = countable(priorFailures).length + 1;
+    if (total >= policy.retryCap) {
+      return { action: 'park', tier: 'transient', signature: cls.signature, reason: `retry cap reached (${total}/${policy.retryCap}) — ${cls.reason}` };
+    }
+    return { action: 'retry', ...cls };
+  }
 
   const prior = countable(priorFailures);
   const sameSig = prior.filter((f) => f.signature === cls.signature).length + 1; // include this run

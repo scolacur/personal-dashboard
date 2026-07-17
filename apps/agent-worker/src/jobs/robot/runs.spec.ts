@@ -96,7 +96,7 @@ describe('agent_runs', () => {
     legacy.prepare(`INSERT INTO agent_runs (ticket_id, branch, status, started_at) VALUES (1, 'b', 'error', 1)`).run();
     expect(() => ensureRunsTable(legacy)).not.toThrow(); // adds the fault_* columns
     // a legacy failure with no fault_tier reads back as transient (safe/retryable), signature ← status
-    expect(failedRunsForTicket(legacy, 1)).toEqual([{ tier: 'transient', signature: 'error', finishedAt: null }]);
+    expect(failedRunsForTicket(legacy, 1)).toEqual([{ tier: 'transient', signature: 'error', finishedAt: null, bodyHash: null }]);
   });
 
   it('failedRunsForTicket returns only failures (no successes / ask-human) in order', () => {
@@ -105,8 +105,8 @@ describe('agent_runs', () => {
     finishRun(db, startRun(db, { ticketId: 2, issueNumber: null, branch: 'b' }, 3), { status: 'no-verify', faultTier: 'transient', faultSignature: 'no-verify' });
     finishRun(db, startRun(db, { ticketId: 2, issueNumber: null, branch: 'b' }, 4), { status: 'error', faultTier: 'system-wide', faultSignature: 'auth' });
     expect(failedRunsForTicket(db, 2)).toEqual([
-      { tier: 'transient', signature: 'no-verify', finishedAt: expect.any(Number) },
-      { tier: 'system-wide', signature: 'auth', finishedAt: expect.any(Number) },
+      { tier: 'transient', signature: 'no-verify', finishedAt: expect.any(Number), bodyHash: null },
+      { tier: 'system-wide', signature: 'auth', finishedAt: expect.any(Number), bodyHash: null },
     ]);
   });
 

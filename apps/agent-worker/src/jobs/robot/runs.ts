@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { ROBOT_RESET_EVENTS } from '@dashboard/shared';
 import type { FailedRun, FaultTier } from './faults';
 
@@ -76,12 +77,23 @@ export function ensureRunsTable(db: Database.Database): void {
   // C3 (PD-344) observability metrics.
   addColumnIfMissing(db, 'agent_runs', 'turns', 'INTEGER');
   addColumnIfMissing(db, 'agent_runs', 'tokens', 'INTEGER');
+  // PD-406: hash of the ticket body this run ran against — lets a max-turns fault distinguish a
+  // futile unchanged-body retry from a genuinely re-scoped one.
+  addColumnIfMissing(db, 'agent_runs', 'body_hash', 'TEXT');
+}
+
+/** Stable hash of a ticket body, for the PD-406 unchanged-body check. `null`/empty bodies hash to a
+ *  fixed sentinel so two empty bodies compare equal. */
+export function hashBody(body: string | null): string {
+  return createHash('sha1').update(body ?? '').digest('hex');
 }
 
 export interface StartRunInput {
   ticketId: number;
   issueNumber: number | null;
   branch: string;
+  /** Hash of the ticket body this run runs against (PD-406) — see `hashBody`. */
+  bodyHash?: string | null;
 }
 
 /** Open a `running` run row and return its id — call before the coding session starts. */
@@ -92,10 +104,10 @@ export function startRun(
 ): number {
   const res = db
     .prepare(
-      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, started_at)
-       VALUES (?, ?, ?, 'running', ?)`,
+      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, started_at, body_hash)
+       VALUES (?, ?, ?, 'running', ?, ?)`,
     )
-    .run(input.ticketId, input.issueNumber, input.branch, now);
+    .run(input.ticketId, input.issueNumber, input.branch, now, input.bodyHash ?? null);
   return Number(res.lastInsertRowid);
 }
 
@@ -179,16 +191,17 @@ export function failedRunsForTicket(db: Database.Database, ticketId: number): Fa
   const boundary = resetBoundaryForTicket(db, ticketId);
   const rows = db
     .prepare(
-      `SELECT fault_tier, fault_signature, status, finished_at
+      `SELECT fault_tier, fault_signature, status, finished_at, body_hash
          FROM agent_runs
         WHERE ticket_id = ? AND status IN ('no-verify', 'error') AND started_at > ?
         ORDER BY started_at ASC, id ASC`,
     )
-    .all(ticketId, boundary) as { fault_tier: string | null; fault_signature: string | null; status: string; finished_at: number | null }[];
+    .all(ticketId, boundary) as { fault_tier: string | null; fault_signature: string | null; status: string; finished_at: number | null; body_hash: string | null }[];
   return rows.map((r) => ({
     tier: (r.fault_tier as FaultTier | null) ?? 'transient',
     signature: r.fault_signature ?? r.status,
     finishedAt: r.finished_at ?? null,
+    bodyHash: r.body_hash ?? null,
   }));
 }
 
