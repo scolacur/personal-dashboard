@@ -1,7 +1,8 @@
 import type { AgentTicket, EpicDerivedLane, EpicSummary, TicketStatus } from '@dashboard/shared';
 
 /** A cell in the board's Epic band (D-054, PD-337): the Epics whose derived lane maps to a
- *  contiguous run of visible ticket columns. `in_progress` spans the two queue columns. */
+ *  contiguous run of visible ticket columns. `in_progress` sits over the single `queue` column
+ *  (D-058, collapsed from the old two-queue span). */
 export interface EpicBandCell {
   lane: EpicDerivedLane;
   label: string;

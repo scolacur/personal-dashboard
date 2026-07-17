@@ -5,7 +5,7 @@
   import DeployStatus from '../DeployStatus.svelte';
   import SystemStatus from './SystemStatus.svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput } from '@dashboard/shared';
   import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isReady } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
@@ -17,8 +17,8 @@
   import { buildEpicBand, type EpicBandCell } from './epic-logic';
   import JobsList from './JobsList.svelte';
   import * as api from './api';
-  import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
-  import type { RefineFilter } from './filter-logic';
+  import { ticketMatchesQuery, ticketMatchesRefineFilter, ticketMatchesAssigneeFilter } from './filter-logic';
+  import type { RefineFilter, AssigneeFilter } from './filter-logic';
   import { compareTicketsInColumn } from './sort-logic';
   import { buildCopyText, copyToClipboard } from './copy-utils';
   import { isStatusLocked, computeSortOrder, computeOrderWithin, clampEpicHeight } from './board-logic';
@@ -151,6 +151,26 @@
   // Refinement filter: 'all' (no filter), or a specific refinement state.
   let filterRefine = $state<RefineFilter>('all');
 
+  // Assignee filter (D-058, PD-399): table-wide across every lane — the single Queue intermixes
+  // robot- and steve-assigned cards, so a lane-independent filter is how you isolate one assignee.
+  // Persisted like hidden lanes so the view survives reloads.
+  const ASSIGNEE_FILTER_KEY = 'task-monitor:filter-assignee';
+  function loadAssigneeFilter(): AssigneeFilter {
+    if (!browser) return 'all';
+    const stored = localStorage.getItem(ASSIGNEE_FILTER_KEY);
+    if (stored === 'robot' || stored === 'steve' || stored === 'none') return stored;
+    return 'all';
+  }
+  let filterAssignee = $state<AssigneeFilter>(loadAssigneeFilter());
+  function setAssigneeFilter(value: AssigneeFilter) {
+    filterAssignee = value;
+    try {
+      localStorage.setItem(ASSIGNEE_FILTER_KEY, value);
+    } catch (err) {
+      console.warn('[task-monitor] failed to persist assignee filter', err);
+    }
+  }
+
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
@@ -255,6 +275,7 @@
     return tickets.filter((t) => {
       if (filterProjectId !== null && t.projectId !== filterProjectId) return false;
       if (filterPriority !== 'all' && bandKey(t.priority) !== filterPriority) return false;
+      if (!ticketMatchesAssigneeFilter(t, filterAssignee)) return false;
       if (!ticketMatchesRefineFilter(t, filterRefine)) return false;
       if (!ticketMatchesQuery(t, search)) return false;
       return true;
@@ -271,7 +292,7 @@
   }
 
   const visibleColumns = $derived(COLUMNS.filter((c) => !hiddenLanes.has(c.status)));
-  // Epic band cells over the visible columns (In-Progress spans the two queue columns, D-054).
+  // Epic band cells over the visible columns (In-Progress sits over the single Queue column, D-058).
   const epicBandCells = $derived(
     buildEpicBand(
       visibleTickets().filter((t) => t.isEpic),
@@ -356,16 +377,32 @@
   async function submitForm() {
     const title = formTitle.trim();
     if (!title || formProjectId === null) return;
-    // D-058: soft not-Ready hint when queueing a robot-assigned ticket (the confirm modal is PD-399).
-    if (formStatus === 'queue' && formAssignee === 'robot' && !isReady(formBody.trim() || null)) {
-      showToast("Heads-up: this ticket isn't in Ready shape — consider Refining it first.");
+    // D-058: editing/creating a not-Ready robot ticket into the Queue needs an explicit bypass ack.
+    // Skip the prompt for a ticket that's already bypassed (editing it shouldn't re-ask) and for an
+    // agent-locked ticket (its status isn't sent). Confirm sets `readyBypassed`; cancel aborts.
+    const existing = editingId !== null ? tickets.find((t) => t.id === editingId) : undefined;
+    const needsBypass =
+      formStatus === 'queue' &&
+      formAssignee === 'robot' &&
+      !isReady(formBody.trim() || null) &&
+      !(existing?.readyBypassed ?? false) &&
+      !(editingId !== null && editingLocked);
+    if (needsBypass) {
+      queueConfirm = { label: title, run: () => writeForm(true) };
+      return;
     }
+    await writeForm(false);
+  }
+
+  async function writeForm(bypass: boolean) {
+    const title = formTitle.trim();
+    if (!title || formProjectId === null) return;
     error = null;
     try {
       // An Epic never belongs to another Epic (no nesting, D-054).
       const epicId = formIsEpic ? null : formEpicId;
       if (editingId === null) {
-        await api.createTicket({
+        const created = await api.createTicket({
           title,
           projectId: formProjectId,
           body: formBody.trim() || null,
@@ -375,6 +412,9 @@
           isEpic: formIsEpic,
           epicId,
         });
+        // CreateTicketInput carries no `readyBypassed` (backend enum/guards are ticket A's scope) —
+        // set it in a follow-up patch when the human bypassed the not-Ready gate at create time.
+        if (bypass) await api.updateTicket(created.id, { readyBypassed: true });
       } else {
         await api.updateTicket(editingId, {
           title,
@@ -386,6 +426,7 @@
           epicId,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: formStatus }),
+          ...(bypass ? { readyBypassed: true } : {}),
         });
       }
       formOpen = false;
@@ -431,6 +472,36 @@
       toast = null;
       toastTimer = null;
     }, 3000);
+  }
+
+  // Queue-bypass confirm (D-058, PD-399): queueing a not-Ready robot ticket pops this modal —
+  // confirm sets `readyBypassed` (honest override, never fakes `ready`) and completes the move;
+  // cancel aborts, leaving the card where it was (no optimistic move happened).
+  let queueConfirm = $state<{ label: string; run: () => Promise<void> } | null>(null);
+  async function acceptQueueConfirm() {
+    const pending = queueConfirm;
+    queueConfirm = null;
+    if (pending) await pending.run();
+  }
+  function cancelQueueConfirm() {
+    queueConfirm = null;
+  }
+
+  // Shared write path for a drag/drop move; surfaces the D-051 blocker-gate refusal as a toast
+  // (the card snaps back since nothing moved optimistically) and anything else as the error banner.
+  async function applyTicketMove(id: number, patch: UpdateTicketInput) {
+    error = null;
+    try {
+      await api.updateTicket(id, patch);
+      await load(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().startsWith('blocked by unresolved')) {
+        showToast(`⛔ Can't queue — ${msg}`);
+      } else {
+        error = msg;
+      }
+    }
   }
 
   function onDragStart(e: DragEvent, ticket: AgentTicket) {
@@ -492,23 +563,22 @@
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, target?.beforeId ?? null, id);
     // Skip the round-trip if nothing actually changed.
     if (ticket.status === status && ticket.sortOrder === sortOrder) return;
-    if (status === 'queue' && ticket.status !== 'queue' && ticket.assignee === 'robot' && !isReady(ticket.body)) {
-      showToast("Heads-up: this ticket isn't in Ready shape — consider Refining it first.");
+    // D-058: dragging a not-Ready robot ticket into the Queue needs an explicit bypass ack. Defer
+    // the move to the confirm modal; confirming sets `readyBypassed` and completes it.
+    if (
+      status === 'queue' &&
+      ticket.status !== 'queue' &&
+      ticket.assignee === 'robot' &&
+      !ticket.ready &&
+      !ticket.readyBypassed
+    ) {
+      queueConfirm = {
+        label: ticket.displayId ?? ticket.title,
+        run: () => applyTicketMove(id, { status, sortOrder, readyBypassed: true }),
+      };
+      return;
     }
-    error = null;
-    try {
-      await api.updateTicket(id, { status, sortOrder });
-      await load(true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // D-051 blocker gate: the drop is refused server-side. The card never moved optimistically,
-      // so it stays put ("snaps back"); surface the open blocker(s) as a toast rather than a banner.
-      if (msg.toLowerCase().startsWith('blocked by unresolved')) {
-        showToast(`⛔ Can't queue — ${msg}`);
-      } else {
-        error = msg;
-      }
-    }
+    await applyTicketMove(id, { status, sortOrder });
   }
 
   /* ── Epic reorder (D-054 amended) ──────────────────────────────────────
@@ -725,6 +795,18 @@
           <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
         {/each}
         <option value="none">— None</option>
+      </select>
+    </label>
+    <label class="assignee-filter">
+      <span class="sr-label">Assignee</span>
+      <select
+        value={filterAssignee}
+        onchange={(e) => setAssigneeFilter(e.currentTarget.value as AssigneeFilter)}
+      >
+        <option value="all">All assignees</option>
+        <option value="robot">🤖 Robot</option>
+        <option value="steve">S Steve</option>
+        <option value="none">— Unassigned</option>
       </select>
     </label>
     <label class="refinement-filter">
@@ -1008,6 +1090,25 @@
       <Button variant="primary" onclick={() => archiveEpic(true)}>
         Epic + {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}
       </Button>
+    </div>
+  {/if}
+</Modal>
+
+<Modal
+  open={queueConfirm !== null}
+  title="Queue a not-Ready ticket?"
+  onClose={cancelQueueConfirm}
+>
+  {#if queueConfirm}
+    <p class="queue-confirm-msg">
+      <strong>{queueConfirm.label}</strong> isn't in Ready shape — its body is missing the four
+      sections (## Context / ## Task / ## Done When / ## Out of scope). The Robot works best from a
+      shaped ticket, so <strong>output may be suboptimal</strong>. Queue it anyway?
+    </p>
+    <div class="queue-confirm-actions">
+      <Button variant="ghost" onclick={cancelQueueConfirm}>Cancel</Button>
+      <span class="spacer"></span>
+      <Button variant="primary" onclick={acceptQueueConfirm}>Queue anyway</Button>
     </div>
   {/if}
 </Modal>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ticketMatchesQuery, ticketMatchesRefineFilter } from './filter-logic';
+import { ticketMatchesQuery, ticketMatchesRefineFilter, ticketMatchesAssigneeFilter } from './filter-logic';
 import type { AgentTicket } from '@dashboard/shared';
 
 function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
@@ -105,5 +105,25 @@ describe('ticketMatchesRefineFilter', () => {
     expect(ticketMatchesRefineFilter(makeTicket({ refined: true, refineState: null }), 'unrefined')).toBe(false);
     expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: 'refining' }), 'unrefined')).toBe(false);
     expect(ticketMatchesRefineFilter(makeTicket({ refined: false, refineState: 'awaiting-human' }), 'unrefined')).toBe(false);
+  });
+});
+
+describe('ticketMatchesAssigneeFilter', () => {
+  it('"all" matches every assignee', () => {
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: 'robot' }), 'all')).toBe(true);
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: 'steve' }), 'all')).toBe(true);
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: null }), 'all')).toBe(true);
+  });
+
+  it('matches a specific assignee', () => {
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: 'robot' }), 'robot')).toBe(true);
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: 'steve' }), 'robot')).toBe(false);
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: null }), 'robot')).toBe(false);
+  });
+
+  it('"none" matches only unassigned tickets', () => {
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: null }), 'none')).toBe(true);
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: 'robot' }), 'none')).toBe(false);
+    expect(ticketMatchesAssigneeFilter(makeTicket({ assignee: 'steve' }), 'none')).toBe(false);
   });
 });

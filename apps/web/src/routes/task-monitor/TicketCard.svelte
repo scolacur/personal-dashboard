@@ -48,6 +48,15 @@
     onUpdate: () => void;
   } = $props();
 
+  // Readiness badges (D-058, PD-399). A robot-assigned ticket that isn't Ready (missing the four
+  // sections) shows a soft "needs shaping" hint; once a human queues it past the confirm modal it
+  // carries an honest "⚠ bypassed" badge instead (readyBypassed never fakes `ready`). Both are moot
+  // on terminal tickets.
+  const isActive = $derived(ticket.status !== 'completed' && ticket.status !== 'closed');
+  const needsShaping = $derived(
+    ticket.assignee === 'robot' && !ticket.ready && !ticket.readyBypassed && isActive && !ticket.isEpic,
+  );
+
   // ⋮ "Mark as →" relation menu (D-051, PD-322).
   let menuOpen = $state(false);
   const detailHref = $derived(ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined);
@@ -165,6 +174,21 @@
       {/if}
       {#if badges.split}
         <a class="rel-badge rel-split" href={detailHref} draggable="false" title="Part of a split lineage">{badges.splitOrigin === 'agent' ? 'auto-split 🤖' : 'split'}</a>
+      {/if}
+    </div>
+  {/if}
+  {#if ticket.readyBypassed || needsShaping}
+    <div class="card-readiness">
+      {#if ticket.readyBypassed}
+        <span
+          class="ready-badge bypassed"
+          title="Queued without the four Ready sections (## Context / ## Task / ## Done When / ## Out of scope) — Robot output may be suboptimal."
+        >⚠ bypassed</span>
+      {:else}
+        <span
+          class="ready-badge needs-shaping"
+          title="Body is missing the four Ready sections (## Context / ## Task / ## Done When / ## Out of scope). Refine it to shape it for the Robot."
+        >needs shaping</span>
       {/if}
     </div>
   {/if}
