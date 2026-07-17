@@ -56,6 +56,9 @@
   const needsShaping = $derived(
     ticket.assignee === 'robot' && !ticket.ready && !ticket.readyBypassed && isActive && !ticket.isEpic,
   );
+  // Queued-but-blocked (D-051 amended, PD-408): a blocked ticket may sit in the queue, but the loop
+  // skips it until its blocker resolves — de-emphasize it so the queue reads actionable-vs-waiting.
+  const queuedBlocked = $derived(ticket.status === 'queue' && badges.blockedBy > 0);
 
   // ⋮ "Mark as →" relation menu (D-051, PD-322).
   let menuOpen = $state(false);
@@ -117,6 +120,7 @@
   class:dragging={dragging}
   class:drop-before={dropBefore}
   class:locked={isLocked}
+  class:queued-blocked={queuedBlocked}
   class:shimmer={ticket.agentState === 'working'}
   data-id={ticket.id}
   data-priority={bandKey(ticket.priority)}

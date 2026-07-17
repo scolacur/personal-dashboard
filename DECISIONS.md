@@ -168,6 +168,20 @@ Newest decisions at the top.
 
 ## D-051: A `blocks` ticket relation is a **hard `robot_queue`-entry gate** (a second queue-entry precondition beside `isSortieReady`); relations carry an `origin` (agent|human); PD-156 sliced backend→frontend (PD-156)
 
+> **Amended 2026-07-17 (PD-408): the blocker gate moved from *queue-entry refusal* to *dispatch-time
+> skip*.** A blocked ticket **may now sit in `queue`** — `updateTicket` no longer refuses queue entry
+> (the `QueueBlockedError` / `BLOCKED_BY_UNRESOLVED` path is removed, as is `approveRefine`'s
+> Approve-&-queue pre-check). The **single authoritative** "never dispatch a blocked ticket" guard is
+> the robot loop's selection query — `robotQueueCandidates` in `apps/agent-worker/src/jobs/robot/select.ts`
+> excludes any ticket that is the `to` end of an open `blocks` relation (blocker not
+> `completed`/`closed`) — mirrored **read-side** by the board's de-emphasis + "⛔ blocked by N" badge
+> (a queued-but-blocked card renders dashed/dimmed). The gate was enforced *twice* (entry + selection);
+> the entry copy was redundant and forced manual re-queueing of a prerequisite chain. **Auto-advance:**
+> drop a whole decomposed chain (A blocks B blocks C) into the queue at once — the loop runs the
+> unblocked head and picks up each next slice the first cycle after its blocker goes terminal. Cycle
+> detection at add-time (below) is unchanged; "resolved = done or gone" is unchanged. The `robot_queue`
+> lane named below is the single `queue` lane after [[D-058]].
+
 **Decision:** Ticket relations become first-class *and behavioral*, not cosmetic. Key choices from the 2026-07-07 grill:
 
 - **`blocks` hard-gates queue entry.** A ticket cannot **enter `robot_queue`** while it has any unresolved blocker — a second entry precondition alongside [[D-046]]-era `isSortieReady` (the shape gate). "Blocked" is not merely displayed; it *refuses dispatch*. Chosen over an informational-only badge because the only actor that ever queues is a **human** (a Sortie worker creates into `backlog` only, [[D-039]]), so the gate protects Steve from dispatching work that can't proceed. Enforced in the `updateTicket` status transition — the chokepoint that both board drag-drop and Refine-in-place routing pass through (decompose children / direct creates are brand-new so can't yet carry blockers).

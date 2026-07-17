@@ -386,15 +386,12 @@ export function updateTicket(
   // D-058: assignee is a free axis — the lane no longer forces it (reverses D-044/D-055).
   // `next.assignee` is whatever the caller set (or the existing value); left untouched here.
 
-  // Blocker gate (D-051, retargeted to `queue` by D-058): a ticket cannot ENTER `queue` while it
-  // has unresolved blockers. This (and the Epic guard above) are the hard queue-entry invariants;
-  // `ready` is the dispatch gate for the robot loop (read from the persisted flag), not enforced
-  // here. Entry-only: an already-queued ticket that later gains a blocker is not evicted here
-  // (PD-322's confirm covers that at add time).
-  if (next.status === 'queue' && existing.status !== 'queue') {
-    const blockers = unresolvedBlockers(db, id);
-    if (blockers.length > 0) throw new QueueBlockedError(blockers);
-  }
+  // Blocker gate (D-051, amended by PD-408): a blocked ticket MAY sit in `queue` — queue entry is no
+  // longer refused. The single authoritative "never dispatch a blocked ticket" guard is the loop's
+  // selection query (`robotQueueCandidates` in agent-worker `select.ts`, which excludes any ticket
+  // with an open `blocks` blocker), mirrored read-side by the board's blocked badge. This lets a
+  // whole decomposed chain (A blocks B blocks C) be queued at once and self-sequence: the loop runs
+  // the unblocked head and auto-picks each next slice the cycle after its blocker goes terminal.
 
   // PD-400: manually moving a ticket to a terminal lane (`completed`/`closed`) ends any lingering
   // agent session cleanly — clear `agent_state`, resolve open needs/awaiting-human notifications,
@@ -910,15 +907,6 @@ export class SelfRelationError extends Error {
   }
 }
 
-/** The blocker gate (D-051, retargeted to `queue` by D-058): a ticket cannot enter `queue` while
- *  it has unresolved blockers. Thrown from `updateTicket`; the PATCH route maps it to 409. */
-export class QueueBlockedError extends Error {
-  constructor(public readonly blockers: LineageRef[]) {
-    super(`blocked by unresolved: ${blockers.map((b) => b.displayId ?? b.ticketId).join(', ')}`);
-    this.name = 'QueueBlockedError';
-  }
-}
-
 /** A blocker is "resolved" (stops gating) once it is terminal — completed / closed / archived
  *  (D-048). The four active lanes still block. Used by the gate and by `unresolvedBlockers`. */
 const UNRESOLVED_BLOCKER_SQL =
@@ -1145,7 +1133,6 @@ export type ApproveRefineResult =
         | 'not_found'
         | 'no_proposal'
         | 'invalid_proposal'
-        | 'blocked_by_unresolved'
         | 'epic_not_queueable';
       detail?: string;
     };
@@ -1189,20 +1176,10 @@ export function approveRefine(
     if (wantQueue) {
       // Explicit dispatch intent ("Approve & queue"). An Epic can never enter `queue`
       // (D-054/D-058) — refuse cleanly so approveRefine keeps its no-throw contract rather than
-      // letting updateTicket's EpicGuardError escape the transaction.
+      // letting updateTicket's EpicGuardError escape the transaction. (A blocked ticket MAY be
+      // queued now — the loop's selection query is the sole dispatch guard, D-051 amended by PD-408.)
       if (parent.isEpic) {
         return { ok: false, reason: 'epic_not_queueable', detail: parent.displayId ?? String(ticketId) };
-      }
-      // Blocker gate (D-051): pre-check here for the same no-throw reason (QueueBlockedError).
-      if (parent.status !== 'queue') {
-        const blockers = unresolvedBlockers(db, ticketId);
-        if (blockers.length > 0) {
-          return {
-            ok: false,
-            reason: 'blocked_by_unresolved',
-            detail: blockers.map((b) => b.displayId ?? String(b.ticketId)).join(', '),
-          };
-        }
       }
     }
 
