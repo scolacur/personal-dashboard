@@ -591,6 +591,7 @@
         {/if}
         <TicketThread
           ticketId={ticket.id}
+          isEpic={ticket.isEpic}
           onChanged={() => ticketId && load(ticketId)}
           onStart={startRefine}
           {starting}

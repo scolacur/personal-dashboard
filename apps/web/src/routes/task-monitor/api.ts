@@ -181,11 +181,20 @@ export async function postRefineReply(id: number, body: string): Promise<TicketE
   return res.json() as Promise<TicketEvent>;
 }
 
-/** Approve the latest Refine commit proposal (PD-269): the server refines-in-place or
- *  decomposes. Throws on 409 (no proposal) / 422 (a robot child isn't Sortie-ready). */
-export async function approveRefine(id: number): Promise<void> {
-  const res = await fetch(`${BASE}/${id}/refine-approve`, { method: 'POST' });
+/** Approve the latest Refine commit proposal (PD-269, D-057): the server refines-in-place or
+ *  decomposes and marks refined, but never dispatches. Pass `queue: true` (the "Approve & queue"
+ *  button — non-Epic refine_in_place only) to also move the ticket into robot_queue. Throws on
+ *  409 (no proposal / Epic can't queue / blocked) / 422 (invalid proposal). Resolves with
+ *  `{ queued }` so the caller can confirm whether it entered the Robot's Queue. */
+export async function approveRefine(id: number, opts: { queue?: boolean } = {}): Promise<{ queued: boolean }> {
+  const res = await fetch(`${BASE}/${id}/refine-approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ queue: opts.queue === true }),
+  });
   if (!res.ok) return parseError(res);
+  const body = (await res.json()) as { queued?: boolean };
+  return { queued: body.queued === true };
 }
 
 /** Reject the latest Refine commit proposal (PD-269); the refine session can propose again. */

@@ -323,14 +323,28 @@
     background: var(--accent);
     color: var(--on-accent);
   }
+  // "Approve & queue" is the deliberate dispatch action — outlined so the safe default
+  // (Approve, which never dispatches) reads as primary (D-057).
+  .approve-queue {
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+  }
   .reject {
     border: 1px solid var(--border);
     background: transparent;
     color: var(--text);
   }
+  .shape-hint {
+    font-size: var(--font-size-sm);
+    color: var(--status-warn, #b7791f);
+    cursor: help;
+  }
 }
 
 .decide-msg {
-  color: #c0392b;
+  list-style: none;
+  color: var(--text-muted, var(--text));
   font-size: var(--font-size-sm);
+  padding: var(--space-xs) 0;
 }

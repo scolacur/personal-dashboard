@@ -15,12 +15,25 @@ describe('validateProposalShape', () => {
     expect(validateProposalShape(p)).toMatch(/decompose requires a non-empty `children`/);
   });
 
-  it('accepts a decompose with children', () => {
+  it('accepts a decompose with children routed to a pre-queue lane', () => {
     const p: RefineProposal = {
+      mode: 'decompose',
+      children: [{ title: 'c', body: SORTIE_BODY, status: 'prioritized', assignee: 'robot' }],
+    };
+    expect(validateProposalShape(p)).toBeNull();
+  });
+
+  it('rejects a decompose child routed into a queue lane (D-057: Refine never queues)', () => {
+    const robot: RefineProposal = {
       mode: 'decompose',
       children: [{ title: 'c', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot' }],
     };
-    expect(validateProposalShape(p)).toBeNull();
+    expect(validateProposalShape(robot)).toMatch(/does not queue tickets/);
+    const steve: RefineProposal = {
+      mode: 'decompose',
+      children: [{ title: 'c', body: SORTIE_BODY, status: 'steve_queue', assignee: 'steve' }],
+    };
+    expect(validateProposalShape(steve)).toMatch(/does not queue tickets/);
   });
 
   it('rejects a refine_in_place with no body', () => {
@@ -28,8 +41,19 @@ describe('validateProposalShape', () => {
     expect(validateProposalShape(p)).toMatch(/refine_in_place requires the rewritten `body`/);
   });
 
-  it('accepts a refine_in_place with a body', () => {
-    const p: RefineProposal = { mode: 'refine_in_place', body: SORTIE_BODY };
-    expect(validateProposalShape(p)).toBeNull();
+  it('accepts a refine_in_place with a body (pre-queue lane or unset)', () => {
+    expect(validateProposalShape({ mode: 'refine_in_place', body: SORTIE_BODY })).toBeNull();
+    expect(
+      validateProposalShape({ mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' }),
+    ).toBeNull();
+  });
+
+  it('rejects a refine_in_place routed into a queue lane (D-057)', () => {
+    expect(
+      validateProposalShape({ mode: 'refine_in_place', body: SORTIE_BODY, status: 'robot_queue' }),
+    ).toMatch(/does not queue tickets/);
+    expect(
+      validateProposalShape({ mode: 'refine_in_place', body: SORTIE_BODY, status: 'steve_queue' }),
+    ).toMatch(/does not queue tickets/);
   });
 });

@@ -25,7 +25,6 @@ import type {
   DispatchPauseState,
 } from '@dashboard/shared';
 import {
-  isSortieReady,
   laneForcedAssignee,
   latestActionableProposal,
   refineStateFromLatestType,
@@ -340,9 +339,10 @@ export function updateTicket(
     next.assignee = forcedAssignee;
   }
 
-  // Blocker gate (D-048): a ticket cannot ENTER robot_queue while it has unresolved blockers —
-  // a second queue-entry precondition beside isSortieReady. Entry-only: an already-queued ticket
-  // that later gains a blocker is not evicted here (PD-322's confirm covers that at add time).
+  // Blocker gate (D-048): a ticket cannot ENTER robot_queue while it has unresolved blockers.
+  // This (and the Epic guard above) are the hard queue-entry invariants; isSortieReady is only a
+  // soft UI shape hint (D-057), not enforced here. Entry-only: an already-queued ticket that
+  // later gains a blocker is not evicted here (PD-322's confirm covers that at add time).
   if (next.status === 'robot_queue' && existing.status !== 'robot_queue') {
     const blockers = unresolvedBlockers(db, id);
     if (blockers.length > 0) throw new QueueBlockedError(blockers);
@@ -1013,26 +1013,44 @@ function logProposalEvent(db: Database.Database, ticketId: number, type: string,
 }
 
 export type ApproveRefineResult =
-  | { ok: true; mode: RefineCommitMode; refinedTicketId?: number; childIds?: number[] }
+  | {
+      ok: true;
+      mode: RefineCommitMode;
+      refinedTicketId?: number;
+      childIds?: number[];
+      /** True when the approval also moved the ticket into robot_queue (`queue: true`). */
+      queued?: boolean;
+    }
   | {
       ok: false;
       reason:
         | 'not_found'
         | 'no_proposal'
         | 'invalid_proposal'
-        | 'child_not_sortie_ready'
-        | 'blocked_by_unresolved';
+        | 'blocked_by_unresolved'
+        | 'epic_not_queueable';
       detail?: string;
     };
 
 /**
  * Execute the latest actionable commit proposal on Steve's approval (D-044, PD-269). The
  * agent-worker only proposes; this is the single place tickets are written, so the lane→assignee
- * invariant + isSortieReady gate are enforced here. Refine-in-place rewrites the ticket and
- * marks it refined; decompose creates routed children, closes the parent (D-036), and links
- * each child via a `split` relation. All-or-nothing (one transaction); validation runs first.
+ * invariant is enforced here.
+ *
+ * D-057: **approval never dispatches on its own.** A plain approve rewrites/creates tickets and
+ * marks them refined but never enters robot_queue — an agent-proposed robot_queue is parked in
+ * `prioritized`. Entering the Robot's Queue is a separate, explicit act: a board drag, or the
+ * "Approve & queue" button (`opts.queue`), which is offered only for a non-Epic refine_in_place.
+ * `isSortieReady` is a soft shape hint surfaced in the UI, not a gate here (matches the drag path).
+ *
+ * Refine-in-place rewrites the ticket; decompose creates children in non-queue lanes, closes the
+ * parent (D-036), and links each via a `split` relation. All-or-nothing (one transaction).
  */
-export function approveRefine(db: Database.Database, ticketId: number): ApproveRefineResult {
+export function approveRefine(
+  db: Database.Database,
+  ticketId: number,
+  opts: { queue?: boolean } = {},
+): ApproveRefineResult {
   const parent = getTicket(db, ticketId);
   if (!parent) return { ok: false, reason: 'not_found' };
 
@@ -1041,23 +1059,35 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
   const p = found.proposal;
 
   if (p.mode === 'refine_in_place') {
-    const status = p.status ?? parent.status;
     const body = p.body ?? parent.body;
-    if (status === 'robot_queue' && !isSortieReady(body)) {
-      return { ok: false, reason: 'child_not_sortie_ready', detail: parent.displayId ?? String(ticketId) };
-    }
-    // Blocker gate (D-048): pre-check here so approveRefine keeps its no-throw contract rather
-    // than letting updateTicket's QueueBlockedError escape the transaction.
-    if (status === 'robot_queue' && parent.status !== 'robot_queue') {
-      const blockers = unresolvedBlockers(db, ticketId);
-      if (blockers.length > 0) {
-        return {
-          ok: false,
-          reason: 'blocked_by_unresolved',
-          detail: blockers.map((b) => b.displayId ?? String(b.ticketId)).join(', '),
-        };
+    const proposed = p.status ?? parent.status;
+    const wantQueue = opts.queue === true;
+
+    if (wantQueue) {
+      // Explicit dispatch intent ("Approve & queue"). An Epic can never enter robot_queue
+      // (D-054) — refuse cleanly so approveRefine keeps its no-throw contract rather than
+      // letting updateTicket's EpicGuardError escape the transaction.
+      if (parent.isEpic) {
+        return { ok: false, reason: 'epic_not_queueable', detail: parent.displayId ?? String(ticketId) };
+      }
+      // Blocker gate (D-048): pre-check here for the same no-throw reason (QueueBlockedError).
+      if (parent.status !== 'robot_queue') {
+        const blockers = unresolvedBlockers(db, ticketId);
+        if (blockers.length > 0) {
+          return {
+            ok: false,
+            reason: 'blocked_by_unresolved',
+            detail: blockers.map((b) => b.displayId ?? String(b.ticketId)).join(', '),
+          };
+        }
       }
     }
+
+    // D-057: plain approve parks a proposed robot_queue in `prioritized`; only `queue: true`
+    // dispatches. isSortieReady stays soft (surfaced in the UI, never enforced here).
+    const status = wantQueue ? 'robot_queue' : proposed === 'robot_queue' ? 'prioritized' : proposed;
+    const queued = status === 'robot_queue';
+
     const run = db.transaction(() => {
       updateTicket(db, ticketId, {
         body,
@@ -1066,10 +1096,10 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
         priority: p.priority === undefined ? parent.priority : p.priority,
         refined: true,
       });
-      logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode });
+      logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, queued });
     });
     run();
-    return { ok: true, mode: p.mode, refinedTicketId: ticketId };
+    return { ok: true, mode: p.mode, refinedTicketId: ticketId, queued };
   }
 
   // decompose
@@ -1084,19 +1114,17 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
     return { ok: false, reason: 'invalid_proposal', detail: 'parent has no project' };
   }
   const projectId = parent.projectId;
-  // Validate ALL robot-bound children before any write.
-  for (const c of children) {
-    if (c.status === 'robot_queue' && !isSortieReady(c.body)) {
-      return { ok: false, reason: 'child_not_sortie_ready', detail: c.title };
-    }
-  }
   const childIds: number[] = [];
   const run = db.transaction(() => {
     for (const c of children) {
+      // Decompose-A (D-057): a child never enters robot_queue at approval — an agent-proposed
+      // robot_queue is parked in `prioritized`; Steve drags the ready ones in. The shaped body
+      // is preserved, so a downgraded child stays one drag away from dispatch.
+      const childStatus = c.status === 'robot_queue' ? 'prioritized' : c.status;
       const child = createTicket(db, {
         title: c.title,
         body: c.body,
-        status: c.status,
+        status: childStatus,
         assignee: c.assignee ?? undefined,
         priority: c.priority ?? null,
         projectId,
@@ -1110,7 +1138,7 @@ export function approveRefine(db: Database.Database, ticketId: number): ApproveR
     logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, childIds });
   });
   run();
-  return { ok: true, mode: p.mode, childIds };
+  return { ok: true, mode: p.mode, childIds, queued: false };
 }
 
 export type RejectRefineResult = { ok: true } | { ok: false; reason: 'not_found' | 'no_proposal' };

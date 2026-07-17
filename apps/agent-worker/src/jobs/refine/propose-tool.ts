@@ -49,10 +49,23 @@ const DESCRIPTION = [
   'mode "refine_in_place": provide the rewritten `body` (+ optional `status`/`assignee`/`priority`)',
   'for THIS ticket. mode "decompose": provide `children` (each title/body/status/assignee/priority);',
   'the parent is then closed and linked to them. `priority` is P0–P5 (P0 most urgent) or null to',
-  'leave unset — set it when the plan implies urgency (e.g. deferred follow-ons → P3). Any target',
-  'routed to `robot_queue` MUST have a body with the four sections: ## Context, ## Task, ## Done',
-  'When, ## Out of scope.',
+  'leave unset — set it when the plan implies urgency (e.g. deferred follow-ons → P3).',
+  'DO NOT route into a queue lane. `status` is a PRE-queue lane only — "backlog" or "prioritized"',
+  '(or omit to leave it unchanged). Refine shapes tickets; it does NOT dispatch them (D-057):',
+  "approval never queues, and Steve moves a ticket into the Robot's / Steve's Queue himself",
+  'afterwards. Use `assignee` ("robot" | "steve" | null) to hint who should do the work. A ticket',
+  'you intend for the robot MUST still carry a Sortie-shaped body — the four sections ## Context,',
+  '## Task, ## Done When, ## Out of scope — so Steve can queue it as-is.',
 ].join(' ');
+
+/** Queue lanes the agent must not route into (D-057): entering a queue is Steve's explicit,
+ *  post-approval act, not something Refine proposes. */
+function queueLaneError(where: string, status: string | undefined): string | null {
+  if (status === 'robot_queue' || status === 'steve_queue') {
+    return `${where} routes into the queue lane "${status}", but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" or "prioritized" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
+  }
+  return null;
+}
 
 /** The fully-qualified tool name the SDK exposes (server key `refine` + tool name). */
 export const PROPOSE_TOOL_NAME = 'mcp__refine__propose_commit';
@@ -68,10 +81,16 @@ export function validateProposalShape(proposal: RefineProposal): string | null {
     if (!proposal.children || proposal.children.length === 0) {
       return 'decompose requires a non-empty `children` array — you set mode "decompose" but attached no children. Re-call with each child ticket (title/body/status/assignee).';
     }
+    for (const c of proposal.children) {
+      const err = queueLaneError(`child "${c.title}"`, c.status);
+      if (err) return err;
+    }
   } else if (proposal.mode === 'refine_in_place') {
     if (proposal.body === undefined) {
       return 'refine_in_place requires the rewritten `body` for this ticket — you set mode "refine_in_place" but attached no body. Re-call with the full rewritten body.';
     }
+    const err = queueLaneError('`status`', proposal.status);
+    if (err) return err;
   }
   return null;
 }
