@@ -75,6 +75,12 @@ ROBOT_CODING_UID=1500               # the low-priv coding uid (enables the kerne
 ROBOT_CODING_GID=1500
 # optional: ROBOT_CODING_HOME (default /home/robot — matches the image), ROBOT_INTERVAL_MS,
 #           ROBOT_WORKTREES_DIR, ROBOT_MAX_TURNS, ROBOT_BOT_NAME, ROBOT_BOT_EMAIL
+# C2 fault guardrail: ROBOT_RETRY_CAP (3), ROBOT_PROMOTE_AFTER (2), ROBOT_BACKOFF_BASE_MS (60000),
+#           ROBOT_BACKOFF_MAX_MS (900000)
+# C5 folded-in bridges: ROBOT_STALL_THRESHOLD_MS (default 7200000 = 2h — a working run running longer
+#           is treated as a restart orphan), ROBOT_PR_POLL_INTERVAL_MS (default 180000 = 3m — how
+#           often each in-review PR is polled for review feedback / merge conflicts). The PR poll uses
+#           GITHUB_READ_TOKEN (read-only); no write token needed to observe PR state.
 ```
 
 ## Avoiding Sortie contention (C1 is supervised)

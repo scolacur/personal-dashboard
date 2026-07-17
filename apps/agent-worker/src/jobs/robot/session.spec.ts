@@ -104,7 +104,7 @@ describe('runRobotSession', () => {
       } as never;
     }) as unknown as RunQuery;
 
-    const res = await runRobotSession(config, candidate, worktree, fake);
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
     // C3 metrics: turns + total tokens captured off the result message.
     expect(res).toMatchObject({ ok: true, sessionId: 'sess-abc', verifyOk: true, prNumber: 99, turns: 6, tokens: 1234 });
   });
@@ -113,7 +113,7 @@ describe('runRobotSession', () => {
     const fake: RunQuery = (async function* () {
       yield { type: 'result', subtype: 'error_max_turns', session_id: 's', errors: ['max turns'] } as never;
     }) as unknown as RunQuery;
-    const res = await runRobotSession(config, candidate, worktree, fake);
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
     expect(res.ok).toBe(false);
     expect(res.error).toContain('max turns');
     expect(res.verifyOk).toBe(false);
@@ -123,7 +123,7 @@ describe('runRobotSession', () => {
     const fake: RunQuery = (() => {
       throw new Error('spawn EACCES');
     }) as unknown as RunQuery;
-    const res = await runRobotSession(config, candidate, worktree, fake);
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
     expect(res.ok).toBe(false);
     expect(res.error).toContain('EACCES');
   });

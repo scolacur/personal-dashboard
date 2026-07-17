@@ -16,6 +16,7 @@ import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import {
   addRelation,
   appendRefineReply,
+  appendRobotReply,
   approveRefine,
   type ApproveRefineResult,
   archiveTicket,
@@ -425,9 +426,12 @@ export function registerRoutes(
 
   app.post(`${base}/notifications/read-all`, async () => ({ marked: markAllNotificationsRead(db) }));
 
-  // Inline reply to a parked agent (PD-250). Posts the reply as a GitHub issue comment
-  // carrying the human-reply marker, so the sortie-ask-human Action (PD-133) re-queues the
-  // agent. Requires the ticket to have a linked issue and a write token to be configured.
+  // Inline reply to a parked agent (PD-250). DB-native as of C5/PD-346: the reply is recorded as a
+  // `robot_human_reply` event the Robot loop's resume sweep detects to re-queue the ticket and hand
+  // the answer to the (DB-blind) coding session — no GitHub round-trip required. This replaces the
+  // `sortie-ask-human` Action. During the transition (Sortie still primary, loop off) we ALSO mirror
+  // the reply to the linked GitHub issue with the human-reply marker, best-effort, so a parked Sortie
+  // agent still resumes; a missing issue/token or a GitHub failure no longer fails the reply.
   app.post(`${base}/tickets/:id/reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -437,35 +441,33 @@ export function registerRoutes(
     if (typeof body.body !== 'string' || body.body.trim() === '') {
       return reply.status(400).send({ error: 'reply body is required', code: 'INVALID_BODY' });
     }
-    const ref = getTicketIssueRef(db, id);
-    if (!ref) {
+    const text = body.body.trim();
+
+    // 1) DB-native record — the authoritative signal the loop resumes on. 404 iff the ticket is gone.
+    const event = appendRobotReply(db, id, text);
+    if (!event) {
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
-    if (ref.githubIssueNumber == null || !ref.githubRepo) {
-      return reply
-        .status(409)
-        .send({ error: 'ticket has no linked GitHub issue', code: 'NO_LINKED_ISSUE' });
-    }
+
+    // 2) Best-effort GitHub mirror for the Sortie transition window. Skipped silently when the ticket
+    //    isn't linked or no write token is set; a GitHub failure is logged, never surfaced.
+    const ref = getTicketIssueRef(db, id);
     const token = deps.githubWriteToken ?? process.env[GITHUB_WRITE_TOKEN_ENV];
-    if (!token) {
-      return reply
-        .status(503)
-        .send({ error: 'reply unavailable — no write token configured', code: 'NO_WRITE_TOKEN' });
+    if (ref?.githubIssueNumber != null && ref.githubRepo && token) {
+      const commentBody = `${text}\n\n${HUMAN_REPLY_MARKER}`;
+      const ok = await postIssueComment(
+        ref.githubRepo,
+        ref.githubIssueNumber,
+        commentBody,
+        token,
+        deps.fetchImpl ?? fetch,
+      );
+      if (!ok) {
+        app.log.warn(`task-monitor: GitHub reply mirror to ${ref.githubRepo}#${ref.githubIssueNumber} failed (reply still recorded in DB)`);
+      }
     }
-    const commentBody = `${body.body.trim()}\n\n${HUMAN_REPLY_MARKER}`;
-    const ok = await postIssueComment(
-      ref.githubRepo,
-      ref.githubIssueNumber,
-      commentBody,
-      token,
-      deps.fetchImpl ?? fetch,
-    );
-    if (!ok) {
-      app.log.error(`task-monitor: reply to ${ref.githubRepo}#${ref.githubIssueNumber} failed`);
-      return reply.status(502).send({ error: 'GitHub rejected the reply', code: 'GITHUB_ERROR' });
-    }
-    app.log.info(`task-monitor: replied to ${ref.githubRepo}#${ref.githubIssueNumber} (ticket ${id})`);
-    return reply.status(201).send({ ok: true });
+    app.log.info(`task-monitor: recorded reply on ticket ${id}`);
+    return reply.status(201).send(event);
   });
 
   /* ── Ticket activity log + Refine thread (D-044, PD-267) ─────────────── */

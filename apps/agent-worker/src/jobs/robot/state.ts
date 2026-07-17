@@ -61,3 +61,19 @@ export function resumeDispatch(db: Database.Database, now: number = Date.now()):
        ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
   ).run(DISPATCH_PAUSED, now);
 }
+
+/** Upsert an arbitrary `robot_state` key (C5/PD-346 — used to throttle the PR-state poll). */
+export function writeState(db: Database.Database, key: string, value: string, now: number = Date.now()): void {
+  db.prepare(
+    `INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(key, value, now);
+}
+
+/** Read a `robot_state` value as a number, or 0 when absent/unset/non-numeric. */
+export function readStateNumber(db: Database.Database, key: string): number {
+  const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(key) as { value: string | null } | undefined;
+  if (!row || row.value === null) return 0;
+  const n = Number(row.value);
+  return Number.isFinite(n) ? n : 0;
+}
