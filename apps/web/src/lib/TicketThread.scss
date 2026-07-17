@@ -106,6 +106,59 @@
   padding: var(--space-xs) var(--space-sm);
 }
 
+// "Refine agent is working…" indicator (shown while awaiting a reply). Plain + honest: a status
+// line with elapsed time and three softly-pulsing dots. No rotating phrases.
+.working {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+.working-text {
+  font-variant-numeric: tabular-nums;
+}
+.working-dots {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+
+  span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.35;
+    animation: working-pulse 1.2s ease-in-out infinite;
+  }
+  span:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  span:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+}
+
+@keyframes working-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-dots span {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
 // Markdown output from agent turns. Children use :global because content is injected via innerHTML.
 .prose {
   white-space: normal;

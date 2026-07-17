@@ -37,6 +37,25 @@
   // True while we're waiting on the agent-worker — the newest turn is Steve's.
   const awaitingAgent = $derived(messages.length > 0 && messages[messages.length - 1].role === 'human');
 
+  // Working indicator: while awaiting a reply, show that the Refine agent is processing, with the
+  // elapsed time since the turn we're waiting on — concrete feedback, no whimsy. Ticks each second.
+  let nowTs = $state(Date.now());
+  $effect(() => {
+    if (!awaitingAgent) return;
+    const t = setInterval(() => (nowTs = Date.now()), 1000);
+    return () => clearInterval(t);
+  });
+  const workingElapsed = $derived(
+    awaitingAgent && messages.length
+      ? Math.max(0, Math.floor((nowTs - messages[messages.length - 1].createdAt) / 1000))
+      : 0,
+  );
+  function fmtElapsed(s: number): string {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    return `${m}m ${s % 60}s`;
+  }
+
   // Svelte action: renders markdown into a node's innerHTML without using {@html}.
   function applyMarkdown(node: HTMLElement, text: string) {
     node.innerHTML = marked.parse(text) as string;
@@ -196,7 +215,10 @@
       {/if}
 
       {#if awaitingAgent}
-        <li class="muted awaiting">Waiting for the Refine agent to reply…</li>
+        <li class="working" aria-live="polite">
+          <span class="working-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="working-text">Refine agent is working… · {fmtElapsed(workingElapsed)}</span>
+        </li>
       {/if}
     </ul>
   {/if}
