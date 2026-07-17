@@ -77,7 +77,7 @@
   }
 
   const REFINE_STATE_LABELS: Record<RefineState, string> = {
-    grilling: 'Grilling…',
+    refining: 'Refining…',
     'awaiting-human': 'Needs you',
   };
 

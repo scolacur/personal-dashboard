@@ -13,7 +13,7 @@ export interface AuditTurnResult {
 }
 
 /**
- * Run ONE audit pass via a fresh Agent SDK query (mirrors the refine job's runGrillTurn):
+ * Run ONE audit pass via a fresh Agent SDK query (mirrors the refine job's runRefineTurn):
  * Opus by default, grounded in the read-only checkout, read-only tools, no prompting. The
  * caller supplies the system prompt (methodology) and the user prompt (the ticket list).
  */

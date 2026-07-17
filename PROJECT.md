@@ -236,28 +236,25 @@ Definitions only — no implementation detail. Decisions live in `DECISIONS.md` 
 
 **Refine**:
 The interactive session (launched from a **Refine** button on a board card) in which an
-agent works *with Steve* to sharpen a ticket: it grills, plans, decomposes into one or
-more well-shaped tickets, suggests assignments, and — after Steve's approval — creates
-and routes them. The whole feature; **Grill** is the interrogation activity inside it.
-
-**Grill**:
-The **pre-dispatch interrogation/decomposition activity** inside a Refine session, run on
-a **backlog or prioritized** ticket (relaxed from prioritized-only; amends D-044 so the
-Ticket Audit's "Send to Refine" can escalate a backlog finding, PD-281). Produces one or
-more well-shaped tickets and proposes a lane for each. Runs *before* a Sortie worker is
-dispatched.
-_Avoid_: using "grill" for questions an agent asks mid-run (that is **ask_human**).
+agent works *with Steve* to sharpen a ticket: it interrogates, plans, decomposes into one or
+more well-shaped tickets, suggests assignments, and — after Steve's approval — creates and
+routes them. Runs on a **backlog or prioritized** ticket (relaxed from prioritized-only;
+amends D-044 so the Ticket Audit's "Send to Refine" can escalate a backlog finding, PD-281),
+*before* a Sortie worker is dispatched. The interrogation/decomposition is just the activity
+inside a Refine session — there is no separate "Grill" term.
+_Avoid_: "grill" — the settled name for the whole thing (interrogation included) is **Refine**;
+and don't use it for a question an agent asks mid-run (that is **ask_human**).
 
 **ask_human**:
 A question a **dispatched Sortie worker** raises mid-run when it hits real ambiguity —
 it posts `### ❓ ask_human`, self-labels `sortie:awaiting-human`, parks, and resumes
 after a human replies async. Clarifies the *current* ticket in place; it does **not**
 produce new tickets and does **not** route anything.
-_Avoid_: calling this a "grill".
+_Avoid_: calling this a "refine".
 
 **Auto-routing**:
 Assigning each ticket a queue lane (**Robot's Queue** or **Steve's Queue**) and the
-matching **assignee** (`robot` / `steve`). "Grill auto-routing" = doing this to the
+matching **assignee** (`robot` / `steve`). "Refine auto-routing" = doing this to the
 tickets a Refine session produces.
 
 **Autonomous agent** (e.g. a dispatched **Sortie worker**):
@@ -267,14 +264,14 @@ An agent operating *unsupervised*. **May not queue tickets** — it can create t
 something stronger than a prompt (PD-244). This is the class D-039's backlog-only rule
 governs.
 
-**Interactive agent** (e.g. the **Refine**/Grill agent):
+**Interactive agent** (e.g. the **Refine** agent):
 An agent that is *always working with Steve in the loop*. **May queue tickets — but only
 after Steve's explicit approval.** Human-in-the-loop is the enforcement, so it is safe in
 a way an autonomous agent is not. This is why Refine can route into queue lanes without
 waiting on PD-244.
 
 **Prioritized**:
-The pre-grill triage lane — "this matters, do it next." Renames the old `ready` lane.
+The pre-refine triage lane — "this matters, do it next." Renames the old `ready` lane.
 Refine may launch from a **backlog or prioritized** ticket (amends D-044); "Send to Refine"
 on an audit finding moves a backlog ticket here as part of the handoff.
 
@@ -349,7 +346,7 @@ _Avoid_: calling it "the griller" — griller is one **job**, not the worker.
 
 **Job** (agent job):
 A distinct unit of agent work hosted by the **agent-worker**, e.g. **refine** (interactive,
-approval-gated; the Grill/Refine session, D-044) or **audit** (autonomous, recurring; the
+approval-gated; the Refine session, D-044) or **audit** (autonomous, recurring; the
 Ticket Audit, PD-281). Jobs share the worker's checkout/proxy/key/context-pack but have
 independent trigger sources and codepaths. **Autonomy mode is a per-job property, not a
 worker property** — the same worker safely hosts an interactive job and an autonomous one.
@@ -471,7 +468,7 @@ still gate. "Done or gone."
 
 **Relation origin**:
 Provenance carried on each relation row — `agent` | `human` (D-051). `agent` = written by the
-griller decompose or the Audit ([[D-045]]); `human` = hand-drawn in the relations UI. The column
+refine decompose or the Audit ([[D-045]]); `human` = hand-drawn in the relations UI. The column
 defaults `agent` so pre-existing rows back-fill correctly. Display distinguishes them (e.g. an
 agent `split` renders "auto-split 🤖", a human one "split").
 _Avoid_: conflating origin with **type** — a `split` can be either origin; origin is *who made it*,

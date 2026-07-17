@@ -6,12 +6,12 @@ export function ticketMatchesQuery(ticket: AgentTicket, query: string): boolean 
   return `${ticket.displayId ?? ''} ${ticket.title} ${ticket.body ?? ''}`.toLowerCase().includes(q);
 }
 
-export type RefineFilter = 'all' | 'refined' | 'grilling' | 'awaiting-human' | 'unrefined';
+export type RefineFilter = 'all' | 'refined' | 'refining' | 'awaiting-human' | 'unrefined';
 
 export function ticketMatchesRefineFilter(ticket: AgentTicket, filter: RefineFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'refined') return ticket.refined;
-  if (filter === 'grilling') return ticket.refineState === 'grilling';
+  if (filter === 'refining') return ticket.refineState === 'refining';
   if (filter === 'awaiting-human') return ticket.refineState === 'awaiting-human';
   return !ticket.refined && ticket.refineState === null;
 }

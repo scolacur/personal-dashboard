@@ -1,7 +1,7 @@
 # agent-worker — deploy checklist
 
 The **agent-worker** is the dashboard-owned interactive triage agent (DECISIONS **D-044**): a
-Claude Agent SDK / Opus worker that grills a ticket with Steve, then proposes a commit
+Claude Agent SDK / Opus worker that refines a ticket with Steve, then proposes a commit
 (refine-in-place or decompose) for approval. It runs as a **separate, egress-hardened
 container** from the web app — it holds `ANTHROPIC_API_KEY` and does long LLM turns, so it is
 deliberately **NOT** part of the web app's CI/CD. Deploy it by hand with the steps below.

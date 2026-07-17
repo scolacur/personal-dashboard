@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import type { RefineProposal, TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
 import { type AgentWorkerConfig, loadRobotConfig } from '../../shared/config';
-import type { GrillSession, GrillTurnResult, OpenGrillSession, OpenSessionInput } from './session';
+import type { RefineSession, RefineTurnResult, OpenRefineSession, OpenSessionInput } from './session';
 import {
   nextRefineWork,
   findPendingRefineTicketIds,
@@ -67,15 +67,15 @@ function fakeSessions(reply: string, sessionId = 'sess-1') {
   const opens: OpenSessionInput[] = [];
   const sends: { prompt: string; resumeSessionId?: string }[] = [];
   let closed = 0;
-  const open: OpenGrillSession = (input) => {
+  const open: OpenRefineSession = (input) => {
     opens.push(input);
     let sid = input.resumeSessionId ?? sessionId;
-    const session: GrillSession = {
+    const session: RefineSession = {
       get sessionId() {
         return sid;
       },
       lastUsedAt: Date.now(),
-      async send(prompt: string): Promise<GrillTurnResult> {
+      async send(prompt: string): Promise<RefineTurnResult> {
         sends.push({ prompt, resumeSessionId: input.resumeSessionId });
         sid = sessionId;
         return { text: reply, ok: true, sessionId: sid, cacheReadTokens: 1234, durationMs: 42 };
@@ -165,7 +165,7 @@ describe('processPendingRefines (orchestration)', () => {
 
   it('answers a pending ticket: writes a refine_agent turn + an agent_refine notification', async () => {
     addTicket(db, 1, 'PD-1');
-    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'grill this' });
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine this' });
     const fake = fakeSessions('here is my plan', 'sess-1');
 
     const handled = await processPendingRefines(db, CONFIG, {
@@ -175,7 +175,7 @@ describe('processPendingRefines (orchestration)', () => {
     });
 
     expect(handled).toBe(1);
-    expect(fake.sends[0].prompt).toBe('grill this');
+    expect(fake.sends[0].prompt).toBe('refine this');
     const agentTurns = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
     expect(agentTurns).toHaveLength(1);
     expect((agentTurns[0].detail as { sessionId?: string }).sessionId).toBe('sess-1');
@@ -236,14 +236,14 @@ describe('processPendingRefines (orchestration)', () => {
 
   it('does NOT persist an API-error result as a turn (billing/auth) — leaves it pending', async () => {
     addTicket(db, 1, 'PD-1');
-    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'grill me' });
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
     // ok:false with error text (what the SDK returns for "credit balance too low" etc.).
-    const erroring: OpenGrillSession = () => ({
+    const erroring: OpenRefineSession = () => ({
       get sessionId() {
         return 'sess-1';
       },
       lastUsedAt: Date.now(),
-      async send(): Promise<GrillTurnResult> {
+      async send(): Promise<RefineTurnResult> {
         return { text: 'Credit balance is too low', ok: false, sessionId: 'sess-1' };
       },
       async close() {},
@@ -278,14 +278,14 @@ describe('processPendingRefines (orchestration)', () => {
 
     // A session that fails a resume (dead sessionId) but succeeds when opened fresh.
     const opens: OpenSessionInput[] = [];
-    const open: OpenGrillSession = (input) => {
+    const open: OpenRefineSession = (input) => {
       opens.push(input);
       return {
         get sessionId() {
           return input.resumeSessionId ? 'sess-DEAD' : 'sess-NEW';
         },
         lastUsedAt: Date.now(),
-        async send(prompt: string): Promise<GrillTurnResult> {
+        async send(prompt: string): Promise<RefineTurnResult> {
           if (input.resumeSessionId) {
             return {
               text: `No conversation found with session ID: ${input.resumeSessionId}`,
@@ -355,15 +355,15 @@ describe('propose_commit path (D-044, PD-269)', () => {
 
   it('processPendingRefines wires onProposal so a tool call records a proposal', async () => {
     addTicket(db, 1, 'PD-1');
-    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'grill me' });
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
     // Fake session that "calls propose_commit" mid-turn via the injected onProposal.
     const proposal: RefineProposal = { mode: 'refine_in_place', body: 'tightened' };
-    const open: OpenGrillSession = (input: OpenSessionInput) => ({
+    const open: OpenRefineSession = (input: OpenSessionInput) => ({
       get sessionId() {
         return 'sess-1';
       },
       lastUsedAt: Date.now(),
-      async send(): Promise<GrillTurnResult> {
+      async send(): Promise<RefineTurnResult> {
         input.onProposal?.(proposal); // agent invoked the tool
         return { text: 'here is my proposal', ok: true, sessionId: 'sess-1' };
       },

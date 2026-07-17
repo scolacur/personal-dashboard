@@ -35,7 +35,7 @@ export function laneForcedAssignee(status: TicketStatus): TicketAssignee | null 
 }
 
 // The Kanban lanes (DECISIONS D-040 board redesign, PD-245). All six are the `status`.
-//  - backlog / prioritized: set by hand (prioritized = pre-grill triage, "do this next").
+//  - backlog / prioritized: set by hand (prioritized = pre-refine triage, "do this next").
 //  - robot_queue: ONE lane for a ticket dispatched to Sortie — every non-terminal
 //    `sortie:*` label lives here; the fine state (queued/in-progress/in-review/…) is
 //    carried by `agentState` and shown as a status pill. Entering this lane is the
@@ -146,13 +146,13 @@ export const PRIORITY_DESCRIPTIONS: Record<TicketPriority, string> = {
 
 /** Short labels for each refinement session state (shown in pills and the glossary modal). */
 export const REFINE_STATE_LABELS: Record<RefineState, string> = {
-  grilling: 'Grilling…',
+  refining: 'Refining…',
   'awaiting-human': 'Needs you',
 };
 
 /** One-sentence descriptions for each refinement session state, shown in the glossary modal. */
 export const REFINE_STATE_DESCRIPTIONS: Record<RefineState, string> = {
-  grilling: 'A refinement session is active — the agent is currently grilling the ticket.',
+  refining: 'A refinement session is active — the agent is currently refining the ticket.',
   'awaiting-human': 'The agent replied and is waiting for your feedback or approval to continue.',
 };
 
@@ -317,7 +317,7 @@ export function isSortieReady(body: string | null): boolean {
 // A notification surfaced in the dashboard's in-app inbox. MVP kinds cover an agent
 // parking for a human (ask_human / needs-human); widget notifications plug in later.
 // 'agent_refine' (D-044, PD-267): the Refine/agent-worker agent posted a turn (plan, questions,
-// or needs-full-grill) on a ticket's Refine thread and wants Steve's attention.
+// or needs-full-refine) on a ticket's Refine thread and wants Steve's attention.
 export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
@@ -364,7 +364,7 @@ export interface TicketEvent {
 
 /** Who authored a Refine turn. `human` = Steve (kickoff = the ticket body, then replies);
  *  `agent` = the agent-worker (Claude Agent SDK / Opus) — a plan, clarifying questions, or a
- *  needs-full-grill verdict. */
+ *  needs-full-refine verdict. */
 export type RefineRole = 'human' | 'agent';
 
 /** The two `agent_ticket_events.type` values that carry the Refine thread. Referenced by
@@ -399,15 +399,15 @@ export function isRefineEventType(type: string): boolean {
 }
 
 /** Live Refine session state, for the card/detail pill (D-044, PD-268). Derived from the
- *  newest refine_* turn: `grilling` = the agent is working / about to (Steve's turn is
+ *  newest refine_* turn: `refining` = the agent is working / about to (Steve's turn is
  *  newest); `awaiting-human` = the agent replied and is waiting on Steve. (`done` arrives
  *  with the commit step, PD-269.) */
-export type RefineState = 'grilling' | 'awaiting-human';
+export type RefineState = 'refining' | 'awaiting-human';
 
 /** Map the newest refine_* event type to a session state, or null if none. */
 export function refineStateFromLatestType(latestRefineType: string | null | undefined): RefineState | null {
   if (latestRefineType === REFINE_EVENT_TYPE.agent) return 'awaiting-human';
-  if (latestRefineType === REFINE_EVENT_TYPE.human) return 'grilling';
+  if (latestRefineType === REFINE_EVENT_TYPE.human) return 'refining';
   return null;
 }
 
@@ -426,9 +426,9 @@ export const RELATION_TYPES: readonly RelationType[] = [
   'duplicates',
 ] as const;
 
-// Who authored a relation (D-048). `agent` = written by the griller decompose or the Ticket
+// Who authored a relation (D-048). `agent` = written by the refine decompose or the Ticket
 // Audit (PD-288); `human` = hand-drawn in the relations UI (PD-322). The DB column defaults
-// `'agent'` so pre-existing rows (all griller-authored splits) back-fill correctly with no
+// `'agent'` so pre-existing rows (all refine-authored splits) back-fill correctly with no
 // data migration. Provenance is orthogonal to `type`: a `split` can be either origin.
 export type RelationOrigin = 'agent' | 'human';
 

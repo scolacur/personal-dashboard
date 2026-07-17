@@ -197,7 +197,7 @@ is left alone.
 `ask_human` (D-038, D-040) lets a dispatched, unattended worker hand a *decision* back to the
 human and pause, rather than guess — for an ambiguous contract, two diverging valid designs, or
 work that would touch forbidden areas (secrets, auth, CI, schema). It clarifies the **current**
-ticket in place; it does not create or route tickets (that is **Grill**, a pre-dispatch activity
+ticket in place; it does not create or route tickets (that is **Refine**, a pre-dispatch activity
 — see `PROJECT.md` §8).
 
 **Outbound (agent parks), from the WORKFLOW.md prompt:**
@@ -249,7 +249,7 @@ these three (`AGENT_STATE_ACTIONS` in the board page).
 
 - **D-016** — hand-off is done by the agent in-turn, not by `after_run`; label transition is last.
 - **D-020** — cross-project ticket backlog; labels are the state machine, not the Sortie API.
-- **D-038** — hybrid pipeline: mechanical `isSortieReady` gate + async in-run `ask_human` grill.
+- **D-038** — hybrid pipeline: mechanical `isSortieReady` gate + async in-run `ask_human` clarification.
 - **D-039** — ticket is the durable spec; issue is an execution lease; tickets stay amendable.
 - **D-040** — board redesign (single `robot_queue` lane + `agentState` pill) + Notification Center.
 - **D-042** — review re-work moves from native `reactions` to the in-repo Actions bridge.

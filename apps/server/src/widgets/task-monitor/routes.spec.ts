@@ -585,7 +585,7 @@ describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', 
       id: number;
       refineState: string | null;
     }[];
-    expect(tickets.find((t) => t.id === id)?.refineState).toBe('grilling');
+    expect(tickets.find((t) => t.id === id)?.refineState).toBe('refining');
   });
 });
 

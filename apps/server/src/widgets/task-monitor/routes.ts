@@ -493,7 +493,7 @@ export function registerRoutes(
 
   // Post a human Refine reply. Unlike /reply (which forwards to a GitHub issue to re-queue a
   // parked Sortie agent), this stays entirely in the DB: it writes a refine_human event the
-  // agent-worker consumes on its next poll and resumes the grill on. No GitHub, no token.
+  // agent-worker consumes on its next poll and resumes the refine session on. No GitHub, no token.
   app.post(`${base}/tickets/:id/refine-reply`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
@@ -545,7 +545,7 @@ export function registerRoutes(
     }
   });
 
-  // Reject the latest actionable proposal; the grill can propose again.
+  // Reject the latest actionable proposal; the refine session can propose again.
   app.post(`${base}/tickets/:id/refine-reject`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {

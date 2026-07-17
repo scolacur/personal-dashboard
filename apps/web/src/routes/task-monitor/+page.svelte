@@ -708,7 +708,7 @@
       <select bind:value={filterRefine}>
         <option value="all">All refinement statuses</option>
         <option value="refined">Refined</option>
-        <option value="grilling">Grilling</option>
+        <option value="refining">Refining</option>
         <option value="awaiting-human">Needs you</option>
         <option value="unrefined">Unrefined</option>
       </select>
