@@ -6,7 +6,7 @@ import { decideReactivation, parsePrUrl, pollInReviewPrs, type PrState, type PrF
 import { ensureRunsTable, startRun, finishRun } from './runs';
 import { ensureRobotStateTable } from './state';
 
-const EMPTY: PrState = { state: 'OPEN', mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [] };
+const EMPTY: PrState = { state: 'OPEN', mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [], inlineComments: [] };
 const iso = (ms: number): string => new Date(ms).toISOString();
 
 describe('parsePrUrl', () => {
@@ -56,6 +56,20 @@ describe('decideReactivation', () => {
 
     const forwarded: PrState = { ...EMPTY, comments: [{ authorLogin: 'bot', authorAssociation: 'COLLABORATOR', body: `steve says: redo it\n\n${HUMAN_REPLY_MARKER}`, createdAt: iso(2000) }] };
     expect(decideReactivation(forwarded, boundary).reactivate).toBe(true);
+  });
+
+  it('reacts to a trusted inline diff comment (PD-394 — gh pr view misses these)', () => {
+    const owner: PrState = { ...EMPTY, inlineComments: [{ authorLogin: 'scolacur', authorAssociation: 'OWNER', body: 'tighten this line', createdAt: iso(2000) }] };
+    expect(decideReactivation(owner, boundary)).toMatchObject({ reactivate: true, reason: 'comment' });
+  });
+
+  it('ignores an inline comment that is stale, empty, or from an untrusted author', () => {
+    const stale: PrState = { ...EMPTY, inlineComments: [{ authorLogin: 'scolacur', authorAssociation: 'OWNER', body: 'x', createdAt: iso(500) }] };
+    expect(decideReactivation(stale, boundary).reactivate).toBe(false);
+    const empty: PrState = { ...EMPTY, inlineComments: [{ authorLogin: 'scolacur', authorAssociation: 'OWNER', body: '  ', createdAt: iso(2000) }] };
+    expect(decideReactivation(empty, boundary).reactivate).toBe(false);
+    const stranger: PrState = { ...EMPTY, inlineComments: [{ authorLogin: 'rando', authorAssociation: 'NONE', body: 'do this', createdAt: iso(2000) }] };
+    expect(decideReactivation(stranger, boundary).reactivate).toBe(false);
   });
 
   it('reacts to a merge conflict', () => {

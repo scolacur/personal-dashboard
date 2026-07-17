@@ -42,7 +42,12 @@ export interface PrState {
   mergeable: string;
   reviewDecision: string | null;
   reviews: PrReview[];
+  /** Top-level PR conversation (issue) comments. */
   comments: PrComment[];
+  /** Inline diff-line review comments (PD-394). `gh pr view` exposes neither these nor their text
+   *  via `reviews`/`comments`, so they're fetched separately — a bare inline comment posts as a
+   *  COMMENTED review with an empty body and would otherwise never trigger rework. */
+  inlineComments: PrComment[];
 }
 
 /** Fetch a PR's state (injectable so tests never shell out). Returns null on any failure. */
@@ -92,12 +97,45 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
           body: c.body ?? '',
           createdAt: c.createdAt ?? '',
         })),
+        inlineComments: await fetchInlineComments(repo, prNumber, env),
       };
     } catch (err) {
       logger.warn({ err, repo, prNumber }, 'robot: PR-state fetch failed (skipping this poll)');
       return null;
     }
   };
+}
+
+/**
+ * Inline diff-line review comments (PD-394), via the REST pulls-comments endpoint — `gh pr view`
+ * doesn't expose them. Best-effort and INDEPENDENT of the main fetch: its own failure resolves to
+ * `[]` (a poll without inline data) rather than nulling the whole PR-state, so a hiccup here can't
+ * strand an in-review ticket. Normalized to the `PrComment` shape (REST uses `user`/`author_association`/
+ * `created_at`, not `gh pr view`'s camelCase).
+ */
+async function fetchInlineComments(repo: string, prNumber: number, env: NodeJS.ProcessEnv): Promise<PrComment[]> {
+  try {
+    const { stdout } = await run(
+      'gh',
+      ['api', `repos/${repo}/pulls/${prNumber}/comments?per_page=100`],
+      { env },
+    );
+    const raw = JSON.parse(stdout) as {
+      user?: { login?: string };
+      author_association?: string;
+      body?: string;
+      created_at?: string;
+    }[];
+    return (raw ?? []).map((c) => ({
+      authorLogin: c.user?.login ?? '',
+      authorAssociation: c.author_association ?? '',
+      body: c.body ?? '',
+      createdAt: c.created_at ?? '',
+    }));
+  } catch (err) {
+    logger.warn({ err, repo, prNumber }, 'robot: inline-comments fetch failed (rework may miss inline feedback this poll)');
+    return [];
+  }
 }
 
 export type ReactivationReason = 'review' | 'comment' | 'conflict';
@@ -126,7 +164,10 @@ function toMs(iso: string): number {
  *     hand-off. A pure APPROVED review is NOT a trigger (approval = ready to merge, not re-work).
  *  2. A trusted top-level PR conversation comment (with a body) created after the last hand-off — the
  *     way feedback is often left outside a formal review (the second half of PD-256).
- *  3. `mergeable === 'CONFLICTING'` — main advanced and the branch no longer merges cleanly.
+ *  3. A trusted INLINE diff-line review comment (PD-394) — the most natural way to give line-level
+ *     feedback, and the one `gh pr view` misses (a bare inline comment is a COMMENTED review with an
+ *     empty body, so rule 1 skips it). Same trust + body + boundary rules as a top-level comment.
+ *  4. `mergeable === 'CONFLICTING'` — main advanced and the branch no longer merges cleanly.
  * The `lastHandoffAt` boundary is what stops a stale CHANGES_REQUESTED review from re-triggering every
  * poll: after a rework hands off again, the boundary advances past that review's timestamp.
  */
@@ -142,6 +183,12 @@ export function decideReactivation(pr: PrState, lastHandoffAt: number): Reactiva
     if (c.body.trim() === '') continue;
     if (!isTrusted(c.authorAssociation, c.body)) continue;
     return { reactivate: true, reason: 'comment', detail: `PR comment from ${c.authorLogin}` };
+  }
+  for (const c of pr.inlineComments) {
+    if (toMs(c.createdAt) <= lastHandoffAt) continue;
+    if (c.body.trim() === '') continue;
+    if (!isTrusted(c.authorAssociation, c.body)) continue;
+    return { reactivate: true, reason: 'comment', detail: `inline comment from ${c.authorLogin}` };
   }
   if (pr.mergeable === 'CONFLICTING') return { reactivate: true, reason: 'conflict', detail: 'PR conflicts with main' };
   return { reactivate: false };
