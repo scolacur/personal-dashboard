@@ -6,6 +6,7 @@ import {
   backoffMs,
   nextEligibleAt,
   normalizeSignature,
+  MAX_TURNS_SIGNATURE,
   type FailedRun,
   type FaultPolicy,
 } from './faults';
@@ -31,8 +32,16 @@ describe('classifyFault', () => {
     expect(c.signature).toBe('no-verify');
   });
 
-  it('treats an unrecognised error (e.g. max turns) as transient', () => {
-    expect(classifyFault({ verifyOk: false, error: 'max turns exceeded' }).tier).toBe('transient');
+  it('classifies a per-run max-turns cutoff with the stable max-turns signature (still transient)', () => {
+    const c = classifyFault({ verifyOk: false, error: 'Reached maximum number of turns (50)' });
+    expect(c.tier).toBe('transient');
+    expect(c.signature).toBe(MAX_TURNS_SIGNATURE);
+  });
+
+  it('treats another unrecognised error as a generic transient', () => {
+    const c = classifyFault({ verifyOk: false, error: 'some weird flake' });
+    expect(c.tier).toBe('transient');
+    expect(c.signature).not.toBe(MAX_TURNS_SIGNATURE);
   });
 });
 
@@ -85,6 +94,36 @@ describe('decideFault', () => {
     ];
     // Two system-wide priors must NOT count toward the cap — this is still the first real attempt.
     expect(decideFault(cls, prior, policy).action).toBe('retry');
+  });
+
+  // ── PD-406: max-turns on an unchanged body parks (no futile retry) ──
+  const maxTurns = () => classifyFault({ verifyOk: false, error: 'Reached maximum number of turns (50)' });
+
+  it('PD-406: max-turns on the first failure (no prior) parks deterministically — skips the wasted retry', () => {
+    expect(decideFault(maxTurns(), [], policy, 'hashA')).toMatchObject({ action: 'park', tier: 'deterministic' });
+  });
+
+  it('PD-406: max-turns with a prior failure on the SAME body hash parks deterministically', () => {
+    const prior: FailedRun[] = [{ tier: 'transient', signature: MAX_TURNS_SIGNATURE, finishedAt: 1, bodyHash: 'hashA' }];
+    expect(decideFault(maxTurns(), prior, policy, 'hashA')).toMatchObject({ action: 'park', tier: 'deterministic' });
+  });
+
+  it('PD-406: max-turns after the body CHANGED since the last failure still retries', () => {
+    const prior: FailedRun[] = [{ tier: 'transient', signature: MAX_TURNS_SIGNATURE, finishedAt: 1, bodyHash: 'oldHash' }];
+    expect(decideFault(maxTurns(), prior, policy, 'newHash').action).toBe('retry');
+  });
+
+  it('PD-406: a changed-body max-turns is still bounded by the retry cap', () => {
+    const prior: FailedRun[] = [
+      { tier: 'transient', signature: MAX_TURNS_SIGNATURE, finishedAt: 1, bodyHash: 'h1' },
+      { tier: 'transient', signature: MAX_TURNS_SIGNATURE, finishedAt: 2, bodyHash: 'h2' },
+    ];
+    expect(decideFault(maxTurns(), prior, policy, 'h3')).toMatchObject({ action: 'park', tier: 'transient' });
+  });
+
+  it('PD-406: missing hashes (legacy runs) are treated as unchanged → park', () => {
+    const prior: FailedRun[] = [{ tier: 'transient', signature: MAX_TURNS_SIGNATURE, finishedAt: 1, bodyHash: null }];
+    expect(decideFault(maxTurns(), prior, policy, null)).toMatchObject({ action: 'park', tier: 'deterministic' });
   });
 });
 

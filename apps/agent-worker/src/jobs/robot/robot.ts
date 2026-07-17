@@ -7,7 +7,7 @@ import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, removeWorktree, type Worktree } from './workspace';
 import { runRobotSession, type RobotSessionResult } from './session';
 import type { ResumeContext } from './prompt';
-import { ensureRunsTable, startRun, finishRun, failedRunsForTicket } from './runs';
+import { ensureRunsTable, startRun, finishRun, failedRunsForTicket, hashBody } from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
 import { ensureRobotStateTable, isDispatchPaused, pauseDispatch } from './state';
 import { logMilestone, ROBOT_EVENT } from './events';
@@ -139,8 +139,11 @@ export async function processRobotQueue(
       : undefined;
 
     const branch = branchFor(candidate);
+    // PD-406: snapshot the body this run runs against so a later max-turns fault can tell a futile
+    // unchanged-body retry from a re-scoped one.
+    const bodyHash = hashBody(candidate.body);
     setAgentState(db, candidate.id, 'working', now());
-    const runId = startRun(db, { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch }, now());
+    const runId = startRun(db, { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch, bodyHash }, now());
     logMilestone(db, candidate.id, ROBOT_EVENT.dispatched, { branch }, now());
 
     // Route a failed run (no-verify or errored) through the fault guardrail. Shared by the normal
@@ -152,7 +155,7 @@ export async function processRobotQueue(
       metrics: { turns?: number; tokens?: number } = {},
     ): void => {
       const cls = classifyFault({ verifyOk: false, error });
-      const decision = decideFault(cls, failures, policy);
+      const decision = decideFault(cls, failures, policy, bodyHash);
       finishRun(
         db,
         runId,
