@@ -132,9 +132,11 @@
   let replying = $state(false);
   let replyMsg = $state<string | null>(null);
 
-  const isParked = $derived(
-    ticket?.agentState === 'awaiting-human' || ticket?.agentState === 'needs-human',
-  );
+  // PD-395: the reply box is ONLY for an outstanding ask_human — the `awaiting-human` park, where
+  // the Robot is waiting on an answer. A `needs-human` park has no question and a reply does nothing
+  // (the resume sweep only re-queues `awaiting-human`), so it gets the reason banner instead — not a
+  // dead textbox whose copy promises to "re-queue it for the Robot".
+  const showReplyBox = $derived(ticket?.agentState === 'awaiting-human');
 
   // A ticket the Robot loop STALLED and won't retry on its own — the C4 remediation controls
   // (Reset / Unstick) show on the Overview banner for exactly these states. `awaiting-human` is
@@ -143,6 +145,24 @@
   const isRobotParked = $derived(
     ticket?.agentState === 'stuck' || ticket?.agentState === 'needs-human',
   );
+
+  // PD-395: why the ticket is parked, for the remediation banner. Scans events newest-first for the
+  // park cause — a closed-unmerged PR (C6), a fault/retry-cap park (C2), or a stall (C5) — so the
+  // detail page alone explains what happened (the reason otherwise lived only in the notification +
+  // activity log).
+  const parkReason = $derived.by((): string | null => {
+    if (!isRobotParked) return null;
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      const d = (e.detail ?? {}) as RobotEventDetail;
+      if (e.type === ROBOT_EVENT.prClosed) {
+        return d.prNumber ? `PR #${d.prNumber} was closed without merging.` : 'The PR was closed without merging.';
+      }
+      if (e.type === ROBOT_EVENT.parked) return d.reason ?? null;
+      if (e.type === ROBOT_EVENT.stalled) return d.reason ? `Stalled run: ${d.reason}` : 'The run stalled and was parked.';
+    }
+    return null;
+  });
 
   // The Robot's outstanding ask_human question (PD-393): the newest `robot_ask_human` event's text,
   // shown at the reply box so the human sees what they're answering. Gated on the LIVE awaiting-human
@@ -363,7 +383,13 @@
       {#if isRobotParked}
         <div class="parked-banner agent-{ticket.agentState}">
           <span class="pb-lead">⛔ {AGENT_STATE_LABELS[ticket.agentState!] ?? ticket.agentState}</span>
-          <span class="pb-note">The Robot won't retry this on its own.</span>
+          {#if parkReason}
+            <span class="pb-reason">{parkReason}</span>
+          {/if}
+          <span class="pb-note">
+            The Robot won't retry this on its own — <strong>Unstick</strong> or <strong>Reset</strong> to
+            retry, or close/archive the ticket to abandon it.
+          </span>
           <span class="pb-actions">
             <button class="pb-btn unstick" type="button" onclick={() => remediate('unstick')} disabled={remediating}>
               Unstick
@@ -375,7 +401,7 @@
         </div>
       {/if}
 
-      {#if isParked}
+      {#if showReplyBox}
         <section class="reply-box">
           <h2>Reply to the agent</h2>
           <p class="muted">

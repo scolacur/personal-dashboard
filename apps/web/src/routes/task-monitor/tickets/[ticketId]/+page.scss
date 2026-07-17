@@ -219,6 +219,11 @@
     font-weight: 600;
     color: var(--status-stuck);
   }
+  .pb-reason {
+    // The park cause (PD-395) — full-strength text so it reads as the headline "why".
+    color: var(--text);
+    font-weight: 500;
+  }
   .pb-note {
     color: var(--muted);
   }
