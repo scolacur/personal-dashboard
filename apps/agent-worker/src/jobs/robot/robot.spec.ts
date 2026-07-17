@@ -11,7 +11,7 @@ const READY = ['## Context', 'c', '## Task', 't', '## Done When', 'd', '## Out o
 function boardDb(): Database.Database {
   const db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, sortie_enabled INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
       id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER,
@@ -21,7 +21,7 @@ function boardDb(): Database.Database {
     CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
   `);
-  db.prepare('INSERT INTO agent_projects (id, github_repo, sortie_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
+  db.prepare('INSERT INTO agent_projects (id, github_repo, robot_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
   ensureRunsTable(db);
   return db;
 }

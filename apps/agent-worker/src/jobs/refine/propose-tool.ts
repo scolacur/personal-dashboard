@@ -9,7 +9,7 @@ import type { RefineProposal } from '@dashboard/shared';
  * then approves on the board and the SERVER does the writes. Two modes:
  *   - refine_in_place: rewrite this ticket's body + route it (lane/assignee).
  *   - decompose: split into children; the server closes+links the parent (D-036).
- * Robot-bound targets MUST be isSortieReady-shaped (## Context / ## Task / ## Done When /
+ * Robot-bound targets MUST be isRobotReady-shaped (## Context / ## Task / ## Done When /
  * ## Out of scope, PD-177) or the server rejects the approval.
  */
 
@@ -54,7 +54,7 @@ const DESCRIPTION = [
   '(or omit to leave it unchanged). Refine shapes tickets; it does NOT dispatch them (D-057):',
   "approval never queues, and Steve moves a ticket into the Robot's / Steve's Queue himself",
   'afterwards. Use `assignee` ("robot" | "steve" | null) to hint who should do the work. A ticket',
-  'you intend for the robot MUST still carry a Sortie-shaped body — the four sections ## Context,',
+  'you intend for the robot MUST still carry a Robot-shaped body — the four sections ## Context,',
   '## Task, ## Done When, ## Out of scope — so Steve can queue it as-is.',
 ].join(' ');
 

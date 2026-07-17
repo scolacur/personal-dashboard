@@ -5,8 +5,8 @@ import { latestEvent, latestEventAt, logMilestone } from './events';
 import { setAgentState } from './board';
 
 /**
- * ask_human resume (D-055, C5/PD-346) — the DB-native replacement for the `sortie-ask-human` GitHub
- * Action. When a Robot parks a ticket `awaiting-human` it records a `robot_ask_human` event with its
+ * ask_human resume (D-055, C5/PD-346) — the Robot loop's DB-native ask_human handoff (it replaced
+ * the retired `sortie-ask-human` GitHub Action). When a Robot parks a ticket `awaiting-human` it records a `robot_ask_human` event with its
  * question. The human answers via the Notification-Center inline reply, which the server records as a
  * `robot_human_reply` event (see `appendRobotReply`). This sweep detects that answer entirely from
  * `dashboard.db` — no GitHub issue round-trip, no label flip — re-queues the ticket, and the answer

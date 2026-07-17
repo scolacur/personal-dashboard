@@ -48,7 +48,7 @@ describe('buildTaskPrompt', () => {
   it('is DB-blind: never tells the Robot to relabel or change ticket/board state', () => {
     const p = buildTaskPrompt(base);
     expect(p).toMatch(/Do NOT change any GitHub labels or ticket state/);
-    expect(p).not.toMatch(/sortie:in-review|robot_queue|agent_state|dashboard\.db/);
+    expect(p).not.toMatch(/robot_reset|robot_queue|agent_state|dashboard\.db/);
   });
 
   it('includes Closes #N when linked, omits it when not', () => {

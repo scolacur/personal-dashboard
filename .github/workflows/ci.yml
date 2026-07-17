@@ -17,7 +17,7 @@
 # #9–#15 (job always reported as "verify"), `verify` is now a required status
 # check on main: {admins:false, approvals:1, checks:["verify"], strict:false}.
 # strict:false (not true) on purpose — don't force every PR up-to-date with main
-# before merge, which would wedge Sortie's automated PRs. To reapply/adjust:
+# before merge, which would wedge the Robot loop's automated PRs. To reapply/adjust:
 #   gh api -X PUT repos/scolacur/personal-dashboard/branches/main/protection \
 #     -H "Accept: application/vnd.github+json" --input - <<'JSON'
 #   { "required_status_checks": { "strict": false, "contexts": ["verify"] },

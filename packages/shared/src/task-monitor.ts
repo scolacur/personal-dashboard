@@ -1,7 +1,7 @@
 // Types for the Task Monitor "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
-// Who the ticket is assigned to. 'steve' = human owner; 'robot' = agent/Sortie.
+// Who the ticket is assigned to. 'steve' = human owner; 'robot' = the Robot loop.
 // null = unassigned.
 export type TicketAssignee = 'steve' | 'robot';
 
@@ -36,13 +36,13 @@ export function laneForcedAssignee(status: TicketStatus): TicketAssignee | null 
 
 // The Kanban lanes (DECISIONS D-040 board redesign, PD-245). All six are the `status`.
 //  - backlog / prioritized: set by hand (prioritized = pre-refine triage, "do this next").
-//  - robot_queue: ONE lane for a ticket dispatched to Sortie — every non-terminal
-//    `sortie:*` label lives here; the fine state (queued/in-progress/in-review/…) is
+//  - robot_queue: ONE lane for a ticket dispatched to the Robot loop — every non-terminal
+//    agent state lives here; the fine state (queued/in-progress/in-review/…) is
 //    carried by `agentState` and shown as a status pill. Entering this lane is the
-//    dispatch trigger (mints the GitHub issue).
+//    dispatch trigger.
 //  - steve_queue: work Steve does under his own supervision (manual, never agent-locked).
-//  - completed: agent-set terminal (sortie:done). closed: manual/wontfix terminal (D-036),
-//    hidden by default.
+//  - completed: agent-set terminal (the Robot loop's PR merged). closed: manual/wontfix
+//    terminal (D-036), hidden by default.
 export type TicketStatus =
   | 'backlog'
   | 'prioritized'
@@ -55,14 +55,13 @@ export type TicketStatus =
 // *unset* — represented as `null` in the domain/API (see AgentTicket.priority).
 export type TicketPriority = 'P0' | 'P1' | 'P2' | 'P3' | 'P4' | 'P5';
 
-// Fine-grained agent state, derived by the GitHub-label poller (PD-165) from the
-// `sortie:*` label on a linked issue. In the redesigned board (D-040) every non-terminal
-// sortie:* label maps to the single `robot_queue` status, so `agentState` is what
-// distinguishes them on the card (rendered as a status pill). Only 'working' drives the
-// active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are paused-need-attention;
-// 'queued'/'in-review' are informational; 'done' is terminal (the ticket sits in the
-// `completed` lane but keeps a green pill so a Sortie-completed issue is distinguishable
-// from a manually-closed one). `null` = no agent state (manual / not worked).
+// Fine-grained agent state, owned by the Robot loop (D-055). In the redesigned board
+// (D-040) every non-terminal agent state maps to the single `robot_queue` status, so
+// `agentState` is what distinguishes them on the card (rendered as a status pill). Only
+// 'working' drives the active-work shimmer; 'stuck'/'needs-human'/'awaiting-human' are
+// paused-need-attention; 'queued'/'in-review' are informational; 'done' is terminal (the
+// ticket sits in the `completed` lane but keeps a green pill so a Robot-completed ticket is
+// distinguishable from a manually-closed one). `null` = no agent state (manual / not worked).
 export type AgentState =
   | 'queued'
   | 'working'
@@ -115,23 +114,23 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
 
 // These stay PLAIN TEXT: the status-legend modal renders them via `{...}` interpolation
 // (apps/web/.../task-monitor/+page.svelte), so any inline markdown/HTML would show as literal
-// syntax. The concepts named below — the watchdog, the autonomous loop, ask_human, the
-// sortie:* state machine — are documented in docs/sortie.md, which the legend modal links to
-// via a "Sortie integration wiki" footer link rather than by embedding markup in these strings
+// syntax. The concepts named below — in-process stall detection, the Robot loop, ask_human,
+// the agent-state machine — are documented in docs/robot.md, which the legend modal links to
+// via a "Robot loop wiki" footer link rather than by embedding markup in these strings
 // (PD-262). See also #145 (Karpathy memory model).
 /** One-sentence descriptions for each agent state, shown in the status-legend modal. */
 export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
-  queued: 'Picked up by Sortie and waiting in the autonomous loop to start.',
-  working: 'A Sortie agent is actively working the issue right now.',
+  queued: 'Picked up by the Robot loop and waiting to start.',
+  working: 'A Robot run is actively working the ticket right now.',
   'in-review': 'The run succeeded and a PR is open, awaiting human review.',
   stuck:
-    'The run stalled/gave up and was flagged by the watchdog; needs human intervention.',
+    'The run stalled/gave up and was flagged by in-process stall detection; needs human intervention.',
   'needs-human':
     "A PR exists but the automated review-feedback loop hit its cap; a human must drive it home.",
   'awaiting-human':
     'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
-  wontfix: "Terminal: the issue was closed as won't-fix.",
-  done: 'Terminal: Sortie finished the work and the issue is sortie:done (green pill; lives in the Completed lane).',
+  wontfix: "Terminal: the ticket was closed as won't-fix.",
+  done: 'Terminal: the Robot loop finished the work and the PR merged (green pill; lives in the Completed lane).',
 };
 
 /** Longer descriptions for the priority-legend modal. */
@@ -166,8 +165,8 @@ export interface AgentProject {
   key: string | null;
   /** 'owner/repo' for Phase-3 issue creation; null if the project isn't on GitHub. */
   githubRepo: string | null;
-  /** Whether "Convert to Sortie issue" applies to this project. */
-  sortieEnabled: boolean;
+  /** Whether the Robot loop is enabled for this project. */
+  robotEnabled: boolean;
   /** Hex color for the project chip on cards. */
   color: string | null;
   createdAt: number;
@@ -178,7 +177,7 @@ export interface CreateProjectInput {
   slug: string;
   name: string;
   githubRepo?: string | null;
-  sortieEnabled?: boolean;
+  robotEnabled?: boolean;
   color?: string | null;
 }
 
@@ -204,7 +203,7 @@ export interface AgentTicket {
   /** Set when the Ticket is converted to a GitHub issue (Phase 3). */
   githubIssueNumber: number | null;
   githubIssueUrl: string | null;
-  /** Fine-grained agent state derived from the linked issue's `sortie:*` label (PD-165); null = none. */
+  /** Fine-grained agent state owned by the Robot loop (D-055); null = none. */
   agentState: AgentState | null;
   /** Live Refine session state derived from the ticket's refine_* thread (D-044, PD-268);
    *  null = no Refine session started. */
@@ -292,11 +291,11 @@ export interface EpicSummary {
 }
 
 /**
- * The four section headers the `/to-sortie-issues` Refine flow produces.
+ * The four section headers the `/to-robot-issues` Refine flow produces.
  * `## Done When` also accepts a `(acceptance checklist)` suffix.
  * All matched case-insensitively, tolerant of trailing text on the heading line.
  */
-const SORTIE_REQUIRED_HEADERS = [
+const ROBOT_REQUIRED_HEADERS = [
   /^## context/im,
   /^## task/im,
   /^## done when/im,
@@ -304,13 +303,12 @@ const SORTIE_REQUIRED_HEADERS = [
 ] as const;
 
 /**
- * Returns true iff `body` contains all four Sortie-ready section headers.
- * A ticket must pass this check before it can be meaningfully consumed by the
- * issue-creation poller (PD-164) without additional reformatting.
+ * Returns true iff `body` contains all four Robot-ready section headers.
+ * The standard hand-off shape a ticket must carry before it can enter `robot_queue`.
  */
-export function isSortieReady(body: string | null): boolean {
+export function isRobotReady(body: string | null): boolean {
   if (!body) return false;
-  return SORTIE_REQUIRED_HEADERS.every((re) => re.test(body));
+  return ROBOT_REQUIRED_HEADERS.every((re) => re.test(body));
 }
 
 // ── Notification Center (D-040) ──────────────────────────────────────────────
@@ -341,9 +339,10 @@ export interface AgentNotification {
   createdAt: number;
 }
 
-/** The HTML-comment marker the Notification Center puts on a forwarded human reply so
- *  the `sortie-ask-human` Action (PD-133) re-queues the parked agent. */
-export const HUMAN_REPLY_MARKER = '<!-- sortie:human-reply -->';
+/** The HTML-comment marker the Robot loop stamps on a human reply so the pr-state trust
+ *  check can recognise a reply the board itself mirrored (reply-mirror ↔ pr-state, D-055).
+ *  Produced and consumed entirely within our own code, so it stays internally consistent. */
+export const HUMAN_REPLY_MARKER = '<!-- robot:human-reply -->';
 
 // ── Ticket activity log + Refine thread (D-044, PD-267) ──────────────────────
 // The `agent_ticket_events` table is the generic per-ticket activity log (created /
@@ -483,7 +482,7 @@ export const REFINE_PROPOSAL_EVENT = {
 
 export type RefineCommitMode = 'refine_in_place' | 'decompose';
 
-/** A proposed child ticket in a decompose. Robot-bound children MUST be isSortieReady-shaped
+/** A proposed child ticket in a decompose. Robot-bound children MUST be isRobotReady-shaped
  *  (four sections, PD-177) — the server rejects the approval otherwise. */
 export interface RefineChildProposal {
   title: string;
@@ -603,7 +602,7 @@ export interface AuditFinding {
 }
 
 // ── System status (Site Status section) ──────────────────────────────────────
-// Two cheap runtime signals surfaced above the board: how the Sortie fleet is
+// Two cheap runtime signals surfaced above the board: how the Robot fleet is
 // doing right now, and whether the out-of-process agent-worker is alive.
 
 /** Liveness beacon written by a long-lived worker process (agent-worker) into the
@@ -639,7 +638,9 @@ export interface DispatchPauseState {
 /** Runtime status for the board's Site Status strip. `sortie` counts active
  *  (non-archived) tickets by agent state — only states with a non-zero count
  *  appear. `workers` is every known worker heartbeat. `dispatch` is the Robot
- *  loop's global running/paused state (C3/PD-344). */
+ *  loop's global running/paused state (C3/PD-344).
+ *  NOTE: the `sortie` key is a stable wire-field name kept for the board's
+ *  Site Status fetch; it carries the Robot loop's fleet counts. */
 export interface SystemStatus {
   sortie: Partial<Record<AgentState, number>>;
   workers: WorkerHeartbeat[];
@@ -697,11 +698,10 @@ export const ROBOT_EVENT = {
   reset: 'robot_reset',
   unstick: 'robot_unstick',
   // Fold-the-bridges (C5/PD-346). `humanReply` is the DB-native ask_human answer, written by the
-  // server's inline-reply route (replaces the sortie-ask-human GitHub Action). `resumed` /
-  // `reactivated` / `stalled` are loop-written milestones: resumed = an ask_human ticket re-queued
-  // after a human reply; reactivated = an in-review ticket re-queued for rework (PR feedback or a
-  // merge conflict — replaces the review-/conflict-rework Actions); stalled = the in-process
-  // watchdog parked an orphaned/over-long run (replaces sortie-watchdog).
+  // server's inline-reply route. `resumed` / `reactivated` / `stalled` are loop-written
+  // milestones: resumed = an ask_human ticket re-queued after a human reply; reactivated = an
+  // in-review ticket re-queued for rework (PR feedback or a merge conflict); stalled = in-process
+  // stall detection parked an orphaned/over-long run.
   humanReply: 'robot_human_reply',
   resumed: 'robot_resumed',
   reactivated: 'robot_reactivated',

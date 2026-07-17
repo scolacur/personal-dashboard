@@ -35,7 +35,7 @@ import {
   updateTicket,
 } from './store';
 
-const SORTIE_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
+const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
 /** Write a refine_proposal event directly (stands in for the agent-worker's propose_commit). */
 function seedProposal(db: Database.Database, ticketId: number, proposal: unknown): void {
@@ -68,8 +68,8 @@ describe('bootstrapSchema', () => {
     ]);
     expect(getProjectBySlug(db, 'personal-dashboard')?.key).toBe('PD');
     expect(getProjectBySlug(db, 'core')?.key).toBe('C');
-    expect(getProjectBySlug(db, 'personal-dashboard')?.sortieEnabled).toBe(true);
-    expect(getProjectBySlug(db, 'core')?.sortieEnabled).toBe(false);
+    expect(getProjectBySlug(db, 'personal-dashboard')?.robotEnabled).toBe(true);
+    expect(getProjectBySlug(db, 'core')?.robotEnabled).toBe(false);
   });
 
   it('is idempotent — re-running does not duplicate projects or tags', () => {
@@ -748,7 +748,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine refine_in_place parks a proposed robot_queue in prioritized (D-057: no dispatch)', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'robot_queue' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'robot_queue' });
     const res = approveRefine(db, t.id);
     expect(res).toMatchObject({ ok: true, queued: false });
     const after = getTicket(db, t.id)!;
@@ -758,7 +758,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine { queue: true } dispatches a non-Epic refine_in_place into robot_queue', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = approveRefine(db, t.id, { queue: true });
     expect(res).toMatchObject({ ok: true, queued: true });
     const after = getTicket(db, t.id)!;
@@ -767,7 +767,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(after.refined).toBe(true);
   });
 
-  it('approveRefine { queue: true } queues even an unshaped body (isSortieReady is a soft hint, D-057)', () => {
+  it('approveRefine { queue: true } queues even an unshaped body (isRobotReady is a soft hint, D-057)', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
     seedProposal(db, t.id, { mode: 'refine_in_place', body: 'not shaped', status: 'prioritized' });
     const res = approveRefine(db, t.id, { queue: true });
@@ -777,7 +777,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine { queue: true } on an Epic is refused cleanly (EPIC_NOT_QUEUEABLE, no 500, no write)', () => {
     const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
-    seedProposal(db, epic.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, epic.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = approveRefine(db, epic.id, { queue: true });
     expect(res).toMatchObject({ ok: false, reason: 'epic_not_queueable' });
     expect(getTicket(db, epic.id)!.status).toBe('prioritized'); // unchanged
@@ -785,7 +785,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine plain-approve on an Epic proposing robot_queue never queues it (bug PD-377)', () => {
     const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
-    seedProposal(db, epic.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'robot_queue' });
+    seedProposal(db, epic.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'robot_queue' });
     const res = approveRefine(db, epic.id);
     expect(res).toMatchObject({ ok: true, queued: false });
     const after = getTicket(db, epic.id)!;
@@ -795,10 +795,10 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
   });
 
   it('approveRefine { queue: true } is blocked by an unresolved blocker (D-048)', () => {
-    const t = createTicket(db, { title: 'x', body: SORTIE_BODY, status: 'prioritized', projectId: pd });
+    const t = createTicket(db, { title: 'x', body: ROBOT_BODY, status: 'prioritized', projectId: pd });
     const blocker = createTicket(db, { title: 'blk', status: 'prioritized', projectId: pd });
     addRelation(db, blocker.id, t.id, 'blocks');
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: SORTIE_BODY, status: 'prioritized' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
     const res = approveRefine(db, t.id, { queue: true });
     expect(res).toMatchObject({ ok: false, reason: 'blocked_by_unresolved' });
     expect(getTicket(db, t.id)!.status).toBe('prioritized'); // unchanged
@@ -809,7 +809,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [
-        { title: 'robot part', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot' },
+        { title: 'robot part', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' },
         { title: 'steve part', body: 'loose is fine', status: 'steve_queue', assignee: 'steve' },
       ],
     });
@@ -833,7 +833,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [
-        { title: 'urgent', body: SORTIE_BODY, status: 'robot_queue', assignee: 'robot', priority: 'P1' },
+        { title: 'urgent', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot', priority: 'P1' },
         { title: 'later', body: 'loose', status: 'backlog', assignee: null, priority: 'P3' },
         { title: 'unset', body: 'loose', status: 'backlog', assignee: null },
       ],
@@ -847,12 +847,12 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine refine_in_place applies proposed priority; omitted leaves it unchanged', () => {
     const a = createTicket(db, { title: 'a', status: 'prioritized', priority: 'P4', projectId: pd });
-    seedProposal(db, a.id, { mode: 'refine_in_place', body: SORTIE_BODY, priority: 'P0' });
+    seedProposal(db, a.id, { mode: 'refine_in_place', body: ROBOT_BODY, priority: 'P0' });
     expect(approveRefine(db, a.id).ok).toBe(true);
     expect(getTicket(db, a.id)!.priority).toBe('P0');
 
     const b = createTicket(db, { title: 'b', status: 'prioritized', priority: 'P4', projectId: pd });
-    seedProposal(db, b.id, { mode: 'refine_in_place', body: SORTIE_BODY });
+    seedProposal(db, b.id, { mode: 'refine_in_place', body: ROBOT_BODY });
     expect(approveRefine(db, b.id).ok).toBe(true);
     expect(getTicket(db, b.id)!.priority).toBe('P4'); // unchanged
   });

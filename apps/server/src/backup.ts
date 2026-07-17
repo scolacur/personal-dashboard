@@ -31,8 +31,8 @@ export interface RunBackupOptions {
   /** Filename prefix for the primary snapshot, e.g. 'dashboard'. */
   primaryLabel: string;
   /**
-   * Extra sqlite files to snapshot beyond the primary — e.g. Sortie's
-   * `.sortie.db` once the runtime can reach it. Each is opened read-only; a
+   * Extra sqlite files to snapshot beyond the primary — e.g. an auxiliary
+   * `.extra.db` a sidecar process owns. Each is opened read-only; a
    * missing/unreadable path is logged and skipped, never fatal.
    */
   extraDbPaths: string[];
@@ -136,7 +136,7 @@ export async function runBackup(log: CronLogger, opts: RunBackupOptions): Promis
 
   // Extras: open read-only; the online backup API is safe against a concurrent writer.
   for (const extraPath of opts.extraDbPaths) {
-    // Strip leading dots (dotfiles like .sortie.db) then the extension → 'sortie'.
+    // Strip leading dots (dotfiles like .extra.db) then the extension → 'extra'.
     const label = path.basename(extraPath).replace(/^\.+/, '').replace(/\.[^.]+$/, '') || 'extra';
     let source: Database.Database;
     try {
@@ -177,7 +177,7 @@ async function snapshotTarget(
  *   BACKUP_CRON            cron schedule           (default '0 3 * * *' — 03:00 daily)
  *   BACKUP_RETAIN_DAYS     snapshot retention      (default 14)
  *   BACKUP_DIR             output dir              (default <dataDir>/backups)
- *   BACKUP_EXTRA_DB_PATHS  comma-separated extras  (e.g. Sortie's .sortie.db)
+ *   BACKUP_EXTRA_DB_PATHS  comma-separated extras  (e.g. a sidecar's .extra.db)
  */
 export function registerBackupJob(
   registry: CronRegistry,

@@ -26,16 +26,16 @@ export interface AgentWorkerConfig {
   auditIntervalMs: number;
   /** Squid proxy URL when egress-hardened; empty in local dev (direct egress). */
   httpsProxy: string;
-  /** The Robot loop (D-055, PD-342) — the in-house Sortie replacement. Off by default. */
+  /** The Robot loop (D-055, PD-342) — the in-house dispatcher. Off by default. */
   robot: RobotConfig;
 }
 
 /**
- * Config for the **Robot loop** (D-055, PD-342): the `robot` job that replaces the
- * third-party Sortie dispatcher. It polls `robot_queue` tickets, opens a git worktree per
+ * Config for the **Robot loop** (D-055, PD-342): the `robot` job that dispatches queued
+ * tickets. It polls `robot_queue` tickets, opens a git worktree per
  * ticket, and runs a write-enabled coding session (a **Robot**) that hands off a PR. All
  * env-driven; the whole loop is inert unless `dispatchEnabled` is true, so the image ships
- * with Sortie still primary until cutover (C6).
+ * with the loop dark until a deploy flips it on (C6).
  */
 export interface RobotConfig {
   /** Master switch — the loop does nothing unless true (default off). C6 flips it on. */
@@ -49,7 +49,7 @@ export interface RobotConfig {
    *   - `number[]` — an explicit id list ⇒ only those tickets (the prove-on-one / prove-on-N gate).
    */
   allowlist: number[] | 'all' | 'none';
-  /** Max Robots in flight at once (PILOT default 1, mirrors Sortie's max_concurrent_agents). */
+  /** Max Robots in flight at once (PILOT default 1, the Robot loop's max-concurrent-agents cap). */
   concurrency: number;
   /** How often to poll `robot_queue` for dispatchable tickets (ms). */
   intervalMs: number;
@@ -70,7 +70,7 @@ export interface RobotConfig {
    *  NOT inherit the loop's HOME (root's — unreadable to it); git/gh/npm write their config +
    *  cache here instead. Matches the `robot` user's home created in the image. */
   codingHome: string;
-  /** Hard turn ceiling for one coding session (mirrors Sortie's max_turns). */
+  /** Hard turn ceiling for one coding session (the Robot loop's max-turns cap). */
   maxTurns: number;
   /** Fault-tier retry guardrail (D-055, PD-343 / C2). Consumed by faults.ts as its `FaultPolicy`. */
   retryCap: number;
@@ -80,8 +80,9 @@ export interface RobotConfig {
   backoffBaseMs: number;
   backoffMaxMs: number;
   /** In-process stall watchdog (C5/PD-346): a `working` ticket whose run has been `running` longer
-   *  than this is an orphan (process died mid-run) — closed + re-queued/parked. Default 2h (matches
-   *  sortie-watchdog's 120m in-progress threshold). A healthy run finishes in minutes. */
+   *  than this is an orphan (process died mid-run) — closed + re-queued/parked. Default 2h
+   *  (the in-progress staleness threshold, carried over from the retired sortie-watchdog.yml's 120m).
+   *  A healthy run finishes in minutes. */
   stallThresholdMs: number;
   /** How often the loop polls each in-review PR's review/merge state for rework (C5/PD-346). The
    *  dispatch loop ticks far faster (`intervalMs`); this throttles the GitHub API hit to its own

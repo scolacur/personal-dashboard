@@ -1,12 +1,13 @@
 /**
- * The Robot coding prompt (D-055, PD-342) — ported from ops/sortie/WORKFLOW.md, adapted for the
- * DB-blind hand-off model.
+ * The Robot coding prompt (D-055, PD-342) — adapted for the DB-blind hand-off model.
  *
- * KEY DIFFERENCE FROM SORTIE: a Robot cannot touch the board (uid-split, D-039). Under Sortie the
- * agent relabelled its own issue to `sortie:in-review` as the final step. A Robot instead ends at
- * a filesystem + GitHub hand-off: green verify → write `.robot/verify-ok` marker → commit → push →
- * open PR → write `.robot/scm.json`. The LOOP (sole DB writer) then observes the marker + PR and
- * writes the board state transition. So there is no "relabel" step here — that is the loop's job.
+ * The Robot is DB-blind by design: it cannot touch the board (uid-split, D-039). Rather than
+ * change any ticket/board state itself, a Robot ends at a filesystem + GitHub hand-off: green
+ * verify → write `.robot/verify-ok` marker → commit → push → open PR → write `.robot/scm.json`.
+ * The LOOP (sole DB writer) then observes the marker + PR and writes the board state transition,
+ * so there is no "relabel" step here — that is the loop's job. (Historically, under the retired
+ * Sortie runtime the agent relabelled its own issue as the final step; the DB-blind hand-off
+ * replaces that.)
  *
  * The `verify-ok` marker gate (D-046) is preserved verbatim: the loop only completes a hand-off if
  * the Robot left the marker, so a turn that dies before a green verify leaves WIP for retry rather

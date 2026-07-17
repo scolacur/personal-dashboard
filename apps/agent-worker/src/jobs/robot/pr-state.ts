@@ -13,8 +13,9 @@ import { readStateNumber, writeState } from './state';
 const run = promisify(execFile);
 
 /**
- * PR-state rework (D-055, C5/PD-346) — the DB-native replacement for BOTH `sortie-review-rework.yml`
- * and `sortie-conflict-rework.yml`, collapsed into one poll. For each `in-review` ticket the loop
+ * PR-state rework (D-055, C5/PD-346) — the Robot loop's DB-native review + conflict rework poll
+ * (it replaced the retired `sortie-review-rework.yml` and `sortie-conflict-rework.yml` Actions,
+ * collapsed into one poll). For each `in-review` ticket the loop
  * reads its PR's review decision, conversation comments, and merge status via the GitHub read API,
  * and re-activates the ticket in-DB (`agent_state = queued`) when a human left feedback or the PR now
  * conflicts with main. The reused branch + the resume-aware prompt (Step 0) then drive the rework.

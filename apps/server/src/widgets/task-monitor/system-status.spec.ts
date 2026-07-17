@@ -16,7 +16,7 @@ function pdId(db: Database.Database): number {
   return p.id;
 }
 
-/** Seed a ticket in a given Sortie agent_state (the poller normally sets this). */
+/** Seed a ticket in a given Robot loop agent_state (the loop normally sets this). */
 function seedTicket(db: Database.Database, title: string, agentState: string | null): number {
   const t = createTicket(db, { title, projectId: pdId(db) });
   if (agentState !== null) {

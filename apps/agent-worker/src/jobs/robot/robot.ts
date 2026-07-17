@@ -31,8 +31,8 @@ export { setAgentState, branchFor };
  * backoff, parks, or pauses the whole loop accordingly. `ask_human` is a deliberate park
  * (awaiting-human), never a failure.
  *
- * C5 (PD-346): the four `sortie-*.yml` reaction bridges fold in as native pre-dispatch
- * reconciliation — an in-process stall watchdog (stall.ts), DB-native ask_human resume (resume.ts),
+ * C5 (PD-346): the four reaction bridges (retired `sortie-*.yml` Actions) fold in as native
+ * pre-dispatch reconciliation — an in-process stall watchdog (stall.ts), DB-native ask_human resume (resume.ts),
  * and a review/conflict PR-state poll (pr-state.ts) — all reading/writing the board DB, no labels.
  */
 

@@ -3,8 +3,8 @@ import type { AgentWorkerConfig } from './config';
 import { logger } from './logger';
 
 /**
- * Force all in-process egress through the squid proxy (D-044 / the Sortie egress
- * pattern). Two layers are needed because Node's global `fetch` does NOT honor
+ * Force all in-process egress through the squid proxy (D-044 / the agent-worker egress
+ * hardening). Two layers are needed because Node's global `fetch` does NOT honor
  * HTTP(S)_PROXY on its own:
  *
  *  1. `NODE_USE_ENV_PROXY=1` (Node 24+) — makes the runtime's fetch respect the

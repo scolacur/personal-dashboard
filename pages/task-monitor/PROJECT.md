@@ -10,7 +10,7 @@ A dedicated page within the Personal Dashboard for monitoring and controlling AI
 
 ### Phase 1 — Core (build first)
 
-**Sortie & Sortie Proxy Status** - Simple color-coded way to see at a glance that Sortie is operational.
+**Robot & Robot Proxy Status** - Simple color-coded way to see at a glance that the Robot loop is operational.
 
 **Tasks** — Kanban board: Backlog / In Progress / Review / Done. Sourced from the `agent_jobs` table. This is the primary view for knowing what agents are actually working on. Filterable by project, initiative, or agent.
 
@@ -46,7 +46,7 @@ A dedicated page within the Personal Dashboard for monitoring and controlling AI
 
 **Visual Office** — 2D pixel-art office showing agents at their desks when working, away when idle. Fun, zero operational value, build last.
 
-**Per-widget Issue Creation** - A small button in the corner of each widget causes the widget to visually flip around, revealing a settings / config area, containing a button that allows me to create an issue via prompt. Some issue detail can be pre-populated based on the widget. Do after we have Discord set up. Possible that the easiest thing is that writing out my issue in Github actually just sends a Discord message on my behalf, after we have discord set up. That way the Dashboard itself may not need to have any knowledge of / access to agents. It just posts a message, that message gets picked up by Sortie.
+**Per-widget Issue Creation** - A small button in the corner of each widget causes the widget to visually flip around, revealing a settings / config area, containing a button that allows me to create an issue via prompt. Some issue detail can be pre-populated based on the widget. Do after we have Discord set up. Possible that the easiest thing is that writing out my issue in Github actually just sends a Discord message on my behalf, after we have discord set up. That way the Dashboard itself may not need to have any knowledge of / access to agents. It just posts a message, that message gets picked up by the Robot loop.
 
 ---
 

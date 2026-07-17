@@ -17,7 +17,7 @@ const run = promisify(execFile);
  * which the loop creates as root, so the Robot couldn't write it, and chowning the shared `.git`
  * to the Robot breaks the root loop's own git. A standalone clone sidesteps all of that: the loop
  * (root) clones, then `chown`s the WHOLE clone to the coding uid, so the Robot owns the one repo it
- * works in and root never contends with it. (This is also how Sortie worked — clone per workspace.)
+ * works in and root never contends with it. (The retired Sortie runtime also cloned per workspace.)
  *
  * Fresh clone every dispatch ⇒ PD-340 pristine-tree hygiene is automatic (no dirty WIP can carry
  * over). C1 runs are first-attempt/pristine; branch reuse for review-rework is a later slice.

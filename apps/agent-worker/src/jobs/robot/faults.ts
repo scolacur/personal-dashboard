@@ -12,7 +12,7 @@
  *                        It is not the ticket's fault and would fail EVERY ticket, so it must not
  *                        burn this ticket's budget; it pauses the whole loop instead.
  *
- * Motivated by #220 (a deterministic before_run failure burned all of Sortie's sessions) and
+ * Motivated by #220 (a deterministic before_run failure burned every session of the retired Sortie runtime) and
  * PD-320/#202 (a board-wide auth 403 silently burned every ticket's budget). This module is pure
  * (no DB, no clock beyond an injected `now`) so the taxonomy is exhaustively unit-testable; the
  * loop (robot.ts) owns persistence and the actual state writes. C3 surfaces these tiers in the UI.

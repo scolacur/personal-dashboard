@@ -39,6 +39,11 @@ laptop — it needs the container (for the uid drop) and a real GitHub push.
 
 ---
 
+> **Squid path change (PD-348):** the agent-worker's `squid.conf` mount moved from
+> `ops/sortie/squid.conf` to `ops/agent-worker/squid.conf`. After `git pull`, redeploy the
+> agent-worker (`docker compose -f ops/agent-worker/docker-compose.egress.yml up -d`) so the
+> new host path resolves — the old path no longer exists.
+
 ## Container prerequisites (one-time, before the flag goes on)
 
 The loop process runs privileged (as today); the coding session runs as a dedicated low-priv uid.
@@ -163,6 +168,7 @@ Once the loop has cleanly completed N tickets and you trust it:
 - [ ] Delete the Sortie container + image (`docker rm sortie` / `docker image rm ghcr.io/sortie-ai/sortie`).
 - [ ] Remove the second squid sidecar (Sortie's egress proxy) — the agent-worker has its own.
 - [ ] Delete `.sortie.db`, the `sortie-reset` script, and `ops/sortie/WORKFLOW.md`.
-- [ ] The four `sortie-*.yml` bridges are already gone (C5); `sortie-auto-merge.yml` **stays**.
+- [ ] The four `sortie-*.yml` bridges are already gone (C5); the auto-merge bridge **stays**
+      (renamed `sortie-auto-merge.yml` → `robot-auto-merge.yml` in C7/PD-348).
 - [ ] Codebase `sortie`→`robot` terminology + dead-code sweep (the retired `deriveState`/`runGithubSync`/
       `runQueuedSync`, `sortie:*` strings) is **C7 / PD-348** — a separate low-risk mechanical PR.

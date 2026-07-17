@@ -9,10 +9,11 @@ import { notifyNeedsHuman } from './notify';
 import { setAgentState } from './board';
 
 /**
- * In-process stall watchdog (D-055, C5/PD-346) — the DB-native replacement for `sortie-watchdog.yml`.
+ * In-process stall watchdog (D-055, C5/PD-346) — the Robot loop's DB-native stall detection (it
+ * replaced the retired `sortie-watchdog.yml` Action).
  *
- * The old watchdog was an EXTERNAL, label-age-based Actions job because Sortie was a closed process
- * the board couldn't see into. The loop IS the process now, so stall detection is native: a run stuck
+ * That old watchdog was an EXTERNAL, label-age-based Actions job because the retired runtime was a
+ * closed process the board couldn't see into. The loop IS the process now, so stall detection is native: a run stuck
  * in `running` past the threshold whose ticket is still `working` is an orphan — the process died or
  * restarted mid-run, leaving a zombie run and a `working` ticket that `robotQueueCandidates` never
  * re-picks (only NULL/`queued` are dispatchable). This sweep closes the run and routes it through the
@@ -20,8 +21,8 @@ import { setAgentState } from './board';
  * attempt); a repeated stall promotes to deterministic and parks `stuck` with a Notification-Center
  * entry (replacing the watchdog's @-mention).
  *
- * The old watchdog's queued-staleness sweep and label-rescue job are intentionally dropped: "Sortie
- * down / not dispatching" cannot happen when the loop itself is the dispatcher, and there are no state
+ * The old watchdog's queued-staleness sweep and label-rescue job are intentionally dropped: a
+ * "dispatcher down / not dispatching" state cannot happen when the loop itself is the dispatcher, and there are no state
  * labels to lose or rescue now that the board DB is the state machine (D-055).
  */
 export function reconcileStalledRuns(
