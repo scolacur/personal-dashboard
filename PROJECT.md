@@ -445,6 +445,23 @@ token-exfil risk (PD-30) and is why git/gh/npm commands pass the proxy explicitl
 
 Definitions for the sensitive-path guardrail model (D-047).
 
+> ⚠️ **NOT YET IMPLEMENTED — this section describes a design, not a live control.**
+> **Neither tier exists in the repo today**: there is no `.github/sensitive-paths.txt`, no
+> path-guard workflow (`.github/workflows/` holds only `ci.yml`, `deploy.yml`,
+> `robot-auto-merge.yml`), no `sensitive-change-approved` label, and no Tier 2 hook.
+> Tier 1 is **PD-308**, Tier 2 is **PD-312** — both unshipped.
+>
+> Read every definition below as *"will, once built"*, never as *"does"*. **Agents: you are
+> NOT operating under this safety net.** Nothing mechanically stops you from editing a
+> sensitive path, so treat the denylist in PD-308 as a rule you must follow yourself, and
+> raise an **ask_human** instead of editing one unprompted.
+>
+> This warning exists because of a real incident: on 2026-07-28 a Robot added a dependency to
+> `apps/server/package.json` in PR #268, wrote in its PR body that "the path-guard will flag
+> package.json … needs the `sensitive-change-approved` label", and merged with no such check
+> ever running. It believed this section described reality. Delete this banner when PD-308
+> and PD-312 land.
+
 **Sensitive path**:
 A repo path whose modification is high-risk for an unsupervised agent — CI workflows,
 deploy/infra config, DB schema/migrations, dependency manifests, secrets, auth/session

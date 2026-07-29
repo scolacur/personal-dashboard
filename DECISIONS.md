@@ -247,6 +247,12 @@ Newest decisions at the top.
 
 ## D-047: Sortie sensitive-path guardrails are two-tier — an authoritative, runtime-independent CI path-guard (Tier 1) plus a runtime-coupled in-loop Claude Code layer (Tier 2), both fed by one shared denylist (PD-308, PD-312; supersedes C-2, PD-13, C-15)
 
+> ⚠️ **STATUS 2026-07-28: DESIGNED, NOT BUILT.** Neither tier has shipped — PD-308 (Tier 1) and
+> PD-312 (Tier 2) are both still open, and no `.github/sensitive-paths.txt`, path-guard workflow,
+> or `sensitive-change-approved` label exists. The decision below stands; the *enforcement* does
+> not. Verified the hard way when a Robot added a dependency to `apps/server/package.json` in
+> PR #268 expecting the path-guard to stop it — nothing did. See the banner in PROJECT.md §9.
+
 **Decision:** Bounding what an autonomous Sortie worker may change **inside the repo** is enforced in **two tiers**, split by whether the layer survives an agent-runtime swap:
 
 - **Tier 1 — authoritative, runtime-independent (PD-308).** A CI **path-guard** at the git/GitHub boundary: a required GitHub Actions check that goes red when a PR's diff touches any path in a shared denylist (`.github/sensitive-paths.txt`), **unless** a write+ collaborator applies a `sensitive-change-approved` label. It runs **base-ref** (`pull_request_target`) so a PR cannot weaken the guard or the list within the same PR. Because it inspects the **diff, not the agent**, it holds regardless of which runtime produced the commit. Branch protection already covers *direct-to-main* runtime-independently; `--no-verify` is moot (CI re-runs `verify`); `push --force` only ever touches the agent's own `sortie/<id>` branch.
