@@ -44,7 +44,7 @@ cp ops/agent-worker/agent-worker.env.example /volume1/docker/personal-dashboard/
 sudo docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
 
 # 4. Bring it up on the egress-hardened network (proxy sidecar + internal net)
-sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d
+sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
 
 # 5. Watch it boot and take a turn
 sudo docker logs -f agent-worker
@@ -101,7 +101,7 @@ the running container. Rebuild and recreate:
 ```bash
 cd /volume1/docker/personal-dashboard/personal-dashboard && git pull --ff-only
 sudo docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
-sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d   # recreates from the new image
+sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d   # recreates from the new image
 ```
 
 ## Troubleshooting

@@ -10,7 +10,7 @@
 # coupling. (Trade-off: one extra lightweight squid container.)
 #
 # Apply (repo checked out on the host):
-#   sudo docker compose -f ops/agent-worker/docker-compose.egress.yml up -d
+#   sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
 #
 # DEPLOY NOTE: the /data mount below MUST be the SAME host directory the web app mounts as
 # /data, so both share dashboard.db. The web app mounts `../data` run from docker/, i.e. the

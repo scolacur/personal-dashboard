@@ -41,7 +41,7 @@ laptop — it needs the container (for the uid drop) and a real GitHub push.
 
 > **Squid path change (PD-348):** the agent-worker's `squid.conf` mount moved from
 > `ops/sortie/squid.conf` to `ops/agent-worker/squid.conf`. After `git pull`, redeploy the
-> agent-worker (`docker compose -f ops/agent-worker/docker-compose.egress.yml up -d`) so the
+> agent-worker (`docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d`) so the
 > new host path resolves — the old path no longer exists.
 
 ## Container prerequisites (one-time, before the flag goes on)

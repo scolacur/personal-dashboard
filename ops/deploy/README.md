@@ -134,7 +134,7 @@ hands-off** — merge a PR, walk away.
 - **Pause auto-deploy:** stop the `watchtower` container; `app` keeps running the
   current image.
 - **Manual deploy without a merge:** Actions tab → deploy → Run workflow
-  (`workflow_dispatch`), then `docker compose ... pull && up -d` on the NAS (or wait for
+  (`workflow_dispatch`), then `docker-compose ... pull && up -d` on the NAS (or wait for
   Watchtower's poll).
 
 ## Private package (only if you make the GHCR package private)
