@@ -6,6 +6,21 @@ Newest decisions at the top.
 
 ---
 
+## D-060: The shared Spotify client uses a custom confidential-client refresh-token auth strategy and no-ops (never throws) when unconfigured (PD-377, slice 1/3)
+
+**Decision:** The first real Spotify client (`apps/server/src/widgets/inspirations-list/spotify.ts`, built on `@spotify/web-api-ts-sdk` per PROJECT.md §2) supplies its **own** `IAuthStrategy` (`RefreshTokenAuthStrategy`) rather than one of the SDK's bundled strategies:
+
+- **Why a custom strategy.** The env vars (`SPOTIFY_CLIENT_ID`/`_SECRET`/`_REFRESH_TOKEN`) describe a **confidential** app whose refresh-token grant must authenticate with HTTP Basic `client_id:client_secret`. The SDK's built-in refresh (`AccessTokenHelpers.refreshCachedAccessToken`) only sends `client_id` — the **public/PKCE** client flow — so it can't refresh a confidential-client token. `withClientCredentials` was also wrong (client-credentials has no user context / playlist access). The custom strategy caches the access token, and because `SpotifyApi.makeRequest` calls `getOrCreateAccessToken()` on every request, it transparently re-obtains the token once expired (with a 30s skew to avoid edge-of-expiry 401s).
+- **Never throws; no-ops on missing config.** `getPlaylistTracks(playlistId)` returns `SpotifyTrack[]` and returns an **empty array + logs a clear reason** when any required var is unset (or the playlist id is blank), so a partially-configured server still boots and callers no-op gracefully (the same tolerance pattern the `.env.example` `GITHUB_WRITE_TOKEN` comment describes). Runtime API/network errors are likewise caught, logged, and flattened to `[]` so a Spotify outage can never crash the server.
+- **`SpotifyTrack` lives in `packages/shared`** (PROJECT.md §5 — types shared between server/web are declared once), even though only the server consumes it this slice; the later frontend slice of PD-377 reuses it without redeclaring.
+- **Adding the dependency.** `@spotify/web-api-ts-sdk` was added to `apps/server` — normally a guarded zone for an autonomous agent, but the ticket explicitly requires this SDK and PROJECT.md §2 already names it as the stack's Spotify client, so the PR will carry the sensitive-path ack.
+
+**Trade-off:** Re-implementing a small slice of the SDK's auth (a ~30-line strategy) instead of using a bundled one — accepted, because no bundled strategy fits the single-user confidential refresh-token pattern, and a thin injectable strategy is fully unit-testable (fake `fetch`) without network.
+
+**Out of scope (later PD-377 slices):** widget schema, sync/reconcile, routes, cron, frontend, and any write-back to Spotify.
+
+---
+
 ## D-058: One `queue` lane (assignee decides dispatch); `ready` (computed formatting) is the single dispatch gate with an explicit bypass; Epics are barred from the queue and get a `Populate` refine mode (PD-390, PD-377, PD-382)
 
 **Decision:** Collapse the two queue lanes into one and make *who does the work* an independent axis from *the work is ready*. From the 2026-07-17 grill, which reconciled three bugs (PD-390 the lane asymmetry, PD-377 an Epic dead-ending in `steve_queue`, PD-382 Refine unable to flesh out an Epic):

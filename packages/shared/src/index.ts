@@ -9,6 +9,7 @@ export type {
 export { IDEA_TYPES } from './acute-strategies-generator';
 export type { TrackStatus, Track, CreateManualTrackInput } from './music-tracker';
 export { TRACK_STATUSES } from './music-tracker';
+export type { SpotifyTrack } from './inspirations-list';
 export type {
   TicketStatus,
   TicketPriority,
