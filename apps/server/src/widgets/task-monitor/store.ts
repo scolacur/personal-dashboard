@@ -87,7 +87,7 @@ function fromDbPriority(s: string): TicketPriority | null {
   return s === PRIORITY_UNSET ? null : (s as TicketPriority);
 }
 
-function rowToTicket(row: TicketRow): AgentTicket {
+function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTicket {
   return {
     id: row.id,
     displayId: row.display_id,
@@ -103,6 +103,8 @@ function rowToTicket(row: TicketRow): AgentTicket {
     githubIssueNumber: row.github_issue_number,
     githubIssueUrl: row.github_issue_url,
     agentState: row.agent_state as AgentTicket['agentState'],
+    // PD-230: turns of the ticket's latest Robot run; joined separately (see latestRunTurns).
+    agentTurns,
     // PD-400: a terminal ticket carries no live refine session — never project a
     // refining/awaiting-human pill on a completed/closed ticket, regardless of its last refine_*
     // event. (agent_state is cleared as a real write on the terminal transition; refineState is
@@ -196,6 +198,42 @@ const LATEST_REFINE_TYPE_SELECT = `(
    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) AS latest_refine_type`;
 
+/**
+ * Turns used by each ticket's LATEST Robot run (PD-230), keyed by ticket id.
+ *
+ * Deliberately a SEPARATE guarded query rather than a subselect in the ticket queries: the
+ * agent-worker OWNS `agent_runs` and creates it, so on a fresh volume where the worker has never
+ * run the table does not exist — a subselect would 500 the whole board. Mirrors the same guard on
+ * `listRunsForTicket` (runs-store.ts). One query for the board, not N+1.
+ */
+function latestRunTurns(db: Database.Database, ticketId?: number): Map<number, number> {
+  const byTicket = new Map<number, number>();
+  try {
+    const sql =
+      `SELECT ticket_id, turns FROM agent_runs` +
+      (ticketId === undefined ? '' : ' WHERE ticket_id = ?') +
+      ` ORDER BY ticket_id ASC, started_at DESC, id DESC`;
+    const stmt = db.prepare(sql);
+    const rows = (ticketId === undefined ? stmt.all() : stmt.all(ticketId)) as {
+      ticket_id: number;
+      turns: number | null;
+    }[];
+    // Rows are newest-first within a ticket, so the FIRST row per ticket decides — including
+    // deciding "no value". Tracked with a separate `seen` set on purpose: a just-started run has
+    // turns=null, and falling through to an older row would report a stale count from the
+    // PREVIOUS attempt on a live card.
+    const seen = new Set<number>();
+    for (const r of rows) {
+      if (seen.has(r.ticket_id)) continue;
+      seen.add(r.ticket_id);
+      if (typeof r.turns === 'number') byTicket.set(r.ticket_id, r.turns);
+    }
+  } catch {
+    // `agent_runs` absent (worker never ran) — no turn data, board still renders.
+  }
+  return byTicket;
+}
+
 export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
@@ -214,14 +252,15 @@ export function listTickets(db: Database.Database): AgentTicket[] {
          id ASC`,
     )
     .all() as TicketRow[];
-  return rows.map(rowToTicket);
+  const turns = latestRunTurns(db);
+  return rows.map((row) => rowToTicket(row, turns.get(row.id) ?? null));
 }
 
 export function getTicket(db: Database.Database, id: number): AgentTicket | null {
   const row = db
     .prepare(`SELECT t.*, ${LATEST_REFINE_TYPE_SELECT} FROM agent_tickets t WHERE t.id = ?`)
     .get(id) as TicketRow | undefined;
-  return row ? rowToTicket(row) : null;
+  return row ? rowToTicket(row, latestRunTurns(db, id).get(id) ?? null) : null;
 }
 
 /** Allocate the next per-project display id (e.g. 'PD-7'), bumping the project's counter. */

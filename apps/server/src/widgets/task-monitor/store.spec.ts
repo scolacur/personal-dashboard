@@ -1340,3 +1340,89 @@ describe('epics (D-054, PD-336)', () => {
     }
   });
 });
+
+/**
+ * PD-230 — `agentTurns` exposes the LATEST Robot run's turn count so the board can show progress
+ * toward the per-run cap. `agent_runs` is OWNED and created by the agent-worker, so the server
+ * must tolerate its absence entirely.
+ */
+describe('agentTurns (PD-230)', () => {
+  let db: Database.Database;
+  let pd: number;
+
+  /** Minimal stand-in for the worker-owned agent_runs table (see agent-worker runs.ts). */
+  function createRunsTable(d: Database.Database): void {
+    d.exec(`
+      CREATE TABLE agent_runs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id    INTEGER NOT NULL,
+        issue_number INTEGER,
+        branch       TEXT NOT NULL,
+        status       TEXT NOT NULL,
+        turns        INTEGER,
+        started_at   INTEGER NOT NULL,
+        finished_at  INTEGER
+      );
+    `);
+  }
+  function addRun(
+    d: Database.Database,
+    ticketId: number,
+    turns: number | null,
+    startedAt: number,
+    status = 'error',
+  ): void {
+    d.prepare(
+      `INSERT INTO agent_runs (ticket_id, branch, status, turns, started_at)
+       VALUES (?, 'robot/t1', ?, ?, ?)`,
+    ).run(ticketId, status, turns, startedAt);
+  }
+
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('is null when the worker has never run (agent_runs absent) — must not throw', () => {
+    const t = createTicket(db, { title: 'no runs table', projectId: pd });
+    expect(() => listTickets(db)).not.toThrow();
+    expect(getTicket(db, t.id)!.agentTurns).toBeNull();
+    expect(listTickets(db).find((x) => x.id === t.id)!.agentTurns).toBeNull();
+  });
+
+  it('reports the latest run\'s turns, not an older run\'s', () => {
+    const t = createTicket(db, { title: 'two runs', projectId: pd });
+    createRunsTable(db);
+    addRun(db, t.id, 43, 1000); // older attempt
+    addRun(db, t.id, 50, 2000); // latest attempt
+    expect(getTicket(db, t.id)!.agentTurns).toBe(50);
+    expect(listTickets(db).find((x) => x.id === t.id)!.agentTurns).toBe(50);
+  });
+
+  it('is null while the newest run has no count yet — never falls back to the previous run', () => {
+    // The regression this guards: a just-dispatched run (turns NULL) must not display the
+    // turn count from the PREVIOUS failed attempt on a live card.
+    const t = createTicket(db, { title: 'fresh retry', projectId: pd });
+    createRunsTable(db);
+    addRun(db, t.id, 43, 1000); // previous attempt burned 43 turns
+    addRun(db, t.id, null, 2000, 'running'); // new attempt, no progress reported yet
+    expect(getTicket(db, t.id)!.agentTurns).toBeNull();
+  });
+
+  it('keeps counts separate per ticket', () => {
+    const a = createTicket(db, { title: 'a', projectId: pd });
+    const b = createTicket(db, { title: 'b', projectId: pd });
+    createRunsTable(db);
+    addRun(db, a.id, 7, 1000);
+    addRun(db, b.id, 22, 1000);
+    const all = listTickets(db);
+    expect(all.find((x) => x.id === a.id)!.agentTurns).toBe(7);
+    expect(all.find((x) => x.id === b.id)!.agentTurns).toBe(22);
+  });
+
+  it('is null for a ticket with no runs at all', () => {
+    const t = createTicket(db, { title: 'never dispatched', projectId: pd });
+    createRunsTable(db);
+    expect(getTicket(db, t.id)!.agentTurns).toBeNull();
+  });
+});

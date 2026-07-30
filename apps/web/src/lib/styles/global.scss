@@ -21,6 +21,10 @@
   --status-awaiting-human: #f59e0b; /* light orange */
   --status-done: #1a7f37; /* green */
   /* wontfix reuses the neutral --muted / --border tokens. */
+  /* Generic "warning / needs attention but not broken" amber. Used by the not-Ready
+     "needs shaping" badge (PD-399) and the near-the-turn-cap indicator (PD-230).
+     Previously referenced with an inline #b7791f fallback and never actually defined. */
+  --status-warn: #b7791f; /* amber */
   /* Refine "Needs you" — the agent asked for your input. Pink: wants attention,
      but less urgent than a red stuck/needs-human Robot job. */
   --status-refine-needs: #d6336c; /* pink */

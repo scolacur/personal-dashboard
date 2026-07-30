@@ -118,6 +118,68 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
   done: 'done',
 };
 
+/**
+ * Per-run turn ceiling the Robot loop enforces (`ROBOT_MAX_TURNS`). Declared here so the board's
+ * denominator and the loop's real cap cannot drift **in code** — the agent-worker's config default
+ * reads this constant (PD-230).
+ *
+ * Caveat: an env override on the deploy host (`ROBOT_MAX_TURNS=...`) is NOT visible to the web
+ * process, which has no access to the worker's env. The board would then show the wrong
+ * denominator. Not overridden today; if that changes, surface the live value on the worker
+ * heartbeat rather than guessing here.
+ */
+export const ROBOT_MAX_TURNS_DEFAULT = 50;
+
+/** At/above this fraction of the ceiling a run is flagged as close to the cap. */
+export const TURN_WARN_FRACTION = 0.8;
+
+/** Agent states for which turn progress is meaningful. `working` is the live case; `in-review`
+ *  and `stuck` are post-mortem — `stuck` is where the ceiling actually bites, so it earns a slot
+ *  (a card reading "50/50" explains itself at a glance). */
+export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-review', 'stuck'];
+
+export interface TurnProgress {
+  turns: number;
+  max: number;
+  /** Compact display form, e.g. "43/50". */
+  label: string;
+  /** True once the run is at/over TURN_WARN_FRACTION of the ceiling. */
+  nearCap: boolean;
+  /** True when the run met or passed the ceiling — it ran out of budget. */
+  atCap: boolean;
+}
+
+/**
+ * Derive turn-progress display data, or null when there is nothing meaningful to show.
+ *
+ * Deliberately does NOT clamp `turns` to `max`: the SDK can report one turn past the ceiling
+ * (PD-412's run #12 recorded 51 against a cap of 50), and "51/50" is more honest — and more
+ * diagnostic — than a clamped "50/50".
+ */
+export function turnProgress(
+  turns: number | null | undefined,
+  max: number = ROBOT_MAX_TURNS_DEFAULT,
+): TurnProgress | null {
+  if (typeof turns !== 'number' || !Number.isFinite(turns) || turns <= 0) return null;
+  const ceiling = Number.isFinite(max) && max > 0 ? max : ROBOT_MAX_TURNS_DEFAULT;
+  return {
+    turns,
+    max: ceiling,
+    label: `${turns}/${ceiling}`,
+    nearCap: turns >= ceiling * TURN_WARN_FRACTION,
+    atCap: turns >= ceiling,
+  };
+}
+
+/** Should this ticket's card/pill show turn progress? */
+export function showsTurnProgress(
+  agentState: AgentState | null | undefined,
+  turns: number | null | undefined,
+): boolean {
+  if (!agentState || !TURN_PROGRESS_STATES.includes(agentState)) return false;
+  return turnProgress(turns) !== null;
+}
+
 // These stay PLAIN TEXT: the status-legend modal renders them via `{...}` interpolation
 // (apps/web/.../task-monitor/+page.svelte), so any inline markdown/HTML would show as literal
 // syntax. The concepts named below — in-process stall detection, the Robot loop, ask_human,
@@ -211,6 +273,10 @@ export interface AgentTicket {
   githubIssueUrl: string | null;
   /** Fine-grained agent state owned by the Robot loop (D-055); null = none. */
   agentState: AgentState | null;
+  /** Turns used by the ticket's LATEST Robot run (PD-230), or null when there is no run yet /
+   *  the worker has never run. Live-updated during a `working` run, then overwritten with the
+   *  SDK's authoritative `num_turns` when the run finishes. Read-only, server-derived. */
+  agentTurns: number | null;
   /** Live Refine session state derived from the ticket's refine_* thread (D-044, PD-268);
    *  null = no Refine session started. */
   refineState: RefineState | null;

@@ -7,7 +7,14 @@ import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, removeWorktree, type Worktree } from './workspace';
 import { runRobotSession, type RobotSessionResult } from './session';
 import type { ResumeContext } from './prompt';
-import { ensureRunsTable, startRun, finishRun, failedRunsForTicket, hashBody } from './runs';
+import {
+  ensureRunsTable,
+  startRun,
+  finishRun,
+  failedRunsForTicket,
+  hashBody,
+  updateRunProgress,
+} from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
 import { ensureRobotStateTable, isDispatchPaused, pauseDispatch } from './state';
 import { logMilestone, ROBOT_EVENT } from './events';
@@ -53,6 +60,8 @@ export interface RobotDeps {
     c: RobotCandidate,
     wt: Worktree,
     resume: ResumeContext | undefined,
+    /** PD-230: called as the session streams, with the live turn count. */
+    onProgress?: (turns: number) => void,
   ) => Promise<RobotSessionResult>;
   now?: () => number;
 }
@@ -90,7 +99,11 @@ export async function processRobotQueue(
 
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
-  const doRun = deps.runSession ?? ((c, cand, w, resume) => runRobotSession(c, cand, w, resume));
+  // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot and `onProgress`
+  // in the 6th, so `deps.runSession` (whose 5th arg IS onProgress) cannot be passed positionally.
+  const doRun =
+    deps.runSession ??
+    ((c, cand, w, resume, onProgress) => runRobotSession(c, cand, w, resume, undefined, onProgress));
   const now = deps.now ?? Date.now;
   const policy = faultPolicy(config);
 
@@ -193,7 +206,11 @@ export async function processRobotQueue(
     let worktree: Worktree | undefined;
     try {
       worktree = await doEnsure(config, branch);
-      const result = await doRun(config, candidate, worktree, resumeCtx);
+      // PD-230: persist live turn progress so the board shows a working run closing on the cap.
+      // The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only reports.
+      const result = await doRun(config, candidate, worktree, resumeCtx, (turns) =>
+        updateRunProgress(db, runId, turns),
+      );
       const metrics = { turns: result.turns, tokens: result.tokens };
 
       if (result.askHuman) {

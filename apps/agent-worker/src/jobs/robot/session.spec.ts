@@ -119,6 +119,46 @@ describe('runRobotSession', () => {
     expect(res.verifyOk).toBe(false);
   });
 
+  // PD-230: live turn progress. Assistant messages are counted as they stream so the board can
+  // show a working run closing on the cap; finishRun later overwrites with the SDK's num_turns.
+  it('reports live turn progress as assistant messages stream', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 's' } as never;
+      yield { type: 'assistant' } as never;
+      yield { type: 'user' } as never; // not a turn
+      yield { type: 'assistant' } as never;
+      yield { type: 'assistant' } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 3 } as never;
+    }) as unknown as RunQuery;
+
+    const seen: number[] = [];
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake, (t) => seen.push(t));
+
+    expect(seen).toEqual([1, 2, 3]); // monotonic, assistant messages only
+    expect(res.turns).toBe(3); // the SDK's authoritative count still wins on the result
+  });
+
+  it('never lets a failing progress callback kill the session', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'assistant' } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 1 } as never;
+    }) as unknown as RunQuery;
+
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake, () => {
+      throw new Error('db locked');
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it('runs fine with no progress callback at all', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'assistant' } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 1 } as never;
+    }) as unknown as RunQuery;
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.ok).toBe(true);
+  });
+
   it('catches a thrown session and surfaces it as an error result', async () => {
     const fake: RunQuery = (() => {
       throw new Error('spawn EACCES');

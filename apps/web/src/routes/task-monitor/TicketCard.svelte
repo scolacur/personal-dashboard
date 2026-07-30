@@ -1,6 +1,13 @@
 <script lang="ts">
   import type { AgentProject, AgentState, AgentTicket, RefineState, TicketAssignee, TicketPriority } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, AGENT_STATE_LABELS } from '@dashboard/shared';
+  import {
+    TICKET_ASSIGNEES,
+    ASSIGNEE_LABELS,
+    TICKET_PRIORITIES,
+    AGENT_STATE_LABELS,
+    showsTurnProgress,
+    turnProgress,
+  } from '@dashboard/shared';
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import { Pencil, Copy, Trash2, ClipboardCopy, MoreVertical } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
@@ -81,6 +88,14 @@
   function agentStateClass(s: AgentState): string {
     return `agent-state-${s}`;
   }
+
+  // PD-230: turn progress toward the per-run cap, shown inside the agent-state pill. Null unless
+  // the state is one where it's meaningful (working / in-review / stuck) AND a count exists.
+  const turns = $derived(
+    showsTurnProgress(ticket.agentState, ticket.agentTurns)
+      ? turnProgress(ticket.agentTurns)
+      : null,
+  );
 
   function assigneeLabel(assignee: TicketAssignee | null): string {
     if (assignee === 'steve') return 'S';
@@ -219,14 +234,25 @@
           >Not refined</button>
         {/if}
       </span>
-      <!-- Right: Robot agent state (filled pill). -->
+      <!-- Right: Robot agent state (filled pill), with turn progress toward the cap (PD-230). -->
       {#if ticket.agentState}
         <button
           class="agent-state-badge {agentStateClass(ticket.agentState)}"
           type="button"
-          aria-label="Agent state: {AGENT_STATE_LABELS[ticket.agentState]}. Click to view Robot status guide."
+          aria-label={turns
+            ? `Agent state: ${AGENT_STATE_LABELS[ticket.agentState]}. Turn ${turns.turns} of ${turns.max}${turns.atCap ? ' — hit the per-run turn cap' : turns.nearCap ? ' — close to the per-run turn cap' : ''}. Click to view Robot status guide.`
+            : `Agent state: ${AGENT_STATE_LABELS[ticket.agentState]}. Click to view Robot status guide.`}
           onclick={() => onOpenStatusLegend(ticket.agentState!)}
-        >{AGENT_STATE_LABELS[ticket.agentState]}</button>
+        >{AGENT_STATE_LABELS[ticket.agentState]}{#if turns}<span
+              class="turn-progress"
+              class:near-cap={turns.nearCap}
+              class:at-cap={turns.atCap}
+              title="{turns.turns} of {turns.max} turns used on the latest run{turns.atCap
+                ? ' — hit the cap'
+                : turns.nearCap
+                  ? ' — close to the cap'
+                  : ''}"
+            >{turns.label}</span>{/if}</button>
       {/if}
     </div>
   {/if}

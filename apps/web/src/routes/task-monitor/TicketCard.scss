@@ -310,6 +310,27 @@
     outline-offset: 2px;
   }
 
+  // PD-230: turns-used/cap for the latest run, tucked inside the pill. Inherits the state's hue
+  // at reduced emphasis so it reads as secondary detail, then escalates as the run nears the cap.
+  .turn-progress {
+    margin-left: calc(var(--space-xs) / 2);
+    font-variant-numeric: tabular-nums; // digits don't jitter as the count ticks up
+    opacity: 0.75;
+
+    &.near-cap {
+      color: var(--status-warn);
+      opacity: 1;
+      font-weight: 600;
+    }
+
+    // At/over the ceiling: this run ran out of budget — same red as stuck/needs-human.
+    &.at-cap {
+      color: var(--status-stuck);
+      opacity: 1;
+      font-weight: 700;
+    }
+  }
+
   // Per-state colours (D-040 pills each carry their own hue) — tokens in global.scss.
   &.agent-state-queued {
     color: var(--status-queued);

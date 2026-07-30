@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { ROBOT_MAX_TURNS_DEFAULT } from '@dashboard/shared';
 
 /**
  * agent-worker configuration (D-044, D-045). All env-driven so the same image runs in
@@ -130,7 +131,9 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     codingUid: optInt(env.ROBOT_CODING_UID),
     codingGid: optInt(env.ROBOT_CODING_GID),
     codingHome: env.ROBOT_CODING_HOME ?? '/home/robot',
-    maxTurns: Number(env.ROBOT_MAX_TURNS ?? 50),
+    // Default from @dashboard/shared so the board's denominator (PD-230) and the loop's real cap
+    // cannot drift in code. An env override here is NOT visible to the web process.
+    maxTurns: Number(env.ROBOT_MAX_TURNS ?? ROBOT_MAX_TURNS_DEFAULT),
     retryCap: Number(env.ROBOT_RETRY_CAP ?? 3),
     promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
     backoffBaseMs: Number(env.ROBOT_BACKOFF_BASE_MS ?? 60_000),

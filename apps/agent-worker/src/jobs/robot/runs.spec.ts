@@ -7,6 +7,7 @@ import {
   runCountForTicket,
   listRunsForTicket,
   failedRunsForTicket,
+  updateRunProgress,
 } from './runs';
 
 function freshDb(): Database.Database {
@@ -126,5 +127,45 @@ describe('agent_runs', () => {
     // A failure after the reset counts again.
     finishRun(db, startRun(db, { ticketId: 1, issueNumber: null, branch: 'b' }, 400), { status: 'error', faultTier: 'transient', faultSignature: 'z' }, 450);
     expect(failedRunsForTicket(db, 1).length).toBe(1);
+  });
+});
+
+/**
+ * PD-230 — live turn progress on a still-running run, so the board can show how close a working
+ * run is to the per-run cap. The SDK only reports authoritative `num_turns` on its final result
+ * message, so without this a `working` run shows no progress at all.
+ */
+describe('updateRunProgress (PD-230)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  it('records turns on a running run', () => {
+    const runId = startRun(db, { ticketId: 1, issueNumber: null, branch: 'robot/t1' });
+    expect(listRunsForTicket(db, 1)[0].turns).toBeNull();
+
+    updateRunProgress(db, runId, 1);
+    expect(listRunsForTicket(db, 1)[0].turns).toBe(1);
+
+    updateRunProgress(db, runId, 17);
+    expect(listRunsForTicket(db, 1)[0].turns).toBe(17);
+  });
+
+  it('does NOT touch a finished run — finishRun holds the authoritative count', () => {
+    const runId = startRun(db, { ticketId: 1, issueNumber: null, branch: 'robot/t1' });
+    updateRunProgress(db, runId, 40);
+    finishRun(db, runId, { status: 'error', turns: 43, error: 'boom' });
+    expect(listRunsForTicket(db, 1)[0].turns).toBe(43);
+
+    // A late progress callback arriving after the run closed must be ignored, not resurrect
+    // a lower count over the SDK's real num_turns.
+    updateRunProgress(db, runId, 41);
+    expect(listRunsForTicket(db, 1)[0].turns).toBe(43);
+    expect(listRunsForTicket(db, 1)[0].status).toBe('error');
+  });
+
+  it('is a no-op for an unknown run id', () => {
+    expect(() => updateRunProgress(db, 9999, 5)).not.toThrow();
   });
 });

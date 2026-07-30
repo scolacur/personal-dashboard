@@ -94,6 +94,7 @@ export async function runRobotSession(
   worktree: Worktree,
   resume: ResumeContext | undefined = undefined,
   runQuery: RunQuery = query,
+  onProgress?: (turns: number) => void,
 ): Promise<RobotSessionResult> {
   const prompt = buildTaskPrompt({
     title: candidate.title,
@@ -110,6 +111,8 @@ export async function runRobotSession(
   let error: string | undefined;
   let turns: number | undefined;
   let tokens: number | undefined;
+  /** Running count of assistant messages — the live stand-in for the SDK's final `num_turns`. */
+  let liveTurns = 0;
 
   try {
     for await (const message of runQuery({
@@ -127,6 +130,19 @@ export async function runRobotSession(
       },
     }) as AsyncIterable<SDKMessage>) {
       if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
+      // PD-230: live turn progress. The SDK only reports authoritative `num_turns` on the final
+      // result message, so a `working` run would otherwise show no progress at all. Counting
+      // assistant messages is an APPROXIMATION of that number; it exists so the board can show
+      // "how close is this run to the cap" while it runs, and is overwritten with the real value
+      // by finishRun. Never let a reporting failure kill the session.
+      if (message.type === 'assistant' && onProgress) {
+        liveTurns += 1;
+        try {
+          onProgress(liveTurns);
+        } catch (err) {
+          logger.warn({ err, ticketId: candidate.id }, 'robot: turn-progress report failed');
+        }
+      }
       if (message.type === 'result') {
         sessionId = message.session_id;
         ok = message.subtype === 'success' && !message.is_error;
