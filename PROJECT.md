@@ -192,7 +192,11 @@ Exposes one port (default 8080). No external auth — relies on LAN-only access.
 
 **Known extraction candidates** (files currently exceeding 300 lines):
 
-- `apps/web/src/routes/task-monitor/+page.svelte` (~895 lines)
+- `apps/web/src/routes/devops/task-tracker/+page.svelte` (~1,103 lines) — the Kanban board. Moved
+  off the Dev Ops overview by PD-421 (which was a wholesale relocation, not a rebuild), so it is
+  still one large file; splitting it into components is tracked separately.
+- `apps/web/src/routes/devops/tickets/[ticketId]/+page.svelte` (~735 lines)
+- `apps/web/src/routes/devops/TicketCard.svelte` (~301 lines) — only just over; low priority.
 
 ---
 

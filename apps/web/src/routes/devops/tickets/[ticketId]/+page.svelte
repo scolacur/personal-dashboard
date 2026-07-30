@@ -331,7 +331,7 @@
 </script>
 
 <nav class="detail-nav">
-  <a href="/devops">← Back to board</a>
+  <a href="/devops/task-tracker">← Back to board</a>
 </nav>
 
 {#if loading}
