@@ -111,6 +111,18 @@ export function startRun(
   return Number(res.lastInsertRowid);
 }
 
+/**
+ * Record in-flight turn progress on a still-`running` run (PD-230), so the board can show how
+ * close a live run is to the ceiling. Scoped to `status = 'running'` so a late progress callback
+ * can never resurrect a finished run's authoritative `num_turns` (which `finishRun` writes).
+ */
+export function updateRunProgress(db: Database.Database, runId: number, turns: number): void {
+  db.prepare(`UPDATE agent_runs SET turns = ? WHERE id = ? AND status = 'running'`).run(
+    turns,
+    runId,
+  );
+}
+
 export interface FinishRunInput {
   status: Exclude<RunStatus, 'running'>;
   sessionId?: string | null;

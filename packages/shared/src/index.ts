@@ -51,6 +51,7 @@ export type {
   RobotFaultTier,
   RobotEventType,
   RobotEventDetail,
+  TurnProgress,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,
@@ -66,6 +67,11 @@ export {
   laneForcedAssignee,
   AGENT_STATE_LABELS,
   AGENT_STATE_DESCRIPTIONS,
+  ROBOT_MAX_TURNS_DEFAULT,
+  TURN_WARN_FRACTION,
+  TURN_PROGRESS_STATES,
+  turnProgress,
+  showsTurnProgress,
   isReady,
   NOTIFICATION_KINDS,
   HUMAN_REPLY_MARKER,
