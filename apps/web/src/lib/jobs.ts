@@ -1,5 +1,5 @@
-// The dashboard's recurring background jobs (PD-286), surfaced in the Task Monitor "Jobs"
-// section + /task-monitor/jobs. Kept in lockstep with the crons the server registers in
+// The dashboard's recurring background jobs (PD-286), surfaced in the Dev Ops "Jobs"
+// section + /devops/jobs. Kept in lockstep with the crons the server registers in
 // apps/server/src/index.ts (task-monitor:audit + db-backup). `kind` picks the row renderer:
 // 'audit' gets the rich row (live status, Run now, report link); everything else is schedule-only.
 
@@ -23,7 +23,7 @@ export const RECURRING_JOBS: RecurringJob[] = [
     description: 'Autonomous advisory sweep of the backlog (D-045).',
     schedule: '0 5 * * 1', // AUDIT_SCHEDULE — weekly, Monday 05:00
     kind: 'audit',
-    reportRoute: '/task-monitor/reports/ticket-audit',
+    reportRoute: '/devops/reports/ticket-audit',
   },
   {
     id: 'db-backup',

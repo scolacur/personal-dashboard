@@ -3,8 +3,8 @@
   import AuditJobRow from './AuditJobRow.svelte';
   import JobRow from './JobRow.svelte';
 
-  // The Recurring Jobs list (PD-286). On the Task Monitor page it's capped with a "View all"
-  // link to the full /task-monitor/jobs page; the full page renders it uncapped.
+  // The Recurring Jobs list (PD-286). On the Dev Ops page it's capped with a "View all"
+  // link to the full /devops/jobs page; the full page renders it uncapped.
   let {
     heading = 'Jobs',
     limit,

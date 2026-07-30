@@ -61,14 +61,14 @@ export const pages: PageMeta[] = [
     route: '/inboxes',
   },
   {
-    id: 'task-monitor',
-    title: 'Task Monitor',
+    id: 'devops',
+    title: 'Dev Ops',
     description: 'Monitor and control AI agent workflows.',
-    route: '/task-monitor',
+    route: '/devops',
     children: [
-      { id: 'tm-site-status', title: 'Site Status', route: '/task-monitor#site-status' },
-      { id: 'tm-jobs', title: 'Jobs', route: '/task-monitor#jobs' },
-      { id: 'tm-tickets', title: 'Tickets', route: '/task-monitor#tickets' },
+      { id: 'do-site-status', title: 'Site Status', route: '/devops#site-status' },
+      { id: 'do-jobs', title: 'Jobs', route: '/devops#jobs' },
+      { id: 'do-tickets', title: 'Tickets', route: '/devops#tickets' },
     ],
   },
 ];

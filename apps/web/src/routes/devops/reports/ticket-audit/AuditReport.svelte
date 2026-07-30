@@ -53,7 +53,7 @@
                 <li class="audit-finding">
                   <div class="finding-top">
                     {#if ticket?.displayId}
-                      <a class="finding-ticket" href="/task-monitor/tickets/{ticket.displayId}">
+                      <a class="finding-ticket" href="/devops/tickets/{ticket.displayId}">
                         {ticket.displayId}
                       </a>
                     {:else}

@@ -8,7 +8,7 @@
     fetchTicketEvents,
     postRefineReply,
     rejectRefine,
-  } from '../routes/task-monitor/api';
+  } from '../routes/devops/api';
 
   // The Refine thread lives on the ticket's activity log (agent_ticket_events); this
   // component reads it via the generic events endpoint and renders the refine_* subset

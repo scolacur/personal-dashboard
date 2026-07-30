@@ -34,7 +34,7 @@
   const total = $derived(summary?.total ?? 0);
   const pct = $derived(total > 0 ? Math.round((done / total) * 100) : 0);
   const detailHref = $derived(
-    epic.displayId ? `/task-monitor/tickets/${epic.displayId}` : undefined,
+    epic.displayId ? `/devops/tickets/${epic.displayId}` : undefined,
   );
 
   function assigneeLabel(a: TicketAssignee | null): string {

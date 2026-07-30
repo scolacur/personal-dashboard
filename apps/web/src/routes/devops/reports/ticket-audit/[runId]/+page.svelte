@@ -45,7 +45,7 @@
       <h1 class="report-title">Audit run #{Number.isNaN(runId) ? '?' : runId}</h1>
       <p class="report-sub">A read-only snapshot of every finding this run produced.</p>
     </div>
-    <a class="report-board-link" href="/task-monitor/reports/ticket-audit">← All findings</a>
+    <a class="report-board-link" href="/devops/reports/ticket-audit">← All findings</a>
   </header>
 
   {#if loading}

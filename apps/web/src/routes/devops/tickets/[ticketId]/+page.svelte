@@ -331,7 +331,7 @@
 </script>
 
 <nav class="detail-nav">
-  <a href="/task-monitor">← Back to board</a>
+  <a href="/devops">← Back to board</a>
 </nav>
 
 {#if loading}
@@ -442,7 +442,7 @@
         {#if parent}
           <p class="belongs-to-epic">
             Part of epic
-            <a href="/task-monitor/tickets/{parent.displayId}">{parent.displayId} — {parent.title}</a>
+            <a href="/devops/tickets/{parent.displayId}">{parent.displayId} — {parent.title}</a>
           </p>
         {/if}
       {/if}
@@ -465,7 +465,7 @@
             <ul class="member-list">
               {#each epicMembers as m (m.id)}
                 <li class="member-row">
-                  <a class="member-ref" href="/task-monitor/tickets/{m.displayId}"
+                  <a class="member-ref" href="/devops/tickets/{m.displayId}"
                     >{m.displayId} — {m.title}</a
                   >
                   <span class="member-status">{STATUS_LABELS[m.status] ?? m.status}</span>
@@ -516,7 +516,7 @@
             {#each relations as rel (rel.id)}
               <li class="relation-row">
                 <span class="relation-kind">{relationLabel(rel)}</span>
-                <a class="relation-ref" href="/task-monitor/tickets/{rel.other.displayId}"
+                <a class="relation-ref" href="/devops/tickets/{rel.other.displayId}"
                   >{rel.other.displayId ?? `#${rel.other.ticketId}`} — {rel.other.title}</a
                 >
                 <span class="relation-status">{STATUS_LABELS[rel.other.status] ?? rel.other.status}</span>
