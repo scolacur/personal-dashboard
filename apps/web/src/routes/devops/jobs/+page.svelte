@@ -5,7 +5,7 @@
 <section class="jobs-page">
   <header class="jobs-page-head">
     <h1 class="jobs-page-title">Recurring Jobs</h1>
-    <a class="jobs-page-back" href="/devops#jobs">← Dev Ops</a>
+    <a class="jobs-page-back" href="/devops">← Dev Ops</a>
   </header>
   <p class="jobs-page-sub">
     Scheduled background jobs the dashboard runs. Times are computed from each job's cron

@@ -66,8 +66,8 @@ export const pages: PageMeta[] = [
     description: 'Monitor and control AI agent workflows.',
     route: '/devops',
     children: [
-      { id: 'do-site-status', title: 'Site Status', route: '/devops#site-status' },
-      { id: 'do-jobs', title: 'Jobs', route: '/devops#jobs' },
+      { id: 'do-agent-dashboard', title: 'Agent Dashboard', route: '/devops/agent-dashboard' },
+      { id: 'do-jobs', title: 'Jobs', route: '/devops/jobs' },
       { id: 'do-task-tracker', title: 'Task Tracker', route: '/devops/task-tracker' },
     ],
   },
