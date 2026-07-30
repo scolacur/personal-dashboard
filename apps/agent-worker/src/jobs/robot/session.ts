@@ -135,7 +135,10 @@ export async function runRobotSession(
       // assistant messages is an APPROXIMATION of that number; it exists so the board can show
       // "how close is this run to the cap" while it runs, and is overwritten with the real value
       // by finishRun. Never let a reporting failure kill the session.
-      if (message.type === 'assistant' && onProgress) {
+      // Only TOP-LEVEL assistant messages count. Ones emitted inside a tool-use / sub-agent
+      // context carry a non-null `parent_tool_use_id` and are not turns of the main loop —
+      // counting them would inflate the live number well past the SDK's final `num_turns`.
+      if (message.type === 'assistant' && message.parent_tool_use_id == null && onProgress) {
         liveTurns += 1;
         try {
           onProgress(liveTurns);

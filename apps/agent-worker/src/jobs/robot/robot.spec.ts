@@ -75,6 +75,30 @@ describe('processRobotQueue', () => {
     expect(branchFor({ id: 5, issueNumber: null, repo: 'r', title: 't', body: null })).toBe('robot/t5');
   });
 
+  // PD-230: the loop must hand the session a progress callback that persists live turn counts.
+  // This guards the WIRING specifically — runRobotSession takes `runQuery` in slot 5 and
+  // `onProgress` in slot 6, so a positional slip in the default `doRun` wrapper would silently
+  // disable live progress while every other test stayed green.
+  it('wires a turn-progress callback that persists onto the running run (PD-230)', async () => {
+    addQueued(db, 1);
+    let observed: number | null = null;
+    const d: RobotDeps = {
+      ...deps(),
+      runSession: async (_c, _cand, _wt, _resume, onProgress) => {
+        // Mid-session: report progress and read it straight back off the run row.
+        onProgress?.(7);
+        observed = listRunsForTicket(db, 1)[0]?.turns ?? null;
+        return { ok: true, sessionId: 'sess-1', verifyOk: true, prNumber: 314 };
+      },
+    };
+
+    await processRobotQueue(db, cfg(), d);
+
+    expect(observed).toBe(7); // the callback wrote through to the DB while the run was live
+    // …and the authoritative count from the finished run still wins afterwards.
+    expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
+  });
+
   it('does nothing when dispatch is disabled', async () => {
     addQueued(db, 1);
     const n = await processRobotQueue(db, cfg({ ROBOT_DISPATCH_ENABLED: '0' }), deps());
