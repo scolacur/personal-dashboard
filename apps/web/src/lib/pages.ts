@@ -68,7 +68,7 @@ export const pages: PageMeta[] = [
     children: [
       { id: 'do-site-status', title: 'Site Status', route: '/devops#site-status' },
       { id: 'do-jobs', title: 'Jobs', route: '/devops#jobs' },
-      { id: 'do-tickets', title: 'Tickets', route: '/devops#tickets' },
+      { id: 'do-task-tracker', title: 'Task Tracker', route: '/devops/task-tracker' },
     ],
   },
 ];
