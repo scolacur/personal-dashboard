@@ -94,7 +94,7 @@
               {#if n.ticketDisplayId}
                 <a
                   class="notif-link"
-                  href="/task-monitor/tickets/{n.ticketDisplayId}"
+                  href="/devops/tickets/{n.ticketDisplayId}"
                   onclick={() => onItemClick(n)}
                 >
                   <span class="notif-title">{n.title}</span>

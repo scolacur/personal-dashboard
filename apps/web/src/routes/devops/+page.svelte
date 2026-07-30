@@ -641,7 +641,7 @@
     error = null;
     try {
       await api.startRefine(ticket.id);
-      if (ticket.displayId) await goto(`/task-monitor/tickets/${ticket.displayId}`);
+      if (ticket.displayId) await goto(`/devops/tickets/${ticket.displayId}`);
       else await load(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -702,7 +702,7 @@
   <SystemStatus />
 </section>
 
-<JobsList heading="Jobs" limit={5} viewAllHref="/task-monitor/jobs" />
+<JobsList heading="Jobs" limit={5} viewAllHref="/devops/jobs" />
 
 <section class="tickets-section" id="tickets">
   <div class="section-head">

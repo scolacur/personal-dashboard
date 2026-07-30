@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TicketEvent, RobotEventDetail } from '@dashboard/shared';
   import { ROBOT_EVENT } from '@dashboard/shared';
-  import { fetchTicketEvents } from '../routes/task-monitor/api';
+  import { fetchTicketEvents } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
   // The ticket's activity timeline (C3/PD-344, realising PD-255). Reads the SAME

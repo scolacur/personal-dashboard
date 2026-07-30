@@ -69,7 +69,7 @@
 
   // ⋮ "Mark as →" relation menu (D-051, PD-322).
   let menuOpen = $state(false);
-  const detailHref = $derived(ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined);
+  const detailHref = $derived(ticket.displayId ? `/devops/tickets/${ticket.displayId}` : undefined);
 
   function chooseRelation(action: RelationAction) {
     menuOpen = false;
@@ -149,7 +149,7 @@
         <a
           class="ticket-id"
           style="--id-color: {projectIdColor(project)}"
-          href="/task-monitor/tickets/{ticket.displayId}"
+          href="/devops/tickets/{ticket.displayId}"
           title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
           draggable="false">{ticket.displayId}</a
         >
@@ -221,7 +221,7 @@
         {:else if ticket.refineState}
           <a
             class="refine-pill refine-{ticket.refineState}"
-            href={ticket.displayId ? `/task-monitor/tickets/${ticket.displayId}` : undefined}
+            href={ticket.displayId ? `/devops/tickets/${ticket.displayId}` : undefined}
             draggable="false"
             title="Refine session — {REFINE_STATE_LABELS[ticket.refineState]}"
           >{REFINE_STATE_LABELS[ticket.refineState]}</a>

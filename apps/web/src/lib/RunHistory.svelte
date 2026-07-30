@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AgentRun, RobotFaultTier, RobotRunStatus } from '@dashboard/shared';
-  import { fetchTicketRuns } from '../routes/task-monitor/api';
+  import { fetchTicketRuns } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
   // Robot run history for a ticket (C3/PD-344). Self-fetching like TicketThread. The loop is

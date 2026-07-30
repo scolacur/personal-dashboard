@@ -57,7 +57,7 @@
         with PD-287.
       </p>
     </div>
-    <a class="report-board-link" href="/task-monitor">← Task Monitor</a>
+    <a class="report-board-link" href="/devops">← Dev Ops</a>
   </header>
 
   {#if loading}
@@ -76,7 +76,7 @@
       </span>
       <span>
         Showing <strong>{openCount}</strong> open finding{openCount === 1 ? '' : 's'} from
-        <a href="/task-monitor/reports/ticket-audit/{reportRun.id}">run #{reportRun.id}</a>
+        <a href="/devops/reports/ticket-audit/{reportRun.id}">run #{reportRun.id}</a>
         · finished {formatTs(reportRun.finishedAt)}
       </span>
       {#if runningNewer}
@@ -93,7 +93,7 @@
       <ul class="run-history-list">
         {#each runs.slice(0, HISTORY_LIMIT) as r (r.id)}
           <li class="run-history-row">
-            <a href="/task-monitor/reports/ticket-audit/{r.id}">run #{r.id}</a>
+            <a href="/devops/reports/ticket-audit/{r.id}">run #{r.id}</a>
             <span class="hist-status" style="--rc: {runStatusColor(r.status)}">{runStatusLabel(r.status)}</span>
             <span class="hist-counts">{#if r.counts}{r.counts.findings} findings{:else}—{/if}</span>
             <span class="hist-time">{formatTs(r.finishedAt ?? r.createdAt)}</span>

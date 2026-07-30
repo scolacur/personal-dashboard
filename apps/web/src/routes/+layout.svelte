@@ -27,13 +27,13 @@
 
   // The pomodoro floats over the whole app, but on the ticket-detail page it overlaps the
   // Refine chat window on mobile — hide it there. Match on route id (exact) not pathname.
-  const showPomodoro = $derived(page.route.id !== '/task-monitor/tickets/[ticketId]');
+  const showPomodoro = $derived(page.route.id !== '/devops/tickets/[ticketId]');
 
   // Arrange button: shown only on widget-bearing pages at >=768px (enforced in CSS).
   // task-monitor is a Kanban, not a widget grid — excluded.
   const canArrange = $derived.by(() => {
     const pathname = page.url.pathname;
-    if (pathname.startsWith('/task-monitor')) return false;
+    if (pathname.startsWith('/devops')) return false;
     if (pathname === '/') return widgets.length > 0;
     const p = pages.find(
       (pg) =>
