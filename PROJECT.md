@@ -339,6 +339,18 @@ spec. Deletion is ticket-authoritative (D-039).
 > **Robot loop** in `agent-worker` (cutover complete). All agent state is now DB-native. See
 > `DECISIONS.md` D-055.
 
+**Osiris**:
+The **agent control plane** (D-061) — the umbrella name covering the **Robot loop**, the queue and
+dispatch model (D-058), the agent-state machine, and the Dev Ops surfaces that drive and observe
+them. Names the *system*, not the repo: **personal dashboard** stays the name of the widget-hosting
+project, and Osiris is the system living inside it. From the same Matrix-universe naming vein as
+the harness project's Tank / Architect / Oracle — the Osiris is a Zion hovercraft, the vessel a
+crew is loaded into the Matrix from, monitored while inside, and extracted back to, which is what
+the control plane does with a Robot.
+_Avoid_: **"Matrix"** as a name for this — it already aliases `core`/`harness` in `/harness`;
+calling the whole dashboard Osiris (it is one system among the widgets); and using the codename in
+public-facing or resume descriptions, which stay descriptive ("self-hosted agent platform").
+
 **Robot**:
 A **dispatched ticket-completing coding agent** in `agent-worker` (D-055). One Robot works one
 `robot_queue` ticket: it gets a per-ticket **worktree**, runs an Agent-SDK coding session against
