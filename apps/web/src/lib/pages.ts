@@ -1,5 +1,6 @@
-/** A nested nav item under a top-level page (PD-286). `route` carries a `#hash` to scroll to a
- *  section on the parent page. Revealed via the parent's accordion. */
+/** A nested nav item under a top-level page (PD-286). `route` is a real subroute of the parent
+ *  (PD-422 replaced the original `#hash` scroll targets); reached by drilling into the parent
+ *  in the side nav. */
 export interface NavChild {
   id: string;
   title: string;
@@ -11,7 +12,8 @@ export interface PageMeta {
   title: string;
   description: string;
   route: string;
-  /** Nested nav items, revealed as an accordion under this page in the side nav. */
+  /** Nested nav items. Selecting this page in the side nav navigates to it and slides to a
+   *  second panel listing these (PD-415); a page without children just navigates. */
   children?: NavChild[];
 }
 

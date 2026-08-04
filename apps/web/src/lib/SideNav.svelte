@@ -1,73 +1,49 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
-  import { page } from '$app/stores';
-  import { slide } from 'svelte/transition';
-  import { ChevronRight } from 'lucide-svelte';
+  import { page } from '$app/state';
+  import { fly } from 'svelte/transition';
+  import { ChevronLeft, ChevronRight } from 'lucide-svelte';
   import { pages } from '$lib/pages';
-  import { SvelteSet } from 'svelte/reactivity';
   import YinYang from '$lib/icons/YinYang.svelte';
 
   // Called after a nav link is chosen — the layout uses it to close the
   // mobile drawer. No-op on desktop where the rail is always visible.
   let { onNavigate }: { onNavigate?: () => void } = $props();
 
+  // Panel travel matches the rail width, so a panel slides fully out of view.
+  const SLIDE_X = 220;
+  const SLIDE_MS = 180;
+
   function isRouteActive(route: string, pathname: string): boolean {
     if (route === '/') return pathname === '/';
     return pathname === route || pathname.startsWith(route + '/');
   }
 
-  // Accordion state: which parents have their sub-items revealed. Sections start collapsed
-  // ("not normally visible") except the one you're currently inside.
-  const open = new SvelteSet(
-    browser
-      ? pages.filter((p) => p.children && isRouteActive(p.route, $page.url.pathname)).map((p) => p.id)
-      : [],
+  // Which level the nav shows is a pure function of the route (PD-415): a page with children
+  // is "drilled into" whenever the current route is that page or one of its subroutes. That
+  // makes deep-linking work for free — loading /devops/jobs opens level 2 with Jobs
+  // highlighted, no click involved, and the two ways of reaching a route can't disagree.
+  //
+  // `showRoot` is the single transient override: Back returns to level 1 *without* navigating,
+  // and it lasts only until the route changes.
+  let showRoot = $state(false);
+
+  const drilled = $derived(
+    showRoot
+      ? undefined
+      : pages.find((p) => p.children?.length && isRouteActive(p.route, page.url.pathname)),
   );
 
-  // The hash of the section currently selected on the parent page (Jobs/Tickets). Tracked
-  // locally because we scroll via replaceState, which the page store doesn't observe.
-  let selectedHash = $state(browser ? window.location.hash : '');
   $effect(() => {
-    void $page.url.pathname; // re-run on route change
-    selectedHash = browser ? window.location.hash : '';
+    void page.url.pathname; // re-run on navigation
+    showRoot = false;
   });
 
-  function childActive(route: string): boolean {
-    const i = route.indexOf('#');
-    if (i === -1) return isRouteActive(route, $page.url.pathname);
-    return $page.url.pathname === route.slice(0, i) && selectedHash === route.slice(i);
-  }
-
-  // Clicking a parent that has children navigates AND reveals its accordion (never collapses —
-  // use the chevron to collapse).
-  function onParentClick(id: string, hasChildren: boolean) {
+  function onParentClick(hasChildren: boolean) {
+    // Clear the Back override even when the href doesn't change the route — otherwise
+    // choosing Dev Ops while already on /devops (i.e. right after Back) would leave the
+    // panel closed, since no navigation occurs to reset it.
+    if (hasChildren) showRoot = false;
     onNavigate?.();
-    if (hasChildren) open.add(id);
-  }
-
-  function toggle(e: MouseEvent, id: string) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (open.has(id)) open.delete(id);
-    else open.add(id);
-  }
-
-  // Hash children scroll to a section on the parent page; smooth-scroll when already there.
-  function onChildClick(e: MouseEvent, route: string) {
-    onNavigate?.();
-    const hashIdx = route.indexOf('#');
-    if (hashIdx === -1) return;
-    const base = route.slice(0, hashIdx);
-    const id = route.slice(hashIdx + 1);
-    if ($page.url.pathname === base) {
-      const el = document.getElementById(id);
-      if (el) {
-        e.preventDefault();
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        history.replaceState(history.state, '', route);
-        selectedHash = '#' + id;
-      }
-    }
   }
 </script>
 
@@ -76,52 +52,82 @@
     <span class="side-brand-mark"><YinYang size={24} /></span>
     <span class="side-brand-text">Da Steve Zone</span>
   </a>
-  <ul class="side-links">
-    {#each pages as p (p.id)}
-      <li>
-        <div class="side-link-row" class:active={isRouteActive(p.route, $page.url.pathname)}>
-          <a
-            href={p.route}
-            class="side-link"
-            class:active={isRouteActive(p.route, $page.url.pathname)}
-            aria-current={isRouteActive(p.route, $page.url.pathname) ? 'page' : undefined}
-            onclick={() => onParentClick(p.id, !!p.children)}
+
+  <!-- Both panels are absolutely positioned so they overlay while sliding rather than
+       stacking; the container clips whichever is on its way out. -->
+  <div class="side-panels">
+    {#if drilled === undefined}
+      <div
+        class="side-panel"
+        in:fly={{ x: -SLIDE_X, duration: SLIDE_MS }}
+        out:fly={{ x: -SLIDE_X, duration: SLIDE_MS }}
+      >
+        <ul class="side-links">
+          {#each pages as p (p.id)}
+            {@const active = isRouteActive(p.route, page.url.pathname)}
+            <li>
+              <a
+                href={p.route}
+                class="side-link"
+                class:active
+                aria-current={active ? 'page' : undefined}
+                onclick={() => onParentClick(!!p.children?.length)}
+              >
+                <span class="side-link-label">{p.title}</span>
+                {#if p.children?.length}
+                  <!-- Inside the link, so the active highlight spans it (PR #273). -->
+                  <span class="side-link-caret" aria-hidden="true"><ChevronRight size={16} /></span>
+                {/if}
+              </a>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {:else}
+      {@const parentActive = page.url.pathname === drilled.route}
+      <div
+        class="side-panel"
+        in:fly={{ x: SLIDE_X, duration: SLIDE_MS }}
+        out:fly={{ x: SLIDE_X, duration: SLIDE_MS }}
+      >
+        <div class="side-back-row" class:active={parentActive}>
+          <button
+            class="side-back"
+            type="button"
+            onclick={() => (showRoot = true)}
+            aria-label="Back to all sections"
           >
-            <span class="side-link-label">{p.title}</span>
+            <ChevronLeft size={16} />
+          </button>
+          <a
+            href={drilled.route}
+            class="side-back-title"
+            aria-current={parentActive ? 'page' : undefined}
+            onclick={onNavigate}
+          >
+            {drilled.title}
           </a>
-          {#if p.children}
-            <button
-              class="side-caret"
-              type="button"
-              aria-label={open.has(p.id) ? `Collapse ${p.title}` : `Expand ${p.title}`}
-              aria-expanded={open.has(p.id)}
-              onclick={(e) => toggle(e, p.id)}
-            >
-              <span class="side-caret-icon" class:open={open.has(p.id)}><ChevronRight size={16} /></span>
-            </button>
-          {/if}
         </div>
 
-        {#if p.children && open.has(p.id)}
-          <ul class="side-sublinks" transition:slide={{ duration: 150 }}>
-            {#each p.children as child (child.id)}
-              <li>
-                <a
-                  href={child.route}
-                  class="side-sublink"
-                  class:active={childActive(child.route)}
-                  aria-current={childActive(child.route) ? 'page' : undefined}
-                  onclick={(e) => onChildClick(e, child.route)}
-                >
-                  {child.title}
-                </a>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </li>
-    {/each}
-  </ul>
+        <ul class="side-links">
+          {#each drilled.children ?? [] as child (child.id)}
+            {@const active = isRouteActive(child.route, page.url.pathname)}
+            <li>
+              <a
+                href={child.route}
+                class="side-link"
+                class:active
+                aria-current={active ? 'page' : undefined}
+                onclick={onNavigate}
+              >
+                <span class="side-link-label">{child.title}</span>
+              </a>
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  </div>
 </nav>
 
 <style lang="scss" src="./SideNav.scss"></style>
