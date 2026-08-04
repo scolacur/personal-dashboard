@@ -12,6 +12,7 @@
     filterItems,
     formatValue,
     nextSort,
+    readField,
     sortItems,
     toDraft,
     type Draft,
@@ -174,7 +175,7 @@
           {#each shown as item (getId(item))}
             <tr>
               {#each cols as col (col.key)}
-                <td class="lm-cell type-{col.type}">{formatValue(item[col.key])}</td>
+                <td class="lm-cell type-{col.type}">{formatValue(readField(item, col.key))}</td>
               {/each}
               <td class="lm-cell lm-actions-cell">
                 <Button variant="ghost" onclick={() => (editing = item)}>Edit</Button>

@@ -10,6 +10,7 @@ import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as taskMonitorWidget } from './widgets/task-monitor/index';
 import { widget as pomodoroWidget } from './widgets/pomodoro/index';
 import { widget as acuteStrategiesWidget } from './widgets/acute-strategies-generator/index';
+import { widget as buySellTradeWidget } from './widgets/buy-sell-trade/index';
 import { initDeployStatus, getDeployInfo } from './deploy-status';
 
 const widgets: BackendWidget[] = [
@@ -17,6 +18,7 @@ const widgets: BackendWidget[] = [
   taskMonitorWidget,
   pomodoroWidget,
   acuteStrategiesWidget,
+  buySellTradeWidget,
 ];
 
 // Structured JSON in prod (log aggregation); human-readable pretty logs in dev.

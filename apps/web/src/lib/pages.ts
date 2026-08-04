@@ -57,6 +57,12 @@ export const pages: PageMeta[] = [
     route: '/event-tracker',
   },
   {
+    id: 'buy-sell-trade',
+    title: 'Buy, Sell, Trade',
+    description: 'Gear you are buying, selling and trading — and who is asking for it.',
+    route: '/buy-sell-trade',
+  },
+  {
     id: 'inboxes',
     title: 'Inboxes',
     description: 'One-at-a-time organizational jobs you chip away at over time.',
