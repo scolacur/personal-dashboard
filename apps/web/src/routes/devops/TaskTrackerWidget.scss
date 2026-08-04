@@ -1,0 +1,123 @@
+/* ── Task Tracker summary widget (/devops overview) ───── */
+
+.tt-widget {
+  height: 100%;
+  padding: var(--space-sm) var(--space-md);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  font-size: var(--font-size-sm);
+}
+
+.tt-group-title {
+  margin: 0 0 var(--space-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.tt-count {
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+.tt-empty {
+  margin: 0;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tt-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.tt-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+}
+
+.tt-link {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  min-width: 0; // lets the title ellipsis rather than pushing the state pill off the card
+  flex: 1;
+  color: inherit;
+  text-decoration: none;
+
+  &:hover .tt-title {
+    color: var(--accent);
+  }
+}
+
+.tt-id {
+  flex: none;
+  font-family: monospace;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+.tt-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.tt-when {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+// Agent-state pill — same --status-* tokens as the board cards and the Agent widget.
+.tt-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  .dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+
+  &.agent-state-queued {
+    color: var(--status-queued);
+  }
+  &.agent-state-working {
+    color: var(--status-working);
+  }
+  &.agent-state-in-review {
+    color: var(--status-in-review);
+  }
+  &.agent-state-awaiting-human {
+    color: var(--status-awaiting-human);
+  }
+  &.agent-state-needs-human {
+    color: var(--status-needs-human);
+  }
+  &.agent-state-stuck {
+    color: var(--status-stuck);
+  }
+}

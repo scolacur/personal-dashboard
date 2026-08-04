@@ -1,8 +1,9 @@
+// No trailing margin: spacing belongs to the consumer, since this renders both as a full
+// page section (/devops/agent-dashboard) and inside the overview's Agent widget card.
 .system-status {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  margin-bottom: var(--space-lg);
   font-size: var(--font-size-sm);
 }
 

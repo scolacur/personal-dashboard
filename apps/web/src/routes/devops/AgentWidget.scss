@@ -1,0 +1,7 @@
+/* ── Agent summary widget (/devops overview) ───── */
+
+.agent-widget {
+  height: 100%;
+  padding: var(--space-sm) var(--space-md);
+  overflow-y: auto;
+}

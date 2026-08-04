@@ -66,7 +66,13 @@
 >
   {#if embed && EmbedComponent}
     <div class="widget-card-header">
-      <span class="widget-card-title">{title}</span>
+      <!-- The header is the card's link to its full page. In arrange mode it goes inert so
+           a drag that starts on the title doesn't navigate. -->
+      {#if arranging}
+        <span class="widget-card-title">{title}</span>
+      {:else}
+        <a href={route} class="widget-card-title widget-card-link">{title}</a>
+      {/if}
     </div>
     <div class="widget-card-content">
       <EmbedComponent
@@ -74,8 +80,7 @@
         view={flipped ? 'manage' : 'generator'}
       />
     </div>
-    {#if !arranging}
-      <a href={route} class="expand-link">Expand ↗</a>
+    {#if !arranging && embed.flippable}
       <button
         type="button"
         class="flip-btn"
