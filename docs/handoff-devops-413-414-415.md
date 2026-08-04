@@ -1,8 +1,8 @@
-# Handoff — Dev Ops slices PD-413 / PD-414 / PD-415
+# Handoff — Dev Ops slices PD-414 / PD-415
 
-Written 2026-07-30 at the end of the session that shipped PD-420/421/422. Read this **after**
-`/harness pd` (which loads PROJECT.md + `MEMORY/2026-07-30.md`). Delete or rewrite this file once
-the three tickets land.
+Written 2026-07-30 at the end of the session that shipped PD-420/421/422; updated 2026-08-04 when
+PD-413 landed. Read this **after** `/harness pd` (which loads PROJECT.md + the recent `MEMORY/`
+day files). Delete or rewrite this file once the remaining two tickets land.
 
 ---
 
@@ -23,24 +23,24 @@ Re-enable only after the hardening work lands: **PD-411** (reset-aware retry), *
 
 ## Where things stand
 
-The Dev Ops restructure (epic PD-382 / id 469) is 3 of 6 done:
+The Dev Ops restructure (epic PD-382 / id 469) is 4 of 6 done:
 
 | Ticket | State |
 |---|---|
 | PD-420 route rename → `/devops` | ✅ merged (#270) |
 | PD-421 Kanban → `/devops/task-tracker` | ✅ merged (#271) |
 | PD-422 subroutes + shell + drop `#site-status` | ✅ merged (#272) |
-| nav/Jobs polish | 🔵 **PR #273 open** — merge before PD-415 |
-| **PD-413** overview grid + Agent Dashboard | ⬜ next |
-| **PD-414** deploy/commit → top nav | ⬜ |
+| nav/Jobs polish | ✅ merged (#273) |
+| PD-413 overview grid + Agent Dashboard | ✅ merged (#274) |
+| **PD-414** deploy/commit → top nav | ⬜ **next** |
 | **PD-415** paged sliding side nav | ⬜ |
 | PD-416 API endpoint rename | ⬜ deferred P4 |
 
 The route tree is now:
 
 ```
-/devops                     → overview: <JobsList limit={5}> only (deliberately minimal)
-/devops/agent-dashboard     → shell/placeholder  ← PD-413 fills this
+/devops                     → Arrange-able 3-widget grid (Task Tracker / Jobs / Agent)
+/devops/agent-dashboard     → SystemStatus: Robot fleet + dispatch + workers
 /devops/jobs                → full Jobs view
 /devops/task-tracker        → the full Kanban (~1103 lines)
 /devops/tickets/[id]        → ticket detail
@@ -54,36 +54,42 @@ one.
 
 ## Sequencing, and why
 
-**Do PD-413 and PD-414 before PD-415.**
+**Do PD-414 before PD-415.**
 
-PD-422 *removed* the `#site-status` section but deliberately **left `DeployStatus.svelte` and
-`SystemStatus.svelte` in the repo, unmounted**. Right now they render nowhere. PD-413 re-homes
-SystemStatus (→ Agent Dashboard) and PD-414 re-homes DeployStatus (→ top nav). Until both land,
-that information is invisible in the UI — so those two close a real regression, while PD-415 is
-additive.
+PD-422 *removed* the `#site-status` section but deliberately left `DeployStatus.svelte` and
+`SystemStatus.svelte` in the repo, unmounted. PD-413 re-homed SystemStatus (→ Agent Dashboard);
+**`DeployStatus` is still rendering nowhere**, so PD-414 is now the only remaining
+regression-closer, while PD-415 is purely additive.
 
-**Merge PR #273 before starting PD-415.** It changes `apps/web/src/lib/SideNav.scss` and
-`SideNav.svelte` — exactly the files PD-415 rewrites. Conflict otherwise.
+PR #273 is merged, so the `SideNav` conflict PD-415 used to be gated on is gone.
 
 ---
 
 ## Per-ticket notes
 
-### PD-413 — overview widget grid + Agent Dashboard
+### PD-413 — overview widget grid + Agent Dashboard ✅ (#274)
 
-- `/devops/agent-dashboard/+page.svelte` is a placeholder shell with a sibling `+page.scss`; you
-  will likely replace both.
-- **`devops/+page.scss` does not exist** — PD-422 deleted it because every rule became unused. Add
-  one back when the grid needs styling.
-- The ticket says to **drop the Sortie line from SystemStatus** — Sortie is retired (D-055). Note
-  the server's `system-status` route still returns its counts under a `sortie` key; that's a
-  backend name, out of scope here.
-- The Arrange-able grid already exists: `lib/WidgetGrid.svelte` renders a `widgetList` for a
-  `pageId`, the top-nav **Arrange** button auto-appears when `widgetsForPage(pageId).length > 0`,
-  and layouts persist to `dashboard:layout:<pageId>` via `lib/layout.ts` (D-053).
-- ⚠️ `+layout.svelte`'s `canArrange` currently **excludes everything under `/devops`**
-  (`startsWith`). If the overview is meant to be Arrange-able, that guard has to change — check the
-  ticket body and confirm with Steve if ambiguous.
+What landed, since PD-414 touches the same `+layout.svelte` and PD-415 the same nav model:
+
+- **`canArrange` moved.** The old blanket `startsWith('/devops') → false` guard is gone. The route
+  half now lives in `lib/nav-utils.ts` as `arrangeablePageId(pathname)` — an **exact** route match,
+  unit-tested in `nav-utils.spec.ts` — and `+layout.svelte` pairs it with the widget count. Keep
+  `nav-utils.ts` free of `widgets.ts` imports: the web vitest config runs **without** the Svelte
+  plugin, so a transitive `.svelte` import breaks the whole suite.
+- **Widget card headers are links** to the widget's page, replacing the old bottom-left
+  "Expand ↗". The ↺ flip is now gated behind `embed.flippable`. Steve prefers this shape and wants
+  the remaining widgets converted — **PD-444** tracks retiring the 3D flip entirely.
+- **The registry gained `system: true` + `homeWidgets()`.** Home renders the whole registry, so
+  anything added without that flag also appears on Home.
+- **The Sortie line stayed.** The ticket called the `activeStates` block "the Sortie line", but C7
+  relabelled it **Robot** and `getSortieFleet` aggregates live `agent_tickets.agent_state` —
+  `sortie` is only a stale wire-field name. Deleting it would have dropped the Robot fleet counts.
+  Decided with Steve; don't "finish the job" by removing it later.
+- **A known non-bug:** widgets flash at default size before snapping to their stored span. That is
+  `vite dev` only — SSR renders defaults, then hydration corrects. Prod is a static SPA shell
+  (`adapter-static`, `fallback: index.html`) so the first paint is already client-side and correct.
+  PROJECT.md §2 says "SSR off" but nothing declares it; a root `+layout.ts` with
+  `export const ssr = false` would make dev match prod. Not done — out of scope, no ticket yet.
 
 ### PD-414 — deploy/commit into the top nav
 
@@ -93,6 +99,9 @@ additive.
   Arrange button, so there's an established pattern to follow.
 - `DeployStatus.svelte` lives at `apps/web/src/routes/DeployStatus.svelte` (note: **not** under
   `devops/`).
+- The `startsWith` above is **correct here** and deliberately unlike `canArrange`'s exact match:
+  deploy/commit shows on *every* Dev Ops route, whereas Arrange applies only to the one route that
+  is actually a widget grid. Don't unify them.
 
 ### PD-415 — paged sliding side nav
 
