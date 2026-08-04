@@ -10,7 +10,16 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/build/**', '**/.svelte-kit/**', '**/node_modules/**'],
+    // `.claude/worktrees/**` holds OTHER sessions' git worktrees — separate checkouts that happen
+    // to live inside this one (and are gitignored). Linting them makes `npm run verify` fail on
+    // another session's work-in-progress, which is not this checkout's problem.
+    ignores: [
+      '**/dist/**',
+      '**/build/**',
+      '**/.svelte-kit/**',
+      '**/node_modules/**',
+      '.claude/worktrees/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
