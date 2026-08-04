@@ -27,9 +27,11 @@
 # are git's documented ones rather than a hand-rolled matcher. `**/package.json` matches the root
 # manifest as well as every workspace one (verified against this repo's tree).
 #
-# REQUIRED-CHECK WIRING — see the sibling note in ci.yml for the payload shape. The guard must be
-# proven to report on a real PR BEFORE being added to branch protection: adding a required check
-# that never reports would block every PR. To wire it once proven:
+# REQUIRED-CHECK WIRING — APPLIED 2026-08-04, after the guard was proven on two throwaway PRs
+# (#280 sensitive → red, then green once labelled; #281 non-sensitive → green). Both directions
+# were exercised deliberately: a required check that never reports, or that reports red on
+# everything, would block every PR. Protection is now
+# {admins:false, approvals:1, checks:["verify","path-guard"], strict:false}. To reapply/adjust:
 #   gh api -X PUT repos/scolacur/personal-dashboard/branches/main/protection \
 #     -H "Accept: application/vnd.github+json" --input - <<'JSON'
 #   { "required_status_checks": { "strict": false, "contexts": ["verify", "path-guard"] },
@@ -37,6 +39,11 @@
 #     "required_pull_request_reviews": { "required_approving_review_count": 1 },
 #     "restrictions": null }
 #   JSON
+#
+# NOTE ON REACH: enforce_admins is false, so an admin can still `gh pr merge --admin` past a red
+# guard. That is the intended trust model, not a hole — the guard's teeth are against the
+# unsupervised Robot, whose auto-merge keys off `mergeStateStatus == CLEAN` and therefore honours
+# this check automatically (DECISIONS.md D-042 note). The human IS the ack.
 
 name: path-guard
 

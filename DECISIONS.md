@@ -323,14 +323,20 @@ which point the name should become the repo name rather than an internal label.
 
 ## D-047: Sortie sensitive-path guardrails are two-tier — an authoritative, runtime-independent CI path-guard (Tier 1) plus a runtime-coupled in-loop Claude Code layer (Tier 2), both fed by one shared denylist (PD-308, PD-312; supersedes C-2, PD-13, C-15)
 
-> ⚠️ **STATUS 2026-08-04: TIER 1 BUILT, TIER 2 STILL OPEN.** PD-308 shipped
-> `.github/sensitive-paths.txt` + `.github/workflows/path-guard.yml`; the guard runs base-ref via
-> `pull_request_target` and matches with git's own `:(glob)` pathspecs. **PD-312 (Tier 2) remains
-> unshipped** — no Claude Code `permissions.deny`, no PreToolUse hook.
+> ⚠️ **STATUS 2026-08-04: TIER 1 LIVE, TIER 2 STILL OPEN.** PD-308 shipped
+> `.github/sensitive-paths.txt` + `.github/workflows/path-guard.yml`, and `path-guard` is now a
+> **required status check** on `main`. The guard runs base-ref via `pull_request_target` and
+> matches with git's own `:(glob)` pathspecs. **PD-312 (Tier 2) remains unshipped** — no Claude
+> Code `permissions.deny`, no PreToolUse hook.
 >
-> The design below stands as written. One implementation note worth carrying: the guard is
-> **required-check wired separately** from the workflow landing, because a required check that has
-> never reported would block every PR — see the wiring note in `path-guard.yml`.
+> The design below stands as written. Two implementation notes worth carrying:
+>
+> - **Wiring is a separate step from landing the workflow.** A required check that has never
+>   reported blocks every PR, so the guard was proven on throwaway PRs in *both* directions
+>   (#280 red→green-on-label, #281 green) before being added to protection.
+> - **`enforce_admins` stays false**, so an admin can still `--admin` merge past a red guard. That
+>   is the trust model working as designed: the guard binds the unsupervised Robot (whose
+>   auto-merge honours required checks via `mergeStateStatus == CLEAN`), and the human is the ack.
 
 **Decision:** Bounding what an autonomous Sortie worker may change **inside the repo** is enforced in **two tiers**, split by whether the layer survives an agent-runtime swap:
 
