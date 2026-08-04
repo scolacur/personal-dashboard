@@ -1,0 +1,49 @@
+/* ── Recurring Jobs (full page) ────────────────── */
+// Extracted from an inline <style> block per PROJECT.md §5 (styles live in their own files).
+
+.jobs-page {
+  // No max-width on purpose: the job cards are a responsive grid that goes two-up above
+  // 900px, so capping the page squeezed them for no benefit.
+  padding: var(--space-lg) var(--space-md);
+}
+
+.jobs-page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  // Let the back-link drop below the title rather than crushing it on narrow screens.
+  flex-wrap: wrap;
+}
+
+.jobs-page-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.jobs-page-back {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.jobs-page-sub {
+  margin: var(--space-xs) 0 var(--space-lg);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+// Reclaim horizontal space on phones — the outer app shell already supplies gutters.
+@media (max-width: 600px) {
+  .jobs-page {
+    padding: var(--space-md) var(--space-sm);
+  }
+
+  .jobs-page-title {
+    font-size: 1.25rem;
+  }
+}

@@ -41,6 +41,31 @@
   display: flex;
   align-items: stretch;
   gap: 2px;
+  border-radius: var(--radius);
+
+  // The active highlight lives on the ROW, not the <a>, so it spans the expand/collapse caret
+  // too — the caret is a sibling button outside the link, so a link-only background left it
+  // stranded on the page background.
+  &.active {
+    background: var(--accent);
+
+    .side-link,
+    .side-link:hover {
+      background: transparent;
+      color: var(--on-accent);
+    }
+
+    // The caret's default --muted is light grey, which is unreadable on the yellow accent.
+    .side-caret {
+      color: var(--on-accent);
+
+      &:hover {
+        color: var(--on-accent);
+        // Tint from the foreground so the hover reads on the accent instead of the page bg.
+        background: color-mix(in srgb, var(--on-accent) 20%, transparent);
+      }
+    }
+  }
 }
 
 .side-link {
@@ -62,9 +87,10 @@
     background: var(--surface-2);
   }
 
+  // Background is owned by .side-link-row.active (so it covers the caret); this keeps the
+  // foreground treatment only.
   &.active {
     color: var(--on-accent);
-    background: var(--accent);
     font-weight: 600;
   }
 }
