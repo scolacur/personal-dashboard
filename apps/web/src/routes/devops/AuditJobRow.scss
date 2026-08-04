@@ -125,6 +125,27 @@
   line-height: 1.5;
 }
 
+// Phones: the run row is a single flex line whose min-widths (run-id 5rem + run-count 6.5rem +
+// run-time 9rem = 20.5rem, before gaps, padding and the report link) overflow a 375px viewport
+// and force the page to scroll sideways. Let it wrap onto two lines instead, with the timestamp
+// dropping to its own row.
+@media (max-width: 600px) {
+  .run-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .run-id,
+  .run-count {
+    min-width: 0;
+  }
+
+  .run-time {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+}
+
 .toast {
   position: fixed;
   bottom: var(--space-lg);

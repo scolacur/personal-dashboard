@@ -79,7 +79,7 @@
   <ul class="side-links">
     {#each pages as p (p.id)}
       <li>
-        <div class="side-link-row">
+        <div class="side-link-row" class:active={isRouteActive(p.route, $page.url.pathname)}>
           <a
             href={p.route}
             class="side-link"
