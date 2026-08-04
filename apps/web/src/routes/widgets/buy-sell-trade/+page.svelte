@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { BST_LISTING_TYPES, type BstImportResult, type BstListing } from '@dashboard/shared';
+  import {
+    BST_CATEGORIES,
+    BST_LISTING_TYPES,
+    BST_SALE_STATUSES,
+    type BstImportResult,
+    type BstListing,
+  } from '@dashboard/shared';
   import Button from '$lib/Button.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
   import ListManager from '$lib/ListManager.svelte';
@@ -42,6 +48,14 @@
     // Price is free text on purpose: "$250 shipped" / "offers" / "trade only" are all real.
     { key: 'price', label: 'Price', type: 'text', placeholder: 'e.g. $250 shipped' },
     { key: 'condition', label: 'Condition', type: 'text', placeholder: 'e.g. Mint' },
+    {
+      key: 'saleStatus',
+      label: 'Sale status',
+      type: 'select',
+      options: BST_SALE_STATUSES,
+      hint: 'Only “for-sale” is drafted as a firm sale',
+    },
+    { key: 'category', label: 'Category', type: 'select', options: BST_CATEGORIES },
     { key: 'location', label: 'Location', type: 'text', hint: 'Your own reference — never posted' },
     { key: 'notes', label: 'Notes', type: 'textarea', formOnly: true },
   ];
@@ -185,6 +199,22 @@
                   <li>{p}</li>
                 {/each}
               </ul>
+            {/if}
+
+            {#if importResult.extractedTerms}
+              <!-- Offered, never auto-applied: a re-import must not clobber terms edited here. -->
+              <div class="bst-found-terms">
+                <p class="bst-found-terms-head">Sale terms found in the sheet:</p>
+                <pre class="bst-found-terms-body">{importResult.extractedTerms}</pre>
+                <Button
+                  variant="ghost"
+                  onclick={() => {
+                    terms = importResult?.extractedTerms ?? terms;
+                  }}
+                >
+                  Use these terms
+                </Button>
+              </div>
             {/if}
           </div>
         {/if}

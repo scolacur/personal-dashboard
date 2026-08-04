@@ -140,6 +140,38 @@
   }
 }
 
+.bst-found-terms {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.bst-found-terms-head {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+.bst-found-terms-body {
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
+  max-height: 10rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+}
+
 .bst-import-actions,
 .bst-terms-actions {
   display: flex;

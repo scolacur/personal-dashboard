@@ -18,6 +18,8 @@ export function bootstrapSchema(db: Database.Database): void {
       condition    TEXT,
       notes        TEXT,
       location     TEXT,
+      sale_status  TEXT,
+      category     TEXT,
       created_at   INTEGER NOT NULL,
       updated_at   INTEGER NOT NULL
     );

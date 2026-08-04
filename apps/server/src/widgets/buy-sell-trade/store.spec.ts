@@ -104,11 +104,35 @@ describe('importListingsCsv', () => {
     expect(listListings(db)).toHaveLength(3);
   });
 
-  it('reports skipped rows without losing the good ones', () => {
-    const r = importListingsCsv(db, `${HEADER}\nWTS,Make Noise,Maths,,,,\nSOLD,X,Y,,,,`);
-    expect(r).toMatchObject({ created: 1, skipped: 1 });
-    expect(r.problems[0]).toMatch(/row 3/);
+  // An unrecognised Type is a SECTION marker in this sheet, not a bad row — the sheet's
+  // second column carries MODULES / MISC / Feelers / "Probably won't sell".
+  it('treats an unrecognised Type as a section rather than rejecting the row', () => {
+    const r = importListingsCsv(db, `${HEADER}\nWTS,Make Noise,Maths,,,,\nFeelers,X,Y,,,,`);
+    expect(r).toMatchObject({ created: 2, skipped: 0 });
+    const y = listListings(db).find((l) => l.module === 'Y');
+    expect(y).toMatchObject({ type: 'WTS', saleStatus: 'feelers', category: 'Modules' });
+  });
+
+  it('carries a changed sale status through an update on re-import', () => {
+    importListingsCsv(db, `${HEADER}\nFeelers,ALM,mmMidi,$100,,,`);
+    importListingsCsv(db, `${HEADER}\nProbably won't sell,ALM,mmMidi,$100,,,`);
+    const m = listListings(db).find((l) => l.module === 'mmMidi');
+    expect(m?.saleStatus).toBe('probably-wont-sell');
     expect(listListings(db)).toHaveLength(1);
+  });
+
+  it('offers terms found in the sheet without applying them', () => {
+    const sheet = [
+      "Holographic b_boys's Module FS List,Type,Manufacturer,Module,Price,Condition,Notes,Current Location",
+      'like new condition,,SSF,Ultra Perc,$380,Excellent,,',
+      'WTTF:,,,,,,,',
+      'acidlab m303,,,,,,,',
+    ].join('\n');
+    const r = importListingsCsv(db, sheet);
+    expect(r.extractedTerms).toBe('like new condition');
+    // Offered, not applied — a re-import must never clobber terms edited in the app.
+    expect(getSettings(db).terms).toBe('');
+    expect(listListings(db).map((l) => l.module).sort()).toEqual(['Ultra Perc', 'acidlab m303']);
   });
 
   it('leaves the list untouched when the CSV has no usable header', () => {

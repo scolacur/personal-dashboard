@@ -1,13 +1,15 @@
 import type Database from 'better-sqlite3';
 import type {
+  BstCategory,
   BstImportResult,
   BstListing,
   BstListingType,
+  BstSaleStatus,
   BstSettings,
   CreateBstListingInput,
   UpdateBstListingInput,
 } from '@dashboard/shared';
-import { parseListingsCsv } from './csv';
+import { parseSheetCsv } from './csv';
 
 interface ListingRow {
   id: number;
@@ -18,6 +20,8 @@ interface ListingRow {
   condition: string | null;
   notes: string | null;
   location: string | null;
+  sale_status: string | null;
+  category: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -32,6 +36,8 @@ function rowToListing(r: ListingRow): BstListing {
     condition: r.condition,
     notes: r.notes,
     location: r.location,
+    saleStatus: r.sale_status as BstSaleStatus | null,
+    category: r.category as BstCategory | null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -58,8 +64,8 @@ export function createListing(db: Database.Database, input: CreateBstListingInpu
   const { lastInsertRowid } = db
     .prepare(
       `INSERT INTO buy_sell_trade_listings
-         (type, manufacturer, module, price, condition, notes, location, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (type, manufacturer, module, price, condition, notes, location, sale_status, category, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.type,
@@ -69,6 +75,8 @@ export function createListing(db: Database.Database, input: CreateBstListingInpu
       input.condition ?? null,
       input.notes ?? null,
       input.location ?? null,
+      input.saleStatus ?? null,
+      input.category ?? null,
       now,
       now,
     );
@@ -90,7 +98,7 @@ export function updateListing(
   db.prepare(
     `UPDATE buy_sell_trade_listings
         SET type = ?, manufacturer = ?, module = ?, price = ?, condition = ?, notes = ?,
-            location = ?, updated_at = ?
+            location = ?, sale_status = ?, category = ?, updated_at = ?
       WHERE id = ?`,
   ).run(
     pick('type'),
@@ -100,6 +108,8 @@ export function updateListing(
     pick('condition'),
     pick('notes'),
     pick('location'),
+    pick('saleStatus'),
+    pick('category'),
     Date.now(),
     id,
   );
@@ -121,7 +131,7 @@ export function deleteListing(db: Database.Database, id: number): boolean {
  * than half-imported in a state Steve would have to reconcile by hand.
  */
 export function importListingsCsv(db: Database.Database, text: string): BstImportResult {
-  const { rows, problems } = parseListingsCsv(text);
+  const { rows, terms, problems } = parseSheetCsv(text);
   let created = 0;
   let updated = 0;
 
@@ -148,7 +158,9 @@ export function importListingsCsv(db: Database.Database, text: string): BstImpor
   });
   run(rows);
 
-  return { created, updated, skipped: problems.length, problems };
+  // Terms are OFFERED, not applied: the caller decides whether to adopt them, so a re-import
+  // can never silently overwrite terms edited in the app since the first paste.
+  return { created, updated, skipped: problems.length, problems, extractedTerms: terms };
 }
 
 /* ── Settings ───────────────────────────────────── */

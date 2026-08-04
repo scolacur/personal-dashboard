@@ -9,8 +9,30 @@ export type BstListingType = (typeof BST_LISTING_TYPES)[number];
 export const BST_LISTING_TYPE_LABELS: Record<BstListingType, string> = {
   WTB: 'Want to buy',
   WTS: 'Want to sell',
-  WTT: 'Want to trade',
+  // "Want to trade FOR" — the WTTF list is gear Steve would ACCEPT in trade, not gear he is
+  // offering. That direction is why `isSellable` is WTS-only.
+  WTT: 'Want to trade for',
 };
+
+/**
+ * Willingness to part with a listing — the top level of the taxonomy. The source sheet
+ * expressed this as running section markers in one column (`MODULES` / `MISC` / `Feelers` /
+ * `Probably won't sell`), mixing willingness with category; this splits the two.
+ *
+ * Load-bearing for PD-439: only `for-sale` belongs in a drafted post as a firm sale.
+ */
+export const BST_SALE_STATUSES = ['for-sale', 'feelers', 'probably-wont-sell'] as const;
+export type BstSaleStatus = (typeof BST_SALE_STATUSES)[number];
+
+export const BST_SALE_STATUS_LABELS: Record<BstSaleStatus, string> = {
+  'for-sale': 'For Sale',
+  feelers: 'Feelers',
+  'probably-wont-sell': "Probably Won't Sell",
+};
+
+/** What kind of thing it is, within a sale status. */
+export const BST_CATEGORIES = ['Modules', 'Misc'] as const;
+export type BstCategory = (typeof BST_CATEGORIES)[number];
 
 /**
  * One row of the WTB/WTS/WTT list.
@@ -32,6 +54,10 @@ export interface BstListing {
   notes: string | null;
   /** "Current Location" in the sheet — Steve's own reference, not shown in drafts. */
   location: string | null;
+  /** Willingness to sell. `null` on want rows (WTB/WTT), where it is meaningless. */
+  saleStatus: BstSaleStatus | null;
+  /** Modules vs Misc, within a sale status. `null` on want rows. */
+  category: BstCategory | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -44,6 +70,8 @@ export interface CreateBstListingInput {
   condition?: string | null;
   notes?: string | null;
   location?: string | null;
+  saleStatus?: BstSaleStatus | null;
+  category?: BstCategory | null;
 }
 
 /** Every field optional — an omitted field means "unchanged", never "clear it". */
@@ -63,6 +91,12 @@ export interface BstImportResult {
   skipped: number;
   /** One human-readable line per skipped row, e.g. `row 4: missing Module`. */
   problems: string[];
+  /**
+   * Sale terms found in the sheet's first column, above the WTTF marker. **Offered, never
+   * applied** — the import returns it for the UI to show with an "use these" action, so a
+   * re-import can't silently overwrite terms that have since been edited in the app.
+   */
+  extractedTerms: string | null;
 }
 
 /** Column headers accepted by the CSV importer, mapped to listing fields. Matches the
@@ -83,8 +117,24 @@ export function isBstListingType(v: unknown): v is BstListingType {
   return typeof v === 'string' && (BST_LISTING_TYPES as readonly string[]).includes(v);
 }
 
-/** Sellable types — what goes in the for-sale table of a drafted post. WTB is what Steve is
- *  *looking for*, so it belongs in its own section (PD-439). */
+export function isBstSaleStatus(v: unknown): v is BstSaleStatus {
+  return typeof v === 'string' && (BST_SALE_STATUSES as readonly string[]).includes(v);
+}
+
+export function isBstCategory(v: unknown): v is BstCategory {
+  return typeof v === 'string' && (BST_CATEGORIES as readonly string[]).includes(v);
+}
+
+/** What Steve is offering — the for-sale table of a drafted post (PD-439).
+ *
+ *  **WTS only.** WTB and WTT are both *wants*: WTT is "want to trade FOR", gear he would
+ *  accept in trade, not gear he is offering. They belong in the post's wanted section. */
 export function isSellable(type: BstListingType): boolean {
-  return type === 'WTS' || type === 'WTT';
+  return type === 'WTS';
+}
+
+/** Whether a listing should be drafted as a firm sale (PD-439): offered, and actually for
+ *  sale rather than a feeler or something he probably won't part with. */
+export function isFirmSale(listing: Pick<BstListing, 'type' | 'saleStatus'>): boolean {
+  return isSellable(listing.type) && listing.saleStatus === 'for-sale';
 }

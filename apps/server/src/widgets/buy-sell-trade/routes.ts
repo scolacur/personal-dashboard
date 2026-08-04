@@ -1,6 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
-import { isBstListingType, type UpdateBstListingInput } from '@dashboard/shared';
+import {
+  isBstCategory,
+  isBstListingType,
+  isBstSaleStatus,
+  type BstCategory,
+  type BstSaleStatus,
+  type UpdateBstListingInput,
+} from '@dashboard/shared';
 import {
   createListing,
   deleteListing,
@@ -24,6 +31,18 @@ function optionalText(v: unknown): string | null | undefined {
   return t === '' ? null : t;
 }
 
+/** An enum field that may be absent (unchanged), explicitly null (cleared), or a valid value.
+ *  An invalid value is rejected rather than coerced — silently downgrading "Feelers" to
+ *  "For Sale" would change what PD-439 drafts as a firm sale. */
+function optionalEnum<T extends string>(
+  v: unknown,
+  guard: (x: unknown) => x is T,
+): { ok: true; value: T | null | undefined } | { ok: false } {
+  if (v === undefined) return { ok: true, value: undefined };
+  if (v === null || v === '') return { ok: true, value: null };
+  return guard(v) ? { ok: true, value: v } : { ok: false };
+}
+
 export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
   app.get(`${BASE}/listings`, async () => listListings(db));
 
@@ -36,6 +55,15 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     if (!module) {
       return reply.status(400).send({ error: 'module is required', code: 'INVALID_MODULE' });
     }
+    const status = optionalEnum<BstSaleStatus>(body.saleStatus, isBstSaleStatus);
+    if (!status.ok) {
+      return reply.status(400).send({ error: 'invalid saleStatus', code: 'INVALID_SALE_STATUS' });
+    }
+    const cat = optionalEnum<BstCategory>(body.category, isBstCategory);
+    if (!cat.ok) {
+      return reply.status(400).send({ error: 'invalid category', code: 'INVALID_CATEGORY' });
+    }
+
     try {
       return reply.status(201).send(
         createListing(db, {
@@ -46,6 +74,9 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
           condition: optionalText(body.condition) ?? null,
           notes: optionalText(body.notes) ?? null,
           location: optionalText(body.location) ?? null,
+          // A hand-added WTS defaults to an actual for-sale listing; a want row gets neither.
+          saleStatus: status.value ?? (body.type === 'WTS' ? 'for-sale' : null),
+          category: cat.value ?? (body.type === 'WTS' ? 'Modules' : null),
         }),
       );
     } catch (e) {
@@ -88,6 +119,18 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       const v = optionalText(body[key]);
       if (v !== undefined) input[key] = v;
     }
+
+    const status = optionalEnum<BstSaleStatus>(body.saleStatus, isBstSaleStatus);
+    if (!status.ok) {
+      return reply.status(400).send({ error: 'invalid saleStatus', code: 'INVALID_SALE_STATUS' });
+    }
+    if (status.value !== undefined) input.saleStatus = status.value;
+
+    const cat = optionalEnum<BstCategory>(body.category, isBstCategory);
+    if (!cat.ok) {
+      return reply.status(400).send({ error: 'invalid category', code: 'INVALID_CATEGORY' });
+    }
+    if (cat.value !== undefined) input.category = cat.value;
 
     try {
       return updateListing(db, id, input);

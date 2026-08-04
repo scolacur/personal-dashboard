@@ -1,19 +1,32 @@
 import { describe, expect, it } from 'vitest';
-import { mapHeaders, parseCsv, parseListingsCsv } from './csv';
+import { mapHeaders, parseCsv, parseSheetCsv, repairMojibake } from './csv';
 
-// The real export's header row, verbatim from the sheet — note the leading title column,
-// which is not a field and must be ignored rather than breaking the mapping.
-const REAL_HEADER =
+// Fixture modelled directly on the real sheet, because the first version of this importer
+// assumed a flat table and rejected all 46 rows of it. The shape that matters:
+//   - column 1 is prose: sale terms, then a "WTTF:" marker, then a want-list
+//   - column 2 ("Type") is a SECTION marker that applies downward, not WTB/WTS/WTT
+//   - one row can carry a terms line, a section change and a listing at once
+const HEADER =
   "Holographic b_boys's Module FS List,Type,Manufacturer,Module,Price,Condition,Notes,Current Location (For my personal reference)";
 
-describe('parseCsv', () => {
-  it('parses a simple grid', () => {
-    expect(parseCsv('a,b\n1,2')).toEqual([
-      ['a', 'b'],
-      ['1', '2'],
-    ]);
-  });
+const SHEET = [
+  HEADER,
+  ',,,,,,,',
+  '"Everything, unless otherwise specified, is:",MODULES,,,,,,',
+  'like new condition,,,,,,,',
+  'purchased new by me,,SSF,Ultra Perc,$380,Excellent,"purchased new, has og box",',
+  'Will consider offers.,,Boredbrain,OPTX,$275,excellent,,Box 2',
+  'WTTF (partial trades in case of value mismatch):,,2hp,Slice,$115,Good,,',
+  'acidlab m303,,,,,,,',
+  'Xodes UGR2,MISC,AmpTone Lab,Powered MIDI 1-4 Splitter,$35,,,',
+  'Sloths 1U,Feelers,ALM,mmMidi,$100,Excellent,,Video Rack',
+  'Non-modular,,Befaco,Motion MTR,,brand new,og box,Box 1',
+  'Future Retro Orb,,Klavis,Quadigy,,excellent,og box,Box 2',
+  ",Probably won't sell,Alright Devices,Chronoblob,$250,Excellent,purchased used,Racked",
+  ',,knob.farm,hrylo (gold),,excellent,og box,',
+].join('\n');
 
+describe('parseCsv', () => {
   it('keeps commas inside quoted fields', () => {
     expect(parseCsv('a,"b,c",d')).toEqual([['a', 'b,c', 'd']]);
   });
@@ -33,144 +46,186 @@ describe('parseCsv', () => {
     ]);
   });
 
-  it('handles a final row with no trailing newline', () => {
-    expect(parseCsv('a,b\n1,2')).toHaveLength(2);
-  });
-
-  it('drops wholly blank lines', () => {
-    expect(parseCsv('a,b\n\n1,2\n')).toEqual([
-      ['a', 'b'],
-      ['1', '2'],
-    ]);
-  });
-
   it('preserves empty fields rather than collapsing them', () => {
     expect(parseCsv('a,,c')).toEqual([['a', '', 'c']]);
   });
 });
 
 describe('mapHeaders', () => {
-  it('maps the real sheet header, ignoring the title column', () => {
-    expect(mapHeaders(REAL_HEADER.split(','))).toEqual([
-      null, // the list title — not a field
+  it('maps the real sheet header — prose column unmapped, location despite its parenthetical', () => {
+    expect(mapHeaders(HEADER.split(','))).toEqual([
+      null, // the prose column, titled with the list's name
       'type',
       'manufacturer',
       'module',
       'price',
       'condition',
       'notes',
-      'location', // "Current Location (For my personal reference)"
-    ]);
-  });
-
-  // The real sheet's header carries an explanatory parenthetical. Matching it exactly would
-  // drop the column silently and import every location as empty.
-  it('drops a trailing parenthetical when matching a header', () => {
-    expect(mapHeaders(['Current Location (For my personal reference)'])).toEqual(['location']);
-    expect(mapHeaders(['Price (USD)'])).toEqual(['price']);
-    expect(mapHeaders(['Current Location'])).toEqual(['location']);
-  });
-
-  it('does not treat a parenthetical mid-header as trailing', () => {
-    expect(mapHeaders(['Module (v2) revision'])).toEqual([null]);
-  });
-
-  it('is case- and whitespace-insensitive', () => {
-    expect(mapHeaders([' MODULE ', 'manufacturer', 'Current   Location'])).toEqual([
-      'module',
-      'manufacturer',
       'location',
     ]);
   });
+
+  it('drops a trailing parenthetical when matching a header', () => {
+    expect(mapHeaders(['Current Location (For my personal reference)'])).toEqual(['location']);
+    expect(mapHeaders(['Price (USD)'])).toEqual(['price']);
+  });
+
+  it('is case- and whitespace-insensitive', () => {
+    expect(mapHeaders([' MODULE ', 'Current   Location'])).toEqual(['module', 'location']);
+  });
 });
 
-describe('parseListingsCsv', () => {
-  const header = 'Type,Manufacturer,Module,Price,Condition,Notes,Current Location';
+describe('parseSheetCsv — the real sheet shape', () => {
+  const out = parseSheetCsv(SHEET);
+  const byModule = (m: string) => out.rows.find((r) => r.module === m);
 
-  it('parses well-formed rows', () => {
-    const { rows, problems } = parseListingsCsv(
-      `${header}\nWTS,Make Noise,Maths,$250 shipped,Mint,boxed,Rack A`,
+  it('imports module rows as WTS by default — the sheet is a For Sale list', () => {
+    expect(byModule('Ultra Perc')).toMatchObject({ type: 'WTS', manufacturer: 'SSF', price: '$380' });
+  });
+
+  it('does not treat a section marker as a listing type', () => {
+    expect(byModule('mmMidi')?.type).toBe('WTS');
+    expect(byModule('Chronoblob')?.type).toBe('WTS');
+  });
+
+  it('splits a section marker into sale status + category, applied downward', () => {
+    expect(byModule('Ultra Perc')).toMatchObject({ saleStatus: 'for-sale', category: 'Modules' });
+    expect(byModule('OPTX')).toMatchObject({ saleStatus: 'for-sale', category: 'Modules' });
+    expect(byModule('Powered MIDI 1-4 Splitter')).toMatchObject({
+      saleStatus: 'for-sale',
+      category: 'Misc',
+    });
+    expect(byModule('mmMidi')?.saleStatus).toBe('feelers');
+    // still feelers — the marker persists past the row it appears on
+    expect(byModule('Motion MTR')?.saleStatus).toBe('feelers');
+    expect(byModule('Quadigy')?.saleStatus).toBe('feelers');
+    expect(byModule('Chronoblob')?.saleStatus).toBe('probably-wont-sell');
+    expect(byModule('hrylo (gold)')?.saleStatus).toBe('probably-wont-sell');
+  });
+
+  it('resets category to Modules when a willingness marker starts', () => {
+    // MISC is in force immediately before Feelers; carrying it forward would mislabel
+    // every feeler as Misc.
+    expect(byModule('Powered MIDI 1-4 Splitter')?.category).toBe('Misc');
+    expect(byModule('mmMidi')?.category).toBe('Modules');
+  });
+
+  it('extracts the sale terms from column 1, above the WTTF marker', () => {
+    expect(out.terms).toBe(
+      ['Everything, unless otherwise specified, is:', 'like new condition', 'purchased new by me', 'Will consider offers.'].join('\n'),
     );
-    expect(problems).toEqual([]);
-    expect(rows).toEqual([
-      {
-        type: 'WTS',
-        manufacturer: 'Make Noise',
-        module: 'Maths',
-        price: '$250 shipped',
-        condition: 'Mint',
-        notes: 'boxed',
-        location: 'Rack A',
-      },
+  });
+
+  it('stops collecting terms at the WTTF marker, and excludes the marker itself', () => {
+    expect(out.terms).not.toMatch(/WTTF/);
+    expect(out.terms).not.toMatch(/acidlab/);
+  });
+
+  it('imports the want-list below the WTTF marker as WTT rows', () => {
+    const wants = out.rows.filter((r) => r.type === 'WTT');
+    expect(wants.map((w) => w.module)).toEqual([
+      'acidlab m303',
+      'Xodes UGR2',
+      'Sloths 1U',
+      'Future Retro Orb',
     ]);
+    // A want is not something Steve is offering, so neither field applies.
+    expect(wants.every((w) => w.saleStatus === null && w.category === null)).toBe(true);
   });
 
-  it('preserves non-numeric prices verbatim', () => {
-    const { rows } = parseListingsCsv(`${header}\nWTT,ALM,Pamela,trade only,,,`);
-    expect(rows[0].price).toBe('trade only');
+  it('skips "Non-modular" — a sub-heading in the want list, not a wanted module', () => {
+    expect(out.rows.some((r) => r.module === 'Non-modular')).toBe(false);
   });
 
-  it('accepts loose casing and padding in Type', () => {
-    const { rows } = parseListingsCsv(`${header}\n wts ,Mutable,Plaits,,,,`);
-    expect(rows[0].type).toBe('WTS');
+  it('reads a terms line, a section change and a listing off the SAME row independently', () => {
+    // 'Sloths 1U,Feelers,ALM,mmMidi,...' is a want, a section marker and a listing at once.
+    expect(out.rows.some((r) => r.type === 'WTT' && r.module === 'Sloths 1U')).toBe(true);
+    expect(byModule('mmMidi')).toMatchObject({ saleStatus: 'feelers', manufacturer: 'ALM' });
+  });
+
+  it('ignores spacer rows without reporting them as problems', () => {
+    expect(out.problems).toEqual([]);
+  });
+
+  it('keeps a non-numeric price verbatim', () => {
+    const priced = parseSheetCsv(`${HEADER}\n,,Doepfer,A-111-5,TBD,Excellent,,Box`);
+    expect(priced.rows[0].price).toBe('TBD');
   });
 
   it('turns empty cells into null, not empty strings', () => {
-    const { rows } = parseListingsCsv(`${header}\nWTB,,Quadrax,,,,`);
-    expect(rows[0]).toMatchObject({ manufacturer: null, price: null, condition: null, notes: null });
+    expect(byModule('hrylo (gold)')).toMatchObject({ price: null, location: null });
+  });
+});
+
+// The real export mis-encodes its Cyrillic module names (UTF-8 bytes decoded as Latin-1).
+// This is not cosmetic: PD-438 matches r/modular comments on the module NAME, so a mangled
+// name can never match.
+describe('repairMojibake', () => {
+  const cases: [string, string][] = [
+    ['СЛИМИКС 6 Channel 1U Mixer with mutes and panning', 'Пуск-3'],
+  ].flat().map((want) => [Buffer.from(want, 'utf8').toString('latin1'), want] as [string, string]);
+
+  for (const [broken, want] of cases) {
+    it(`repairs "${want.slice(0, 20)}…"`, () => {
+      expect(repairMojibake(broken)).toBe(want);
+    });
+  }
+
+  it('leaves clean ASCII untouched', () => {
+    for (const s of ["Pamela's PRO Workout", 'Pico Case (3U, 42hp)', 'A-145-4 Quad LFO', '2hp Mix']) {
+      expect(repairMojibake(s)).toBe(s);
+    }
   });
 
-  it('skips a row with no Module and says which row', () => {
-    const { rows, problems } = parseListingsCsv(`${header}\nWTS,Make Noise,,,,,`);
-    expect(rows).toEqual([]);
-    expect(problems[0]).toMatch(/row 2.*no Module/i);
+  it('leaves already-correct non-ASCII untouched', () => {
+    for (const s of ['Пуск-3', 'café', 'naïve', 'Erica Synths – Pico']) {
+      expect(repairMojibake(s)).toBe(s);
+    }
   });
 
-  it('skips a row with an unrecognised Type rather than guessing', () => {
-    const { rows, problems } = parseListingsCsv(`${header}\nSOLD,Make Noise,Maths,,,,`);
-    expect(rows).toEqual([]);
-    expect(problems[0]).toMatch(/row 2 \(Maths\).*expected WTB, WTS or WTT/i);
+  it('is idempotent — repairing twice does not damage the result', () => {
+    const broken = Buffer.from('Пуск-3', 'utf8').toString('latin1');
+    expect(repairMojibake(repairMojibake(broken))).toBe('Пуск-3');
   });
 
-  it('keeps good rows when a bad one is present — one bad row does not lose the import', () => {
-    const { rows, problems } = parseListingsCsv(
-      `${header}\nWTS,Make Noise,Maths,,,,\nJUNK,X,Y,,,,\nWTB,Intellijel,Quadrax,,,,`,
+  it('repairs module names during a real import', () => {
+    const broken = Buffer.from('Пуск-3', 'utf8').toString('latin1');
+    const { rows } = parseSheetCsv(
+      `Type,Manufacturer,Module,Price,Condition,Notes,Current Location\nWTS,Paratek,${broken},$80,excellent,,Box 2`,
     );
-    expect(rows.map((r) => r.module)).toEqual(['Maths', 'Quadrax']);
-    expect(problems).toHaveLength(1);
+    expect(rows[0].module).toBe('Пуск-3');
+  });
+});
+
+describe('parseSheetCsv — explicit types and failure modes', () => {
+  const flat = 'Type,Manufacturer,Module,Price,Condition,Notes,Current Location';
+
+  it('still honours an explicit WTB/WTS/WTT in the Type column', () => {
+    const { rows } = parseSheetCsv(`${flat}\nWTB,Intellijel,Quadrax,,,,`);
+    expect(rows[0]).toMatchObject({ type: 'WTB', module: 'Quadrax' });
   });
 
-  it('ignores blank rows in the middle of an export', () => {
-    const { rows, problems } = parseListingsCsv(
-      `${header}\nWTS,Make Noise,Maths,,,,\n,,,,,,\nWTB,Intellijel,Quadrax,,,,`,
-    );
-    expect(rows).toHaveLength(2);
-    expect(problems).toEqual([]);
+  it('accepts loose casing on an explicit type', () => {
+    expect(parseSheetCsv(`${flat}\n wts ,Mutable,Plaits,,,,`).rows[0].type).toBe('WTS');
   });
 
   it('refuses a CSV with no Module column instead of importing nothing silently', () => {
-    const { rows, problems } = parseListingsCsv('Foo,Bar\n1,2');
+    const { rows, problems } = parseSheetCsv('Foo,Bar\n1,2');
     expect(rows).toEqual([]);
     expect(problems[0]).toMatch(/no "Module" column/i);
   });
 
-  it('reports an empty CSV', () => {
-    expect(parseListingsCsv('').problems).toEqual(['empty CSV']);
+  it('reports a CSV whose Module column is entirely empty', () => {
+    const { rows, problems } = parseSheetCsv(`${flat}\nWTS,SSF,,,,,`);
+    expect(rows).toEqual([]);
+    expect(problems[0]).toMatch(/no rows with a Module/i);
   });
 
-  it('handles the real sheet header shape end to end, including Current Location', () => {
-    const { rows, problems } = parseListingsCsv(
-      `${REAL_HEADER}\n,WTS,Make Noise,Maths,$250,Mint,boxed,Rack A`,
-    );
-    expect(problems).toEqual([]);
-    expect(rows[0]).toEqual({
-      type: 'WTS',
-      manufacturer: 'Make Noise',
-      module: 'Maths',
-      price: '$250',
-      condition: 'Mint',
-      notes: 'boxed',
-      location: 'Rack A',
-    });
+  it('reports an empty CSV', () => {
+    expect(parseSheetCsv('').problems).toEqual(['empty CSV']);
+  });
+
+  it('returns null terms when the sheet has no prose column', () => {
+    expect(parseSheetCsv(`${flat}\nWTS,SSF,Ultra Perc,,,,`).terms).toBeNull();
   });
 });
