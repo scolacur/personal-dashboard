@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
-import { codingEnv, readHandoff, runRobotSession, type RunQuery } from './session';
+import { appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, type RunQuery } from './session';
+import { OUTPUT_TAIL_MAX } from './runs';
 import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
 import type { RobotCandidate } from './select';
 import type { Worktree } from './workspace';
@@ -169,5 +170,128 @@ describe('runRobotSession', () => {
     const res = await runRobotSession(config, candidate, worktree, undefined, fake);
     expect(res.ok).toBe(false);
     expect(res.error).toContain('EACCES');
+  });
+});
+
+// ── PD-426: output-tail capture ──────────────────────────────────────────────
+// A `no-verify` run was undiagnosable — the worktree is removed in the loop's `finally` and the
+// stream was consumed only for session_id/num_turns/usage. These cover the capture that fixes it.
+
+describe('appendTail', () => {
+  it('joins chunks with newlines and leaves a short buffer untouched', () => {
+    expect(appendTail('', 'a')).toBe('a');
+    expect(appendTail('a', 'b')).toBe('a\nb');
+  });
+
+  it('ignores empty chunks', () => {
+    expect(appendTail('a', '')).toBe('a');
+  });
+
+  it('keeps the TAIL and truncates the FRONT once past the cap', () => {
+    // The end of a failed run is the interesting part (what verify said), so the front goes.
+    const out = appendTail('x'.repeat(50), 'END', 20);
+    expect(out.length).toBe(20);
+    expect(out.endsWith('END')).toBe(true);
+    expect(out.startsWith('…[truncated]')).toBe(true);
+  });
+
+  it('stays pinned at the cap across repeated truncation, not growing a marker each time', () => {
+    let buf = '';
+    for (let i = 0; i < 25; i++) buf = appendTail(buf, `line-${i}-${'y'.repeat(40)}`, 200);
+    expect(buf.length).toBe(200);
+    expect(buf).toContain('line-24');
+    expect(buf).not.toContain('line-0-');
+  });
+
+  it('handles a single chunk larger than the whole cap', () => {
+    const out = appendTail('', 'z'.repeat(500), 40);
+    expect(out.length).toBe(40);
+    expect(out.endsWith('z')).toBe(true);
+  });
+});
+
+describe('extractMessageText', () => {
+  it('pulls assistant text blocks', () => {
+    const t = extractMessageText({ type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } });
+    expect(t).toBe('[assistant] hello');
+  });
+
+  it('pulls tool_result content — where the `npm run verify` output lives', () => {
+    const t = extractMessageText({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: [{ type: 'text', text: 'FAIL src/x.spec.ts' }] }] },
+    });
+    expect(t).toBe('[tool] FAIL src/x.spec.ts');
+  });
+
+  it('accepts a string tool_result and a string message content', () => {
+    expect(extractMessageText({ type: 'user', message: { content: [{ type: 'tool_result', content: 'raw' }] } })).toBe('[tool] raw');
+    expect(extractMessageText({ type: 'assistant', message: { content: 'plain' } })).toBe('[assistant] plain');
+  });
+
+  it('skips unrecognised shapes instead of throwing — the SDK block shape is not guaranteed', () => {
+    expect(extractMessageText({})).toBe('');
+    expect(extractMessageText({ type: 'assistant' })).toBe('');
+    expect(extractMessageText({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x' }] } })).toBe('');
+    expect(extractMessageText(null)).toBe('');
+  });
+});
+
+describe('runRobotSession output tail', () => {
+  let dir: string;
+  let config: AgentWorkerConfig;
+  let worktree: Worktree;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'robot-tail-'));
+    config = loadConfig({});
+    worktree = { dir, branch: 'robot/220' };
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('captures assistant text and tool output from a no-verify run', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 's' } as never;
+      yield { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'running verify' }] } } as never;
+      yield {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', content: [{ type: 'text', text: 'Tests 3 failed' }] }] },
+      } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 2 } as never;
+    }) as unknown as RunQuery;
+
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.verifyOk).toBe(false); // no marker written — the no-verify case
+    expect(res.outputTail).toContain('running verify');
+    expect(res.outputTail).toContain('Tests 3 failed');
+  });
+
+  it('captures sub-agent output too — unlike the turn counter, which excludes it', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'assistant', parent_tool_use_id: 'toolu_1', message: { content: [{ type: 'text', text: 'inner detail' }] } } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's' } as never;
+    }) as unknown as RunQuery;
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.outputTail).toContain('inner detail');
+  });
+
+  it('leaves outputTail undefined when the session produced no text, so the column stays null', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's' } as never;
+    }) as unknown as RunQuery;
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.outputTail).toBeUndefined();
+  });
+
+  it('caps the captured tail at OUTPUT_TAIL_MAX', async () => {
+    const fake: RunQuery = (async function* () {
+      for (let i = 0; i < 40; i++) {
+        yield { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'q'.repeat(500) }] } } as never;
+      }
+      yield { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'THE-LAST-LINE' }] } } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's' } as never;
+    }) as unknown as RunQuery;
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.outputTail!.length).toBeLessThanOrEqual(OUTPUT_TAIL_MAX);
+    expect(res.outputTail).toContain('THE-LAST-LINE'); // the tail survives, not the head
   });
 });

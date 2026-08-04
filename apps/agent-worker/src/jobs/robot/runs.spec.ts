@@ -8,6 +8,7 @@ import {
   listRunsForTicket,
   failedRunsForTicket,
   updateRunProgress,
+  OUTPUT_TAIL_MAX,
 } from './runs';
 
 function freshDb(): Database.Database {
@@ -167,5 +168,65 @@ describe('updateRunProgress (PD-230)', () => {
 
   it('is a no-op for an unknown run id', () => {
     expect(() => updateRunProgress(db, 9999, 5)).not.toThrow();
+  });
+});
+
+// ── PD-426: output_tail column ───────────────────────────────────────────────
+
+describe('agent_runs output_tail (PD-426)', () => {
+  it('migrates onto a table that predates the column, without losing rows', () => {
+    // The NAS table already exists, so the column arrives via addColumnIfMissing rather than
+    // CREATE TABLE. Build the old shape by hand and prove the migration is additive.
+    const db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE agent_runs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id    INTEGER NOT NULL,
+        issue_number INTEGER,
+        branch       TEXT NOT NULL,
+        status       TEXT NOT NULL,
+        session_id   TEXT,
+        pr_url       TEXT,
+        error        TEXT,
+        started_at   INTEGER NOT NULL,
+        finished_at  INTEGER
+      );
+    `);
+    db.prepare(
+      `INSERT INTO agent_runs (ticket_id, branch, status, started_at) VALUES (1, 'robot/1', 'no-verify', 100)`,
+    ).run();
+
+    ensureRunsTable(db);
+
+    const cols = (db.prepare('PRAGMA table_info(agent_runs)').all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toContain('output_tail');
+    // The pre-existing row survives and reads back as null rather than undefined.
+    const runs = listRunsForTicket(db, 1);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].outputTail).toBeNull();
+  });
+
+  it('round-trips through finishRun and rowToRun', () => {
+    const db = freshDb();
+    const runId = startRun(db, { ticketId: 7, issueNumber: null, branch: 'robot/7' });
+    finishRun(db, runId, { status: 'no-verify', outputTail: '[tool] Tests 2 failed' });
+    expect(listRunsForTicket(db, 7)[0].outputTail).toBe('[tool] Tests 2 failed');
+  });
+
+  it('stores null when no tail was captured', () => {
+    const db = freshDb();
+    const runId = startRun(db, { ticketId: 8, issueNumber: null, branch: 'robot/8' });
+    finishRun(db, runId, { status: 'error', error: 'spawn EACCES' });
+    expect(listRunsForTicket(db, 8)[0].outputTail).toBeNull();
+  });
+
+  it('clamps at the DB boundary so the column cannot exceed the cap regardless of caller', () => {
+    const db = freshDb();
+    const runId = startRun(db, { ticketId: 9, issueNumber: null, branch: 'robot/9' });
+    // A caller that bypassed the capture-site cap entirely.
+    finishRun(db, runId, { status: 'no-verify', outputTail: 'w'.repeat(OUTPUT_TAIL_MAX * 3) + 'TAIL-END' });
+    const stored = listRunsForTicket(db, 9)[0].outputTail!;
+    expect(stored.length).toBe(OUTPUT_TAIL_MAX);
+    expect(stored.endsWith('TAIL-END')).toBe(true); // clamped to the tail, not the head
   });
 });

@@ -42,9 +42,19 @@ export interface RunRow {
   /** C3 observability metrics off the SDK result (null for older rows / no result). */
   turns: number | null;
   tokens: number | null;
+  /** PD-426: bounded tail of the session's output, so a `no-verify` run is diagnosable from the
+   *  board after the worktree is gone. Null for older rows / sessions that produced nothing. */
+  outputTail: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
+
+/**
+ * Hard cap on the stored output tail (PD-426). Lives here, with the row it bounds, so the storage
+ * limit has one owner: session.ts imports it for the capture site, and `finishRun` clamps again at
+ * the DB boundary so the column can't exceed it regardless of caller.
+ */
+export const OUTPUT_TAIL_MAX = 8 * 1024;
 
 /** Add a column only if it isn't already present — additive migration for a table that already
  *  exists on the NAS (CREATE IF NOT EXISTS won't alter an existing table). */
@@ -80,6 +90,8 @@ export function ensureRunsTable(db: Database.Database): void {
   // PD-406: hash of the ticket body this run ran against — lets a max-turns fault distinguish a
   // futile unchanged-body retry from a genuinely re-scoped one.
   addColumnIfMissing(db, 'agent_runs', 'body_hash', 'TEXT');
+  // PD-426: bounded tail of the coding session's output — the evidence a failed run leaves behind.
+  addColumnIfMissing(db, 'agent_runs', 'output_tail', 'TEXT');
 }
 
 /** Stable hash of a ticket body, for the PD-406 unchanged-body check. `null`/empty bodies hash to a
@@ -135,6 +147,8 @@ export interface FinishRunInput {
   /** C3 observability metrics off the SDK result. */
   turns?: number | null;
   tokens?: number | null;
+  /** PD-426: bounded tail of the session's output. Clamped to `OUTPUT_TAIL_MAX` on write. */
+  outputTail?: string | null;
 }
 
 /** Close out a run with its terminal outcome. */
@@ -144,11 +158,16 @@ export function finishRun(
   input: FinishRunInput,
   now: number = Date.now(),
 ): void {
+  // Clamp at the DB boundary as well as the capture site: this is the only place the column is
+  // written, so enforcing here makes the size bound true for every caller, not just the loop.
+  const tail = input.outputTail ?? null;
+  const boundedTail = tail !== null && tail.length > OUTPUT_TAIL_MAX ? tail.slice(-OUTPUT_TAIL_MAX) : tail;
+
   db.prepare(
     `UPDATE agent_runs
         SET status = ?, session_id = ?, pr_url = ?, error = ?,
             fault_tier = ?, fault_signature = ?, fault_reason = ?,
-            turns = ?, tokens = ?, finished_at = ?
+            turns = ?, tokens = ?, output_tail = ?, finished_at = ?
       WHERE id = ?`,
   ).run(
     input.status,
@@ -160,6 +179,7 @@ export function finishRun(
     input.faultReason ?? null,
     input.turns ?? null,
     input.tokens ?? null,
+    boundedTail,
     now,
     runId,
   );
@@ -280,6 +300,7 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     faultReason: (r.fault_reason as string | null) ?? null,
     turns: (r.turns as number | null) ?? null,
     tokens: (r.tokens as number | null) ?? null,
+    outputTail: (r.output_tail as string | null) ?? null,
     startedAt: r.started_at as number,
     finishedAt: (r.finished_at as number | null) ?? null,
   };

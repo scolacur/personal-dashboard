@@ -8,6 +8,7 @@ import { makeCodingSpawn } from './privilege';
 import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from './prompt';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
+import { OUTPUT_TAIL_MAX } from './runs';
 
 /**
  * The Robot coding session (D-055, PD-342): one write-enabled Agent-SDK session that implements a
@@ -37,6 +38,62 @@ export interface RobotSessionResult {
   tokens?: number;
   /** On !ok, the SDK error text (billing / rate-limit / max-turns / crash). */
   error?: string;
+  /** Last `OUTPUT_TAIL_MAX` chars of the session's assistant text + tool output (PD-426).
+   *  The evidence a `no-verify` run leaves behind — see the capture note below. */
+  outputTail?: string;
+}
+
+/**
+ * Output-tail capture (PD-426). A `no-verify` run used to be undiagnosable: the SDK stream is
+ * consumed here for `session_id`/`num_turns`/`usage` and everything else — including the
+ * `npm run verify` output — was dropped, while the worktree is removed in robot.ts's `finally`.
+ * The run row outlives both, so a bounded tail of the stream is captured onto it.
+ *
+ * TAIL, not head: the interesting part of a failed run is the end (what verify said, where it gave
+ * up), so the FRONT is truncated when the cap is hit.
+ */
+const TRUNCATION_MARKER = '…[truncated]\n';
+
+/** Append to a rolling buffer capped at `max` chars, discarding from the front. The result is
+ *  never longer than `max`, and carries a leading marker once anything has been dropped. */
+export function appendTail(buf: string, chunk: string, max: number = OUTPUT_TAIL_MAX): string {
+  if (!chunk) return buf;
+  const next = buf ? `${buf}\n${chunk}` : chunk;
+  if (next.length <= max) return next;
+  // Re-truncating an already-truncated buffer just eats into the old marker, so the length stays
+  // pinned at exactly `max` rather than growing by a marker each time.
+  return TRUNCATION_MARKER + next.slice(next.length - max + TRUNCATION_MARKER.length);
+}
+
+/**
+ * Pull human-readable text out of one SDK message: assistant text blocks and tool results (the
+ * latter is where `npm run verify`'s stdout/stderr lives, which is the whole point).
+ *
+ * Read defensively — same posture as the existing `num_turns`/`usage` handling. The SDK's block
+ * shapes are not guaranteed here, so anything unrecognized is skipped rather than assumed.
+ */
+export function extractMessageText(message: unknown): string {
+  if (message === null || typeof message !== 'object') return '';
+  const m = message as { type?: string; message?: { content?: unknown } };
+  const role = m.type === 'assistant' ? '[assistant]' : '[tool]';
+  const content = m.message?.content;
+  const parts: string[] = [];
+
+  const pushBlock = (block: unknown): void => {
+    const b = block as { type?: string; text?: string; content?: unknown };
+    if (b.type === 'text' && typeof b.text === 'string') {
+      parts.push(b.text);
+    } else if (b.type === 'tool_result') {
+      if (typeof b.content === 'string') parts.push(b.content);
+      else if (Array.isArray(b.content)) b.content.forEach(pushBlock);
+    }
+  };
+
+  if (typeof content === 'string') parts.push(content);
+  else if (Array.isArray(content)) content.forEach(pushBlock);
+
+  const text = parts.join('\n').trim();
+  return text ? `${role} ${text}` : '';
 }
 
 /** The env handed to the coding subprocess. Inherits the loop env for PATH/ANTHROPIC_API_KEY,
@@ -113,6 +170,8 @@ export async function runRobotSession(
   let tokens: number | undefined;
   /** Running count of assistant messages — the live stand-in for the SDK's final `num_turns`. */
   let liveTurns = 0;
+  /** Rolling tail of what the session said and ran (PD-426). */
+  let outputTail = '';
 
   try {
     for await (const message of runQuery({
@@ -130,6 +189,16 @@ export async function runRobotSession(
       },
     }) as AsyncIterable<SDKMessage>) {
       if (message.type === 'system' && message.subtype === 'init') sessionId = message.session_id;
+      // PD-426: capture assistant text + tool results. Unlike the turn counter below this does
+      // NOT filter on parent_tool_use_id — sub-agent output is exactly the kind of evidence a
+      // failed run needs. Capture must never break the session, hence the guard.
+      if (message.type === 'assistant' || message.type === 'user') {
+        try {
+          outputTail = appendTail(outputTail, extractMessageText(message));
+        } catch (err) {
+          logger.warn({ err, ticketId: candidate.id }, 'robot: output-tail capture failed');
+        }
+      }
       // PD-230: live turn progress. The SDK only reports authoritative `num_turns` on the final
       // result message, so a `working` run would otherwise show no progress at all. Counting
       // assistant messages is an APPROXIMATION of that number; it exists so the board can show
@@ -163,5 +232,7 @@ export async function runRobotSession(
   }
 
   const handoff = readHandoff(worktree.dir);
-  return { ok, sessionId, error, turns, tokens, ...handoff };
+  // Empty tail (a session that produced nothing) reports as undefined, not '', so the column
+  // stays null rather than storing a meaningless empty string.
+  return { ok, sessionId, error, turns, tokens, outputTail: outputTail || undefined, ...handoff };
 }
