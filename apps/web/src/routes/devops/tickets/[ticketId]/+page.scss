@@ -421,6 +421,133 @@
   line-height: 1.55;
 }
 
+/* ── Rendered markdown description (PD-409) ──────────────────────────────────
+   Children use :global because marked's output is injected via innerHTML and so
+   isn't compiled by Svelte. `white-space: normal` undoes .detail-body's pre-wrap,
+   which would otherwise double every blank line the markdown already turned into
+   paragraph spacing. */
+.detail-body-md {
+  white-space: normal;
+
+  :global(> :first-child) {
+    margin-top: 0;
+  }
+  :global(> :last-child) {
+    margin-bottom: 0;
+  }
+
+  :global(h1),
+  :global(h2),
+  :global(h3),
+  :global(h4) {
+    margin: var(--space-md) 0 var(--space-xs);
+    font-family: var(--font-display);
+    line-height: 1.3;
+  }
+  :global(h1) {
+    font-size: 1.35rem;
+  }
+  :global(h2) {
+    font-size: 1.15rem;
+  }
+  :global(h3),
+  :global(h4) {
+    font-size: 1rem;
+  }
+
+  :global(p) {
+    margin: 0 0 var(--space-sm);
+  }
+
+  :global(ul),
+  :global(ol) {
+    margin: 0 0 var(--space-sm);
+    padding-left: var(--space-lg);
+  }
+  :global(li) {
+    margin: 0.15rem 0;
+  }
+
+  :global(a) {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+
+  :global(code) {
+    font-family: monospace;
+    font-size: 0.9em;
+    background: var(--surface-2);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+  }
+
+  :global(pre) {
+    margin: 0 0 var(--space-sm);
+    padding: var(--space-sm);
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    overflow-x: auto;
+    white-space: pre;
+
+    // Inside a block the padding/background belong to the <pre>, not each token.
+    :global(code) {
+      background: none;
+      padding: 0;
+    }
+  }
+
+  :global(blockquote) {
+    margin: 0 0 var(--space-sm);
+    padding-left: var(--space-sm);
+    border-left: 3px solid var(--border);
+    color: var(--muted);
+  }
+
+  :global(hr) {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: var(--space-md) 0;
+  }
+
+  :global(table) {
+    border-collapse: collapse;
+    margin: 0 0 var(--space-sm);
+  }
+  :global(th),
+  :global(td) {
+    border: 1px solid var(--border);
+    padding: var(--space-xs) var(--space-sm);
+    text-align: left;
+  }
+}
+
+// Small segmented toggle in the Description header.
+.body-raw-toggle {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    border-color 0.15s;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+
+  &.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+}
+
 .issue-link {
   font-size: var(--font-size-sm);
   color: var(--accent);
