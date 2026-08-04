@@ -14,6 +14,7 @@ const candidate: RobotCandidate = {
   repo: 'scolacur/personal-dashboard',
   title: 'T',
   body: 'b',
+  priority: 'P2',
 };
 
 describe('codingEnv', () => {

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { TicketPriority } from '@dashboard/shared';
 import type { RobotConfig } from '../../shared/config';
 
 /**
@@ -19,6 +20,8 @@ export interface RobotCandidate {
   repo: string;
   title: string;
   body: string | null;
+  /** P0–P5, or null when unset. Carried so the dispatch order is observable in logs (PD-294). */
+  priority: TicketPriority | null;
 }
 
 interface CandidateRow {
@@ -27,7 +30,14 @@ interface CandidateRow {
   repo: string;
   title: string;
   body: string | null;
+  /** RAW column value — 'P0'…'P5' or the `'none'` sentinel, not the domain `null`. */
+  priority: string | null;
 }
+
+/** How `agent_tickets.priority` stores "unset": the column is `TEXT NOT NULL DEFAULT 'none'`
+ *  (server `schema.ts`), so unset is this sentinel and never SQL NULL. Mirrors `PRIORITY_UNSET`
+ *  in the server store, which maps it to `null` at the API boundary. */
+const PRIORITY_UNSET = 'none';
 
 /** Tickets in `queue` assigned to `robot` and Ready (or ready-bypassed) of a robot-enabled repo
  *  project — the raw candidate set (D-058). A ticket blocked by an unresolved `blocks` relation is
@@ -37,11 +47,25 @@ interface CandidateRow {
  *  The `agent_state` gate is what stops re-dispatch: `queue` is a single lane whose sub-state lives
  *  in `agent_state`, so a ticket stays in `queue` while working and after hand-off. Only a fresh
  *  ticket (NULL or `queued`) is dispatchable; the loop sets `working` on dispatch and `in-review`
- *  on hand-off, both of which drop it out of this set. */
+ *  on hand-off, both of which drop it out of this set.
+ *
+ *  Ordered by **priority, then id** (PD-294). 'P0'…'P5' compare correctly under plain lexical ASC,
+ *  so no mapping table is needed. Unset priority sorts *last* via the CASE — absent priority means
+ *  "unclassified", not "most urgent" — and id ASC breaks ties so the order is deterministic and
+ *  oldest-first within a priority. Previously this was `ORDER BY t.id ASC`, which dispatched purely
+ *  oldest-first: a P0 queued today waited behind a P5 queued last month.
+ *
+ *  NOTE the storage representation: `agent_tickets.priority` is `TEXT NOT NULL DEFAULT 'none'`, so
+ *  **unset is the sentinel string `'none'`, never SQL NULL** (schema.ts). The server store maps
+ *  'none' ↔ `null` at the API boundary; this query reads the raw column, so it must test the
+ *  sentinel — a `priority IS NULL` check would silently never fire, and ~⅓ of the board is unset.
+ *  We map the sentinel back to `null` on the way out so `RobotCandidate.priority` matches the
+ *  domain type. */
 export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   const rows = db
     .prepare(
-      `SELECT t.id AS id, t.github_issue_number AS n, t.title AS title, t.body AS body, p.github_repo AS repo
+      `SELECT t.id AS id, t.github_issue_number AS n, t.title AS title, t.body AS body,
+              t.priority AS priority, p.github_repo AS repo
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
         WHERE t.archived_at IS NULL
@@ -60,10 +84,19 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
                AND blocker.archived_at IS NULL
                AND blocker.status NOT IN ('completed', 'closed')
           )
-        ORDER BY t.id ASC`,
+        ORDER BY CASE WHEN t.priority IS NULL OR t.priority = ? THEN 1 ELSE 0 END,
+                 t.priority ASC,
+                 t.id ASC`,
     )
-    .all() as CandidateRow[];
-  return rows.map((r) => ({ id: r.id, issueNumber: r.n, repo: r.repo, title: r.title, body: r.body }));
+    .all(PRIORITY_UNSET) as CandidateRow[];
+  return rows.map((r) => ({
+    id: r.id,
+    issueNumber: r.n,
+    repo: r.repo,
+    title: r.title,
+    body: r.body,
+    priority: r.priority === null || r.priority === PRIORITY_UNSET ? null : (r.priority as TicketPriority),
+  }));
 }
 
 /**

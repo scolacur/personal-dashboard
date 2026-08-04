@@ -12,6 +12,9 @@ function boardDb(): Database.Database {
     CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
       id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
+      -- Prod is \`TEXT NOT NULL DEFAULT 'none'\`; left nullable here only so the defensive
+      -- SQL-NULL ordering case is testable. addTicket defaults to 'none' like a real insert.
+      priority TEXT,
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER
     );
@@ -40,17 +43,21 @@ function addTicket(
     ready?: 0 | 1;
     /** Persisted ready-bypass flag (D-058). Defaults to 0. */
     readyBypassed?: 0 | 1;
+    /** P0–P5, or the `'none'` sentinel for unset — matching how the column actually stores it.
+     *  Defaults to 'none', as a real insert would (PD-294). */
+    priority?: string | null;
   },
 ): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, ready_bypassed, project_id, github_issue_number, agent_state, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, priority, ready, ready_bypassed, project_id, github_issue_number, agent_state, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
     `T${t.id}`,
     t.body ?? READY,
     t.status,
     t.assignee === undefined ? 'robot' : t.assignee,
+    t.priority === undefined ? 'none' : t.priority,
     t.ready ?? 1,
     t.readyBypassed ?? 0,
     t.projectId ?? 1,
@@ -131,6 +138,69 @@ describe('robotQueueCandidates', () => {
     expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([11]);
   });
 
+  // PD-294 — dispatch order. Before this, the query was `ORDER BY t.id ASC`: a P0 queued today
+  // waited behind a P5 queued last month.
+  it('dispatches in priority order, highest first — not oldest first', () => {
+    addTicket(db, { id: 1, status: 'queue', priority: 'P5' });
+    addTicket(db, { id: 2, status: 'queue', priority: 'P0' });
+    addTicket(db, { id: 3, status: 'queue', priority: 'P2' });
+    expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([2, 3, 1]);
+  });
+
+  // Unset priority is stored as the sentinel 'none' (TEXT NOT NULL DEFAULT 'none'), NOT SQL NULL —
+  // so this is the case that actually occurs in prod, on ~⅓ of the board.
+  it("sorts unset priority ('none' sentinel) LAST — unclassified, not most urgent", () => {
+    addTicket(db, { id: 1, status: 'queue', priority: 'none' });
+    addTicket(db, { id: 2, status: 'queue', priority: 'P3' });
+    addTicket(db, { id: 3, status: 'queue', priority: 'none' });
+    addTicket(db, { id: 4, status: 'queue', priority: 'P0' });
+    expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([4, 2, 1, 3]);
+  });
+
+  it('maps the sentinel back to null on the candidate, matching the domain type', () => {
+    addTicket(db, { id: 1, status: 'queue', priority: 'none' });
+    expect(robotQueueCandidates(db)[0].priority).toBeNull();
+  });
+
+  // Defensive: the column is NOT NULL today, but the ordering must not depend on that.
+  it('also sorts a SQL NULL priority last', () => {
+    addTicket(db, { id: 1, status: 'queue', priority: null });
+    addTicket(db, { id: 2, status: 'queue', priority: 'P4' });
+    const c = robotQueueCandidates(db);
+    expect(c.map((x) => x.id)).toEqual([2, 1]);
+    expect(c[1].priority).toBeNull();
+  });
+
+  it('breaks ties within a priority by id ascending (oldest first, deterministic)', () => {
+    addTicket(db, { id: 7, status: 'queue', priority: 'P1' });
+    addTicket(db, { id: 3, status: 'queue', priority: 'P1' });
+    addTicket(db, { id: 5, status: 'queue', priority: 'P1' });
+    expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([3, 5, 7]);
+  });
+
+  it('orders across the full P0–P5 range', () => {
+    for (const [id, priority] of [[1, 'P3'], [2, 'P5'], [3, 'P0'], [4, 'P4'], [5, 'P1'], [6, 'P2']] as const) {
+      addTicket(db, { id, status: 'queue', priority });
+    }
+    expect(robotQueueCandidates(db).map((x) => x.priority)).toEqual(['P0', 'P1', 'P2', 'P3', 'P4', 'P5']);
+  });
+
+  it('carries priority on the candidate so the dispatch order is observable', () => {
+    addTicket(db, { id: 1, status: 'queue', priority: 'P1' });
+    addTicket(db, { id: 2, status: 'queue', priority: 'none' });
+    const c = robotQueueCandidates(db);
+    expect(c[0]).toMatchObject({ id: 1, priority: 'P1' });
+    expect(c[1]).toMatchObject({ id: 2, priority: null });
+  });
+
+  it('applies ordering only to tickets that pass the gates', () => {
+    addTicket(db, { id: 1, status: 'queue', priority: 'P5' });
+    addTicket(db, { id: 2, status: 'queue', priority: 'P0', assignee: 'steve' }); // filtered out
+    addTicket(db, { id: 3, status: 'queue', priority: 'P0', ready: 0 }); // filtered out
+    addTicket(db, { id: 4, status: 'queue', priority: 'P1' });
+    expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([4, 1]);
+  });
+
   it('does NOT exclude the blocker itself (direction matters)', () => {
     // 20 blocks 21; 20 is the from/blocker. 20 being in queue is fine — it is not blocked.
     addTicket(db, { id: 20, status: 'queue' });
@@ -147,6 +217,7 @@ describe('selectDispatchable', () => {
     repo: 'r',
     title: `T${id}`,
     body,
+    priority: null,
   });
 
   it('dispatches nothing when disabled', () => {
