@@ -11,6 +11,7 @@ import {
   formatValue,
   matchesQuery,
   nextSort,
+  readField,
   sortItems,
   toDraft,
   validateDraft,
@@ -39,6 +40,38 @@ const gear = [
   { id: 3, type: 'WTB', manufacturer: 'Intellijel', module: 'Quadrax', price: null, notes: null },
   { id: 4, type: 'WTT', manufacturer: 'ALM', module: 'Pamela', price: 0, notes: undefined },
 ];
+
+// PD-437 regression: the component's first real caller could not compile, because
+// `ListItem = Record<string, unknown>` rejects a TS *interface* (no implicit index signature)
+// and every domain type in this app is an interface. This is a compile-time test — if the
+// constraint tightens back to `Record`, `tsc` fails here rather than in a distant caller.
+interface DomainRecord {
+  id: number;
+  module: string;
+  price: string | null;
+}
+
+describe('ListItem constraint', () => {
+  it('accepts a plain interface, not just an index-signature type', () => {
+    const rows: DomainRecord[] = [
+      { id: 1, module: 'Maths', price: '$250' },
+      { id: 2, module: 'Plaits', price: null },
+    ];
+    // Each of these would fail to typecheck under a `Record<string, unknown>` constraint.
+    expect(filterItems(rows, 'math', ['module']).map((r) => r.id)).toEqual([1]);
+    expect(sortItems(rows, 'module', 'asc').map((r) => r.module)).toEqual(['Maths', 'Plaits']);
+    expect(toDraft(rows[0], [{ key: 'module', label: 'Module', type: 'text' }])).toEqual({
+      module: 'Maths',
+    });
+  });
+
+  it('readField reads a key off an interface-typed record', () => {
+    const row: DomainRecord = { id: 1, module: 'Maths', price: null };
+    expect(readField(row, 'module')).toBe('Maths');
+    expect(readField(row, 'price')).toBeNull();
+    expect(readField(row, 'nope')).toBeUndefined();
+  });
+});
 
 describe('formatValue', () => {
   it('renders arrays as comma-joined text so tag fields stay searchable', () => {

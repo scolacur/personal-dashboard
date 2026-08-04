@@ -1,5 +1,6 @@
 import type { Component } from 'svelte';
 import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
+import BuySellTrade from './BuySellTrade.svelte';
 import MusicTracker from './MusicTracker.svelte';
 import DevOpsAgentWidget from '../routes/devops/AgentWidget.svelte';
 import DevOpsJobsWidget from '../routes/devops/JobsWidget.svelte';
@@ -138,6 +139,19 @@ export const widgets: WidgetMeta[] = [
     description: "Log of shows you've attended, with photos and notes.",
     route: '/widgets/concert-diary',
     pages: ['event-tracker'],
+  },
+  {
+    id: 'buy-sell-trade',
+    title: 'Buy, Sell, Trade',
+    description: 'Your WTB / WTS / WTT gear list, sale terms, and r/modular matches.',
+    route: '/widgets/buy-sell-trade',
+    pages: ['buy-sell-trade'],
+    // No `flippable`: D-062 retired the card flip — the header links to the widget page,
+    // which is where the list management and terms live.
+    embed: {
+      component: BuySellTrade,
+      span: { cols: 2, rows: 1 },
+    },
   },
   {
     id: 'chat',

@@ -27,8 +27,23 @@ export type FieldValue = string | number | null;
 /** An in-progress add/edit form, keyed by field key. */
 export type Draft = Record<string, FieldValue>;
 
-/** The minimum a managed record must be: a bag of readable properties. */
-export type ListItem = Record<string, unknown>;
+/**
+ * The minimum a managed record must be: an object with named fields.
+ *
+ * Deliberately `object` rather than `Record<string, unknown>`. A TypeScript **interface** has
+ * no implicit index signature, so `interface BstListing {...}` is NOT assignable to
+ * `Record<string, unknown>` — and every domain type in this app is an interface. Constraining
+ * to `Record` made the component unusable by its own callers (found by PD-437, the first one).
+ *
+ * Reading an arbitrary key off a caller's record is inherently unchecked; `readField` localises
+ * that single cast instead of pushing an index signature onto every domain type.
+ */
+export type ListItem = object;
+
+/** Read a field by key from a caller's record. The one place the unchecked access lives. */
+export function readField(item: ListItem, key: string): unknown {
+  return (item as Record<string, unknown>)[key];
+}
 
 export type SortDir = 'asc' | 'desc';
 
@@ -60,7 +75,7 @@ export function emptyDraft(fields: FieldDef[]): Draft {
 export function toDraft(item: ListItem, fields: FieldDef[]): Draft {
   const draft: Draft = {};
   for (const f of fields) {
-    const raw = item[f.key];
+    const raw = readField(item, f.key);
     if (isEmpty(raw)) {
       draft[f.key] = null;
     } else if (f.type === 'number') {
@@ -118,7 +133,7 @@ export function cleanDraft(draft: Draft): Draft {
 export function matchesQuery(item: ListItem, query: string, keys: string[]): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
-  return keys.some((k) => formatValue(item[k]).toLowerCase().includes(q));
+  return keys.some((k) => formatValue(readField(item, k)).toLowerCase().includes(q));
 }
 
 export function filterItems<T extends ListItem>(items: T[], query: string, keys: string[]): T[] {
@@ -151,8 +166,8 @@ export function sortItems<T extends ListItem>(items: T[], key: string | null, di
   if (!key) return [...items];
   const sign = dir === 'desc' ? -1 : 1;
   return [...items].sort((a, b) => {
-    const av = a[key];
-    const bv = b[key];
+    const av = readField(a, key);
+    const bv = readField(b, key);
     const aEmpty = isEmpty(av);
     const bEmpty = isEmpty(bv);
     if (aEmpty && bEmpty) return 0;
