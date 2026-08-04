@@ -45,6 +45,18 @@
   );
 
   let dispatch = $derived(status?.dispatch ?? null);
+  // PD-470: present only while the loop is waiting out a provider session limit. Re-checked against
+  // the local clock as well as the server's, so the banner disappears at the reset even if a poll
+  // is in flight.
+  let sessionLimit = $derived(
+    status?.sessionLimit && status.sessionLimit.until > now ? status.sessionLimit : null,
+  );
+
+  /** Wall-clock "5:30 AM" for the reset — a relative "in 3h" reads as an estimate, and the whole
+   *  point is that the provider named a specific time. */
+  function formatClockTime(ms: number): string {
+    return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
 
   function isStale(w: WorkerHeartbeat): boolean {
     return now - w.lastSeen > STALE_MS;
@@ -99,6 +111,17 @@
           <strong>⛔ Robot dispatch paused</strong>
           <span class="reason">{dispatch.reason ?? 'system-wide fault'}</span>
           {#if dispatch.since}<span class="since">since {formatRelativeTime(dispatch.since, now)}</span>{/if}
+        </div>
+      {/if}
+      <!-- PD-470: deliberately NOT styled as a fault. A session-limit hold needs no action — it
+           ends by itself at the stated time — so it reads as "waiting until X", and the copy says
+           so outright. The API reports an expired hold as none, so this can't linger. -->
+      {#if sessionLimit}
+        <div class="ss-holding" role="status">
+          <strong>⏳ Waiting out the session limit</strong>
+          <span class="until">resumes {formatClockTime(sessionLimit.until)}</span>
+          {#if sessionLimit.reason}<span class="reason">{sessionLimit.reason}</span>{/if}
+          <span class="note">No action needed — dispatch resumes on its own.</span>
         </div>
       {/if}
     {/if}

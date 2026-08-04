@@ -110,6 +110,39 @@
 }
 
 // System-wide fault banner (PD-323 surface) — only shown while dispatch is paused.
+// PD-470: the session-limit hold. Same shape as .ss-fault so the strip stays visually consistent,
+// but keyed to --status-queued rather than --status-stuck: the loop is waiting, not broken, and a
+// red banner for a self-healing wait is exactly the "looks stuck" this ticket set out to fix.
+.ss-holding {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: 0.4rem 0.7rem;
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--status-queued) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-queued) 35%, transparent);
+  color: var(--text);
+
+  strong {
+    color: var(--status-queued);
+  }
+
+  .until {
+    font-weight: 600;
+  }
+
+  .reason {
+    font-family: monospace;
+    font-size: 0.85em;
+  }
+
+  .note {
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+}
+
 .ss-fault {
   display: flex;
   align-items: center;

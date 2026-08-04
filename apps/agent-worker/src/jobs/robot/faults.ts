@@ -26,6 +26,9 @@ export interface FaultClassification {
   tier: FaultTier;
   signature: string;
   reason: string;
+  /** PD-470: for a session-limit fault only — when the provider says the quota resets, epoch ms,
+   *  or null when the message carried no readable time. */
+  resetAt?: number | null;
 }
 
 /** A prior failed run, as the engine needs to see it for counting/backoff. */
@@ -41,6 +44,59 @@ export interface FailedRun {
 /** The stable signature for a per-run turn-limit cutoff (PD-406). Set explicitly (not derived via
  *  `normalizeSignature`) so it's a reliable key for the unchanged-body deterministic promotion. */
 export const MAX_TURNS_SIGNATURE = 'max-turns';
+
+/** The stable signature for a provider session/usage limit (PD-470). Explicit for the same reason
+ *  as `MAX_TURNS_SIGNATURE`: the raw text carries a reset time, so a normalized signature would
+ *  differ run to run and defeat every same-signature rule we want to apply to it. */
+export const SESSION_LIMIT_SIGNATURE = 'session-limit';
+
+/** "You've hit your session limit · resets 5:30am (UTC)" and its usage-limit variants. Deliberately
+ *  narrow: a generic 429/rate-limit is NOT this — this is the subscription quota, which recovers on
+ *  a schedule the message itself states. */
+const SESSION_LIMIT_PATTERN = /\b(session|usage)[ _-]?limit\b|hit your limit/i;
+
+/** How long to hold when a session limit is reported but its reset time can't be read. Bounded on
+ *  purpose (PD-470): an unparseable variant must degrade to "try again shortly", never to an
+ *  indefinite wait for a human. */
+export const SESSION_LIMIT_FALLBACK_MS = 15 * 60_000;
+
+/** Longest wait a PARSED reset time may produce. A quota reset is hours away at most, so anything
+ *  beyond this means the parse went wrong (wrong day, wrong timezone) — fall back to the bounded
+ *  delay rather than trusting it and stalling the loop until tomorrow. */
+export const SESSION_LIMIT_MAX_WAIT_MS = 12 * 60 * 60_000;
+
+/**
+ * Read the reset time out of a session-limit error, as epoch ms — `null` when it can't be read.
+ *
+ * Defensive by construction (PD-470): the provider's phrasing is not a contract, so every branch
+ * that isn't confidently understood returns null and lets the caller use the bounded fallback. A
+ * bare hour is read as 24h; `(UTC)`/`(GMT)` switches the whole computation to UTC, anything else
+ * (including an absent parenthetical) is local. A time that has already passed today is read as
+ * tomorrow's — "resets 5:30am" at 21:45 means the 5:30am that is 7¾ hours out, not the one 16 hours
+ * ago.
+ */
+export function parseResetAt(error: string, now: number): number | null {
+  const m = /reset(?:s|ting)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]{1,40})\))?/i.exec(error);
+  if (!m) return null;
+
+  let hour = Number(m[1]);
+  const minute = m[2] === undefined ? 0 : Number(m[2]);
+  const meridiem = m[3]?.toLowerCase();
+  const utc = /\b(utc|gmt)\b/i.test(m[4] ?? '');
+
+  if (meridiem === 'pm' && hour < 12) hour += 12;
+  if (meridiem === 'am' && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59) return null; // e.g. "resets 25:00" — not a time we understand
+
+  const base = new Date(now);
+  const at = utc
+    ? Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), hour, minute, 0, 0)
+    : new Date(base.getFullYear(), base.getMonth(), base.getDate(), hour, minute, 0, 0).getTime();
+
+  const target = at <= now ? at + 24 * 60 * 60_000 : at;
+  if (target - now > SESSION_LIMIT_MAX_WAIT_MS) return null;
+  return target;
+}
 
 /** "Reached maximum number of turns (N)" — the Agent SDK's per-run turn-ceiling error. */
 const MAX_TURNS_PATTERN = /maximum number of turns|max_turns|reached the turn limit/i;
@@ -93,9 +149,24 @@ function firstLine(s: string): string {
  * Classify a single failed run from what the loop observed. `error` is the SDK/thrown error text
  * (undefined for a plain no-verify, where the session ran cleanly but never reached a green verify).
  */
-export function classifyFault(input: { verifyOk: boolean; error?: string | null }): FaultClassification {
+export function classifyFault(
+  input: { verifyOk: boolean; error?: string | null },
+  now: number = Date.now(),
+): FaultClassification {
   const err = (input.error ?? '').trim();
 
+  // PD-470: checked BEFORE the auth/credit patterns. A session limit reads like a credit fault but
+  // behaves nothing like one — it is not a broken credential a human must fix, it is a wait with a
+  // stated end. Classifying it first is what stops it being handled as "pause until someone looks".
+  if (err && SESSION_LIMIT_PATTERN.test(err)) {
+    const resetAt = parseResetAt(err, now);
+    return {
+      tier: 'transient',
+      signature: SESSION_LIMIT_SIGNATURE,
+      reason: `provider session limit: ${firstLine(err)}`,
+      resetAt,
+    };
+  }
   if (err && SYSTEM_WIDE_PATTERNS.some((re) => re.test(err))) {
     return { tier: 'system-wide', signature: normalizeSignature(err), reason: `auth/credit fault (loop-wide): ${firstLine(err)}` };
   }
@@ -122,9 +193,13 @@ export function backoffMs(attempt: number, policy: FaultPolicy): number {
   return Math.min(step, policy.backoffMaxMs);
 }
 
-/** Failures that count against a ticket's budget — system-wide faults are excluded (zero burn). */
+/** Failures that count against a ticket's budget — system-wide faults are excluded (zero burn), and
+ *  so are session limits (PD-470): the account ran out of quota, which is not evidence of anything
+ *  about this ticket. Excluding them here is ALSO what structurally prevents the deterministic
+ *  promotion that stranded PD-420 for ~12h — two identical session-limit signatures are one
+ *  transient cause seen twice, and neither one is ever counted. */
 function countable(failures: FailedRun[]): FailedRun[] {
-  return failures.filter((f) => f.tier !== 'system-wide');
+  return failures.filter((f) => f.tier !== 'system-wide' && f.signature !== SESSION_LIMIT_SIGNATURE);
 }
 
 /** Earliest time the ticket may be retried, from its most recent countable failure + backoff.
@@ -139,7 +214,11 @@ export function nextEligibleAt(failures: FailedRun[], policy: FaultPolicy): numb
 export type FaultDecision =
   | { action: 'retry'; tier: FaultTier; signature: string; reason: string }
   | { action: 'park'; tier: FaultTier; signature: string; reason: string }
-  | { action: 'pause'; tier: FaultTier; signature: string; reason: string };
+  | { action: 'pause'; tier: FaultTier; signature: string; reason: string }
+  /** PD-470: hold the WHOLE loop until `until`, then resume unattended. The ticket stays queued —
+   *  a session limit is an account-wide condition, so parking this one ticket would be both wrong
+   *  (it did nothing) and useless (the next ticket hits the same wall). */
+  | { action: 'wait'; tier: FaultTier; signature: string; reason: string; until: number };
 
 /** True when the ticket body CHANGED since its most recent countable failure (PD-406). A genuinely
  *  re-scoped ticket deserves a fresh transient attempt; an untouched one does not. No prior failure
@@ -169,9 +248,26 @@ export function decideFault(
   priorFailures: FailedRun[],
   policy: FaultPolicy,
   currentBodyHash: string | null = null,
+  now: number = Date.now(),
 ): FaultDecision {
   if (cls.tier === 'system-wide') return { action: 'pause', ...cls };
   if (cls.tier === 'deterministic') return { action: 'park', ...cls };
+
+  // PD-470: a session limit is a wait, not a failure. Decided before every counting rule below so
+  // no repeat count, cap or promotion can reach it — the ticket keeps its budget and its place.
+  if (cls.signature === SESSION_LIMIT_SIGNATURE) {
+    const parsed = cls.resetAt ?? null;
+    const until = parsed ?? now + SESSION_LIMIT_FALLBACK_MS;
+    return {
+      action: 'wait',
+      tier: cls.tier,
+      signature: cls.signature,
+      reason: parsed
+        ? `${cls.reason} — holding dispatch until the stated reset`
+        : `${cls.reason} — reset time unreadable, holding dispatch for ${Math.round(SESSION_LIMIT_FALLBACK_MS / 60_000)}m`,
+      until,
+    };
+  }
 
   // PD-406: a max-turns cutoff means the ticket is too big for one run. Handled in its own branch so
   // the same-signature promotion (`promoteAfter`) can't park a genuinely re-scoped retry.

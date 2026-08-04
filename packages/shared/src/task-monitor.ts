@@ -721,6 +721,19 @@ export interface DispatchPauseState {
   since: number | null;
 }
 
+/** A self-expiring hold on dispatch after the provider reported a session/usage limit (PD-470).
+ *  Unlike `DispatchPauseState` this needs no human: the loop resumes itself once `until` passes,
+ *  and the status API reports an expired hold as none at all. */
+export interface SessionLimitHoldState {
+  /** Unix ms dispatch resumes — the time the provider stated, or a bounded fallback when its
+   *  message carried no readable time. */
+  until: number;
+  /** The fault text that caused the hold. */
+  reason: string;
+  /** Unix ms the hold was set. */
+  since: number;
+}
+
 /** Runtime status for the board's Site Status strip. `sortie` counts active
  *  (non-archived) tickets by agent state — only states with a non-zero count
  *  appear. `workers` is every known worker heartbeat. `dispatch` is the Robot
@@ -731,6 +744,8 @@ export interface SystemStatus {
   sortie: Partial<Record<AgentState, number>>;
   workers: WorkerHeartbeat[];
   dispatch: DispatchPauseState;
+  /** PD-470: set while the loop is waiting out a provider session limit; null when it isn't. */
+  sessionLimit: SessionLimitHoldState | null;
 }
 
 // ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────
@@ -836,4 +851,8 @@ export interface RobotEventDetail {
   resolvedNotifications?: number;
   /** True when an active refine session was ended by the terminal transition (`robot_session_ended`). */
   endedRefine?: boolean;
+  /** PD-470: on a `robot_paused` raised by a provider session limit — the flag distinguishes it
+   *  from an auth/credit pause (which needs a human), and `until` is when dispatch resumes. */
+  sessionLimit?: boolean;
+  until?: number;
 }
