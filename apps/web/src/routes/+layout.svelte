@@ -6,9 +6,8 @@
   import SideNav from '$lib/SideNav.svelte';
   import NotificationBell from '$lib/NotificationBell.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
-  import { resolvePageTitle } from '$lib/nav-utils';
-  import { widgets, widgetsForPage } from '$lib/widgets';
-  import { pages } from '$lib/pages';
+  import { arrangeablePageId, resolvePageTitle } from '$lib/nav-utils';
+  import { homeWidgets, widgetsForPage } from '$lib/widgets';
   import { arrangeMode } from '$lib/arrange.svelte';
   import FloatingPomodoro from './widgets/pomodoro/FloatingPomodoro.svelte';
 
@@ -30,16 +29,12 @@
   const showPomodoro = $derived(page.route.id !== '/devops/tickets/[ticketId]');
 
   // Arrange button: shown only on widget-bearing pages at >=768px (enforced in CSS).
-  // task-monitor is a Kanban, not a widget grid — excluded.
+  // The route half of the rule lives in nav-utils so it's unit-tested (nav-utils.spec.ts);
+  // Home draws from the user-facing catalogue, every other page from its `pages` tag.
   const canArrange = $derived.by(() => {
-    const pathname = page.url.pathname;
-    if (pathname.startsWith('/devops')) return false;
-    if (pathname === '/') return widgets.length > 0;
-    const p = pages.find(
-      (pg) =>
-        pg.route !== '/' && (pathname === pg.route || pathname.startsWith(pg.route + '/')),
-    );
-    return p ? widgetsForPage(p.id).length > 0 : false;
+    const pageId = arrangeablePageId(page.url.pathname);
+    if (pageId === undefined) return false;
+    return pageId === 'home' ? homeWidgets().length > 0 : widgetsForPage(pageId).length > 0;
   });
 
   // Exit arrange mode whenever the page changes.

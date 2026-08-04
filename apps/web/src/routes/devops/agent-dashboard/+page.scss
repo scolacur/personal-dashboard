@@ -1,26 +1,21 @@
-/* ── Agent Dashboard (shell) ───────────────────── */
-// Placeholder styling only; PD-413 brings the real content and will likely replace this file.
+/* ── Agent Dashboard ───────────────────────────── */
 // `.section-head` / `.section-title` mirror the other Dev Ops pages — Svelte scopes styles per
 // component, so each page carries its own copy of the shared section chrome.
 
 .agent-dashboard {
   scroll-margin-top: 5rem;
+  padding: var(--space-lg) var(--space-md);
 }
 
 .section-head {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  margin-bottom: var(--space-sm);
+  margin-bottom: var(--space-md);
 }
 
 .section-title {
   margin: 0;
   font-size: var(--font-size-lg);
   flex: 0 0 auto;
-}
-
-.placeholder {
-  margin: 0;
-  color: var(--muted);
 }

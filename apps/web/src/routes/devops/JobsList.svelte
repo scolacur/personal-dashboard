@@ -4,24 +4,28 @@
   import JobRow from './JobRow.svelte';
 
   // The Recurring Jobs list (PD-286). On the Dev Ops page it's capped with a "View all"
-  // link to the full /devops/jobs page; the full page renders it uncapped.
+  // link to the full /devops/jobs page; the full page renders it uncapped. Inside the
+  // overview's Jobs widget the head is suppressed — the widget card supplies its own.
   let {
     heading = 'Jobs',
     limit,
     viewAllHref,
-  }: { heading?: string; limit?: number; viewAllHref?: string } = $props();
+    showHead = true,
+  }: { heading?: string; limit?: number; viewAllHref?: string; showHead?: boolean } = $props();
 
   const shown = $derived(limit != null ? RECURRING_JOBS.slice(0, limit) : RECURRING_JOBS);
   const hasMore = $derived(limit != null && RECURRING_JOBS.length > limit);
 </script>
 
 <section class="jobs-section" id="jobs">
-  <div class="section-head">
-    <h2 class="section-title">{heading}</h2>
-    {#if viewAllHref && hasMore}
-      <a class="jobs-view-all" href={viewAllHref}>View all ({RECURRING_JOBS.length})</a>
-    {/if}
-  </div>
+  {#if showHead}
+    <div class="section-head">
+      <h2 class="section-title">{heading}</h2>
+      {#if viewAllHref && hasMore}
+        <a class="jobs-view-all" href={viewAllHref}>View all ({RECURRING_JOBS.length})</a>
+      {/if}
+    </div>
+  {/if}
 
   <ul class="job-list">
     {#each shown as job (job.id)}

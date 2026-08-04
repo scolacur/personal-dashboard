@@ -1,14 +1,15 @@
 <script lang="ts">
-  // Shell only (PD-422, Dev Ops 3/3). The Agent Dashboard's real content — SystemStatus and the
-  // agent monitoring widgets — is owned by PD-413; this page exists so the nav child has a real
-  // subroute to point at and the route tree is complete.
+  // The Agent Dashboard (PD-413). Home of SystemStatus, which PD-422 left unmounted when it
+  // removed the old `#site-status` section: the Robot fleet counts, the loop's global
+  // dispatch state (with the pause/resume control), and worker heartbeats.
+  import SystemStatus from '../SystemStatus.svelte';
 </script>
 
 <section class="agent-dashboard">
   <div class="section-head">
     <h2 class="section-title">Agent Dashboard</h2>
   </div>
-  <p class="placeholder">Agent monitoring lives here soon.</p>
+  <SystemStatus />
 </section>
 
 <style lang="scss" src="./+page.scss"></style>
