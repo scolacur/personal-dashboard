@@ -445,6 +445,23 @@ export function updateTicket(
     next.refineState = null;
   }
 
+  // PD-467: a ticket parked `stuck`/`needs-human` keeps that `agent_state` forever, and the loop's
+  // selection gates on `agent_state IS NULL OR 'queued'` — so re-queueing a parked ticket from the
+  // board produced a card that looked perfectly normal in the Queue and could NEVER dispatch, with
+  // nothing saying so. (PD-426 sat in exactly this state.) Entering `queue` is an explicit human
+  // "run this", so it clears the park itself rather than requiring the easy-to-miss Unstick control.
+  //
+  // `awaiting-human` is deliberately NOT cleared: it means an unanswered question, and clearing it
+  // would re-dispatch the Robot to ask the same question again (the PD-393 failure). It is owned by
+  // the reply → `resumeAskHuman` path; the loop's PD-467 warn log covers it if it ever sticks.
+  const parkedOnQueueEntry =
+    next.status === 'queue' &&
+    existing.status !== 'queue' &&
+    (existing.agentState === 'stuck' || existing.agentState === 'needs-human');
+  if (parkedOnQueueEntry) {
+    next.agentState = 'queued';
+  }
+
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
@@ -494,6 +511,17 @@ export function updateTicket(
           endedRefine: endedRefine || undefined,
         });
       }
+    }
+    // PD-467: write the cleared state, and log it as an `unstick` — the SAME event the human
+    // control writes, because that event is also the loop's retry-budget boundary
+    // (`resetBoundaryForTicket`). Logging anything else would hand the ticket back to the loop with
+    // its exhausted budget intact, so it would dispatch once and immediately re-park at the cap.
+    if (parkedOnQueueEntry) {
+      db.prepare('UPDATE agent_tickets SET agent_state = ? WHERE id = ?').run('queued', id);
+      logEvent(db, id, ROBOT_EVENT.unstick, {
+        reason: 'auto-unstuck on queue entry',
+        from: existing.agentState ?? undefined,
+      });
     }
     // Covers both an explicit assignee change and a lane-forced one (D-044).
     if (next.assignee !== existing.assignee) {

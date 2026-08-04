@@ -2,7 +2,12 @@ import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { dbPathFor } from '../../shared/config';
 import { logger } from '../../shared/logger';
-import { robotQueueCandidates, selectDispatchable, type RobotCandidate } from './select';
+import {
+  queuedBlockedByAgentState,
+  robotQueueCandidates,
+  selectDispatchable,
+  type RobotCandidate,
+} from './select';
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, removeWorktree, type Worktree } from './workspace';
 import { runRobotSession, type RobotSessionResult } from './session';
@@ -113,6 +118,17 @@ export async function processRobotQueue(
   reconcileStalledRuns(db, config, policy, now()); // watchdog → in-process stall detection
   resumeAskHuman(db, now()); // ask_human resume off the DB reply
   await pollInReviewPrs(db, config, now()); // review-/conflict-rework → one PR-state poll
+
+  // PD-467: name any ticket the selection query passed over purely because of a parked
+  // `agent_state`. Runs after the reconciliation above, so a ticket those steps just re-queued is
+  // not reported. Warn, not error — the ticket is not lost, it is stalled and invisible, and
+  // silence is the actual defect.
+  for (const t of queuedBlockedByAgentState(db)) {
+    logger.warn(
+      { ticketId: t.id, agentState: t.agentState },
+      'robot: queued + robot-assigned + Ready but NOT dispatchable — parked agent_state; Unstick to clear',
+    );
+  }
 
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
   const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);

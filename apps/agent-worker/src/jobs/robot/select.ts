@@ -99,6 +99,52 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   }));
 }
 
+/** A queued ticket that passes every dispatch gate EXCEPT its `agent_state` (PD-467). */
+export interface BlockedByAgentState {
+  id: number;
+  agentState: string;
+}
+
+/**
+ * Tickets that would be dispatchable but for a parked `agent_state` (PD-467). Same gates as
+ * `robotQueueCandidates` — `queue` + `assignee=robot` + Ready + robot-enabled repo + unblocked —
+ * with the `agent_state` test inverted, and `working`/`in-review` excluded because those are the
+ * states the loop itself sets on a healthy run (a Robot mid-flight or a PR awaiting review is not a
+ * trap). What is left is a card that looks perfectly normal in the Queue and can never dispatch.
+ *
+ * `updateTicket` now clears `stuck`/`needs-human` on queue entry, so the trap should be
+ * unreachable from the board — this exists because "should be unreachable" is exactly the claim
+ * that goes stale. A silently-skipped ticket is indistinguishable from an idle loop, which is the
+ * failure mode that is hardest to notice when the loop is turned back on.
+ */
+export function queuedBlockedByAgentState(db: Database.Database): BlockedByAgentState[] {
+  return db
+    .prepare(
+      `SELECT t.id AS id, t.agent_state AS agentState
+         FROM agent_tickets t
+         JOIN agent_projects p ON p.id = t.project_id
+        WHERE t.archived_at IS NULL
+          AND t.status = 'queue'
+          AND t.assignee = 'robot'
+          AND (t.ready = 1 OR t.ready_bypassed = 1)
+          AND t.agent_state IS NOT NULL
+          AND t.agent_state NOT IN ('queued', 'working', 'in-review')
+          AND p.robot_enabled = 1
+          AND p.github_repo IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+              FROM agent_ticket_relations r
+              JOIN agent_tickets blocker ON blocker.id = r.from_ticket_id
+             WHERE r.type = 'blocks'
+               AND r.to_ticket_id = t.id
+               AND blocker.archived_at IS NULL
+               AND blocker.status NOT IN ('completed', 'closed')
+          )
+        ORDER BY t.id ASC`,
+    )
+    .all() as BlockedByAgentState[];
+}
+
 /**
  * Decide which candidates the Robot loop may dispatch THIS cycle, given the current in-flight
  * count. Pure so it is unit-tested directly. Applies, in order:

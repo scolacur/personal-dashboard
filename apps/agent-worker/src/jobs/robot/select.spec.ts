@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { loadRobotConfig, type RobotConfig } from '../../shared/config';
-import { robotQueueCandidates, selectDispatchable, type RobotCandidate } from './select';
+import {
+  queuedBlockedByAgentState,
+  robotQueueCandidates,
+  selectDispatchable,
+  type RobotCandidate,
+} from './select';
 
 const READY = ['## Context', 'ctx', '## Task', 'do it', '## Done When', 'done', '## Out of scope', 'no'].join('\n');
 
@@ -207,6 +212,50 @@ describe('robotQueueCandidates', () => {
     addTicket(db, { id: 21, status: 'prioritized' });
     addBlocks(db, 20, 21);
     expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([20]);
+  });
+});
+
+// PD-467: the counterpart to the agent_state gate above — the tickets it drops that a human would
+// read as dispatchable. This set is what the loop logs, so nothing is skipped in silence.
+describe('queuedBlockedByAgentState', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  it('names a queued, robot-assigned, Ready ticket held only by a parked agent_state', () => {
+    addTicket(db, { id: 1, status: 'queue', agentState: 'stuck' });
+    addTicket(db, { id: 2, status: 'queue', agentState: 'needs-human' });
+    addTicket(db, { id: 3, status: 'queue', agentState: 'awaiting-human' });
+    expect(queuedBlockedByAgentState(db)).toEqual([
+      { id: 1, agentState: 'stuck' },
+      { id: 2, agentState: 'needs-human' },
+      { id: 3, agentState: 'awaiting-human' },
+    ]);
+  });
+
+  it('stays quiet for dispatchable and healthy in-flight states', () => {
+    addTicket(db, { id: 1, status: 'queue', agentState: null }); // dispatchable
+    addTicket(db, { id: 2, status: 'queue', agentState: 'queued' }); // dispatchable
+    addTicket(db, { id: 3, status: 'queue', agentState: 'working' }); // a Robot is on it
+    addTicket(db, { id: 4, status: 'queue', agentState: 'in-review' }); // handed off, PR open
+    expect(queuedBlockedByAgentState(db)).toEqual([]);
+  });
+
+  it('stays quiet for a parked ticket that is NOT otherwise dispatchable', () => {
+    addTicket(db, { id: 1, status: 'backlog', agentState: 'stuck' }); // wrong lane
+    addTicket(db, { id: 2, status: 'queue', agentState: 'stuck', assignee: 'steve' }); // Steve's
+    addTicket(db, { id: 3, status: 'queue', agentState: 'stuck', ready: 0 }); // not Ready
+    addTicket(db, { id: 4, status: 'queue', agentState: 'stuck', archived: true });
+    addTicket(db, { id: 5, status: 'queue', agentState: 'stuck', projectId: 2 }); // robot-disabled
+    expect(queuedBlockedByAgentState(db)).toEqual([]);
+  });
+
+  it('stays quiet for a parked ticket that is also blocked — the blocker is the real reason', () => {
+    addTicket(db, { id: 10, status: 'prioritized' });
+    addTicket(db, { id: 11, status: 'queue', agentState: 'stuck' });
+    addBlocks(db, 10, 11);
+    expect(queuedBlockedByAgentState(db)).toEqual([]);
   });
 });
 
