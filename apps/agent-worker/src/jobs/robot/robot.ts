@@ -165,7 +165,9 @@ export async function processRobotQueue(
       status: 'no-verify' | 'error',
       sessionId: string | undefined,
       error: string | undefined,
-      metrics: { turns?: number; tokens?: number } = {},
+      // `outputTail` (PD-426) is the evidence a failed run leaves behind. The catch path below
+      // has no session result and passes none, which stores null — correct: nothing was captured.
+      metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
     ): void => {
       const cls = classifyFault({ verifyOk: false, error });
       const decision = decideFault(cls, failures, policy, bodyHash);
@@ -181,6 +183,7 @@ export async function processRobotQueue(
           faultReason: decision.reason,
           turns: metrics.turns,
           tokens: metrics.tokens,
+          outputTail: metrics.outputTail,
         },
         now(),
       );
@@ -211,7 +214,9 @@ export async function processRobotQueue(
       const result = await doRun(config, candidate, worktree, resumeCtx, (turns) =>
         updateRunProgress(db, runId, turns),
       );
-      const metrics = { turns: result.turns, tokens: result.tokens };
+      // Spread into finishRun on every terminal path, so the captured tail (PD-426) lands on the
+      // run row before the `finally` below removes the worktree.
+      const metrics = { turns: result.turns, tokens: result.tokens, outputTail: result.outputTail };
 
       if (result.askHuman) {
         // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a

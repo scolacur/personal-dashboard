@@ -144,6 +144,32 @@ describe('processRobotQueue', () => {
     expect(run.faultTier).toBe('transient');
   });
 
+  // PD-426: the tail must reach the run row on the no-verify path specifically — that is the
+  // case that was undiagnosable, and finishRun runs BEFORE the `finally` removes the worktree.
+  it('threads the session output tail onto the run row on the no-verify path', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(
+      db,
+      cfg(),
+      deps({ ok: true, verifyOk: false, prNumber: undefined, outputTail: '[tool] Tests 2 failed' }),
+    );
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('no-verify');
+    expect(run.outputTail).toBe('[tool] Tests 2 failed');
+  });
+
+  it('stores a null tail when the session threw before producing one', async () => {
+    addQueued(db, 1);
+    const d = deps();
+    d.runSession = async () => {
+      throw new Error('spawn EACCES');
+    };
+    await processRobotQueue(db, cfg(), d);
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('error');
+    expect(run.outputTail).toBeNull();
+  });
+
   it('session error (unrecognised) ⇒ run error (transient) + re-queued', async () => {
     addQueued(db, 1);
     const n = await processRobotQueue(db, cfg(), deps({ ok: false, verifyOk: false, error: 'max turns' }));

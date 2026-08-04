@@ -765,6 +765,10 @@ export interface AgentRun {
   turns: number | null;
   /** Total tokens the coding session used (null for older rows). */
   tokens: number | null;
+  /** Bounded (8 KB) tail of the coding session's assistant text + tool output (PD-426) — the
+   *  evidence that makes a `no-verify` run diagnosable from the board after its worktree is gone.
+   *  Null for older rows and for sessions that produced no output. */
+  outputTail: string | null;
   startedAt: number;
   finishedAt: number | null;
 }

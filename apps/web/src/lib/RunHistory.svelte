@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AgentRun, RobotFaultTier, RobotRunStatus } from '@dashboard/shared';
+  import { SvelteSet } from 'svelte/reactivity';
   import { fetchTicketRuns } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
@@ -58,6 +59,19 @@
     if (s < 60) return `${s}s`;
     return `${Math.floor(s / 60)}m ${s % 60}s`;
   }
+
+  // PD-426: captured session output, expanded per run. Collapsed by default — it's 8 KB of raw
+  // log, useful when diagnosing a failure and noise otherwise. Not persisted: unlike the section's
+  // own open/closed state, which run you were reading isn't worth remembering across visits.
+  const openOutputs = new SvelteSet<number>();
+
+  function toggleOutput(runId: number): void {
+    if (openOutputs.has(runId)) openOutputs.delete(runId);
+    else openOutputs.add(runId);
+  }
+
+  /** Columns in the runs table — keeps the expanded row's colspan honest if a column is added. */
+  const RUN_COLUMNS = 10;
 </script>
 
 {#if !loading && runs.length > 0}
@@ -77,13 +91,27 @@
       <table class="runs-table">
         <thead>
           <tr>
+            <th><span class="sr-only">Output</span></th>
             <th>#</th><th>Status</th><th>Fault</th><th>Reason</th>
             <th>Turns</th><th>Tokens</th><th>Dur</th><th>PR</th><th>Started</th>
           </tr>
         </thead>
         <tbody>
           {#each runs as r, i (r.id)}
+            {@const hasOutput = !!r.outputTail}
+            {@const isOpen = openOutputs.has(r.id)}
             <tr>
+              <td class="expander">
+                {#if hasOutput}
+                  <button
+                    class="out-toggle"
+                    type="button"
+                    aria-expanded={isOpen}
+                    aria-label={isOpen ? `Hide output for run ${runs.length - i}` : `Show output for run ${runs.length - i}`}
+                    onclick={() => toggleOutput(r.id)}
+                  >{isOpen ? '▾' : '▸'}</button>
+                {/if}
+              </td>
               <td class="num">{runs.length - i}</td>
               <td><span class="status-badge status-{r.status}">{STATUS_LABEL[r.status] ?? r.status}</span></td>
               <td>
@@ -96,6 +124,13 @@
               <td>{#if r.prUrl}<a href={r.prUrl} target="_blank" rel="noreferrer">PR</a>{:else}—{/if}</td>
               <td class="when">{fmt(r.startedAt)}</td>
             </tr>
+            {#if hasOutput && isOpen}
+              <tr class="output-row">
+                <td colspan={RUN_COLUMNS}>
+                  <pre class="output-tail">{r.outputTail}</pre>
+                </td>
+              </tr>
+            {/if}
           {/each}
         </tbody>
       </table>

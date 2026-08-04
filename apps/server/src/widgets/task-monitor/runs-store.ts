@@ -23,6 +23,7 @@ interface AgentRunRow {
   fault_reason: string | null;
   turns: number | null;
   tokens: number | null;
+  output_tail: string | null;
   started_at: number;
   finished_at: number | null;
 }
@@ -42,6 +43,9 @@ function rowToRun(r: AgentRunRow): AgentRun {
     faultReason: r.fault_reason,
     turns: r.turns,
     tokens: r.tokens,
+    // `?? null` rather than a bare read: a pre-PD-426 row selected by `SELECT *` has no
+    // output_tail key at all, so the property would come back undefined instead of null.
+    outputTail: r.output_tail ?? null,
     startedAt: r.started_at,
     finishedAt: r.finished_at,
   };
