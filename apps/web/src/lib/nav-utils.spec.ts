@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { arrangeablePageId, resolvePageTitle } from './nav-utils';
+import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from './nav-utils';
 
 describe('resolvePageTitle', () => {
   it('returns "Home" for the root path', () => {
@@ -50,5 +50,32 @@ describe('arrangeablePageId', () => {
   it('resolves no grid for unknown routes', () => {
     expect(arrangeablePageId('/widgets/music-tracker')).toBeUndefined();
     expect(arrangeablePageId('/unknown')).toBeUndefined();
+  });
+});
+
+describe('isDevOpsRoute', () => {
+  it('matches the Dev Ops section root and all its subroutes', () => {
+    expect(isDevOpsRoute('/devops')).toBe(true);
+    expect(isDevOpsRoute('/devops/task-tracker')).toBe(true);
+    expect(isDevOpsRoute('/devops/jobs')).toBe(true);
+    expect(isDevOpsRoute('/devops/agent-dashboard')).toBe(true);
+    expect(isDevOpsRoute('/devops/tickets/PD-1')).toBe(true);
+    expect(isDevOpsRoute('/devops/reports/ticket-audit')).toBe(true);
+  });
+
+  it('does not match other routes', () => {
+    expect(isDevOpsRoute('/')).toBe(false);
+    expect(isDevOpsRoute('/productivity')).toBe(false);
+  });
+
+  it('does not match a route that merely starts with the same characters', () => {
+    // `/devops-notes` is not inside the section — the boundary is the slash.
+    expect(isDevOpsRoute('/devops-notes')).toBe(false);
+  });
+
+  it('is a prefix match where arrangeablePageId is exact — the two must not be unified', () => {
+    // Deploy state is section-wide context; Arrange applies only to the actual widget grid.
+    expect(isDevOpsRoute('/devops/task-tracker')).toBe(true);
+    expect(arrangeablePageId('/devops/task-tracker')).toBeUndefined();
   });
 });
