@@ -1,0 +1,136 @@
+# Path-guard — Tier 1 of the sensitive-path guardrail model (D-047, PD-308).
+#
+# WHY THIS EXISTS: an autonomous Robot may edit any file in the repo. "Don't touch CI /
+# deploy / schema / deps" was prompt-only, which is not trustworthy for an unsupervised agent.
+# On 2026-07-28 (PR #268) a Robot added a dependency to apps/server/package.json, wrote in its
+# own PR body that "the path-guard will flag this — needs the sensitive-change-approved label",
+# and merged. No such guard existed. This is that guard.
+#
+# WHAT IT DOES: red when a PR's diff touches any glob in .github/sensitive-paths.txt, unless the
+# PR carries the `sensitive-change-approved` label. Editing a sensitive path is never forbidden —
+# it requires a conscious ack from a write+ collaborator (strangers cannot apply labels, which is
+# the same trust boundary the Robot loop already relies on).
+#
+# WHY pull_request_target, NOT pull_request: GitHub runs `pull_request_target` workflows from the
+# BASE branch, and checkout defaults to the base ref. So both this workflow and the denylist are
+# read from `main`, never from the PR. A PR cannot weaken the guard or the list within the same
+# PR — and since `.github/**` is itself on the list, such a PR goes red and needs the label.
+# With plain `pull_request` the workflow file comes from the PR head, so a PR could rewrite the
+# guard to `exit 0` and merge itself. That is the whole point of the ticket, so: base-ref.
+#
+# SAFETY under pull_request_target: this event carries a privileged token, so the usual footgun
+# is checking out and EXECUTING PR code. We never do. The PR ref is fetched and inspected with
+# `git diff --name-only` only — no build, no install, no script from the PR is ever run — and
+# permissions are pinned read-only below. Nothing in the PR's tree is executed.
+#
+# MATCHING is git's own: each denylist line is passed as a `:(glob)` pathspec, so `**` semantics
+# are git's documented ones rather than a hand-rolled matcher. `**/package.json` matches the root
+# manifest as well as every workspace one (verified against this repo's tree).
+#
+# REQUIRED-CHECK WIRING — see the sibling note in ci.yml for the payload shape. The guard must be
+# proven to report on a real PR BEFORE being added to branch protection: adding a required check
+# that never reports would block every PR. To wire it once proven:
+#   gh api -X PUT repos/scolacur/personal-dashboard/branches/main/protection \
+#     -H "Accept: application/vnd.github+json" --input - <<'JSON'
+#   { "required_status_checks": { "strict": false, "contexts": ["verify", "path-guard"] },
+#     "enforce_admins": false,
+#     "required_pull_request_reviews": { "required_approving_review_count": 1 },
+#     "restrictions": null }
+#   JSON
+
+name: path-guard
+
+on:
+  pull_request_target:
+    branches: [main]
+    # `labeled`/`unlabeled` matter: applying the ack label must re-run the guard so it flips
+    # to green (and removing it must flip it back to red) without needing a new commit.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: path-guard-${{ github.event.number }}
+  cancel-in-progress: true
+
+# Read-only. pull_request_target would otherwise grant write scope by default.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Job name is the status-check context used in branch protection — keep it `path-guard`.
+  path-guard:
+    runs-on: ubuntu-latest
+    steps:
+      # No `ref:` — defaults to the base branch, which is what makes the guard authoritative.
+      - name: Checkout base branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need history to find the merge-base with the PR head
+
+      - name: Check diff against the sensitive-path denylist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.number }}
+          BASE_REF: ${{ github.base_ref }}
+          LABEL: sensitive-change-approved
+        run: |
+          set -euo pipefail
+
+          LIST=.github/sensitive-paths.txt
+          if [ ! -f "$LIST" ]; then
+            echo "::error::$LIST is missing on $BASE_REF — the guard cannot evaluate anything."
+            exit 1
+          fi
+
+          # Denylist -> git pathspecs. Strip comments and blank lines; prefix each with :(glob)
+          # so git applies its documented ** semantics rather than default fnmatch.
+          # A while-read loop rather than mapfile: no bash-4 dependency, so this exact pipeline
+          # can be run locally to verify it before it ever reaches CI.
+          SPECS=()
+          while IFS= read -r p; do
+            [ -n "$p" ] && SPECS+=( ":(glob)$p" )
+          done < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$LIST" | grep -v '^$')
+
+          if [ ${#SPECS[@]} -eq 0 ]; then
+            echo "::error::$LIST contains no patterns — refusing to pass vacuously."
+            exit 1
+          fi
+
+          # Fetch the PR head. Works for forks too — GitHub exposes refs/pull/N/head on the base
+          # repo. Inspected only; never checked out over the workspace, never executed.
+          git fetch --no-tags --quiet origin "pull/${PR}/head:pr-head"
+          MERGE_BASE=$(git merge-base "origin/${BASE_REF}" pr-head)
+
+          echo "Comparing ${MERGE_BASE} .. pr-head against ${#SPECS[@]} sensitive globs."
+          HITS=$(git diff --name-only "$MERGE_BASE" pr-head -- "${SPECS[@]}")
+
+          if [ -z "$HITS" ]; then
+            echo "✅ No sensitive paths touched."
+            exit 0
+          fi
+
+          echo "Sensitive paths touched by this PR:"
+          echo "$HITS" | sed 's/^/  - /'
+
+          # Live label state, not the (possibly stale on re-run) event payload.
+          LABELS=$(gh api "repos/${REPO}/pulls/${PR}" --jq '[.labels[].name] | join(" ")')
+          if printf '%s\n' $LABELS | grep -qx "$LABEL"; then
+            echo "✅ Acknowledged — '$LABEL' is applied by a collaborator."
+            exit 0
+          fi
+
+          {
+            echo "### 🚧 path-guard: sensitive paths touched"
+            echo
+            echo "This PR changes files on the sensitive-path denylist:"
+            echo
+            echo "$HITS" | sed 's/^/- `/;s/$/`/'
+            echo
+            echo "That is allowed — it just needs a conscious ack. A collaborator with write access"
+            echo "should review the change and apply the **\`$LABEL\`** label, which re-runs this"
+            echo "check and turns it green."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::Sensitive paths touched without the '$LABEL' label. See the job summary."
+          exit 1

@@ -1,0 +1,50 @@
+# Sensitive paths — the single source of truth for the guardrail model (D-047, PD-308).
+#
+# A PR whose diff touches any glob below turns the `path-guard` check RED unless a write+
+# collaborator applies the `sensitive-change-approved` label. Editing a sensitive path is never
+# forbidden — it just requires a conscious human ack. That friction IS the control.
+#
+# Consumed by Tier 1 (the path-guard workflow, .github/workflows/path-guard.yml) and, once it
+# ships, by Tier 2 (PD-312 generates Claude Code deny rules from this same file).
+#
+# SYNTAX: one git pathspec glob per line; `#` comments and blank lines ignored. Each line is
+# passed to `git diff` as `:(glob)<line>`, so matching is git's own documented glob semantics —
+# `**` crosses directory boundaries, and `**/x` matches `x` at the repo root too. Verified:
+# `**/package.json` matches the root `package.json` as well as every workspace one.
+#
+# SELF-PROTECTING: `.github/**` covers both this file and the guard workflow, so a PR that tries
+# to weaken the guard trips the guard. The check runs from the BASE branch (pull_request_target),
+# so the PR's own version of these files never evaluates itself.
+#
+# NOTE: drawn against the current NAS/Docker-on-Synology layout. PD-311 re-evaluates the list
+# after the Mac Mini migration (PD-188).
+
+# ── CI, deploy, and ops ──────────────────────────────────────────────────────
+.github/**
+ops/**
+docker/**
+**/Dockerfile
+**/docker-compose*.yml
+
+# ── Secrets and environment ──────────────────────────────────────────────────
+**/.env*
+
+# ── Database schema and migrations ───────────────────────────────────────────
+**/schema.ts
+apps/server/src/migrate.ts
+
+# ── Agent harness config ─────────────────────────────────────────────────────
+.claude/**
+
+# ── Dependency manifests ─────────────────────────────────────────────────────
+# This is the pair PR #268 changed with no enforcement — the incident behind PD-308.
+**/package.json
+package-lock.json
+
+# ── Forward-looking ──────────────────────────────────────────────────────────
+# No auth today (LAN-only, no auth), but listed now so the guard is already in place
+# if/when the reverse proxy lands and the board becomes reachable off-LAN.
+**/auth/**
+**/session/**
+**/*cors*
+**/*csp*
