@@ -28,3 +28,15 @@ export function resolvePageTitle(pathname: string): string {
 export function arrangeablePageId(pathname: string): string | undefined {
   return pages.find((pg) => pg.route === pathname)?.id;
 }
+
+/**
+ * Whether `pathname` is anywhere under Dev Ops. Drives the deploy/commit readout in the top
+ * nav (PD-414), which belongs on the whole section.
+ *
+ * A **prefix** match, deliberately unlike `arrangeablePageId`'s exact one — the two answer
+ * different questions and must not be unified. Deploy state is section-wide context; Arrange
+ * applies only to the single route that actually renders a widget grid.
+ */
+export function isDevOpsRoute(pathname: string): boolean {
+  return pathname === '/devops' || pathname.startsWith('/devops/');
+}

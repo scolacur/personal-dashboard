@@ -1,11 +1,15 @@
+// Styled for its one consumer: the Dev Ops top nav (PD-414). No trailing margin (spacing is
+// the nav's) and no wrapping — wrapping here would push the nav bar to two lines. If this ever
+// gains a second, in-page consumer, that's the point to add a `variant` prop rather than now.
 .deploy-status {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  margin-bottom: var(--space-lg);
   font-size: var(--font-size-sm);
   color: var(--muted);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: 0; // lets the commit message ellipsis instead of squeezing the rest of the nav
 }
 
 .item {
@@ -57,4 +61,30 @@ a.value {
   margin: 0;
   color: var(--muted);
   font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+/* ── Narrow viewports ──────────────────────────────────────────────────────
+   Shed the readout's least-load-bearing parts as the nav tightens, rather than
+   dropping it wholesale: deploy time + commit sha stay visible at every width. */
+
+// The commit subject is the long part — first to go.
+@media (max-width: 1100px) {
+  .commit-msg {
+    display: none;
+  }
+}
+
+// Below the drawer breakpoint the nav also carries the menu button and page title,
+// so drop the "Deployed" / "Commit" labels too, leaving e.g. "2h ago · a1b2c3d".
+@media (max-width: 768px) {
+  .label {
+    display: none;
+  }
+
+  .deploy-status,
+  .deploy-empty {
+    gap: var(--space-xs);
+    font-size: var(--font-size-xs);
+  }
 }
