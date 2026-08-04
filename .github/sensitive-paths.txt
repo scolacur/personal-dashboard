@@ -48,3 +48,5 @@ package-lock.json
 **/session/**
 **/*cors*
 **/*csp*
+
+# (throwaway line added to prove the path-guard reports — PR to be closed, not merged)
