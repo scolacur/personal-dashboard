@@ -463,9 +463,11 @@ Definitions for the sensitive-path guardrail model (D-047).
 
 > ⚠️ **STATUS — read this before relying on anything below.**
 >
-> **Tier 1 (the path-guard) is BUILT (PD-308):** `.github/sensitive-paths.txt` and
-> `.github/workflows/path-guard.yml` exist and the check runs on every PR. **Tier 2 is still
-> unshipped (PD-312)** — there is no Claude Code `permissions.deny` and no PreToolUse hook.
+> **Tier 1 (the path-guard) is LIVE (PD-308, 2026-08-04):** `.github/sensitive-paths.txt` and
+> `.github/workflows/path-guard.yml` are on `main`, and `path-guard` is a **required status
+> check**. Proven in both directions on real PRs before wiring — red on a sensitive diff, green
+> once labelled, green on an ordinary diff. **Tier 2 is still unshipped (PD-312)** — there is no
+> Claude Code `permissions.deny` and no PreToolUse hook.
 >
 > **Agents: Tier 1 does not stop you editing a sensitive path — it stops the PR merging
 > without a human ack.** Nothing blocks the edit itself, so still treat the denylist as a rule
