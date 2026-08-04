@@ -410,9 +410,12 @@
       {#if showReplyBox}
         <section class="reply-box">
           <h2>Reply to the agent</h2>
+          <!-- PD-393: this box only ever renders for `awaiting-human`, so the copy names the
+               question rather than describing a generic park — and never says "won't retry on its
+               own", which is the stall banner's copy and is wrong for a deliberate pause. -->
           <p class="muted">
-            The agent paused ({ticket.agentState?.replace(/-/g, ' ')}) and needs your input. Your
-            reply is recorded on the ticket and re-queues it for the Robot.
+            The Robot asked a question and is waiting for your reply. Your answer is recorded on the
+            ticket and re-queues it for the Robot.
           </p>
           {#if askHumanQuestion}
             <blockquote class="ask-question">
