@@ -323,11 +323,14 @@ which point the name should become the repo name rather than an internal label.
 
 ## D-047: Sortie sensitive-path guardrails are two-tier — an authoritative, runtime-independent CI path-guard (Tier 1) plus a runtime-coupled in-loop Claude Code layer (Tier 2), both fed by one shared denylist (PD-308, PD-312; supersedes C-2, PD-13, C-15)
 
-> ⚠️ **STATUS 2026-07-28: DESIGNED, NOT BUILT.** Neither tier has shipped — PD-308 (Tier 1) and
-> PD-312 (Tier 2) are both still open, and no `.github/sensitive-paths.txt`, path-guard workflow,
-> or `sensitive-change-approved` label exists. The decision below stands; the *enforcement* does
-> not. Verified the hard way when a Robot added a dependency to `apps/server/package.json` in
-> PR #268 expecting the path-guard to stop it — nothing did. See the banner in PROJECT.md §9.
+> ⚠️ **STATUS 2026-08-04: TIER 1 BUILT, TIER 2 STILL OPEN.** PD-308 shipped
+> `.github/sensitive-paths.txt` + `.github/workflows/path-guard.yml`; the guard runs base-ref via
+> `pull_request_target` and matches with git's own `:(glob)` pathspecs. **PD-312 (Tier 2) remains
+> unshipped** — no Claude Code `permissions.deny`, no PreToolUse hook.
+>
+> The design below stands as written. One implementation note worth carrying: the guard is
+> **required-check wired separately** from the workflow landing, because a required check that has
+> never reported would block every PR — see the wiring note in `path-guard.yml`.
 
 **Decision:** Bounding what an autonomous Sortie worker may change **inside the repo** is enforced in **two tiers**, split by whether the layer survives an agent-runtime swap:
 
