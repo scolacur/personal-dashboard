@@ -4,11 +4,26 @@
   margin-top: var(--space-md);
 }
 
+// Header row: the collapse button takes the width, optional actions pin to the right.
+.collapsible-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.collapsible-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .collapsible-head {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: var(--space-xs) 0;
   background: transparent;
   border: 0;

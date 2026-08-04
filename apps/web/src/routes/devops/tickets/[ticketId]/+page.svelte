@@ -29,6 +29,7 @@
   import RunHistory from '$lib/RunHistory.svelte';
   import ActivityTimeline from '$lib/ActivityTimeline.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
+  import { applyMarkdown } from '$lib/markdown';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
@@ -37,6 +38,11 @@
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
   const ticketId = $derived(page.params.ticketId);
+
+  // Description view (PD-409): rendered markdown by default, with a Raw toggle in the section
+  // header. Not persisted — the ticket asks for rendered to be the default, so it resets each
+  // visit rather than stickily hiding the formatting.
+  let bodyRaw = $state(false);
 
   let ticket = $state<AgentTicket | null>(null);
   let project = $state<AgentProject | null>(null);
@@ -430,8 +436,24 @@
       {/if}
 
       <Collapsible title="Description" storeKey="description">
+        {#snippet actions()}
+          {#if ticket?.body}
+            <button
+              class="body-raw-toggle"
+              class:active={bodyRaw}
+              type="button"
+              aria-pressed={bodyRaw}
+              title={bodyRaw ? 'Show rendered markdown' : 'Show raw markdown'}
+              onclick={() => (bodyRaw = !bodyRaw)}
+            >Raw</button>
+          {/if}
+        {/snippet}
         {#if ticket.body}
-          <p class="detail-body">{ticket.body}</p>
+          {#if bodyRaw}
+            <p class="detail-body">{ticket.body}</p>
+          {:else}
+            <div class="detail-body detail-body-md" use:applyMarkdown={ticket.body}></div>
+          {/if}
         {:else}
           <p class="muted">No description.</p>
         {/if}

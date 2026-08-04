@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { marked } from 'marked';
+  import { applyMarkdown } from '$lib/markdown';
   import type { RefineMessage, RefineProposal } from '@dashboard/shared';
   import { isReady, latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
   import {
@@ -71,16 +71,6 @@
   const needsShaping = $derived(
     proposal?.mode === 'refine_in_place' && !isReady(proposal.body ?? null),
   );
-
-  // Svelte action: renders markdown into a node's innerHTML without using {@html}.
-  function applyMarkdown(node: HTMLElement, text: string) {
-    node.innerHTML = marked.parse(text) as string;
-    return {
-      update(newText: string) {
-        node.innerHTML = marked.parse(newText) as string;
-      },
-    };
-  }
 
   // Scroll the thread to the latest message. Called explicitly on initial load and after
   // sending — NOT on every poll: a reactive $effect on `messages` re-scrolled every 5s (load

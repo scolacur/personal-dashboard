@@ -11,12 +11,17 @@
     open: openDefault = true,
     storeKey,
     children,
+    actions,
   }: {
     title: string;
     count?: number | null;
     open?: boolean;
     storeKey?: string;
     children: Snippet;
+    /** Optional controls pinned to the right of the header, shown only while open. Rendered
+     *  as a sibling of the header button — nesting them inside it would be invalid HTML and
+     *  would swallow their clicks into the collapse toggle. */
+    actions?: Snippet;
   } = $props();
 
   const key = $derived(storeKey ? `tm.collapsible.${storeKey}` : null);
@@ -36,11 +41,16 @@
 </script>
 
 <section class="collapsible" class:open>
-  <button class="collapsible-head" type="button" aria-expanded={open} onclick={toggle}>
-    <span class="chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
-    <span class="collapsible-title">{title}</span>
-    {#if count != null}<span class="collapsible-count">{count}</span>{/if}
-  </button>
+  <div class="collapsible-head-row">
+    <button class="collapsible-head" type="button" aria-expanded={open} onclick={toggle}>
+      <span class="chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
+      <span class="collapsible-title">{title}</span>
+      {#if count != null}<span class="collapsible-count">{count}</span>{/if}
+    </button>
+    {#if open && actions}
+      <div class="collapsible-actions">{@render actions()}</div>
+    {/if}
+  </div>
   {#if open}
     <div class="collapsible-body">
       {@render children()}
