@@ -27,6 +27,27 @@
   }
 }
 
+/* ── Paged panels (PD-415) ───────────────────────────────────────────────────
+   Level 1 (top-level pages) and level 2 (one page's children) slide past each
+   other horizontally. Both are absolutely positioned so they overlay during the
+   transition instead of stacking, and the container clips the outgoing one. */
+
+.side-panels {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.side-panel {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
 .side-links {
   list-style: none;
   margin: 0;
@@ -36,45 +57,15 @@
   gap: var(--space-xs);
 }
 
-// A top-level nav row: the link fills the row, the accordion caret (if any) sits at the end.
-.side-link-row {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  border-radius: var(--radius);
-
-  // The active highlight lives on the ROW, not the <a>, so it spans the expand/collapse caret
-  // too — the caret is a sibling button outside the link, so a link-only background left it
-  // stranded on the page background.
-  &.active {
-    background: var(--accent);
-
-    .side-link,
-    .side-link:hover {
-      background: transparent;
-      color: var(--on-accent);
-    }
-
-    // The caret's default --muted is light grey, which is unreadable on the yellow accent.
-    .side-caret {
-      color: var(--on-accent);
-
-      &:hover {
-        color: var(--on-accent);
-        // Tint from the foreground so the hover reads on the accent instead of the page bg.
-        background: color-mix(in srgb, var(--on-accent) 20%, transparent);
-      }
-    }
-  }
-}
-
+// One nav row, used at both levels. The drill caret lives INSIDE the link, so the active
+// highlight spans it — the behaviour PR #273 established when the caret was a sibling button
+// and a link-only background left it stranded on the page colour.
 .side-link {
   display: flex;
-  flex: 1;
-  min-width: 0;
   align-items: center;
   gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-sm);
+  min-width: 0;
+  padding: var(--space-sm);
   border-radius: var(--radius);
   color: var(--muted);
   font-size: var(--font-size-sm);
@@ -87,11 +78,15 @@
     background: var(--surface-2);
   }
 
-  // Background is owned by .side-link-row.active (so it covers the caret); this keeps the
-  // foreground treatment only.
   &.active {
+    background: var(--accent);
     color: var(--on-accent);
     font-weight: 600;
+
+    &:hover {
+      background: var(--accent);
+      color: var(--on-accent);
+    }
   }
 }
 
@@ -100,17 +95,58 @@
   min-width: 0;
 }
 
-.side-caret {
+// Inherits the row's colour, so on the yellow accent it reads as --on-accent rather than the
+// unreadable light grey --muted.
+.side-link-caret {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+/* ── Level-2 header: "‹ Dev Ops" ─────────────────────────────────────────── */
+
+.side-back-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius);
+
+  // Active when the current route is the parent itself (not one of its children), so
+  // /devops highlights the header while /devops/jobs highlights the Jobs row instead.
+  &.active {
+    background: var(--accent);
+
+    .side-back,
+    .side-back-title {
+      color: var(--on-accent);
+    }
+
+    .side-back:hover {
+      // Tint from the foreground so the hover reads on the accent, not the page background.
+      background: color-mix(in srgb, var(--on-accent) 20%, transparent);
+    }
+
+    .side-back-title:hover {
+      background: transparent;
+    }
+  }
+}
+
+.side-back {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   width: 1.75rem;
+  align-self: stretch;
   border: none;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   border-radius: var(--radius);
+  transition:
+    color 0.15s,
+    background 0.15s;
 
   &:hover {
     color: var(--text);
@@ -118,45 +154,20 @@
   }
 }
 
-.side-caret-icon {
-  display: inline-flex;
-  transition: transform 0.15s ease;
-
-  &.open {
-    transform: rotate(90deg);
-  }
-}
-
-.side-sublinks {
-  list-style: none;
-  margin: var(--space-xs) 0 0;
-  padding: 0 0 0 var(--space-md);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.side-sublink {
-  display: block;
-  padding: var(--space-xs) var(--space-sm);
-  border-left: 2px solid var(--border);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  color: var(--muted);
+.side-back-title {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-sm) var(--space-sm);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-weight: 600;
   font-size: var(--font-size-sm);
   transition:
     color 0.15s,
-    background 0.15s,
-    border-color 0.15s;
+    background 0.15s;
 
   &:hover {
-    color: var(--text);
     background: var(--surface-2);
-  }
-
-  &.active {
-    color: var(--text);
-    border-left-color: var(--accent);
-    background: var(--surface-2);
-    font-weight: 600;
   }
 }
