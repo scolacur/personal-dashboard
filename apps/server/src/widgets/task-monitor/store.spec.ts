@@ -725,6 +725,68 @@ describe('terminal-transition cleanup (PD-400)', () => {
   });
 });
 
+describe('parked agent_state cleared on queue entry (PD-467)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  function setAgentState(id: number, state: string): void {
+    db.prepare('UPDATE agent_tickets SET agent_state = ? WHERE id = ?').run(state, id);
+  }
+
+  // The live instance: PD-426 sat queue + robot + Ready + agent_state='stuck' and would have been
+  // skipped silently on the first cycle after the loop resumed.
+  it.each(['stuck', 'needs-human'])('re-queueing a %s ticket clears the park to queued', (state) => {
+    const t = createTicket(db, { title: 'x', status: 'backlog', assignee: 'robot', projectId: pd });
+    setAgentState(t.id, state);
+
+    const after = updateTicket(db, t.id, { status: 'queue' })!;
+
+    expect(after.agentState).toBe('queued');
+    expect(getTicket(db, t.id)!.agentState).toBe('queued');
+  });
+
+  // The event type matters as much as the state: `robot_unstick` is the loop's retry-budget
+  // boundary, so a ticket parked at its retry cap comes back with a fresh budget instead of
+  // dispatching once and immediately re-parking.
+  it('logs the clear as a robot_unstick — the same boundary the human control writes', () => {
+    const t = createTicket(db, { title: 'x', status: 'backlog', assignee: 'robot', projectId: pd });
+    setAgentState(t.id, 'stuck');
+
+    updateTicket(db, t.id, { status: 'queue' });
+
+    const unstick = listTicketEvents(db, t.id).filter((e) => e.type === 'robot_unstick');
+    expect(unstick).toHaveLength(1);
+    expect(unstick[0].detail).toMatchObject({ reason: 'auto-unstuck on queue entry', from: 'stuck' });
+  });
+
+  it('leaves awaiting-human alone — the question is still unanswered (PD-393)', () => {
+    const t = createTicket(db, { title: 'x', status: 'backlog', assignee: 'robot', projectId: pd });
+    setAgentState(t.id, 'awaiting-human');
+
+    updateTicket(db, t.id, { status: 'queue' });
+
+    expect(getTicket(db, t.id)!.agentState).toBe('awaiting-human');
+    expect(listTicketEvents(db, t.id).some((e) => e.type === 'robot_unstick')).toBe(false);
+  });
+
+  it('leaves working/in-review alone, and does not fire on edits within the queue', () => {
+    const working = createTicket(db, { title: 'w', status: 'backlog', assignee: 'robot', projectId: pd });
+    setAgentState(working.id, 'working');
+    updateTicket(db, working.id, { status: 'queue' });
+    expect(getTicket(db, working.id)!.agentState).toBe('working');
+
+    // Already in the queue and parked (the loop just stuck it) — a title edit must not re-queue it.
+    const parked = createTicket(db, { title: 'p', status: 'queue', assignee: 'robot', projectId: pd });
+    setAgentState(parked.id, 'stuck');
+    updateTicket(db, parked.id, { title: 'p2' });
+    expect(getTicket(db, parked.id)!.agentState).toBe('stuck');
+  });
+});
+
 describe('relations + Refine commit (D-044, PD-269)', () => {
   let db: Database.Database;
   let pd: number;
