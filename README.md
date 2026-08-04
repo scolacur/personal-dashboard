@@ -146,3 +146,5 @@ docker compose up -d
 ```
 
 The compose file mounts `./data` for SQLite and logs, and `/volume1/music/dj-library/tracks` (read-only) for the DJ library scanner.
+
+<!-- throwaway line to prove the path-guard passes on a non-sensitive diff; PR to be closed -->
