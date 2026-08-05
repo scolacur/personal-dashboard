@@ -7,6 +7,10 @@ import {
   nextEligibleAt,
   normalizeSignature,
   MAX_TURNS_SIGNATURE,
+  parseResetAt,
+  SESSION_LIMIT_FALLBACK_MS,
+  SESSION_LIMIT_MAX_WAIT_MS,
+  SESSION_LIMIT_SIGNATURE,
   type FailedRun,
   type FaultPolicy,
 } from './faults';
@@ -165,5 +169,100 @@ describe('preflight', () => {
       { tier: 'transient', signature: 'c', finishedAt: 3 },
     ];
     expect(preflight(prior, policy, 10_000).action).toBe('park');
+  });
+});
+
+// ── PD-470: the session limit ────────────────────────────────────────────────
+// The failure this encodes: on 2026-07-28 PD-420 hit the session limit at ~21:45, run 2 produced an
+// identical signature, C2 promoted it to deterministic, and the ticket sat parked ~12h — through a
+// quota reset at 1:30 AM — with four tickets stranded behind it.
+
+describe('session-limit faults (PD-470)', () => {
+  const ERR = "You've hit your session limit · resets 5:30am (UTC)";
+  // 2026-07-29T01:45:00Z — the incident's ~21:45 ET, in the message's own timezone.
+  const NOW = Date.UTC(2026, 6, 29, 1, 45);
+  const RESET = Date.UTC(2026, 6, 29, 5, 30);
+
+  it('classifies a session limit as its own signature, with the reset time parsed', () => {
+    const c = classifyFault({ verifyOk: false, error: ERR }, NOW);
+    expect(c.signature).toBe(SESSION_LIMIT_SIGNATURE);
+    expect(c.tier).toBe('transient');
+    expect(c.resetAt).toBe(RESET);
+  });
+
+  it('does NOT read it as the loop-wide auth/credit fault', () => {
+    // Both are "the provider said no", but a credit fault needs a human and this one does not.
+    expect(classifyFault({ verifyOk: false, error: ERR }, NOW).tier).not.toBe('system-wide');
+    expect(classifyFault({ verifyOk: false, error: 'Your credit balance is too low' }, NOW).tier).toBe('system-wide');
+  });
+
+  it('waits until the parsed reset instead of retrying on backoff', () => {
+    const cls = classifyFault({ verifyOk: false, error: ERR }, NOW);
+    expect(decideFault(cls, [], policy, null, NOW)).toMatchObject({ action: 'wait', until: RESET });
+  });
+
+  it('never promotes to deterministic, however many times it repeats', () => {
+    // The exact shape that stranded PD-420: two identical signatures, which promoteAfter=2 would
+    // normally park as deterministic.
+    const prior: FailedRun[] = [
+      { tier: 'transient', signature: SESSION_LIMIT_SIGNATURE, finishedAt: NOW - 10_000 },
+      { tier: 'transient', signature: SESSION_LIMIT_SIGNATURE, finishedAt: NOW - 5000 },
+    ];
+    const cls = classifyFault({ verifyOk: false, error: ERR }, NOW);
+    expect(decideFault(cls, prior, policy, null, NOW)).toMatchObject({ action: 'wait' });
+  });
+
+  it('burns no budget: session-limit runs do not count toward the cap or the backoff', () => {
+    const prior: FailedRun[] = [
+      { tier: 'transient', signature: SESSION_LIMIT_SIGNATURE, finishedAt: 1 },
+      { tier: 'transient', signature: SESSION_LIMIT_SIGNATURE, finishedAt: 2 },
+      { tier: 'transient', signature: SESSION_LIMIT_SIGNATURE, finishedAt: 3 },
+    ];
+    expect(preflight(prior, policy, 10_000)).toEqual({ action: 'go' });
+    expect(nextEligibleAt(prior, policy)).toBe(0);
+    // A real failure still counts normally alongside them.
+    const cls = classifyFault({ verifyOk: false });
+    expect(decideFault(cls, prior, policy, null, 10_000).action).toBe('retry');
+  });
+
+  it('degrades to a bounded wait when the reset time is unreadable — never an indefinite park', () => {
+    const cls = classifyFault({ verifyOk: false, error: 'session limit reached, try again later' }, NOW);
+    expect(cls.resetAt).toBeNull();
+    const d = decideFault(cls, [], policy, null, NOW);
+    expect(d).toMatchObject({ action: 'wait', until: NOW + SESSION_LIMIT_FALLBACK_MS });
+    expect(d.reason).toContain('unreadable');
+  });
+});
+
+describe('parseResetAt (PD-470)', () => {
+  const NOW = Date.UTC(2026, 6, 29, 1, 45); // 01:45 UTC
+
+  it('reads a 12-hour UTC time later today', () => {
+    expect(parseResetAt('resets 5:30am (UTC)', NOW)).toBe(Date.UTC(2026, 6, 29, 5, 30));
+  });
+
+  // The overnight case, which is the one that actually happens: it is late, the stated reset is a
+  // morning time that already passed today, and the reset being named is tomorrow's.
+  it('rolls a time that has already passed to tomorrow', () => {
+    const lateNight = Date.UTC(2026, 6, 29, 23, 0);
+    expect(parseResetAt('resets 5:30am (UTC)', lateNight)).toBe(Date.UTC(2026, 6, 30, 5, 30));
+    expect(parseResetAt('resets 12:30am (UTC)', lateNight)).toBe(Date.UTC(2026, 6, 30, 0, 30)); // 12am = 00
+  });
+
+  it('handles pm, a bare hour, and "resets at"', () => {
+    expect(parseResetAt('resets 12:15pm (UTC)', NOW)).toBe(Date.UTC(2026, 6, 29, 12, 15));
+    expect(parseResetAt('resets at 9 (UTC)', NOW)).toBe(Date.UTC(2026, 6, 29, 9, 0));
+  });
+
+  it('returns null for anything it does not confidently understand', () => {
+    expect(parseResetAt('session limit reached', NOW)).toBeNull();
+    expect(parseResetAt('resets 25:00 (UTC)', NOW)).toBeNull();
+    expect(parseResetAt('resets 61 minutes from now', NOW)).toBeNull(); // "61" is not an hour
+  });
+
+  it('returns null rather than trusting a parse that lands absurdly far out', () => {
+    // A wrong-timezone read could produce a wait of most of a day; the bounded fallback is safer.
+    expect(SESSION_LIMIT_MAX_WAIT_MS).toBeLessThan(24 * 60 * 60_000);
+    expect(parseResetAt('resets 1:30am (UTC)', NOW)).toBeNull(); // 23h45m out
   });
 });

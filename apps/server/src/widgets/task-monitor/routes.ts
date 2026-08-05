@@ -27,6 +27,7 @@ import {
   createProject,
   createTicket,
   getDispatchPauseState,
+  getSessionLimitHold,
   getProjectBySlug,
   getSortieFleet,
   getTicket,
@@ -701,5 +702,6 @@ export function registerRoutes(
     sortie: getSortieFleet(db),
     workers: listWorkerHeartbeats(db),
     dispatch: getDispatchPauseState(db),
+    sessionLimit: getSessionLimitHold(db),
   }));
 }

@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { createTicket, getDispatchPauseState, getProjectBySlug, getSortieFleet, listWorkerHeartbeats } from './store';
+import {
+  createTicket,
+  getDispatchPauseState,
+  getProjectBySlug,
+  getSessionLimitHold,
+  getSortieFleet,
+  listWorkerHeartbeats,
+} from './store';
 
 function freshDb(): Database.Database {
   const db = new Database(':memory:');
@@ -108,5 +115,42 @@ describe('getDispatchPauseState', () => {
       reason: 'auth/credit fault (loop-wide): HTTP 403',
       since: 1700,
     });
+  });
+});
+
+describe('getSessionLimitHold (PD-470)', () => {
+  function withHold(db: Database.Database, until: number, reason = 'provider session limit'): void {
+    db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    db.prepare('INSERT OR REPLACE INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'session_limit_until',
+      JSON.stringify({ until, reason }),
+      1000,
+    );
+  }
+
+  it('reads null when the worker has never booted (no robot_state table)', () => {
+    expect(getSessionLimitHold(freshDb())).toBeNull();
+  });
+
+  it('reports an in-force hold with its end time', () => {
+    const db = freshDb();
+    withHold(db, 9000);
+    expect(getSessionLimitHold(db, 5000)).toEqual({ until: 9000, reason: 'provider session limit', since: 1000 });
+  });
+
+  // The row survives until the worker's next cycle clears it, so the READ has to expire it too —
+  // showing "waiting until 5:30" after 5:30 would be a lie the UI has no way to catch.
+  it('reports an expired hold as no hold at all', () => {
+    const db = freshDb();
+    withHold(db, 9000);
+    expect(getSessionLimitHold(db, 9000)).toBeNull();
+    expect(getSessionLimitHold(db, 12_000)).toBeNull();
+  });
+
+  it('survives a corrupt row rather than breaking the status endpoint', () => {
+    const db = freshDb();
+    db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run('session_limit_until', '{oops', 1000);
+    expect(getSessionLimitHold(db, 5000)).toBeNull();
   });
 });

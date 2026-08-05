@@ -23,6 +23,7 @@ import type {
   UpdateTicketInput,
   WorkerHeartbeat,
   DispatchPauseState,
+  SessionLimitHoldState,
 } from '@dashboard/shared';
 import {
   coerceTicketStatus,
@@ -1482,6 +1483,36 @@ export function getDispatchPauseState(db: Database.Database): DispatchPauseState
   })();
   if (!row || row.value === null) return { paused: false, reason: null, since: null };
   return { paused: true, reason: row.value, since: row.updated_at };
+}
+
+/** The Robot loop's session-limit hold (PD-470), read from the same worker-owned `robot_state`
+ *  table. Distinct from the pause above: this one has an end time and clears itself when the loop
+ *  next runs, so the UI shows "waiting until X", not "someone must fix this". Read-only, and
+ *  tolerant of an absent table, a null row, or corrupt JSON — none of those should break the
+ *  status endpoint. An EXPIRED hold reads as none: the row lingers until the worker's next cycle
+ *  clears it, and showing a wait that has already ended would be a lie. */
+export function getSessionLimitHold(db: Database.Database, now: number = Date.now()): SessionLimitHoldState | null {
+  const row = (() => {
+    try {
+      return db.prepare("SELECT value, updated_at FROM robot_state WHERE key = 'session_limit_until'").get() as
+        | { value: string | null; updated_at: number }
+        | undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (!row || row.value === null) return null;
+  try {
+    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown };
+    if (typeof parsed.until !== 'number' || parsed.until <= now) return null;
+    return {
+      until: parsed.until,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      since: row.updated_at,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Ensure the worker-owned `robot_state` table exists before the server writes it — the server may

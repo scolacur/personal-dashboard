@@ -3,7 +3,8 @@ import Database from 'better-sqlite3';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { processRobotQueue, branchFor, type RobotDeps } from './robot';
 import { startRun, finishRun, listRunsForTicket, failedRunsForTicket, ensureRunsTable } from './runs';
-import { isDispatchPaused } from './state';
+import { activeSessionLimitHold, isDispatchPaused } from './state';
+import { SESSION_LIMIT_FALLBACK_MS } from './faults';
 import type { RobotSessionResult } from './session';
 
 const READY = ['## Context', 'c', '## Task', 't', '## Done When', 'd', '## Out of scope', 'o'].join('\n');
@@ -64,6 +65,11 @@ function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
     now: () => 1000,
   };
 }
+
+/** PD-470 fixtures: the incident's own error text, and a clock inside its window. */
+const LIMIT_ERR = "You've hit your session limit \u00b7 resets 5:30am (UTC)";
+const LIMIT_NOW = Date.UTC(2026, 6, 29, 1, 45);
+const LIMIT_RESET = Date.UTC(2026, 6, 29, 5, 30);
 
 describe('processRobotQueue', () => {
   let db: Database.Database;
@@ -268,6 +274,95 @@ describe('processRobotQueue', () => {
     const n2 = await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
     expect(n2).toBe(0);
     expect(listRunsForTicket(db, 2)).toEqual([]);
+  });
+
+  // ---- PD-470: the provider session limit ----
+  // The 2026-07-28 failure: a session-limit run was promoted to deterministic and the ticket sat
+  // parked ~12h, right through the quota reset, with the chain behind it stranded.
+
+  it('a session limit holds the loop until the reset instead of parking the ticket', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const d = deps();
+    d.now = () => LIMIT_NOW;
+    d.runSession = async (_c, cand) =>
+      cand.id === 1
+        ? { ok: false, verifyOk: false, error: LIMIT_ERR }
+        : { ok: true, verifyOk: true, prNumber: 999 };
+
+    const n = await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
+    expect(n).toBe(0);
+
+    // The ticket is untouched: still queued, budget intact — it did nothing wrong.
+    expect(agentState(db, 1)).toBe('queued');
+    expect(failedRunsForTicket(db, 1).every((f) => f.signature === 'session-limit')).toBe(true);
+    // ticket 2 never ran: the cycle stopped rather than grinding the queue against an empty quota.
+    expect(listRunsForTicket(db, 2)).toEqual([]);
+    // and this is a HOLD, not the human-cleared pause.
+    expect(isDispatchPaused(db)).toBe(false);
+    expect(activeSessionLimitHold(db, LIMIT_NOW)).toMatchObject({ until: LIMIT_RESET });
+  });
+
+  it('stays held before the reset, then dispatches again after it — with no human action', async () => {
+    addQueued(db, 1);
+    const d = deps();
+    d.now = () => LIMIT_NOW;
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: LIMIT_ERR });
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    const runsAfterLimit = listRunsForTicket(db, 1).length;
+
+    // A cycle inside the window does nothing at all.
+    const held = deps();
+    held.now = () => LIMIT_RESET - 1;
+    held.runSession = async () => ({ ok: true, verifyOk: true, prNumber: 314 });
+    expect(await processRobotQueue(db, cfgNoBackoff(), held)).toBe(0);
+    expect(listRunsForTicket(db, 1).length).toBe(runsAfterLimit);
+
+    // A cycle after it picks the ticket straight back up — nobody pressed Unstick.
+    const after = deps();
+    after.now = () => LIMIT_RESET + 1;
+    after.runSession = async () => ({ ok: true, verifyOk: true, prNumber: 314 });
+    expect(await processRobotQueue(db, cfgNoBackoff(), after)).toBe(1);
+    expect(agentState(db, 1)).toBe('in-review');
+    expect(activeSessionLimitHold(db, LIMIT_RESET + 1)).toBeNull();
+  });
+
+  it('does not promote two session limits to a deterministic park (the PD-420 trap)', async () => {
+    addQueued(db, 1);
+    for (const at of [LIMIT_NOW, LIMIT_RESET + 1]) {
+      const d = deps();
+      d.now = () => at;
+      d.runSession = async () => ({ ok: false, verifyOk: false, error: LIMIT_ERR });
+      await processRobotQueue(db, cfgNoBackoff(), d);
+    }
+    // Two identical signatures — promoteAfter is 2 — and the ticket is still queued, not stuck.
+    expect(listRunsForTicket(db, 1).length).toBe(2);
+    expect(agentState(db, 1)).toBe('queued');
+    expect(eventTypes(db, 1).filter((t) => t === 'robot_parked')).toEqual([]);
+  });
+
+  it('emits robot_paused carrying the reset time, so the wait is visible on the ticket', async () => {
+    addQueued(db, 1);
+    const d = deps();
+    d.now = () => LIMIT_NOW;
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: LIMIT_ERR });
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    expect(eventTypes(db, 1)).toEqual(['robot_dispatched', 'robot_paused']);
+    const ev = db
+      .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = 1 AND type = 'robot_paused'")
+      .get() as { detail: string };
+    expect(JSON.parse(ev.detail)).toMatchObject({ sessionLimit: true, until: LIMIT_RESET });
+  });
+
+  it('an unreadable reset time still holds — bounded — rather than parking indefinitely', async () => {
+    addQueued(db, 1);
+    const d = deps();
+    d.now = () => LIMIT_NOW;
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: 'session limit reached' });
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    expect(agentState(db, 1)).toBe('queued');
+    const hold = activeSessionLimitHold(db, LIMIT_NOW)!;
+    expect(hold.until).toBe(LIMIT_NOW + SESSION_LIMIT_FALLBACK_MS);
   });
 
   it('ask_human parks awaiting-human and is not counted as a failure', async () => {

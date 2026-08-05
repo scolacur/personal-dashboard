@@ -21,7 +21,13 @@ import {
   updateRunProgress,
 } from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
-import { ensureRobotStateTable, isDispatchPaused, pauseDispatch } from './state';
+import {
+  activeSessionLimitHold,
+  ensureRobotStateTable,
+  holdForSessionLimit,
+  isDispatchPaused,
+  pauseDispatch,
+} from './state';
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman } from './notify';
@@ -94,11 +100,27 @@ export async function processRobotQueue(
   ensureRunsTable(db);
   ensureRobotStateTable(db);
 
+  // Defined up here because the session-limit hold below is clock-driven and must use the SAME
+  // injected clock the rest of the cycle does (the tests drive time through `deps.now`).
+  const now = deps.now ?? Date.now;
+
   // System-wide fault gate (C2): a prior auth/credit fault paused the whole loop. Stay inert until
   // a human resumes (C4) — auto-resuming would re-burn the board (the PD-320/#202 failure mode).
   const pause = isDispatchPaused(db);
   if (pause) {
     logger.warn('robot: dispatch is paused (system-wide fault) — not dispatching until resumed');
+    return 0;
+  }
+
+  // Session-limit hold (PD-470): the account is out of quota until a time the provider stated. Wait
+  // it out — the read CLEARS an expired hold, so the loop resumes on its own with no Unstick. This
+  // is deliberately not `dispatch_paused`: a hold ends by itself, a pause waits for a human.
+  const hold = activeSessionLimitHold(db, now());
+  if (hold) {
+    logger.info(
+      { until: hold.until, reason: hold.reason },
+      'robot: holding — provider session limit, dispatch resumes automatically at the reset',
+    );
     return 0;
   }
 
@@ -109,7 +131,6 @@ export async function processRobotQueue(
   const doRun =
     deps.runSession ??
     ((c, cand, w, resume, onProgress) => runRobotSession(c, cand, w, resume, undefined, onProgress));
-  const now = deps.now ?? Date.now;
   const policy = faultPolicy(config);
 
   // ── C5 (PD-346): pre-dispatch reconciliation — the four folded-in bridges. These run BEFORE
@@ -139,6 +160,14 @@ export async function processRobotQueue(
     // ticket, so no other ticket burns budget on the same broken auth/credit state.
     if (isDispatchPaused(db)) {
       logger.warn('robot: dispatch paused mid-cycle (system-wide fault) — stopping this cycle');
+      break;
+    }
+
+    // PD-470: same idea for a session limit raised earlier in THIS cycle. Without this the loop
+    // would keep dispatching into an exhausted quota, and every remaining ticket would collect a
+    // failed run for a condition that has nothing to do with it.
+    if (activeSessionLimitHold(db, now())) {
+      logger.warn('robot: session limit hit mid-cycle — stopping this cycle until the reset');
       break;
     }
 
@@ -185,8 +214,8 @@ export async function processRobotQueue(
       // has no session result and passes none, which stores null — correct: nothing was captured.
       metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
     ): void => {
-      const cls = classifyFault({ verifyOk: false, error });
-      const decision = decideFault(cls, failures, policy, bodyHash);
+      const cls = classifyFault({ verifyOk: false, error }, now());
+      const decision = decideFault(cls, failures, policy, bodyHash, now());
       finishRun(
         db,
         runId,
@@ -210,6 +239,25 @@ export async function processRobotQueue(
         setAgentState(db, candidate.id, 'queued', now());
         logMilestone(db, candidate.id, ROBOT_EVENT.paused, { tier: decision.tier, reason: decision.reason }, now());
         logger.error({ ticketId: candidate.id, reason: decision.reason }, 'robot: system-wide fault — PAUSING dispatch (no burn)');
+      } else if (decision.action === 'wait') {
+        // PD-470: zero per-ticket burn (the run is recorded but `countable` ignores this signature)
+        // and the ticket goes straight back to queued — it did nothing wrong, the account ran out of
+        // quota. The HOLD is what stops the loop grinding through the rest of the queue against a
+        // wall, and it expires by itself, so this needs no human. `paused` is the honest milestone:
+        // from the ticket's point of view the loop stopped; the detail says until when.
+        holdForSessionLimit(db, decision.until, decision.reason, now());
+        setAgentState(db, candidate.id, 'queued', now());
+        logMilestone(
+          db,
+          candidate.id,
+          ROBOT_EVENT.paused,
+          { tier: decision.tier, reason: decision.reason, until: decision.until, sessionLimit: true },
+          now(),
+        );
+        logger.warn(
+          { ticketId: candidate.id, until: decision.until, reason: decision.reason },
+          'robot: provider session limit — HOLDING dispatch until the reset (no burn, auto-resumes)',
+        );
       } else if (decision.action === 'park') {
         setAgentState(db, candidate.id, 'stuck', now());
         logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason }, now());

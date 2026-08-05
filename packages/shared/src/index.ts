@@ -69,6 +69,7 @@ export type {
   WorkerHeartbeat,
   SystemStatus,
   DispatchPauseState,
+  SessionLimitHoldState,
   AgentRun,
   RobotRunStatus,
   RobotFaultTier,
