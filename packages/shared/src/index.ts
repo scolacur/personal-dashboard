@@ -19,6 +19,12 @@ export type {
   UpdateBstListingInput,
   BstSettings,
   BstImportResult,
+  BstMatchIntent,
+  BstMatch,
+  BstMatchSignificance,
+  BstIngestResult,
+  BstCommentInput,
+  BstDuplicateWarning,
 } from './buy-sell-trade';
 export {
   BST_LISTING_TYPES,
@@ -27,11 +33,15 @@ export {
   BST_SALE_STATUS_LABELS,
   BST_CATEGORIES,
   BST_CSV_COLUMNS,
+  BST_MATCH_INTENTS,
+  BST_MATCH_INTENT_LABELS,
   isBstListingType,
   isBstSaleStatus,
   isBstCategory,
+  isBstMatchIntent,
   isSellable,
   isFirmSale,
+  matchSignificance,
 } from './buy-sell-trade';
 export type {
   TicketStatus,

@@ -6,6 +6,62 @@ Newest decisions at the top.
 
 ---
 
+## D-065: The BST list is gear, duplicates are legal, and the matcher is tuned for precision
+
+**Decision:** Four changes to the Buy/Sell/Trade model PD-437 shipped, plus the rule the PD-438
+matcher is built on. Landed together because the matcher forced the model questions.
+
+1. **The list is gear, not modules.** The field is `item`, not `module`, and `Other Instruments`
+   joins `Modules` / `Misc` as a category. Eurorack is simply what Steve has most of today.
+2. **`WTT` is retired as a listing *type*.** WTB and WTS only. Existing WTT rows migrated to WTB.
+   The *commenter* side keeps WTT (`BstMatchIntent`) — a stranger in a thread really can be
+   offering a trade.
+3. **Notes split into public (`notes`) and private (`privateNotes`).** `location` was already
+   private; now it has company and a stated rule: private fields are shown when drafting a post so
+   Steve can find the thing, and never included in the post.
+4. **Duplicates are legal.** PD-437's `UNIQUE(type, manufacturer, module)` index is dropped.
+5. **The matcher resolves every ambiguity towards *not* matching**, and records `unknown` intent
+   rather than guessing.
+
+**Reasoning:**
+
+- **WTT was never a type, it was a payment method.** "Want to trade for" describes gear Steve would
+  *accept* — a want, the same side of the ledger as WTB. Carrying it as a third type meant every
+  consumer had to remember that two of three types were wants; that confusion nearly drafted the
+  want-list into a for-sale table once already.
+- **The uniqueness constraint was wrong about the domain.** Steve owns two of some items, in
+  different condition, at different prices, and each is a separate listing. A database that refuses
+  to record true facts is a bug. Duplication is now a **question the UI asks** — the route returns
+  `409 DUPLICATE_CONFIRM` carrying the existing rows, and re-sending with `confirmDuplicate: true`
+  goes through.
+- **Import idempotency had to survive the constraint's removal.** The CSV key is now
+  `(type, manufacturer, item, condition)` — condition is exactly what distinguishes his duplicates.
+  The residual cost is real and stated in the code: two sheet rows identical in all four fields
+  collapse to one. Adding `price` to the key would change a row's identity every time he re-priced
+  something, which is worse.
+- **Precision over recall is a consequence of the schedule, not a preference.** The scan runs
+  weekly and its output is a list Steve reads, so a false match costs him attention *every week*
+  while a miss costs one trade. His list contains names that are ordinary modular vocabulary —
+  `Mix`, `VCA`, `Slice`, `Loop`, `Qua`, `Helium`, `Where?` — so a generic name only matches when the
+  manufacturer appears within ~40 characters of it ("2hp Mix"), and a generic name on a listing with
+  *no* manufacturer cannot match at all.
+- **Intent is positional, not a comment-wide vote.** One BST comment routinely carries `WTS:` and
+  `WTB:` sections; intent comes from the nearest marker *before* the mention. A comment-wide vote
+  would label the WTB line "selling", which is exactly the confident wrongness this feature can't
+  afford.
+
+**Implications:** `RENAME COLUMN` is an accepted migration, narrowing `migrate.ts`'s "additive only"
+phrasing to its actual rule — *no migration may lose data*. The matcher's `GENERIC_TERMS` list is
+**safe to grow and unsafe to shrink**: an entry only ever costs recall on listings with no
+manufacturer recorded.
+
+**Revisit if:** the readout is too quiet — misses are visible only by reading the thread by hand, so
+if Steve finds himself doing that, loosen corroboration before adding names. Or if he starts wanting
+"two of these" tracked as a quantity rather than two rows, in which case duplicates become a
+`quantity` column and the confirm flow goes away.
+
+---
+
 ## D-064: The loop-wide budget ceiling counts turns per rolling 24h, and pauses deliberately
 
 **Decision:** The Robot loop enforces a cumulative spend ceiling over a **rolling window**

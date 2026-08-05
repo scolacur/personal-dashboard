@@ -5,16 +5,22 @@ import {
   isBstListingType,
   isBstSaleStatus,
   type BstCategory,
+  type BstCommentInput,
   type BstSaleStatus,
   type UpdateBstListingInput,
 } from '@dashboard/shared';
 import {
+  countOpenMatches,
   createListing,
   deleteListing,
+  findDuplicateListings,
   getListing,
   getSettings,
   importListingsCsv,
+  ingestComments,
   listListings,
+  listMatches,
+  setMatchDismissed,
   updateListing,
   updateSettings,
 } from './store';
@@ -49,11 +55,11 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
   app.post(`${BASE}/listings`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     if (!isBstListingType(body.type)) {
-      return reply.status(400).send({ error: 'type must be WTB, WTS or WTT', code: 'INVALID_TYPE' });
+      return reply.status(400).send({ error: 'type must be WTB or WTS', code: 'INVALID_TYPE' });
     }
-    const module = typeof body.module === 'string' ? body.module.trim() : '';
-    if (!module) {
-      return reply.status(400).send({ error: 'module is required', code: 'INVALID_MODULE' });
+    const item = typeof body.item === 'string' ? body.item.trim() : '';
+    if (!item) {
+      return reply.status(400).send({ error: 'item is required', code: 'INVALID_ITEM' });
     }
     const status = optionalEnum<BstSaleStatus>(body.saleStatus, isBstSaleStatus);
     if (!status.ok) {
@@ -64,30 +70,37 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       return reply.status(400).send({ error: 'invalid category', code: 'INVALID_CATEGORY' });
     }
 
-    try {
-      return reply.status(201).send(
-        createListing(db, {
-          type: body.type,
-          module,
-          manufacturer: optionalText(body.manufacturer) ?? null,
-          price: optionalText(body.price) ?? null,
-          condition: optionalText(body.condition) ?? null,
-          notes: optionalText(body.notes) ?? null,
-          location: optionalText(body.location) ?? null,
-          // A hand-added WTS defaults to an actual for-sale listing; a want row gets neither.
-          saleStatus: status.value ?? (body.type === 'WTS' ? 'for-sale' : null),
-          category: cat.value ?? (body.type === 'WTS' ? 'Modules' : null),
-        }),
-      );
-    } catch (e) {
-      // The identity index is the only constraint that can fire here.
-      if (e instanceof Error && /UNIQUE/i.test(e.message)) {
-        return reply
-          .status(409)
-          .send({ error: 'that type + manufacturer + module is already listed', code: 'DUPLICATE' });
+    const manufacturer = optionalText(body.manufacturer) ?? null;
+
+    // Duplicates are legal — owning two of something at different prices is ordinary. So this
+    // asks once instead of refusing: re-send with `confirmDuplicate` and it goes through. The
+    // existing rows travel with the warning so the modal can show what he already has.
+    if (body.confirmDuplicate !== true) {
+      const existing = findDuplicateListings(db, { type: body.type, manufacturer, item });
+      if (existing.length > 0) {
+        return reply.status(409).send({
+          code: 'DUPLICATE_CONFIRM',
+          error: `You already have ${existing.length} listing${existing.length === 1 ? '' : 's'} for this. Add another?`,
+          existing,
+        });
       }
-      throw e;
     }
+
+    return reply.status(201).send(
+      createListing(db, {
+        type: body.type,
+        item,
+        manufacturer,
+        price: optionalText(body.price) ?? null,
+        condition: optionalText(body.condition) ?? null,
+        notes: optionalText(body.notes) ?? null,
+        privateNotes: optionalText(body.privateNotes) ?? null,
+        location: optionalText(body.location) ?? null,
+        // A hand-added WTS defaults to an actual for-sale listing; a want row gets neither.
+        saleStatus: status.value ?? (body.type === 'WTS' ? 'for-sale' : null),
+        category: cat.value ?? (body.type === 'WTS' ? 'Modules' : null),
+      }),
+    );
   });
 
   app.patch<{ Params: { id: string } }>(`${BASE}/listings/:id`, async (request, reply) => {
@@ -104,18 +117,25 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
 
     if (body.type !== undefined) {
       if (!isBstListingType(body.type)) {
-        return reply.status(400).send({ error: 'type must be WTB, WTS or WTT', code: 'INVALID_TYPE' });
+        return reply.status(400).send({ error: 'type must be WTB or WTS', code: 'INVALID_TYPE' });
       }
       input.type = body.type;
     }
-    if (body.module !== undefined) {
-      const module = typeof body.module === 'string' ? body.module.trim() : '';
-      if (!module) {
-        return reply.status(400).send({ error: 'module cannot be empty', code: 'INVALID_MODULE' });
+    if (body.item !== undefined) {
+      const item = typeof body.item === 'string' ? body.item.trim() : '';
+      if (!item) {
+        return reply.status(400).send({ error: 'item cannot be empty', code: 'INVALID_ITEM' });
       }
-      input.module = module;
+      input.item = item;
     }
-    for (const key of ['manufacturer', 'price', 'condition', 'notes', 'location'] as const) {
+    for (const key of [
+      'manufacturer',
+      'price',
+      'condition',
+      'notes',
+      'privateNotes',
+      'location',
+    ] as const) {
       const v = optionalText(body[key]);
       if (v !== undefined) input[key] = v;
     }
@@ -132,16 +152,26 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     }
     if (cat.value !== undefined) input.category = cat.value;
 
-    try {
-      return updateListing(db, id, input);
-    } catch (e) {
-      if (e instanceof Error && /UNIQUE/i.test(e.message)) {
-        return reply
-          .status(409)
-          .send({ error: 'that type + manufacturer + module is already listed', code: 'DUPLICATE' });
+    // Same advisory duplicate check as create, but only when the edit actually moves the row
+    // onto another one's identity — and never against itself.
+    if (body.confirmDuplicate !== true && (input.type || input.item || 'manufacturer' in input)) {
+      const existing = getListing(db, id)!;
+      const merged = {
+        type: input.type ?? existing.type,
+        manufacturer: 'manufacturer' in input ? (input.manufacturer ?? null) : existing.manufacturer,
+        item: input.item ?? existing.item,
+      };
+      const clashes = findDuplicateListings(db, merged, id);
+      if (clashes.length > 0) {
+        return reply.status(409).send({
+          code: 'DUPLICATE_CONFIRM',
+          error: `You already have ${clashes.length} other listing${clashes.length === 1 ? '' : 's'} for this. Keep both?`,
+          existing: clashes,
+        });
       }
-      throw e;
     }
+
+    return updateListing(db, id, input);
   });
 
   app.delete<{ Params: { id: string } }>(`${BASE}/listings/:id`, async (request, reply) => {
@@ -156,13 +186,75 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
   });
 
   /** One-time (and re-runnable) import of the Google-Sheets export. Idempotent on
-   *  (type, manufacturer, module), so a re-paste corrects rather than duplicates. */
+   *  (type, manufacturer, item, condition), so a re-paste corrects rather than duplicates. */
   app.post(`${BASE}/listings/import`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     if (typeof body.csv !== 'string' || body.csv.trim() === '') {
       return reply.status(400).send({ error: 'csv text is required', code: 'INVALID_CSV' });
     }
     return importListingsCsv(db, body.csv);
+  });
+
+  /* ── Matches (PD-438) ─────────────────────────── */
+
+  app.get<{ Querystring: { includeDismissed?: string } }>(`${BASE}/matches`, async (request) =>
+    listMatches(db, request.query.includeDismissed === 'true'),
+  );
+
+  /** What the collapsed card needs, without pulling the whole table onto the dashboard grid. */
+  app.get(`${BASE}/matches/count`, async () => ({ open: countOpenMatches(db) }));
+
+  app.patch<{ Params: { id: string } }>(`${BASE}/matches/:id`, async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.dismissed !== 'boolean') {
+      return reply
+        .status(400)
+        .send({ error: 'dismissed must be a boolean', code: 'INVALID_DISMISSED' });
+    }
+    const updated = setMatchDismissed(db, id, body.dismissed);
+    if (!updated) return reply.status(404).send({ error: 'not found', code: 'NOT_FOUND' });
+    return updated;
+  });
+
+  /**
+   * The seam PD-471 will call once Reddit access lands, and the manual fallback until then:
+   * POST a thread's comments and get back what matched. Deliberately source-agnostic — it takes
+   * `{ id, author, body, permalink }`, not a Reddit payload — so a thread pasted by hand and a
+   * thread fetched by the scheduled job travel the same path.
+   */
+  app.post(`${BASE}/matches/ingest`, async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const threadId = typeof body.threadId === 'string' ? body.threadId.trim() : '';
+    if (!threadId) {
+      return reply.status(400).send({ error: 'threadId is required', code: 'INVALID_THREAD' });
+    }
+    if (!Array.isArray(body.comments)) {
+      return reply
+        .status(400)
+        .send({ error: 'comments must be an array', code: 'INVALID_COMMENTS' });
+    }
+
+    const comments: BstCommentInput[] = [];
+    for (const [i, raw] of body.comments.entries()) {
+      const c = (raw ?? {}) as Record<string, unknown>;
+      if (typeof c.id !== 'string' || typeof c.body !== 'string') {
+        return reply
+          .status(400)
+          .send({ error: `comment ${i} needs an id and a body`, code: 'INVALID_COMMENTS' });
+      }
+      comments.push({
+        id: c.id,
+        body: c.body,
+        author: typeof c.author === 'string' ? c.author : '[unknown]',
+        permalink: typeof c.permalink === 'string' ? c.permalink : '',
+      });
+    }
+
+    return ingestComments(db, { threadId, comments });
   });
 
   app.get(`${BASE}/settings`, async () => getSettings(db));

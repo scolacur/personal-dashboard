@@ -60,15 +60,192 @@
     color: var(--status-done);
   }
 
-  &.type-wtt {
-    border-color: var(--status-in-review);
-    color: var(--status-in-review);
-  }
-
   &.type-wtb {
     border-color: var(--status-queued);
     color: var(--status-queued);
   }
+
+  &.type-match {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+/* ── Matches (PD-438) ───────────────────────────── */
+
+.bst-matches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.bst-matches-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-lg);
+  color: var(--text);
+}
+
+.match-group {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-sm) var(--space-md);
+
+  /* The scan's payoff: someone offering gear from the want list. Sorted first and marked, so
+     it can't be lost among sale-side noise. */
+  &.sig-high {
+    border-left-color: var(--accent);
+  }
+
+  &.sig-normal {
+    border-left-color: var(--border);
+  }
+
+  &.sig-low {
+    border-left-color: var(--border);
+    opacity: 0.7;
+  }
+}
+
+.match-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-md);
+  color: var(--text);
+}
+
+.match-flag {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.match-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.match {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+
+  &:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
+.match-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.match-intent {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px var(--space-xs);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  color: var(--muted);
+
+  &.intent-WTS {
+    border-color: var(--status-done);
+    color: var(--status-done);
+  }
+
+  &.intent-WTB {
+    border-color: var(--status-queued);
+    color: var(--status-queued);
+  }
+
+  &.intent-WTT {
+    border-color: var(--status-in-review);
+    color: var(--status-in-review);
+  }
+
+  /* Deliberately plain: the matcher records `unknown` rather than guessing, and the readout
+     should look uncertain rather than authoritative. */
+  &.intent-unknown {
+    font-style: italic;
+  }
+}
+
+.match-author,
+.match-link {
+  font-size: var(--font-size-sm);
+  color: var(--accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.match-excerpt {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.match-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+/* ── Duplicate confirmation ─────────────────────── */
+
+.bst-dup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.bst-dup-text {
+  margin: 0;
+  color: var(--text);
+}
+
+.bst-dup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  li {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+    color: var(--text);
+  }
+}
+
+.bst-dup-detail {
+  color: var(--muted);
+}
+
+.bst-dup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
 }
 
 /* ── Import ─────────────────────────────────────── */

@@ -57,7 +57,7 @@ describe('mapHeaders', () => {
       null, // the prose column, titled with the list's name
       'type',
       'manufacturer',
-      'module',
+      'item',
       'price',
       'condition',
       'notes',
@@ -71,43 +71,56 @@ describe('mapHeaders', () => {
   });
 
   it('is case- and whitespace-insensitive', () => {
-    expect(mapHeaders([' MODULE ', 'Current   Location'])).toEqual(['module', 'location']);
+    expect(mapHeaders([' MODULE ', 'Current   Location'])).toEqual(['item', 'location']);
+  });
+
+  // The sheet says "Module", the model says `item` — the list is gear, not modules. Both
+  // headers map to the same field so an old export and a future one both import.
+  it('accepts Module, Item and Gear as the same column', () => {
+    expect(mapHeaders(['Module'])).toEqual(['item']);
+    expect(mapHeaders(['Item'])).toEqual(['item']);
+    expect(mapHeaders(['Gear'])).toEqual(['item']);
+  });
+
+  it('maps the public/private notes split', () => {
+    expect(mapHeaders(['Notes', 'Private Notes'])).toEqual(['notes', 'privateNotes']);
+    expect(mapHeaders(['Public Notes'])).toEqual(['notes']);
   });
 });
 
 describe('parseSheetCsv — the real sheet shape', () => {
   const out = parseSheetCsv(SHEET);
-  const byModule = (m: string) => out.rows.find((r) => r.module === m);
+  const byItem = (m: string) => out.rows.find((r) => r.item === m);
 
   it('imports module rows as WTS by default — the sheet is a For Sale list', () => {
-    expect(byModule('Ultra Perc')).toMatchObject({ type: 'WTS', manufacturer: 'SSF', price: '$380' });
+    expect(byItem('Ultra Perc')).toMatchObject({ type: 'WTS', manufacturer: 'SSF', price: '$380' });
   });
 
   it('does not treat a section marker as a listing type', () => {
-    expect(byModule('mmMidi')?.type).toBe('WTS');
-    expect(byModule('Chronoblob')?.type).toBe('WTS');
+    expect(byItem('mmMidi')?.type).toBe('WTS');
+    expect(byItem('Chronoblob')?.type).toBe('WTS');
   });
 
   it('splits a section marker into sale status + category, applied downward', () => {
-    expect(byModule('Ultra Perc')).toMatchObject({ saleStatus: 'for-sale', category: 'Modules' });
-    expect(byModule('OPTX')).toMatchObject({ saleStatus: 'for-sale', category: 'Modules' });
-    expect(byModule('Powered MIDI 1-4 Splitter')).toMatchObject({
+    expect(byItem('Ultra Perc')).toMatchObject({ saleStatus: 'for-sale', category: 'Modules' });
+    expect(byItem('OPTX')).toMatchObject({ saleStatus: 'for-sale', category: 'Modules' });
+    expect(byItem('Powered MIDI 1-4 Splitter')).toMatchObject({
       saleStatus: 'for-sale',
       category: 'Misc',
     });
-    expect(byModule('mmMidi')?.saleStatus).toBe('feelers');
+    expect(byItem('mmMidi')?.saleStatus).toBe('feelers');
     // still feelers — the marker persists past the row it appears on
-    expect(byModule('Motion MTR')?.saleStatus).toBe('feelers');
-    expect(byModule('Quadigy')?.saleStatus).toBe('feelers');
-    expect(byModule('Chronoblob')?.saleStatus).toBe('probably-wont-sell');
-    expect(byModule('hrylo (gold)')?.saleStatus).toBe('probably-wont-sell');
+    expect(byItem('Motion MTR')?.saleStatus).toBe('feelers');
+    expect(byItem('Quadigy')?.saleStatus).toBe('feelers');
+    expect(byItem('Chronoblob')?.saleStatus).toBe('probably-wont-sell');
+    expect(byItem('hrylo (gold)')?.saleStatus).toBe('probably-wont-sell');
   });
 
   it('resets category to Modules when a willingness marker starts', () => {
     // MISC is in force immediately before Feelers; carrying it forward would mislabel
     // every feeler as Misc.
-    expect(byModule('Powered MIDI 1-4 Splitter')?.category).toBe('Misc');
-    expect(byModule('mmMidi')?.category).toBe('Modules');
+    expect(byItem('Powered MIDI 1-4 Splitter')?.category).toBe('Misc');
+    expect(byItem('mmMidi')?.category).toBe('Modules');
   });
 
   it('extracts the sale terms from column 1, above the WTTF marker', () => {
@@ -121,9 +134,11 @@ describe('parseSheetCsv — the real sheet shape', () => {
     expect(out.terms).not.toMatch(/acidlab/);
   });
 
-  it('imports the want-list below the WTTF marker as WTT rows', () => {
-    const wants = out.rows.filter((r) => r.type === 'WTT');
-    expect(wants.map((w) => w.module)).toEqual([
+  // WTTF is a heading about HOW he'd pay; the rows under it are wants, so they import as WTB.
+  // WTT was retired as a listing type — see BST_LISTING_TYPES.
+  it('imports the want-list below the WTTF marker as WTB rows', () => {
+    const wants = out.rows.filter((r) => r.type === 'WTB');
+    expect(wants.map((w) => w.item)).toEqual([
       'acidlab m303',
       'Xodes UGR2',
       'Sloths 1U',
@@ -133,14 +148,14 @@ describe('parseSheetCsv — the real sheet shape', () => {
     expect(wants.every((w) => w.saleStatus === null && w.category === null)).toBe(true);
   });
 
-  it('skips "Non-modular" — a sub-heading in the want list, not a wanted module', () => {
-    expect(out.rows.some((r) => r.module === 'Non-modular')).toBe(false);
+  it('skips "Non-modular" — a sub-heading in the want list, not a wanted item', () => {
+    expect(out.rows.some((r) => r.item === 'Non-modular')).toBe(false);
   });
 
   it('reads a terms line, a section change and a listing off the SAME row independently', () => {
     // 'Sloths 1U,Feelers,ALM,mmMidi,...' is a want, a section marker and a listing at once.
-    expect(out.rows.some((r) => r.type === 'WTT' && r.module === 'Sloths 1U')).toBe(true);
-    expect(byModule('mmMidi')).toMatchObject({ saleStatus: 'feelers', manufacturer: 'ALM' });
+    expect(out.rows.some((r) => r.type === 'WTB' && r.item === 'Sloths 1U')).toBe(true);
+    expect(byItem('mmMidi')).toMatchObject({ saleStatus: 'feelers', manufacturer: 'ALM' });
   });
 
   it('ignores spacer rows without reporting them as problems', () => {
@@ -153,7 +168,7 @@ describe('parseSheetCsv — the real sheet shape', () => {
   });
 
   it('turns empty cells into null, not empty strings', () => {
-    expect(byModule('hrylo (gold)')).toMatchObject({ price: null, location: null });
+    expect(byItem('hrylo (gold)')).toMatchObject({ price: null, location: null });
   });
 });
 
@@ -193,7 +208,7 @@ describe('repairMojibake', () => {
     const { rows } = parseSheetCsv(
       `Type,Manufacturer,Module,Price,Condition,Notes,Current Location\nWTS,Paratek,${broken},$80,excellent,,Box 2`,
     );
-    expect(rows[0].module).toBe('Пуск-3');
+    expect(rows[0].item).toBe('Пуск-3');
   });
 });
 
@@ -202,7 +217,7 @@ describe('parseSheetCsv — explicit types and failure modes', () => {
 
   it('still honours an explicit WTB/WTS/WTT in the Type column', () => {
     const { rows } = parseSheetCsv(`${flat}\nWTB,Intellijel,Quadrax,,,,`);
-    expect(rows[0]).toMatchObject({ type: 'WTB', module: 'Quadrax' });
+    expect(rows[0]).toMatchObject({ type: 'WTB', item: 'Quadrax' });
   });
 
   it('accepts loose casing on an explicit type', () => {
