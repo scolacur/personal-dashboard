@@ -7,4 +7,6 @@ One line per day. Load today's and yesterday's files at session start.
 - [2026-07-30](2026-07-30.md) — Claude account rotation; `/harness` rename (D-028); path-guard found unshipped (PD-308→P1); agents paused on quota; Dev Ops PD-420/421/422 shipped by hand.
 - [2026-08-04](2026-08-04.md) — Big day: BST epic intake + PD-441/294/437/471 shipped, board-wide epic pass, Dev Ops restructure (PD-413/414/415), **path-guard live (PD-308)**, PD-426, PD-468 gate.
 
+- [2026-08-05](2026-08-05.md) — PD-468 gate worked top-down: PD-393, PD-467, PD-470 shipped by hand (17→14 blockers); session-limit hold is D-063.
+
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
