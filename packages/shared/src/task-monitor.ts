@@ -130,6 +130,14 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
  */
 export const ROBOT_MAX_TURNS_DEFAULT = 50;
 
+/**
+ * Hard upper bound for a per-ticket `max_turns` override (PD-432). An override exists so an
+ * irreducible ticket can finish; it does not exist to authorise an unbounded burn, so a value above
+ * this is rejected at the write boundary rather than clamped — a silently-lowered ceiling would
+ * mislead whoever set it.
+ */
+export const ROBOT_MAX_TURNS_LIMIT = 200;
+
 /** At/above this fraction of the ceiling a run is flagged as close to the cap. */
 export const TURN_WARN_FRACTION = 0.8;
 
@@ -292,6 +300,10 @@ export interface AgentTicket {
    *  The loop gate is `ready || readyBypassed`; goes moot once the body is fixed (recompute makes
    *  `ready` true). Never fakes `ready`, so the board can show an honest "⚠ bypassed" badge. */
   readyBypassed: boolean;
+  /** Per-ticket run ceiling (PD-432); `null` = inherit the loop's env default. Set when a ticket
+   *  genuinely cannot be decomposed to fit — raising the cap is the escape hatch, not the default.
+   *  Bounded by `ROBOT_MAX_TURNS_LIMIT` so a bad estimate cannot authorise an unbounded burn. */
+  maxTurns: number | null;
   /** True when this Ticket is an Epic umbrella (D-054, PD-336). An Epic groups member Tickets,
    *  is never dispatched (cannot enter `queue`), and its board status is derived. */
   isEpic: boolean;
@@ -330,6 +342,9 @@ export interface CreateTicketInput {
   isEpic?: boolean;
   /** Parent Epic id, or null. Ignored when `isEpic` is true (no nesting). */
   epicId?: number | null;
+  /** Per-ticket run ceiling (PD-432); omit or null to inherit the loop's default. Rejected above
+   *  `ROBOT_MAX_TURNS_LIMIT`. */
+  maxTurns?: number | null;
 }
 
 /** Partial update — any subset of these fields. */
@@ -356,6 +371,8 @@ export interface UpdateTicketInput {
   isEpic?: boolean;
   /** Set (via id) or clear (via null) the parent Epic. Omit to leave unchanged. */
   epicId?: number | null;
+  /** Set (a number) or clear (null) the per-ticket run ceiling (PD-432). Omit to leave unchanged. */
+  maxTurns?: number | null;
 }
 
 /** An Epic's derived board lane (D-054, PD-336). `in_progress` is the synthetic cell over the
@@ -578,6 +595,10 @@ export interface RefineChildProposal {
   /** P0–P5, or null/omitted when the agent leaves it for Steve to set. Optional so proposals
    *  stored before priority-support (and terse fixtures) still typecheck; normalized to null. */
   priority?: TicketPriority | null;
+  /** PD-432: an estimated per-run turn ceiling, set ONLY when the agent has argued the work cannot
+   *  decompose further. Omitted/null = the loop default, which is the expected case — decomposing
+   *  stays the preferred move, and raising the cap is the escape hatch. */
+  maxTurns?: number | null;
 }
 
 /** The structured commit proposal, stored as the detail of a `refine_proposal` event. */
@@ -589,6 +610,8 @@ export interface RefineProposal {
   assignee?: TicketAssignee | null;
   /** refine_in_place: P0–P5 for THIS ticket, or null to clear. Omit to leave unchanged. */
   priority?: TicketPriority | null;
+  /** refine_in_place: an estimated turn ceiling for THIS ticket (PD-432); null clears it. */
+  maxTurns?: number | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
   /** Short why, shown in the approval panel. */
@@ -867,6 +890,9 @@ export interface RobotEventDetail {
   resolvedNotifications?: number;
   /** True when an active refine session was ended by the terminal transition (`robot_session_ended`). */
   endedRefine?: boolean;
+  /** PD-432: the effective turn ceiling a dispatched run was given (`robot_dispatched`) — the
+   *  ticket's override, or the loop's env default. */
+  maxTurns?: number;
   /** PD-470: on a `robot_paused` raised by a provider session limit — the flag distinguishes it
    *  from an auth/credit pause (which needs a human), and `until` is when dispatch resumes. */
   sessionLimit?: boolean;

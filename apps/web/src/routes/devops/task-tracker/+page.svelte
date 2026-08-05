@@ -4,7 +4,15 @@
   import { goto } from '$app/navigation';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput } from '@dashboard/shared';
-  import { TICKET_ASSIGNEES, ASSIGNEE_LABELS, TICKET_PRIORITIES, PRIORITY_LABELS, isReady } from '@dashboard/shared';
+  import {
+    TICKET_ASSIGNEES,
+    ASSIGNEE_LABELS,
+    TICKET_PRIORITIES,
+    PRIORITY_LABELS,
+    ROBOT_MAX_TURNS_DEFAULT,
+    ROBOT_MAX_TURNS_LIMIT,
+    isReady,
+  } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from '../TicketCard.svelte';
@@ -197,6 +205,17 @@
   let formIsEpic = $state(false);
   // Which Epic this ticket belongs to (D-054, PD-338); null = none. Forced null when isEpic.
   let formEpicId = $state<number | null>(null);
+  // PD-432: per-ticket run ceiling as typed text, so an empty field is unambiguously "default"
+  // rather than 0. Parsed on submit; the server rejects anything above ROBOT_MAX_TURNS_LIMIT.
+  let formMaxTurns = $state('');
+  // Caught here as well as server-side so Save is blocked with an explanation, rather than the
+  // write failing after the fact — the bound is a rule worth learning, not an error to hit.
+  const maxTurnsInvalid = $derived.by(() => {
+    const raw = formMaxTurns.trim();
+    if (raw === '') return false;
+    const n = Number(raw);
+    return !Number.isInteger(n) || n < 1 || n > ROBOT_MAX_TURNS_LIMIT;
+  });
   let formProjectId = $state<number | null>(null);
 
   // Epics selectable as a parent in the form's "Belongs to epic" dropdown — same project,
@@ -340,6 +359,7 @@
     formPriority = null; // unset by default — assigned deliberately
     formAssignee = null;
     formIsEpic = false;
+    formMaxTurns = '';
     formEpicId = null;
     // Default to the active filter, else "personal-dashboard", else the first project.
     const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
@@ -362,6 +382,7 @@
     formPriority = ticket.priority;
     formAssignee = ticket.assignee;
     formIsEpic = ticket.isEpic;
+    formMaxTurns = ticket.maxTurns === null ? '' : String(ticket.maxTurns);
     formEpicId = ticket.epicId;
     formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
     formOpen = true;
@@ -398,6 +419,9 @@
     try {
       // An Epic never belongs to another Epic (no nesting, D-054).
       const epicId = formIsEpic ? null : formEpicId;
+      // Blank = clear the override (inherit the loop default). NaN can't reach here: the input is
+      // type=number and the Save button gates on `maxTurnsInvalid`.
+      const maxTurns = formMaxTurns.trim() === '' ? null : Number(formMaxTurns);
       if (editingId === null) {
         const created = await api.createTicket({
           title,
@@ -408,6 +432,7 @@
           assignee: formAssignee,
           isEpic: formIsEpic,
           epicId,
+          maxTurns,
         });
         // CreateTicketInput carries no `readyBypassed` (backend enum/guards are ticket A's scope) —
         // set it in a follow-up patch when the human bypassed the not-Ready gate at create time.
@@ -421,6 +446,7 @@
           assignee: formAssignee,
           isEpic: formIsEpic,
           epicId,
+          maxTurns,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: formStatus }),
           ...(bypass ? { readyBypassed: true } : {}),
@@ -881,12 +907,29 @@
         <small class="field-note">Locked — controlled by its agent.</small>
       {/if}
     </label>
+    <label>
+      <span>Turn ceiling</span>
+      <input
+        type="number"
+        min="1"
+        max={ROBOT_MAX_TURNS_LIMIT}
+        placeholder={`default (${ROBOT_MAX_TURNS_DEFAULT})`}
+        bind:value={formMaxTurns}
+      />
+      <small class="field-note">
+        {#if maxTurnsInvalid}
+          Must be a whole number between 1 and {ROBOT_MAX_TURNS_LIMIT}.
+        {:else}
+          Leave blank for the default. Raise it only for work that cannot be split further.
+        {/if}
+      </small>
+    </label>
     <div class="form-actions">
       <Button variant="ghost" onclick={closeForm}>Cancel</Button>
       <Button
         variant="primary"
         onclick={submitForm}
-        disabled={!formTitle.trim() || formProjectId === null}
+        disabled={!formTitle.trim() || formProjectId === null || maxTurnsInvalid}
       >
         {editingId === null ? 'Add' : 'Save'}
       </Button>

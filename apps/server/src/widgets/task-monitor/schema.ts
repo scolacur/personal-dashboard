@@ -77,6 +77,7 @@ export function bootstrapSchema(db: Database.Database): void {
       refined             INTEGER NOT NULL DEFAULT 0, -- 1 once refined to completion (D-044, PD-268)
       ready               INTEGER NOT NULL DEFAULT 0, -- 1 iff body is 4-section Ready (D-058); recomputed on body write
       ready_bypassed      INTEGER NOT NULL DEFAULT 0, -- 1 when a human queued a not-Ready robot ticket via confirm modal (D-058)
+      max_turns           INTEGER,                  -- per-ticket run ceiling (PD-432); NULL = the loop's env default
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       archived_at         INTEGER,                  -- soft delete; NULL = active
@@ -280,6 +281,12 @@ export function bootstrapSchema(db: Database.Database): void {
     for (const r of rows) {
       setReady.run(isReady(r.body) ? 1 : 0, r.id);
     }
+  });
+
+  // PD-432: per-ticket run ceiling. Nullable by design — NULL means "inherit the loop's env
+  // default", so the global stays authoritative for the ~all tickets that never need an override.
+  migrate(db, 'agent_tickets_add_max_turns', (d) => {
+    addColumn(d, 'agent_tickets', 'max_turns', 'INTEGER');
   });
 
   // Seed the known projects once (with display-id keys). Idempotent, and backfills

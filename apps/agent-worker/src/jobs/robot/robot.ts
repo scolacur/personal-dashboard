@@ -228,8 +228,15 @@ export async function processRobotQueue(
     // unchanged-body retry from a re-scoped one.
     const bodyHash = hashBody(candidate.body);
     setAgentState(db, candidate.id, 'working', now());
-    const runId = startRun(db, { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch, bodyHash }, now());
-    logMilestone(db, candidate.id, ROBOT_EVENT.dispatched, { branch }, now());
+    // PD-432: record the ceiling this run actually runs under, so the run is self-describing and
+    // the board's N/M indicator reads the real denominator rather than the shared constant.
+    const effectiveMaxTurns = candidate.maxTurns ?? config.robot.maxTurns;
+    const runId = startRun(
+      db,
+      { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch, bodyHash, maxTurns: effectiveMaxTurns },
+      now(),
+    );
+    logMilestone(db, candidate.id, ROBOT_EVENT.dispatched, { branch, maxTurns: effectiveMaxTurns }, now());
 
     // Route a failed run (no-verify or errored) through the fault guardrail. Shared by the normal
     // path and the catch below so a thrown clone/spawn error is classified the same way.

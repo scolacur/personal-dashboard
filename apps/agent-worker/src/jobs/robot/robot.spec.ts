@@ -17,7 +17,7 @@ function boardDb(): Database.Database {
       id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
       priority TEXT NOT NULL DEFAULT 'none',
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
-      project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER,
+      project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_relations (id INTEGER PRIMARY KEY, from_ticket_id INTEGER, to_ticket_id INTEGER, type TEXT);
@@ -86,8 +86,8 @@ describe('processRobotQueue', () => {
   });
 
   it('branchFor uses the issue number, or t<id> when unlinked', () => {
-    expect(branchFor({ id: 5, issueNumber: 220, repo: 'r', title: 't', body: null, priority: null })).toBe('robot/220');
-    expect(branchFor({ id: 5, issueNumber: null, repo: 'r', title: 't', body: null, priority: null })).toBe('robot/t5');
+    expect(branchFor({ id: 5, issueNumber: 220, repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/220');
+    expect(branchFor({ id: 5, issueNumber: null, repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/t5');
   });
 
   // PD-230: the loop must hand the session a progress callback that persists live turn counts.
@@ -371,6 +371,31 @@ describe('processRobotQueue', () => {
     expect(agentState(db, 1)).toBe('queued');
     const hold = activeSessionLimitHold(db, LIMIT_NOW)!;
     expect(hold.until).toBe(LIMIT_NOW + SESSION_LIMIT_FALLBACK_MS);
+  });
+
+  // ---- PD-432: the per-ticket turn ceiling ----
+
+  it('records the effective ceiling on the run — the ticket override, else the env default', async () => {
+    addQueued(db, 1);
+    db.prepare('UPDATE agent_tickets SET max_turns = 120 WHERE id = 1').run();
+    addQueued(db, 2);
+
+    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_MAX_TURNS: '50' }), deps());
+
+    // Self-describing after the fact: the run says what it was allowed, so a max-turns fault can be
+    // read without guessing which config was live (and PD-230's N/M gets the real denominator).
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(120);
+    expect(listRunsForTicket(db, 2)[0].maxTurns).toBe(50);
+  });
+
+  it('puts the effective ceiling on the dispatched milestone', async () => {
+    addQueued(db, 1);
+    db.prepare('UPDATE agent_tickets SET max_turns = 75 WHERE id = 1').run();
+    await processRobotQueue(db, cfg(), deps());
+    const ev = db
+      .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = 1 AND type = 'robot_dispatched'")
+      .get() as { detail: string };
+    expect(JSON.parse(ev.detail)).toMatchObject({ maxTurns: 75 });
   });
 
   // ---- PD-463: the loop-wide budget ceiling ----

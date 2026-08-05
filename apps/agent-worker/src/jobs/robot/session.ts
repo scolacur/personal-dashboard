@@ -180,7 +180,9 @@ export async function runRobotSession(
         model: config.model,
         cwd: worktree.dir,
         systemPrompt: robotSystemPrompt(),
-        maxTurns: config.robot.maxTurns,
+        // PD-432: the ticket's override when it has one, else the loop-wide env default. Null is
+        // the normal case, so the global stays authoritative for ~every ticket.
+        maxTurns: candidate.maxTurns ?? config.robot.maxTurns,
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,
         env: codingEnv(config),

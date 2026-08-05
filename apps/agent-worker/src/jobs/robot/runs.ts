@@ -41,6 +41,9 @@ export interface RunRow {
   faultReason: string | null;
   /** C3 observability metrics off the SDK result (null for older rows / no result). */
   turns: number | null;
+  /** PD-432: the ceiling this run ran under — the ticket's override, or the loop's env default.
+   *  Null on pre-PD-432 rows, where the reader falls back to the shared default. */
+  maxTurns: number | null;
   tokens: number | null;
   /** PD-426: bounded tail of the session's output, so a `no-verify` run is diagnosable from the
    *  board after the worktree is gone. Null for older rows / sessions that produced nothing. */
@@ -86,6 +89,10 @@ export function ensureRunsTable(db: Database.Database): void {
   addColumnIfMissing(db, 'agent_runs', 'fault_reason', 'TEXT');
   // C3 (PD-344) observability metrics.
   addColumnIfMissing(db, 'agent_runs', 'turns', 'INTEGER');
+  // PD-432: the ceiling this run ACTUALLY ran under (the ticket override, or the env default).
+  // Recorded per run so a run is self-describing after the fact — and so the board's N/M indicator
+  // reads the real denominator instead of the shared constant, which cannot see an override.
+  addColumnIfMissing(db, 'agent_runs', 'max_turns', 'INTEGER');
   addColumnIfMissing(db, 'agent_runs', 'tokens', 'INTEGER');
   // PD-406: hash of the ticket body this run ran against — lets a max-turns fault distinguish a
   // futile unchanged-body retry from a genuinely re-scoped one.
@@ -106,6 +113,8 @@ export interface StartRunInput {
   branch: string;
   /** Hash of the ticket body this run runs against (PD-406) — see `hashBody`. */
   bodyHash?: string | null;
+  /** Effective turn ceiling for this run (PD-432): the ticket's override, else the env default. */
+  maxTurns?: number | null;
 }
 
 /** Open a `running` run row and return its id — call before the coding session starts. */
@@ -116,10 +125,10 @@ export function startRun(
 ): number {
   const res = db
     .prepare(
-      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, started_at, body_hash)
-       VALUES (?, ?, ?, 'running', ?, ?)`,
+      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, started_at, body_hash, max_turns)
+       VALUES (?, ?, ?, 'running', ?, ?, ?)`,
     )
-    .run(input.ticketId, input.issueNumber, input.branch, now, input.bodyHash ?? null);
+    .run(input.ticketId, input.issueNumber, input.branch, now, input.bodyHash ?? null, input.maxTurns ?? null);
   return Number(res.lastInsertRowid);
 }
 
@@ -299,6 +308,7 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     faultSignature: (r.fault_signature as string | null) ?? null,
     faultReason: (r.fault_reason as string | null) ?? null,
     turns: (r.turns as number | null) ?? null,
+    maxTurns: (r.max_turns as number | null) ?? null,
     tokens: (r.tokens as number | null) ?? null,
     outputTail: (r.output_tail as string | null) ?? null,
     startedAt: r.started_at as number,

@@ -91,9 +91,11 @@
 
   // PD-230: turn progress toward the per-run cap, shown inside the agent-state pill. Null unless
   // the state is one where it's meaningful (working / in-review / stuck) AND a count exists.
+  // PD-432: the denominator is the ticket's OWN ceiling when it has one — this used to be the
+  // shared default, which could not see an override and so showed the wrong "M" in "N/M".
   const turns = $derived(
     showsTurnProgress(ticket.agentState, ticket.agentTurns)
-      ? turnProgress(ticket.agentTurns)
+      ? turnProgress(ticket.agentTurns, ticket.maxTurns ?? undefined)
       : null,
   );
 

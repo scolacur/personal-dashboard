@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal } from '@dashboard/shared';
 
@@ -23,12 +24,17 @@ const STATUS = z.enum([
 const ASSIGNEE = z.enum(['steve', 'robot']).nullable();
 const PRIORITY = z.enum(['P0', 'P1', 'P2', 'P3', 'P4', 'P5']).nullable();
 
+// PD-432: the estimated ceiling. Bounded here as well as at the write boundary so a bad estimate
+// is rejected while the agent can still see the error and re-propose, rather than at approval time.
+const MAX_TURNS = z.number().int().min(1).max(ROBOT_MAX_TURNS_LIMIT).nullable();
+
 const CHILD = z.object({
   title: z.string().min(1),
   body: z.string().min(1),
   status: STATUS,
   assignee: ASSIGNEE.optional(),
   priority: PRIORITY.optional(),
+  maxTurns: MAX_TURNS.optional(),
 });
 
 // Raw Zod shape (not z.object) — the SDK's tool() wants the shape.
@@ -38,6 +44,7 @@ const PROPOSE_COMMIT_SHAPE = {
   status: STATUS.optional(),
   assignee: ASSIGNEE.optional(),
   priority: PRIORITY.optional(),
+  maxTurns: MAX_TURNS.optional(),
   children: z.array(CHILD).optional(),
   rationale: z.string().optional(),
 };
@@ -57,6 +64,10 @@ const DESCRIPTION = [
   'afterwards. Use `assignee` ("robot" | "steve" | null) to hint who should do the work. A ticket',
   'you intend for the robot MUST still carry a Robot-shaped body — the four sections ## Context,',
   '## Task, ## Done When, ## Out of scope — so Steve can queue it as-is.',
+  'OPTIONAL `maxTurns` (PD-432): a conservative estimate of the turns a ticket needs, which raises',
+  'that ticket\'s ceiling above the default. DECOMPOSING REMAINS THE PREFERRED MOVE — only set it',
+  'when you have argued in `rationale` that the work genuinely cannot be split further, and estimate',
+  'conservatively. Omit it for ~every ticket.',
 ].join(' ');
 
 /** The queue lane the agent must not route into (D-057/D-058): entering the queue is Steve's
@@ -114,6 +125,7 @@ export function buildProposeToolServer(onProposal: (proposal: RefineProposal) =>
         ...(args.status !== undefined ? { status: args.status } : {}),
         ...(args.assignee !== undefined ? { assignee: args.assignee } : {}),
         ...(args.priority !== undefined ? { priority: args.priority } : {}),
+        ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
         ...(args.children !== undefined
           ? {
               children: args.children.map((c) => ({
