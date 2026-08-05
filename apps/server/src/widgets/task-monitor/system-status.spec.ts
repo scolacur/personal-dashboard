@@ -5,6 +5,7 @@ import {
   createTicket,
   getDispatchPauseState,
   getProjectBySlug,
+  getRobotBudget,
   getSessionLimitHold,
   getSortieFleet,
   listWorkerHeartbeats,
@@ -152,5 +153,67 @@ describe('getSessionLimitHold (PD-470)', () => {
     db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
     db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run('session_limit_until', '{oops', 1000);
     expect(getSessionLimitHold(db, 5000)).toBeNull();
+  });
+});
+
+describe('getRobotBudget (PD-463)', () => {
+  function withPolicy(db: Database.Database, policy: unknown): void {
+    db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    db.prepare('INSERT OR REPLACE INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'budget_policy',
+      JSON.stringify(policy),
+      1000,
+    );
+  }
+
+  function withRuns(db: Database.Database, rows: { turns: number; tokens: number; finishedAt: number }[]): void {
+    db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (
+      id INTEGER PRIMARY KEY, ticket_id INTEGER, turns INTEGER, tokens INTEGER,
+      started_at INTEGER, finished_at INTEGER
+    )`);
+    for (const r of rows) {
+      db.prepare('INSERT INTO agent_runs (ticket_id, turns, tokens, started_at, finished_at) VALUES (1, ?, ?, ?, ?)').run(
+        r.turns,
+        r.tokens,
+        r.finishedAt,
+        r.finishedAt,
+      );
+    }
+  }
+
+  // No published policy ⇒ nothing to show. Inventing a ceiling the loop is not enforcing would be
+  // worse than an empty panel: the numbers would look authoritative and be fiction.
+  it('is null until a worker publishes a policy', () => {
+    expect(getRobotBudget(freshDb())).toBeNull();
+    const db = freshDb();
+    db.exec('CREATE TABLE robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    expect(getRobotBudget(db)).toBeNull();
+  });
+
+  it('reports spend in the window against the published ceiling', () => {
+    const db = freshDb();
+    withPolicy(db, { windowMs: 1000, turns: 500, tokens: 0 });
+    withRuns(db, [
+      { turns: 40, tokens: 900, finishedAt: 9500 },
+      { turns: 12, tokens: 100, finishedAt: 9000 }, // exactly on the boundary
+      { turns: 99, tokens: 999, finishedAt: 8999 }, // aged out
+    ]);
+    expect(getRobotBudget(db, 10_000)).toEqual({
+      windowMs: 1000,
+      turnsUsed: 52,
+      turnsLimit: 500,
+      tokensUsed: 1000,
+      tokensLimit: null, // the token limb is off
+    });
+  });
+
+  it('survives a corrupt policy row and an absent agent_runs table', () => {
+    const db = freshDb();
+    db.exec('CREATE TABLE robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run('budget_policy', '{oops', 1000);
+    expect(getRobotBudget(db)).toBeNull();
+
+    withPolicy(db, { windowMs: 1000, turns: 500, tokens: 0 }); // valid policy, no runs table yet
+    expect(getRobotBudget(db, 10_000)).toMatchObject({ turnsUsed: 0, tokensUsed: 0 });
   });
 });

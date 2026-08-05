@@ -30,7 +30,8 @@ import {
 } from './state';
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
-import { notifyNeedsHuman, notifyAwaitingHuman } from './notify';
+import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
+import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
 import { pollInReviewPrs } from './pr-state';
@@ -58,6 +59,12 @@ export { setAgentState, branchFor };
 function faultPolicy(config: AgentWorkerConfig): FaultPolicy {
   const { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs } = config.robot;
   return { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs };
+}
+
+/** The loop-wide budget ceiling this config enforces (PD-463). */
+function budgetPolicy(config: AgentWorkerConfig): BudgetPolicy {
+  const { budgetWindowMs, budgetTurns, budgetTokens } = config.robot;
+  return { windowMs: budgetWindowMs, turns: budgetTurns, tokens: budgetTokens };
 }
 
 export interface RobotDeps {
@@ -151,11 +158,31 @@ export async function processRobotQueue(
     );
   }
 
+  // PD-463: publish the ceiling the loop is actually enforcing, so the board can show consumption
+  // against it. The web process cannot read the worker's env, so the worker states its own numbers
+  // rather than letting a second copy of them drift.
+  const budget = budgetPolicy(config);
+  publishBudgetPolicy(db, budget, now());
+
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
   const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);
   let dispatched = 0;
 
   for (const candidate of selected) {
+    // PD-463: the loop-wide budget ceiling, evaluated per candidate so a cycle with concurrency > 1
+    // cannot step over it mid-cycle. It gates NEW dispatch only — an in-flight Robot is never
+    // interrupted, because killing one mid-hand-off loses the work outright (D-046).
+    const verdict = checkBudget(db, budget, now());
+    if (verdict.breached) {
+      // Reuses the one pause concept (C4 `dispatch_paused`) rather than adding a second halt path,
+      // so the existing resume control clears it. Resuming is deliberate by construction: a human
+      // resumes, or the window rolls far enough that the spend ages out.
+      pauseDispatch(db, verdict.reason, now());
+      notifyLoop(db, 'agent_needs_human', 'Robot budget ceiling reached', verdict.reason, now());
+      logger.error({ reason: verdict.reason }, 'robot: budget ceiling reached — PAUSING dispatch');
+      break;
+    }
+
     // A system-wide fault earlier in THIS cycle paused the loop — stop before running any further
     // ticket, so no other ticket burns budget on the same broken auth/credit state.
     if (isDispatchPaused(db)) {

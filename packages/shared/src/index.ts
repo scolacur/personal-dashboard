@@ -70,6 +70,7 @@ export type {
   SystemStatus,
   DispatchPauseState,
   SessionLimitHoldState,
+  RobotBudgetStatus,
   AgentRun,
   RobotRunStatus,
   RobotFaultTier,

@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { processRobotQueue, branchFor, type RobotDeps } from './robot';
 import { startRun, finishRun, listRunsForTicket, failedRunsForTicket, ensureRunsTable } from './runs';
-import { activeSessionLimitHold, isDispatchPaused } from './state';
+import { activeSessionLimitHold, dispatchPauseState, isDispatchPaused } from './state';
 import { SESSION_LIMIT_FALLBACK_MS } from './faults';
 import type { RobotSessionResult } from './session';
 
@@ -43,6 +43,14 @@ function addQueued(db: Database.Database, id: number, issue: number | null = id)
     `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, project_id, github_issue_number, agent_state)
      VALUES (?, ?, ?, 'queue', 'robot', 1, 1, ?, NULL)`,
   ).run(id, `T${id}`, READY, issue);
+}
+
+/** Prior spend in the window, as finished runs (PD-463). */
+function spend(db: Database.Database, turns: number, finishedAt: number): void {
+  db.prepare(
+    `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, turns, started_at, finished_at)
+     VALUES (99, 99, 'robot/99', 'handed-off', ?, ?, ?)`,
+  ).run(turns, finishedAt, finishedAt);
 }
 
 function agentState(db: Database.Database, id: number): string | null {
@@ -363,6 +371,76 @@ describe('processRobotQueue', () => {
     expect(agentState(db, 1)).toBe('queued');
     const hold = activeSessionLimitHold(db, LIMIT_NOW)!;
     expect(hold.until).toBe(LIMIT_NOW + SESSION_LIMIT_FALLBACK_MS);
+  });
+
+  // ---- PD-463: the loop-wide budget ceiling ----
+
+  it('pauses dispatch when the window is already over the ceiling, without running anything', async () => {
+    addQueued(db, 1);
+    spend(db, 520, 1000); // prior runs, inside the window
+    const d = deps();
+    const n = await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '500' }), d);
+
+    expect(n).toBe(0);
+    expect(listRunsForTicket(db, 1)).toEqual([]); // the ticket was never dispatched
+    expect(agentState(db, 1)).toBeNull();
+    // One pause concept: it reuses dispatch_paused, so the existing resume control clears it.
+    expect(isDispatchPaused(db)).toBe(true);
+    expect(dispatchPauseState(db).reason).toContain('budget ceiling reached');
+    // ...and it is not a silent stall.
+    const note = db
+      .prepare("SELECT title, body, ticket_id FROM agent_notifications WHERE kind = 'agent_needs_human'")
+      .get() as { title: string; body: string; ticket_id: number | null };
+    expect(note.title).toBe('Robot budget ceiling reached');
+    expect(note.ticket_id).toBeNull(); // loop-wide: it belongs to no single ticket
+    expect(note.body).toContain('520 turns');
+  });
+
+  it('dispatch is unchanged below the ceiling', async () => {
+    addQueued(db, 1);
+    spend(db, 100, 1000);
+    const n = await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '500' }), deps());
+    expect(n).toBe(1);
+    expect(agentState(db, 1)).toBe('in-review');
+    expect(isDispatchPaused(db)).toBe(false);
+  });
+
+  it('spend that has aged out of the window does not count against the ceiling', async () => {
+    addQueued(db, 1);
+    spend(db, 900, 1000 - 24 * 60 * 60_000 - 1); // one ms older than the 24h window
+    expect(await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '500' }), deps())).toBe(1);
+    expect(isDispatchPaused(db)).toBe(false);
+  });
+
+  it('stops the cycle at the breach — later tickets are left queued, not failed', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    spend(db, 499, 1000);
+    const d = deps();
+    // Ticket 1 is affordable and spends 40 turns; ticket 2 must not start after that crosses 500.
+    d.runSession = async () => ({ ok: true, verifyOk: true, prNumber: 314, turns: 40 });
+
+    const n = await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '500', ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
+
+    expect(n).toBe(1);
+    expect(agentState(db, 1)).toBe('in-review'); // the in-flight run finished its hand-off
+    expect(listRunsForTicket(db, 2)).toEqual([]); // never dispatched
+    expect(agentState(db, 2)).toBeNull(); // and untouched — queued, not parked
+    expect(isDispatchPaused(db)).toBe(true);
+  });
+
+  it('is disabled by a ceiling of 0 — no pause however much has been spent', async () => {
+    addQueued(db, 1);
+    spend(db, 10_000, 1000);
+    expect(await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '0' }), deps())).toBe(1);
+    expect(isDispatchPaused(db)).toBe(false);
+  });
+
+  it('publishes the effective ceiling for the board to read', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '400', ROBOT_BUDGET_TOKENS: '900' }), deps());
+    const row = db.prepare("SELECT value FROM robot_state WHERE key = 'budget_policy'").get() as { value: string };
+    expect(JSON.parse(row.value)).toMatchObject({ turns: 400, tokens: 900 });
   });
 
   it('ask_human parks awaiting-human and is not counted as a failure', async () => {

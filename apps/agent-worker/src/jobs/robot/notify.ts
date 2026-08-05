@@ -45,3 +45,31 @@ export function notifyNeedsHuman(db: Database.Database, ticketId: number, title:
 export function notifyAwaitingHuman(db: Database.Database, ticketId: number, title: string, body: string, now: number = Date.now()): void {
   notify(db, 'agent_awaiting_human', ticketId, title, body, now);
 }
+
+/**
+ * A LOOP-WIDE notification, with no ticket attached (PD-463's budget ceiling is the first: the loop
+ * paused because of cumulative spend, which belongs to no single ticket — pinning it on whichever
+ * ticket happened to be next would misattribute it).
+ *
+ * Needs its own dedup: `ticket_id = NULL` never equals itself in SQL, so the ticket-scoped guard in
+ * `notify` silently never matches and a paused loop would re-notify every cycle forever.
+ */
+export function notifyLoop(
+  db: Database.Database,
+  kind: NotificationKind,
+  title: string,
+  body: string,
+  now: number = Date.now(),
+): void {
+  try {
+    const dup = db
+      .prepare('SELECT 1 FROM agent_notifications WHERE ticket_id IS NULL AND kind = ? AND title = ? AND read_at IS NULL')
+      .get(kind, title);
+    if (dup) return;
+    db.prepare(
+      'INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, NULL, ?, ?, ?)',
+    ).run(kind, title, body, now);
+  } catch (err) {
+    logger.warn({ err, kind }, 'robot: loop notification write failed (non-fatal)');
+  }
+}
