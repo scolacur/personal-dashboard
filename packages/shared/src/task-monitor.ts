@@ -734,6 +734,20 @@ export interface SessionLimitHoldState {
   since: number;
 }
 
+/** The loop-wide budget ceiling and what has been spent against it (PD-463). The ceiling itself is
+ *  worker config the web process cannot read, so the worker publishes it into `robot_state` and the
+ *  server sums the window from `agent_runs`. `null` limits mean that limb is disabled. */
+export interface RobotBudgetStatus {
+  /** Rolling window the spend is measured over, ms. */
+  windowMs: number;
+  /** Turns spent in the window, and the ceiling (null when the turn limb is off). */
+  turnsUsed: number;
+  turnsLimit: number | null;
+  /** Tokens spent in the window, and the ceiling (null when the token limb is off). */
+  tokensUsed: number;
+  tokensLimit: number | null;
+}
+
 /** Runtime status for the board's Site Status strip. `sortie` counts active
  *  (non-archived) tickets by agent state — only states with a non-zero count
  *  appear. `workers` is every known worker heartbeat. `dispatch` is the Robot
@@ -746,6 +760,8 @@ export interface SystemStatus {
   dispatch: DispatchPauseState;
   /** PD-470: set while the loop is waiting out a provider session limit; null when it isn't. */
   sessionLimit: SessionLimitHoldState | null;
+  /** PD-463: the loop-wide budget ceiling and spend against it; null until a worker publishes one. */
+  budget: RobotBudgetStatus | null;
 }
 
 // ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────

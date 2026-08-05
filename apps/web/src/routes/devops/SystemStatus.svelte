@@ -58,6 +58,30 @@
     return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
+  // PD-463: spend against the loop-wide ceiling. Null until a worker publishes a policy — better a
+  // missing row than a ceiling shown to a user that nothing is actually enforcing.
+  let budget = $derived(status?.budget ?? null);
+  const WARN_FRACTION = 0.8;
+
+  /** One limb of the ceiling, or null when that limb is disabled. */
+  function limb(used: number, limit: number | null, unit: string) {
+    if (limit === null || limit <= 0) return null;
+    const fraction = used / limit;
+    return {
+      label: `${used.toLocaleString()} / ${limit.toLocaleString()} ${unit}`,
+      near: fraction >= WARN_FRACTION,
+      over: used >= limit,
+    };
+  }
+
+  let budgetLimbs = $derived(
+    budget
+      ? [limb(budget.turnsUsed, budget.turnsLimit, 'turns'), limb(budget.tokensUsed, budget.tokensLimit, 'tokens')].filter(
+          (l) => l !== null,
+        )
+      : [],
+  );
+
   function isStale(w: WorkerHeartbeat): boolean {
     return now - w.lastSeen > STALE_MS;
   }
@@ -124,6 +148,21 @@
           <span class="note">No action needed — dispatch resumes on its own.</span>
         </div>
       {/if}
+    {/if}
+
+    <!-- PD-463: consumption against the ceiling, so "why did the loop pause?" is answerable without
+         reading the DB — and so the approach to the ceiling is visible BEFORE it bites. -->
+    {#if budgetLimbs.length > 0 && budget}
+      <div class="ss-line">
+        <span class="ss-label">Budget</span>
+        {#each budgetLimbs as l (l.label)}
+          <span class="ss-budget" class:near={l.near} class:over={l.over}>
+            <span class="dot" aria-hidden="true"></span>
+            <span class="name">{l.label}</span>
+          </span>
+        {/each}
+        <span class="ss-window">per {Math.round(budget.windowMs / 3_600_000)}h</span>
+      </div>
     {/if}
 
     <div class="ss-line">

@@ -89,6 +89,16 @@ export interface RobotConfig {
    *  dispatch loop ticks far faster (`intervalMs`); this throttles the GitHub API hit to its own
    *  slower cadence. Default 3 min. */
   prPollIntervalMs: number;
+  /** Loop-wide budget ceiling (PD-463) — the backstop for spend that stays inside every per-ticket
+   *  limit but repeats across tickets. Rolling window in ms (default 24h). */
+  budgetWindowMs: number;
+  /** Turn ceiling per window; 0 disables. Default 500 ≈ ten tickets at the 50-turn per-run cap —
+   *  comfortably above a normal day, low enough that a runaway loop stops the same day it starts. */
+  budgetTurns: number;
+  /** Token ceiling per window; 0 disables (the default). Tokens are the honest measure of spend,
+   *  but tokens-per-turn swings by model, so this stays opt-in rather than shipping a number that
+   *  quietly goes wrong after a model change. */
+  budgetTokens: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -140,6 +150,9 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     backoffMaxMs: Number(env.ROBOT_BACKOFF_MAX_MS ?? 15 * 60_000),
     stallThresholdMs: Number(env.ROBOT_STALL_THRESHOLD_MS ?? 2 * 60 * 60_000),
     prPollIntervalMs: Number(env.ROBOT_PR_POLL_INTERVAL_MS ?? 3 * 60_000),
+    budgetWindowMs: Number(env.ROBOT_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
+    budgetTurns: Number(env.ROBOT_BUDGET_TURNS ?? 500),
+    budgetTokens: Number(env.ROBOT_BUDGET_TOKENS ?? 0),
   };
 }
 

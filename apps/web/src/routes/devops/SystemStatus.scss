@@ -170,6 +170,33 @@
 }
 
 // Worker liveness — green while fresh, red once stale.
+// PD-463 budget limbs. Green while there is room, amber approaching the ceiling, red at it — the
+// point is to see the ceiling coming, not only to learn about it once dispatch has already stopped.
+.ss-budget {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--status-done);
+
+  &.near {
+    color: var(--status-warn);
+  }
+
+  &.over {
+    color: var(--status-stuck);
+  }
+
+  .name {
+    font-weight: 500;
+    color: var(--text);
+  }
+}
+
+.ss-window {
+  color: var(--muted);
+  font-size: 0.85em;
+}
+
 .ss-worker {
   display: inline-flex;
   align-items: center;

@@ -24,6 +24,7 @@ import type {
   WorkerHeartbeat,
   DispatchPauseState,
   SessionLimitHoldState,
+  RobotBudgetStatus,
 } from '@dashboard/shared';
 import {
   coerceTicketStatus,
@@ -1483,6 +1484,57 @@ export function getDispatchPauseState(db: Database.Database): DispatchPauseState
   })();
   if (!row || row.value === null) return { paused: false, reason: null, since: null };
   return { paused: true, reason: row.value, since: row.updated_at };
+}
+
+/** The loop-wide budget ceiling and the spend against it (PD-463). The ceiling is worker config —
+ *  the web process cannot read the worker's env — so the worker publishes its EFFECTIVE policy into
+ *  `robot_state.budget_policy` and this sums the window from `agent_runs`. Null until a worker has
+ *  published one (never booted, or an older build), which the UI reads as "nothing to show" rather
+ *  than inventing a ceiling that isn't being enforced.
+ *
+ *  Mirrors the worker's window arithmetic exactly, including counting an in-flight run by its
+ *  `started_at`: a long-running Robot's turns are spent whether or not the run has landed. */
+export function getRobotBudget(db: Database.Database, now: number = Date.now()): RobotBudgetStatus | null {
+  const policy = (() => {
+    try {
+      const row = db.prepare("SELECT value FROM robot_state WHERE key = 'budget_policy'").get() as
+        | { value: string | null }
+        | undefined;
+      if (!row || row.value === null) return null;
+      const p = JSON.parse(row.value) as { windowMs?: unknown; turns?: unknown; tokens?: unknown };
+      if (typeof p.windowMs !== 'number' || p.windowMs <= 0) return null;
+      return {
+        windowMs: p.windowMs,
+        turns: typeof p.turns === 'number' ? p.turns : 0,
+        tokens: typeof p.tokens === 'number' ? p.tokens : 0,
+      };
+    } catch {
+      return null; // no robot_state table, or a corrupt row — neither should break the status API
+    }
+  })();
+  if (!policy) return null;
+
+  const used = (() => {
+    try {
+      return db
+        .prepare(
+          `SELECT COALESCE(SUM(turns), 0) AS turns, COALESCE(SUM(tokens), 0) AS tokens
+             FROM agent_runs
+            WHERE COALESCE(finished_at, started_at) >= ?`,
+        )
+        .get(now - policy.windowMs) as { turns: number; tokens: number };
+    } catch {
+      return { turns: 0, tokens: 0 }; // agent_runs is worker-owned; absent ⇒ nothing spent
+    }
+  })();
+
+  return {
+    windowMs: policy.windowMs,
+    turnsUsed: used.turns,
+    turnsLimit: policy.turns > 0 ? policy.turns : null,
+    tokensUsed: used.tokens,
+    tokensLimit: policy.tokens > 0 ? policy.tokens : null,
+  };
 }
 
 /** The Robot loop's session-limit hold (PD-470), read from the same worker-owned `robot_state`
