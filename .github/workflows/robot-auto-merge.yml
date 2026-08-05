@@ -19,6 +19,22 @@
 # satisfied"). Keying off mergeStateStatus rather than a hard-coded check name means any
 # future required check (e.g., the D-047 path-guard) is honored automatically.
 #
+# SELF-BLOCK (PD-424, found on PR #268) — why CLEAN alone is not enough. This job registers
+# as a check on the PR head ("auto-merge / robot-auto-merge" in statusCheckRollup). While the
+# run is in flight that check is pending, so GitHub reports UNSTABLE — the bridge reads its
+# OWN in-progress check and declines to merge. Nothing re-fires afterwards, so an approval
+# landing on an already-green PR sat unmerged until a human did it by hand.
+#
+# Polling for CLEAN cannot fix this: the pending check IS this job, so waiting deadlocks by
+# construction (the job cannot complete while it waits for itself). Instead, when the PR is
+# not CLEAN we re-evaluate ignoring THIS workflow's own check — no conflicts, review
+# satisfied, and every OTHER check complete and green — and then attempt the merge.
+#
+# That is safe because `gh pr merge` is not the authority: branch protection is. The token
+# cannot bypass a required check, so the worst case of a wrong local judgement is a refused
+# merge, logged, with the PR left open. This also keeps honouring future required checks:
+# a new one shows up in the rollup as "not green yet" and holds the merge.
+#
 # TRIGGER — the "approved before CI was green" case (amends D-052): when the approval lands
 # before CI finishes, the review-triggered run sees mergeStateStatus != CLEAN and skips,
 # planning to re-fire when CI goes green. That re-fire MUST come from `workflow_run`, NOT
@@ -160,10 +176,14 @@ jobs:
             echo "PR #$PR has an authorized APPROVED review — checking mergeability."
 
             # ── 4. Poll mergeStateStatus past UNKNOWN ──
+            # UNKNOWN means GitHub has not finished computing mergeability yet (distinct from
+            # the self-block below, which is a settled UNSTABLE that will never clear on its own).
             MERGE_STATE="UNKNOWN"
+            POLL=""
             CLOSED_DURING_POLL=false
             for _ in 1 2 3 4 5; do
-              POLL="$(gh pr view "$PR" --repo "$REPO" --json state,mergeStateStatus)"
+              POLL="$(gh pr view "$PR" --repo "$REPO" \
+                --json state,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup)"
               if [ "$(echo "$POLL" | jq -r .state)" != "OPEN" ]; then
                 echo "PR #$PR closed during mergeability poll — skip."
                 CLOSED_DURING_POLL=true
@@ -180,13 +200,74 @@ jobs:
 
             echo "PR #$PR mergeStateStatus=$MERGE_STATE"
 
-            if [ "$MERGE_STATE" != "CLEAN" ]; then
-              echo "PR #$PR not CLEAN (mergeStateStatus=$MERGE_STATE) — skip; will merge once it becomes CLEAN."
+            # ── 5. Decide whether to attempt the merge ──────────────────────────
+            # CLEAN is the fast path. Otherwise apply the PD-424 rule: is this bridge's own
+            # check the only thing outstanding?
+            ATTEMPT="no"
+            SELF_BLOCKED="no"
+            if [ "$MERGE_STATE" = "CLEAN" ]; then
+              ATTEMPT="yes"
+            else
+              MERGEABLE="$(echo "$POLL" | jq -r '.mergeable // "UNKNOWN"')"
+              REVIEW_DECISION="$(echo "$POLL" | jq -r '.reviewDecision // ""')"
+
+              # Every check EXCEPT this workflow's own, deduped to the LATEST run per check.
+              #
+              # Matched on workflowName (the workflow, not the job) so renaming the job cannot
+              # silently re-enable the self-block.
+              #
+              # The dedupe is not cosmetic: the rollup carries EVERY run of a check, so one that
+              # failed and was later re-run green appears twice. Counting the stale failure would
+              # refuse to merge a PR that is actually green — reintroducing the very "sat unmerged
+              # until a human did it by hand" bug this fix exists to remove. Observed on PR #293:
+              # a red path-guard, then a green one after the approval label was applied. Same
+              # shape as the standing-review rule above — group, then take each one's latest.
+              OTHERS="$(echo "$POLL" | jq -c '
+                [ .statusCheckRollup[]?
+                  | select((.workflowName // "") != "robot-auto-merge") ]
+                | group_by(.name // .context // "")
+                | map(sort_by(.startedAt // .completedAt // "") | last)
+              ')"
+              OTHERS_PENDING="$(echo "$OTHERS" | jq '
+                [ .[] | select(
+                    (((.status // "") | ascii_upcase) | IN("QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED"))
+                    or (((.state // "") | ascii_upcase) == "PENDING")
+                  ) ] | length
+              ')"
+              OTHERS_FAILED="$(echo "$OTHERS" | jq '
+                [ .[] | select(
+                    (((.conclusion // "") | ascii_upcase) | IN("FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"))
+                    or (((.state // "") | ascii_upcase) | IN("FAILURE", "ERROR"))
+                  ) ] | length
+              ')"
+
+              echo "PR #$PR mergeable=$MERGEABLE reviewDecision=$REVIEW_DECISION others_pending=$OTHERS_PENDING others_failed=$OTHERS_FAILED"
+
+              if [ "$MERGEABLE" = "MERGEABLE" ] && [ "$REVIEW_DECISION" = "APPROVED" ] \
+                 && [ "$OTHERS_PENDING" -eq 0 ] && [ "$OTHERS_FAILED" -eq 0 ]; then
+                ATTEMPT="yes"
+                SELF_BLOCKED="yes"
+              fi
+            fi
+
+            if [ "$ATTEMPT" != "yes" ]; then
+              echo "PR #$PR not mergeable yet (mergeStateStatus=$MERGE_STATE) — skip; will merge once it becomes CLEAN."
               continue
             fi
 
-            # ── 5. Squash merge — branch left intact (no --delete-branch) ────────
-            echo "PR #$PR is CLEAN with an authorized APPROVED review — squash-merging."
-            gh pr merge "$PR" --repo "$REPO" --squash
-            echo "PR #$PR merged successfully."
+            # ── 6. Squash merge — branch left intact (no --delete-branch) ────────
+            if [ "$SELF_BLOCKED" = "yes" ]; then
+              # Branch protection still arbitrates: a refusal here means our reading was wrong,
+              # which is information, not a failure — log it and leave the PR open.
+              echo "PR #$PR: $MERGE_STATE is this bridge's own in-flight check (PD-424); every other check is green — attempting merge."
+              if gh pr merge "$PR" --repo "$REPO" --squash; then
+                echo "PR #$PR merged successfully."
+              else
+                echo "PR #$PR: GitHub refused the merge — branch protection is the authority; leaving it open."
+              fi
+            else
+              echo "PR #$PR is CLEAN with an authorized APPROVED review — squash-merging."
+              gh pr merge "$PR" --repo "$REPO" --squash
+              echo "PR #$PR merged successfully."
+            fi
           done
