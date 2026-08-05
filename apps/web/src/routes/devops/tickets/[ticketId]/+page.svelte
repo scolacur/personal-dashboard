@@ -21,6 +21,7 @@
     TICKET_PRIORITIES,
     TICKET_ASSIGNEES,
     ROBOT_EVENT,
+    ROBOT_MAX_TURNS_DEFAULT,
   } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
@@ -649,6 +650,15 @@
             <dt>Refinement</dt>
             <dd>{ticket.refined ? '✓ Refined' : (ticket.refineState ?? 'Not started')}</dd>
           </div>
+          <!-- PD-432: only rendered when the ticket carries an override. A row reading
+               "default" on every ticket would be noise; an unusual budget is the thing worth
+               seeing, and it should be obvious that someone chose it. -->
+          {#if ticket.maxTurns !== null}
+            <div>
+              <dt>Turn ceiling</dt>
+              <dd>{ticket.maxTurns} <span class="muted">(raised from {ROBOT_MAX_TURNS_DEFAULT})</span></dd>
+            </div>
+          {/if}
           <div><dt>Source</dt><dd>{ticket.source}</dd></div>
           <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
           <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>

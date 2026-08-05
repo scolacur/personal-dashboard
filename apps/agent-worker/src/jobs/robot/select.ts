@@ -22,6 +22,8 @@ export interface RobotCandidate {
   body: string | null;
   /** P0–P5, or null when unset. Carried so the dispatch order is observable in logs (PD-294). */
   priority: TicketPriority | null;
+  /** Per-ticket run ceiling (PD-432); null ⇒ use the loop's env default. */
+  maxTurns: number | null;
 }
 
 interface CandidateRow {
@@ -32,6 +34,7 @@ interface CandidateRow {
   body: string | null;
   /** RAW column value — 'P0'…'P5' or the `'none'` sentinel, not the domain `null`. */
   priority: string | null;
+  max_turns: number | null;
 }
 
 /** How `agent_tickets.priority` stores "unset": the column is `TEXT NOT NULL DEFAULT 'none'`
@@ -65,7 +68,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   const rows = db
     .prepare(
       `SELECT t.id AS id, t.github_issue_number AS n, t.title AS title, t.body AS body,
-              t.priority AS priority, p.github_repo AS repo
+              t.priority AS priority, t.max_turns AS max_turns, p.github_repo AS repo
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
         WHERE t.archived_at IS NULL
@@ -96,6 +99,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
     title: r.title,
     body: r.body,
     priority: r.priority === null || r.priority === PRIORITY_UNSET ? null : (r.priority as TicketPriority),
+    maxTurns: r.max_turns,
   }));
 }
 

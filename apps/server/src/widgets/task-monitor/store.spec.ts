@@ -35,6 +35,7 @@ import {
   ValidationError,
 } from './store';
 import type { TicketStatus } from '@dashboard/shared';
+import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 
 const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
@@ -722,6 +723,51 @@ describe('terminal-transition cleanup (PD-400)', () => {
     // Even though the newest refine_* event is still an agent turn, a completed ticket reads null.
     expect(getTicket(db, t.id)!.refineState).toBeNull();
     expect(listTickets(db).find((x) => x.id === t.id)!.refineState).toBeNull();
+  });
+});
+
+describe('per-ticket turn ceiling (PD-432)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('defaults to null — the loop-wide default stays authoritative', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(t.maxTurns).toBeNull();
+    expect(getTicket(db, t.id)!.maxTurns).toBeNull();
+  });
+
+  it('round-trips an override through create and update, and null clears it', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd, maxTurns: 120 });
+    expect(t.maxTurns).toBe(120);
+    expect(updateTicket(db, t.id, { maxTurns: 80 })!.maxTurns).toBe(80);
+    expect(updateTicket(db, t.id, { maxTurns: null })!.maxTurns).toBeNull();
+    // Omitting it leaves the value alone (it is not a "clear on any edit" field).
+    updateTicket(db, t.id, { maxTurns: 90 });
+    expect(updateTicket(db, t.id, { title: 'y' })!.maxTurns).toBe(90);
+  });
+
+  // Rejected rather than clamped: whoever asked for 5000 needs to learn the bound exists, and a
+  // silently-lowered ceiling would look accepted while behaving as something else.
+  it('rejects an override above the safety bound instead of clamping it', () => {
+    expect(() => createTicket(db, { title: 'x', projectId: pd, maxTurns: ROBOT_MAX_TURNS_LIMIT + 1 })).toThrow(
+      /may not exceed/,
+    );
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(() => updateTicket(db, t.id, { maxTurns: 5000 })).toThrow(/may not exceed/);
+    expect(getTicket(db, t.id)!.maxTurns).toBeNull(); // the refused write changed nothing
+  });
+
+  it('accepts exactly the bound, and rejects zero, negatives and fractions', () => {
+    expect(createTicket(db, { title: 'x', projectId: pd, maxTurns: ROBOT_MAX_TURNS_LIMIT }).maxTurns).toBe(
+      ROBOT_MAX_TURNS_LIMIT,
+    );
+    for (const bad of [0, -5, 12.5]) {
+      expect(() => createTicket(db, { title: 'x', projectId: pd, maxTurns: bad })).toThrow(/positive whole number/);
+    }
   });
 });
 

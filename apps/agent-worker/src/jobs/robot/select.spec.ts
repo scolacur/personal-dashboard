@@ -21,7 +21,7 @@ function boardDb(): Database.Database {
       -- SQL-NULL ordering case is testable. addTicket defaults to 'none' like a real insert.
       priority TEXT,
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
-      project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, archived_at INTEGER
+      project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER
     );
     CREATE TABLE agent_ticket_relations (
       id INTEGER PRIMARY KEY, from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL, type TEXT NOT NULL
@@ -48,14 +48,16 @@ function addTicket(
     ready?: 0 | 1;
     /** Persisted ready-bypass flag (D-058). Defaults to 0. */
     readyBypassed?: 0 | 1;
+    /** Per-ticket run ceiling (PD-432). Defaults to null = inherit the loop default. */
+    maxTurns?: number | null;
     /** P0–P5, or the `'none'` sentinel for unset — matching how the column actually stores it.
      *  Defaults to 'none', as a real insert would (PD-294). */
     priority?: string | null;
   },
 ): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, assignee, priority, ready, ready_bypassed, project_id, github_issue_number, agent_state, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, priority, ready, ready_bypassed, project_id, github_issue_number, agent_state, max_turns, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
     `T${t.id}`,
@@ -68,6 +70,7 @@ function addTicket(
     t.projectId ?? 1,
     t.issue ?? null,
     t.agentState ?? null,
+    t.maxTurns ?? null,
     t.archived ? 1 : null,
   );
 }
@@ -169,7 +172,7 @@ describe('robotQueueCandidates', () => {
 
   // Defensive: the column is NOT NULL today, but the ordering must not depend on that.
   it('also sorts a SQL NULL priority last', () => {
-    addTicket(db, { id: 1, status: 'queue', priority: null });
+    addTicket(db, { id: 1, status: 'queue', priority: null, maxTurns: null });
     addTicket(db, { id: 2, status: 'queue', priority: 'P4' });
     const c = robotQueueCandidates(db);
     expect(c.map((x) => x.id)).toEqual([2, 1]);
@@ -195,7 +198,7 @@ describe('robotQueueCandidates', () => {
     addTicket(db, { id: 2, status: 'queue', priority: 'none' });
     const c = robotQueueCandidates(db);
     expect(c[0]).toMatchObject({ id: 1, priority: 'P1' });
-    expect(c[1]).toMatchObject({ id: 2, priority: null });
+    expect(c[1]).toMatchObject({ id: 2, priority: null, maxTurns: null });
   });
 
   it('applies ordering only to tickets that pass the gates', () => {
@@ -212,6 +215,22 @@ describe('robotQueueCandidates', () => {
     addTicket(db, { id: 21, status: 'prioritized' });
     addBlocks(db, 20, 21);
     expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([20]);
+  });
+});
+
+// PD-432: the per-ticket ceiling has to reach the loop, or the override is decorative.
+describe('robotQueueCandidates — per-ticket turn ceiling (PD-432)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  it('carries the ticket override onto the candidate, and null when unset', () => {
+    addTicket(db, { id: 1, status: 'queue', maxTurns: 120 });
+    addTicket(db, { id: 2, status: 'queue' });
+    const byId = new Map(robotQueueCandidates(db).map((c) => [c.id, c.maxTurns]));
+    expect(byId.get(1)).toBe(120);
+    expect(byId.get(2)).toBeNull();
   });
 });
 
@@ -263,6 +282,7 @@ describe('selectDispatchable', () => {
   const cand = (id: number, body: string | null = READY): RobotCandidate => ({
     id,
     issueNumber: id,
+    maxTurns: null,
     repo: 'r',
     title: `T${id}`,
     body,

@@ -18,6 +18,7 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
     githubIssueNumber: null,
     githubIssueUrl: null,
     agentState: null,
+    maxTurns: null,
     agentTurns: null,
     refineState: null,
     refined: false,

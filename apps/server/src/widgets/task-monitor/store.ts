@@ -34,6 +34,7 @@ import {
   REFINE_EVENT_TYPE,
   REFINE_PROPOSAL_EVENT,
   ROBOT_EVENT,
+  ROBOT_MAX_TURNS_LIMIT,
 } from '@dashboard/shared';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
@@ -56,6 +57,7 @@ interface TicketRow {
   refined: number;
   ready: number;
   ready_bypassed: number;
+  max_turns: number | null;
   is_epic: number;
   epic_id: number | null;
   archived_at: number | null;
@@ -118,6 +120,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     refined: row.refined === 1,
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
+    maxTurns: row.max_turns,
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
     archivedAt: row.archived_at,
@@ -284,7 +287,7 @@ function nextDisplayId(db: Database.Database, projectId: number): string {
  *  that isn't a coercible legacy alias. Surfaced by the routes as a 400. */
 export class ValidationError extends Error {
   constructor(
-    public readonly code: 'INVALID_STATUS',
+    public readonly code: 'INVALID_STATUS' | 'INVALID_MAX_TURNS',
     message: string,
   ) {
     super(message);
@@ -300,6 +303,25 @@ function coerceStatusOrThrow(status: string): TicketStatus {
   const coerced = coerceTicketStatus(status);
   if (coerced === null) throw new ValidationError('INVALID_STATUS', `invalid status: ${status}`);
   return coerced;
+}
+
+/**
+ * Validate a per-ticket run ceiling (PD-432). `null` clears the override (inherit the loop default).
+ *
+ * **Rejected, not clamped**, above `ROBOT_MAX_TURNS_LIMIT`: whoever set 5000 needs to learn the
+ * ceiling exists — a silently-lowered value would look accepted and then behave as something else.
+ * The override is the escape hatch for an irreducible ticket, not a way to authorise an unbounded
+ * burn (a Refine estimate writes this field too, so it must hold against a bad guess).
+ */
+function validMaxTurns(value: number | null): number | null {
+  if (value === null) return null;
+  if (!Number.isInteger(value) || value < 1) {
+    throw new ValidationError('INVALID_MAX_TURNS', 'maxTurns must be a positive whole number, or null');
+  }
+  if (value > ROBOT_MAX_TURNS_LIMIT) {
+    throw new ValidationError('INVALID_MAX_TURNS', `maxTurns may not exceed ${ROBOT_MAX_TURNS_LIMIT}`);
+  }
+  return value;
 }
 
 export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
@@ -340,12 +362,14 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
       throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter the queue');
     }
     validateEpicMembership(db, { epicId, projectId: input.projectId });
+    // PD-432: per-ticket run ceiling, validated at the write boundary (see `validMaxTurns`).
+    const maxTurns = validMaxTurns(input.maxTurns ?? null);
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, is_epic, epic_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, max_turns, is_epic, epic_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, isEpic ? 1 : 0, epicId, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, maxTurns, isEpic ? 1 : 0, epicId, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     return id;
@@ -397,6 +421,8 @@ export function updateTicket(
     ready: existing.ready,
     readyBypassed: patch.readyBypassed === undefined ? existing.readyBypassed : patch.readyBypassed,
     isEpic: patch.isEpic === undefined ? existing.isEpic : patch.isEpic,
+    // PD-432: `null` is meaningful (clear the override, back to the loop default).
+    maxTurns: patch.maxTurns === undefined ? existing.maxTurns : validMaxTurns(patch.maxTurns),
     // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
     epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
     updatedAt: Date.now(),
@@ -467,7 +493,7 @@ export function updateTicket(
   const apply = db.transaction(() => {
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, is_epic = ?, epic_id = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -482,6 +508,7 @@ export function updateTicket(
       next.refined ? 1 : 0,
       next.ready ? 1 : 0,
       next.readyBypassed ? 1 : 0,
+      next.maxTurns,
       next.isEpic ? 1 : 0,
       next.epicId,
       next.updatedAt,
@@ -1263,6 +1290,8 @@ export function approveRefine(
         status,
         assignee: p.assignee === undefined ? parent.assignee : p.assignee,
         priority: p.priority === undefined ? parent.priority : p.priority,
+        // PD-432: an estimated ceiling from the proposal, else leave the ticket's own as it is.
+        maxTurns: p.maxTurns === undefined ? parent.maxTurns : p.maxTurns,
         refined: true,
       });
       logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, queued });
@@ -1302,6 +1331,8 @@ export function approveRefine(
         status: childStatus,
         assignee: c.assignee ?? undefined,
         priority: c.priority ?? null,
+        // PD-432: the child's estimated ceiling, when the agent argued the work is irreducible.
+        maxTurns: c.maxTurns ?? null,
         projectId,
         // Populate: members belong to the Epic itself. Split: children inherit the parent's Epic
         // (if any), staying under the same umbrella (D-054 split-inheritance).
