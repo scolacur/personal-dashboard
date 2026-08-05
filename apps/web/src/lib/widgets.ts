@@ -143,7 +143,7 @@ export const widgets: WidgetMeta[] = [
   {
     id: 'buy-sell-trade',
     title: 'Buy, Sell, Trade',
-    description: 'Your WTB / WTS / WTT gear list, sale terms, and r/modular matches.',
+    description: 'Your buy/sell/trade gear list, sale terms, and r/modular matches.',
     route: '/widgets/buy-sell-trade',
     pages: ['buy-sell-trade'],
     // No `flippable`: D-062 retired the card flip — the header links to the widget page,

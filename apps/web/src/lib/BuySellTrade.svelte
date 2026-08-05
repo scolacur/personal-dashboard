@@ -1,20 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { BstListing } from '@dashboard/shared';
-  import { fetchListings } from './buy-sell-trade/api';
+  import { fetchListings, fetchOpenMatchCount } from './buy-sell-trade/api';
 
-  // Collapsed summary card for the Buy/Sell/Trade widget (PD-437). Per D-062 the card header
-  // links to the widget page rather than flipping, so this face is read-only: counts by type,
-  // and a hint of what is listed. Matches readout arrives with the scan job (PD-438).
+  // Collapsed summary card for the Buy/Sell/Trade widget (PD-437, matches PD-438). Per D-062
+  // the card header links to the widget page rather than flipping, so this face is read-only:
+  // counts by type, new matches from the weekly scan, and a hint of what is listed.
   let { variant = 'widget' }: { variant?: 'widget' | 'page' } = $props();
 
   let listings = $state<BstListing[]>([]);
+  let openMatches = $state(0);
   let loading = $state(true);
   let failed = $state(false);
 
   onMount(async () => {
     try {
-      listings = await fetchListings();
+      // A count endpoint rather than the match list: this renders on the dashboard grid
+      // alongside every other widget and has no business pulling the whole table.
+      const [l, m] = await Promise.all([fetchListings(), fetchOpenMatchCount()]);
+      listings = l;
+      openMatches = m;
     } catch {
       failed = true;
     } finally {
@@ -24,16 +29,15 @@
 
   const counts = $derived({
     WTS: listings.filter((l) => l.type === 'WTS').length,
-    WTT: listings.filter((l) => l.type === 'WTT').length,
     WTB: listings.filter((l) => l.type === 'WTB').length,
   });
 
-  /** A few module names so the card says something concrete rather than only numbers. */
+  /** A few item names so the card says something concrete rather than only numbers. */
   const preview = $derived(
     listings
-      .filter((l) => l.type !== 'WTB')
+      .filter((l) => l.type === 'WTS')
       .slice(0, 4)
-      .map((l) => l.module),
+      .map((l) => l.item),
   );
 </script>
 
@@ -51,12 +55,12 @@
         <span class="stat-l">for sale</span>
       </span>
       <span class="stat">
-        <span class="stat-n">{counts.WTT}</span>
-        <span class="stat-l">for trade</span>
-      </span>
-      <span class="stat">
         <span class="stat-n">{counts.WTB}</span>
         <span class="stat-l">wanted</span>
+      </span>
+      <span class="stat" class:has-matches={openMatches > 0}>
+        <span class="stat-n">{openMatches}</span>
+        <span class="stat-l">new match{openMatches === 1 ? '' : 'es'}</span>
       </span>
     </div>
     {#if preview.length > 0}

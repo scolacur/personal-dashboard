@@ -32,7 +32,7 @@ const WANT_LIST_MARKER = /^WTTF\b/i;
  *  being silently swallowed by a clever heuristic. */
 const WANT_SUBHEADINGS = new Set(['non-modular', 'modular']);
 
-/** The sheet is a *For Sale* list: a module row with no explicit WTB/WTS/WTT is for sale. */
+/** The sheet is a *For Sale* list: an item row with no explicit WTB/WTS is for sale. */
 const DEFAULT_LISTING_TYPE: BstListingType = 'WTS';
 
 /**
@@ -57,11 +57,11 @@ function normalizeMarker(s: string): string {
 }
 
 /**
- * Repair UTF-8 text that was decoded as Latin-1 ("mojibake") — the sheet's Cyrillic module
+ * Repair UTF-8 text that was decoded as Latin-1 ("mojibake") — the sheet's Cyrillic item
  * names arrive as `Ð¡Ð\x9bÐ\x98...` when the export is mis-encoded. Round-trips the bytes back
  * through UTF-8.
  *
- * This matters beyond cosmetics: the r/modular scanner (PD-438) matches on module name, so a
+ * This matters beyond cosmetics: the r/modular scanner (PD-438) matches on item name, so a
  * mangled name can never match a comment.
  *
  * Guarded twice — it only touches strings carrying a mojibake signature, and only keeps the
@@ -181,20 +181,24 @@ export interface SheetParseOutcome {
  * Turn the sheet's CSV into listing inputs, extracted terms, and problems.
  *
  * Produces two kinds of row:
- *  - **module rows** (columns 3+) → `WTS` by default, carrying the section marker in force;
- *  - **want-list entries** (column 1, below the WTTF marker) → `WTT` with only a module name.
+ *  - **item rows** (columns 3+) → `WTS` by default, carrying the section marker in force;
+ *  - **want-list entries** (column 1, below the WTTF marker) → `WTB` with only a name.
  *
- * A module row is rejected — never silently coerced — only when it has no module name, since
- * that is what the scanner matches on. An unrecognised value in the Type column is a *section*,
- * not an error.
+ * The want list is headed `WTTF` in the sheet ("want to trade for"), but it lands as `WTB`:
+ * WTT is retired as a listing type because a thing Steve would accept in trade is a want, and
+ * the sheet's heading describes how he'd pay, not which side of the ledger it sits on.
+ *
+ * An item row is rejected — never silently coerced — only when it has no name, since that is
+ * what the scanner matches on. An unrecognised value in the Type column is a *section*, not an
+ * error.
  */
 export function parseSheetCsv(text: string): SheetParseOutcome {
   const records = parseCsv(text).filter((r) => r.length > 0);
   if (records.length === 0) return { rows: [], terms: null, problems: ['empty CSV'] };
 
   const fields = mapHeaders(records[0]);
-  const moduleCol = fields.indexOf('module');
-  if (moduleCol === -1) {
+  const itemCol = fields.indexOf('item');
+  if (itemCol === -1) {
     return { rows: [], terms: null, problems: ['no "Module" column found in the header row'] };
   }
 
@@ -249,16 +253,17 @@ export function parseSheetCsv(text: string): SheetParseOutcome {
     }
 
     // 3. Listing row.
-    const module = draft.module;
-    if (!module) continue; // prose-only or spacer row — not an error
+    const item = draft.item;
+    if (!item) continue; // prose-only or spacer row — not an error
 
     rows.push({
       type: explicitType ?? DEFAULT_LISTING_TYPE,
-      module,
+      item,
       manufacturer: draft.manufacturer ?? null,
       price: draft.price ?? null,
       condition: draft.condition ?? null,
       notes: draft.notes ?? null,
+      privateNotes: draft.privateNotes ?? null,
       location: draft.location ?? null,
       // Sale status and category describe an offering; they are meaningless on a want row.
       saleStatus: explicitType && explicitType !== 'WTS' ? null : saleStatus,
@@ -270,12 +275,13 @@ export function parseSheetCsv(text: string): SheetParseOutcome {
   // no sale status or category, since Steve is not the one offering them.
   for (const w of wants) {
     rows.push({
-      type: 'WTT',
-      module: w.name,
+      type: 'WTB',
+      item: w.name,
       manufacturer: null,
       price: null,
       condition: null,
       notes: null,
+      privateNotes: null,
       location: null,
       saleStatus: null,
       category: null,

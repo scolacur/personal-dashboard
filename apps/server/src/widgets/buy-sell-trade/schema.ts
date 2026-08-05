@@ -1,35 +1,37 @@
 import type Database from 'better-sqlite3';
+import { addColumn, columnExists, migrate } from '../../migrate';
 
-/** Buy/Sell/Trade widget tables (PD-437). Namespaced `buy_sell_trade_*` per PROJECT.md §2;
- *  times are unix ms integers per §5.
+/**
+ * Buy/Sell/Trade widget tables (PD-437, matches PD-438). Namespaced `buy_sell_trade_*` per
+ * PROJECT.md §2; times are unix ms integers per §5.
  *
- *  The UNIQUE index is what makes the CSV import idempotent: re-pasting the same export
- *  updates rows instead of duplicating them. It is COLLATE NOCASE because the same module
- *  typed "Maths" one month and "maths" the next is the same listing, and a case-sensitive
- *  key would silently double it. */
+ * **There is deliberately no uniqueness constraint on a listing.** PD-437 shipped one on
+ * (type, manufacturer, module) to make the CSV import idempotent, and it was wrong about the
+ * domain: Steve owns two of some things, in different condition, at different prices, and each
+ * is its own listing. Duplication is now a question the UI asks (`findDuplicateListings` →
+ * `DUPLICATE_CONFIRM`) rather than an error the database raises.
+ *
+ * Import idempotency survives on the narrower key (type, manufacturer, item, condition) — see
+ * `importListingsCsv`. That is the honest trade: two sheet rows identical in all four fields
+ * collapse to one, and re-pasting the sheet still corrects rather than duplicates.
+ */
 export function bootstrapSchema(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS buy_sell_trade_listings (
-      id           INTEGER PRIMARY KEY,
-      type         TEXT    NOT NULL,
-      manufacturer TEXT,
-      module       TEXT    NOT NULL,
-      price        TEXT,
-      condition    TEXT,
-      notes        TEXT,
-      location     TEXT,
-      sale_status  TEXT,
-      category     TEXT,
-      created_at   INTEGER NOT NULL,
-      updated_at   INTEGER NOT NULL
+      id            INTEGER PRIMARY KEY,
+      type          TEXT    NOT NULL,
+      manufacturer  TEXT,
+      item          TEXT    NOT NULL,
+      price         TEXT,
+      condition     TEXT,
+      notes         TEXT,
+      private_notes TEXT,
+      location      TEXT,
+      sale_status   TEXT,
+      category      TEXT,
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
     );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_bst_listings_identity
-      ON buy_sell_trade_listings (
-        type COLLATE NOCASE,
-        IFNULL(manufacturer, '') COLLATE NOCASE,
-        module COLLATE NOCASE
-      );
 
     CREATE INDEX IF NOT EXISTS idx_bst_listings_type ON buy_sell_trade_listings (type);
 
@@ -38,10 +40,88 @@ export function bootstrapSchema(db: Database.Database): void {
       terms      TEXT    NOT NULL DEFAULT '',
       updated_at INTEGER NOT NULL
     );
+
+    /* One comment that mentioned one listing (PD-438).
+       ON DELETE CASCADE is load-bearing rather than decorative: a match whose listing is gone
+       has nothing to display — no item, no type, no significance. db.ts sets
+       'foreign_keys = ON', and the tests do the same so they can catch it if that ever lapses. */
+    CREATE TABLE IF NOT EXISTS buy_sell_trade_matches (
+      id           INTEGER PRIMARY KEY,
+      listing_id   INTEGER NOT NULL REFERENCES buy_sell_trade_listings(id) ON DELETE CASCADE,
+      thread_id    TEXT    NOT NULL,
+      comment_id   TEXT    NOT NULL,
+      permalink    TEXT    NOT NULL,
+      author       TEXT    NOT NULL,
+      author_url   TEXT    NOT NULL,
+      intent       TEXT    NOT NULL,
+      excerpt      TEXT    NOT NULL,
+      matched_at   INTEGER NOT NULL,
+      dismissed_at INTEGER
+    );
+
+    /* Re-scanning a thread must never re-notify. This index plus an INSERT ... DO NOTHING is
+       what guarantees it — including for matches Steve has already dismissed, which must stay
+       dismissed rather than reappearing every week. */
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bst_matches_identity
+      ON buy_sell_trade_matches (listing_id, comment_id);
+
+    CREATE INDEX IF NOT EXISTS idx_bst_matches_open
+      ON buy_sell_trade_matches (dismissed_at, matched_at);
   `);
 
   // Single settings row, created empty so reads never have to handle "no row yet".
   db.prepare(
     'INSERT OR IGNORE INTO buy_sell_trade_settings (id, terms, updated_at) VALUES (1, ?, ?)',
   ).run('', Date.now());
+
+  /* ── Migrations (2026-08-04) ───────────────────────────────────────────────────────────────
+     Order matters: the rename must land before anything else refers to `item`. */
+
+  // `module` → `item`. The list is gear, not modules — Eurorack is just what Steve happens to
+  // have most of. RENAME COLUMN is lossless and SQLite rewrites dependent index definitions
+  // itself, so this honours migrate.ts's actual rule (no migration may lose data) even though
+  // it is not literally additive.
+  migrate(db, 'bst_rename_module_to_item', (d) => {
+    if (columnExists(d, 'buy_sell_trade_listings', 'module')) {
+      d.exec('ALTER TABLE buy_sell_trade_listings RENAME COLUMN module TO item');
+    }
+  });
+
+  // Notes split into public and private. The existing `notes` column holds what came out of the
+  // sheet's Notes column — "og box", "purchased new" — which is post copy, so it stays as the
+  // PUBLIC field and the new column is the private one.
+  migrate(db, 'bst_add_private_notes', (d) => {
+    addColumn(d, 'buy_sell_trade_listings', 'private_notes', 'TEXT');
+  });
+
+  // Drop PD-437's uniqueness constraint. See the note at the top of this file: two of the same
+  // item in different condition is real data, not a mistake to be prevented.
+  migrate(db, 'bst_drop_identity_index', (d) => {
+    d.exec('DROP INDEX IF EXISTS idx_bst_listings_identity');
+    d.exec(
+      `CREATE INDEX IF NOT EXISTS idx_bst_listings_item
+         ON buy_sell_trade_listings (item COLLATE NOCASE)`,
+    );
+  });
+
+  // WTT retired as a listing type. "Want to trade for" is a want, so those rows become WTB —
+  // see BST_LISTING_TYPES for why the type went away.
+  //
+  // An item recorded as BOTH WTB and WTT is the same want written down twice, so the WTT row is
+  // dropped rather than carried over as a duplicate. This is a judgement about the data, not a
+  // constraint: duplicates are legal now, they are just not what these rows mean.
+  migrate(db, 'bst_retire_wtt_type', (d) => {
+    d.prepare(
+      `DELETE FROM buy_sell_trade_listings
+        WHERE type = 'WTT'
+          AND EXISTS (
+            SELECT 1 FROM buy_sell_trade_listings o
+             WHERE o.type = 'WTB'
+               AND o.item = buy_sell_trade_listings.item COLLATE NOCASE
+               AND IFNULL(o.manufacturer, '') = IFNULL(buy_sell_trade_listings.manufacturer, '')
+                     COLLATE NOCASE
+          )`,
+    ).run();
+    d.prepare("UPDATE buy_sell_trade_listings SET type = 'WTB' WHERE type = 'WTT'").run();
+  });
 }

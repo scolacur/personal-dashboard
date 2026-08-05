@@ -51,3 +51,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Matches from the weekly r/modular scan (PD-438). Only tinted when there is something to
+   read — a zero should not draw the eye across the dashboard grid. */
+.stat.has-matches .stat-n {
+  color: var(--accent);
+}
