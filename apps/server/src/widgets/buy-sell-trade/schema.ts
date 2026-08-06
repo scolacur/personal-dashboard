@@ -29,6 +29,7 @@ export function bootstrapSchema(db: Database.Database): void {
       location      TEXT,
       sale_status   TEXT,
       category      TEXT,
+      aliases       TEXT,
       created_at    INTEGER NOT NULL,
       updated_at    INTEGER NOT NULL
     );
@@ -36,10 +37,28 @@ export function bootstrapSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_bst_listings_type ON buy_sell_trade_listings (type);
 
     CREATE TABLE IF NOT EXISTS buy_sell_trade_settings (
-      id         INTEGER PRIMARY KEY CHECK (id = 1),
-      terms      TEXT    NOT NULL DEFAULT '',
-      updated_at INTEGER NOT NULL
+      id                INTEGER PRIMARY KEY CHECK (id = 1),
+      terms             TEXT    NOT NULL DEFAULT '',
+      template_reddit   TEXT    NOT NULL DEFAULT '',
+      template_facebook TEXT    NOT NULL DEFAULT '',
+      template_discord  TEXT    NOT NULL DEFAULT '',
+      updated_at        INTEGER NOT NULL
     );
+
+    /* A rendered post (PD-439). History is kept deliberately: regenerating writes a new row
+       rather than replacing last month's, because the draft you already pasted somewhere is a
+       record of what you offered and at what price. */
+    CREATE TABLE IF NOT EXISTS buy_sell_trade_drafts (
+      id           INTEGER PRIMARY KEY,
+      format       TEXT    NOT NULL,
+      content      TEXT    NOT NULL,
+      generated_at INTEGER NOT NULL
+    );
+
+    /* The readout wants the newest batch first, and a batch is "the rows sharing a
+       generated_at". */
+    CREATE INDEX IF NOT EXISTS idx_bst_drafts_generated
+      ON buy_sell_trade_drafts (generated_at DESC);
 
     /* One comment that mentioned one listing (PD-438).
        ON DELETE CASCADE is load-bearing rather than decorative: a match whose listing is gone
@@ -54,6 +73,8 @@ export function bootstrapSchema(db: Database.Database): void {
       author       TEXT    NOT NULL,
       author_url   TEXT    NOT NULL,
       intent       TEXT    NOT NULL,
+      confidence   TEXT    NOT NULL DEFAULT 'confirmed',
+      matched_on   TEXT    NOT NULL DEFAULT '',
       excerpt      TEXT    NOT NULL,
       matched_at   INTEGER NOT NULL,
       dismissed_at INTEGER
@@ -123,5 +144,33 @@ export function bootstrapSchema(db: Database.Database): void {
           )`,
     ).run();
     d.prepare("UPDATE buy_sell_trade_listings SET type = 'WTB' WHERE type = 'WTT'").run();
+  });
+
+  /* ── Migrations (2026-08-05, PD-475) ───────────────────────────────────────────────────────── */
+
+  // Per-listing aliases. See `BstListing.aliases`: the curated table in the matcher cannot know
+  // what Steve calls his own gear, and it does not scale past a handful of entries.
+  migrate(db, 'bst_add_listing_aliases', (d) => {
+    addColumn(d, 'buy_sell_trade_listings', 'aliases', 'TEXT');
+  });
+
+  // How sure the matcher was, and which needle fired.
+  //
+  // Existing rows defaulting to `confirmed` is accurate rather than a convenient fiction: every
+  // match written before this column existed was found under the old suppress-generics rule,
+  // which only ever recorded corroborated hits. `matched_on` genuinely is unknown for them, and
+  // an empty string says so — the UI only shows it on a `possible` match, which no old row is.
+  migrate(db, 'bst_add_match_confidence', (d) => {
+    addColumn(d, 'buy_sell_trade_matches', 'confidence', "TEXT NOT NULL DEFAULT 'confirmed'");
+    addColumn(d, 'buy_sell_trade_matches', 'matched_on', "TEXT NOT NULL DEFAULT ''");
+  });
+
+  // Post templates, one per format, editable without a deploy. Empty means "use the seeded
+  // default" — see `getSettings`, which fills them in on read rather than at migration time so
+  // improving a default reaches an existing install.
+  migrate(db, 'bst_add_post_templates', (d) => {
+    for (const format of ['reddit', 'facebook', 'discord']) {
+      addColumn(d, 'buy_sell_trade_settings', `template_${format}`, "TEXT NOT NULL DEFAULT ''");
+    }
   });
 }

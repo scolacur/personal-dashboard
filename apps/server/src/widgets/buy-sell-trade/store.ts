@@ -1,12 +1,16 @@
 import type Database from 'better-sqlite3';
+import { BST_DRAFT_FORMATS } from '@dashboard/shared';
 import type {
   BstCategory,
   BstCommentInput,
+  BstDraft,
+  BstDraftFormat,
   BstImportResult,
   BstIngestResult,
   BstListing,
   BstListingType,
   BstMatch,
+  BstMatchConfidence,
   BstMatchIntent,
   BstSaleStatus,
   BstSettings,
@@ -14,6 +18,7 @@ import type {
   UpdateBstListingInput,
 } from '@dashboard/shared';
 import { parseSheetCsv } from './csv';
+import { DEFAULT_TEMPLATES, fillTemplate } from './drafts';
 import { matchComments } from './matcher';
 
 interface ListingRow {
@@ -28,6 +33,7 @@ interface ListingRow {
   location: string | null;
   sale_status: string | null;
   category: string | null;
+  aliases: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -45,6 +51,9 @@ function rowToListing(r: ListingRow): BstListing {
     location: r.location,
     saleStatus: r.sale_status as BstSaleStatus | null,
     category: r.category as BstCategory | null,
+    // `?? null` rather than a bare read: a row selected before the column existed has no key
+    // at all under `SELECT *`, which surfaces as `undefined` and breaks the declared type.
+    aliases: r.aliases ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -72,8 +81,8 @@ export function createListing(db: Database.Database, input: CreateBstListingInpu
     .prepare(
       `INSERT INTO buy_sell_trade_listings
          (type, manufacturer, item, price, condition, notes, private_notes, location,
-          sale_status, category, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          sale_status, category, aliases, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.type,
@@ -86,6 +95,7 @@ export function createListing(db: Database.Database, input: CreateBstListingInpu
       input.location ?? null,
       input.saleStatus ?? null,
       input.category ?? null,
+      input.aliases ?? null,
       now,
       now,
     );
@@ -107,7 +117,8 @@ export function updateListing(
   db.prepare(
     `UPDATE buy_sell_trade_listings
         SET type = ?, manufacturer = ?, item = ?, price = ?, condition = ?, notes = ?,
-            private_notes = ?, location = ?, sale_status = ?, category = ?, updated_at = ?
+            private_notes = ?, location = ?, sale_status = ?, category = ?, aliases = ?,
+            updated_at = ?
       WHERE id = ?`,
   ).run(
     pick('type'),
@@ -120,6 +131,7 @@ export function updateListing(
     pick('location'),
     pick('saleStatus'),
     pick('category'),
+    pick('aliases'),
     Date.now(),
     id,
   );
@@ -221,6 +233,8 @@ interface MatchRow {
   author: string;
   author_url: string;
   intent: string;
+  confidence: string;
+  matched_on: string;
   excerpt: string;
   matched_at: number;
   dismissed_at: number | null;
@@ -240,6 +254,10 @@ function rowToMatch(r: MatchRow): BstMatch {
     author: r.author,
     authorUrl: r.author_url,
     intent: r.intent as BstMatchIntent,
+    // Same `?? null`-shaped reason as `rowToListing.aliases`: a pre-migration row read under
+    // `SELECT *` carries no key, and `undefined` is not a BstMatchConfidence.
+    confidence: (r.confidence ?? 'confirmed') as BstMatchConfidence,
+    matchedOn: r.matched_on ?? '',
     excerpt: r.excerpt,
     matchedAt: r.matched_at,
     dismissedAt: r.dismissed_at,
@@ -308,8 +326,9 @@ export function ingestComments(
 
   const insert = db.prepare(
     `INSERT INTO buy_sell_trade_matches
-       (listing_id, thread_id, comment_id, permalink, author, author_url, intent, excerpt, matched_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (listing_id, thread_id, comment_id, permalink, author, author_url, intent, confidence,
+        matched_on, excerpt, matched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (listing_id, comment_id) DO NOTHING`,
   );
 
@@ -325,6 +344,8 @@ export function ingestComments(
         m.author,
         `https://reddit.com/user/${m.author}`,
         m.intent,
+        m.confidence,
+        m.matchedOn,
         m.excerpt,
         now,
       );
@@ -343,19 +364,125 @@ export function ingestComments(
 
 /* ── Settings ───────────────────────────────────── */
 
-export function getSettings(db: Database.Database): BstSettings {
-  const row = db
-    .prepare('SELECT terms, updated_at FROM buy_sell_trade_settings WHERE id = 1')
-    .get() as { terms: string; updated_at: number } | undefined;
-  // bootstrapSchema seeds row 1, so this fallback is belt-and-braces for a stale DB.
-  return row ? { terms: row.terms, updatedAt: row.updated_at } : { terms: '', updatedAt: 0 };
+interface SettingsRow {
+  terms: string;
+  template_reddit: string;
+  template_facebook: string;
+  template_discord: string;
+  updated_at: number;
 }
 
-export function updateSettings(db: Database.Database, terms: string): BstSettings {
+/**
+ * Settings, with an unset template filled in from `DEFAULT_TEMPLATES` **on read**.
+ *
+ * Filling in on read rather than seeding at migration time means improving a default reaches an
+ * install that has never touched its templates. The cost is that "empty" cannot mean "a post
+ * with no template" — which is not a thing anyone wants.
+ */
+export function getSettings(db: Database.Database): BstSettings {
+  const row = db.prepare('SELECT * FROM buy_sell_trade_settings WHERE id = 1').get() as
+    | SettingsRow
+    | undefined;
+
+  const templates = {} as Record<BstDraftFormat, string>;
+  for (const format of BST_DRAFT_FORMATS) {
+    const stored = row?.[`template_${format}` as keyof SettingsRow];
+    templates[format] =
+      typeof stored === 'string' && stored.trim() !== '' ? stored : DEFAULT_TEMPLATES[format];
+  }
+
+  // bootstrapSchema seeds row 1, so the missing-row case is belt-and-braces for a stale DB.
+  return { terms: row?.terms ?? '', templates, updatedAt: row?.updated_at ?? 0 };
+}
+
+/** Partial update: an omitted field is unchanged. Templates are merged per format, so saving
+ *  the Reddit one cannot blank the other two. */
+export function updateSettings(
+  db: Database.Database,
+  input: { terms?: string; templates?: Partial<Record<BstDraftFormat, string>> },
+): BstSettings {
   const now = Date.now();
+  const current = getSettings(db);
+  const terms = input.terms ?? current.terms;
+
+  // A template equal to its default is stored as empty, so it keeps tracking the default rather
+  // than freezing today's copy of it into the row.
+  const stored = BST_DRAFT_FORMATS.map((format) => {
+    const value = input.templates?.[format] ?? current.templates[format];
+    return value.trim() === DEFAULT_TEMPLATES[format].trim() ? '' : value;
+  });
+
   db.prepare(
-    `INSERT INTO buy_sell_trade_settings (id, terms, updated_at) VALUES (1, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET terms = excluded.terms, updated_at = excluded.updated_at`,
-  ).run(terms, now);
-  return { terms, updatedAt: now };
+    `INSERT INTO buy_sell_trade_settings
+       (id, terms, template_reddit, template_facebook, template_discord, updated_at)
+     VALUES (1, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         terms = excluded.terms,
+         template_reddit = excluded.template_reddit,
+         template_facebook = excluded.template_facebook,
+         template_discord = excluded.template_discord,
+         updated_at = excluded.updated_at`,
+  ).run(terms, ...stored, now);
+
+  return getSettings(db);
+}
+
+/* ── Drafts (PD-439) ────────────────────────────── */
+
+interface DraftRow {
+  id: number;
+  format: string;
+  content: string;
+  generated_at: number;
+}
+
+function rowToDraft(r: DraftRow): BstDraft {
+  return {
+    id: r.id,
+    format: r.format as BstDraftFormat,
+    content: r.content,
+    generatedAt: r.generated_at,
+  };
+}
+
+/** Newest first. Bounded because this is a readout, not an export — the page shows the latest
+ *  batch and offers the previous ones, and nobody scrolls a year of monthly posts. */
+export function listDrafts(db: Database.Database, limit = 60): BstDraft[] {
+  const rows = db
+    .prepare('SELECT * FROM buy_sell_trade_drafts ORDER BY generated_at DESC, id DESC LIMIT ?')
+    .all(limit) as DraftRow[];
+  return rows.map(rowToDraft);
+}
+
+/**
+ * Render every format from the current list and terms, and record the batch.
+ *
+ * **Always a new batch, never an update.** Regenerating in a month that already has drafts adds
+ * a pair rather than mutating the old one — see the schema note: the draft already pasted
+ * somewhere is a record of what was offered.
+ */
+export function generateDrafts(db: Database.Database): BstDraft[] {
+  const settings = getSettings(db);
+  const listings = listListings(db);
+  const at = Date.now();
+
+  const insert = db.prepare(
+    'INSERT INTO buy_sell_trade_drafts (format, content, generated_at) VALUES (?, ?, ?)',
+  );
+
+  const created: BstDraft[] = [];
+  const run = db.transaction(() => {
+    for (const format of BST_DRAFT_FORMATS) {
+      const content = fillTemplate(settings.templates[format], format, {
+        listings,
+        terms: settings.terms,
+        at,
+      });
+      const { lastInsertRowid } = insert.run(format, content, at);
+      created.push({ id: Number(lastInsertRowid), format, content, generatedAt: at });
+    }
+  });
+  run();
+
+  return created;
 }

@@ -1,0 +1,164 @@
+/* Matches readout (PD-438, confidence split PD-475). Moved out of +page.scss with the markup —
+   Svelte scopes styles per component, so these have to travel with it. */
+
+.bst-matches {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.bst-matches-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-lg);
+  color: var(--text);
+}
+
+.bst-error {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--status-blocked);
+  color: var(--status-blocked);
+}
+
+.bst-possible-help {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.match-group {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-sm) var(--space-md);
+
+  /* The scan's payoff: someone offering gear from the want list. Sorted first and marked, so
+     it can't be lost among sale-side noise. */
+  &.sig-high {
+    border-left-color: var(--accent);
+  }
+
+  &.sig-normal {
+    border-left-color: var(--border);
+  }
+
+  &.sig-low {
+    border-left-color: var(--border);
+    opacity: 0.7;
+  }
+}
+
+.match-group + .match-group {
+  margin-top: var(--space-md);
+}
+
+.match-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-md);
+  color: var(--text);
+}
+
+.match-flag {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.match-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.match {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+
+  &:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
+.match-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.match-intent {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px var(--space-xs);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  color: var(--muted);
+
+  &.intent-WTS {
+    border-color: var(--status-done);
+    color: var(--status-done);
+  }
+
+  &.intent-WTB {
+    border-color: var(--status-queued);
+    color: var(--status-queued);
+  }
+
+  &.intent-WTT {
+    border-color: var(--status-in-review);
+    color: var(--status-in-review);
+  }
+
+  /* Deliberately plain: the matcher records `unknown` rather than guessing, and the readout
+     should look uncertain rather than authoritative. */
+  &.intent-unknown {
+    font-style: italic;
+  }
+}
+
+/* Why a possible match fired. Quiet — it is an explanation, not a finding. */
+.match-why {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.match-author,
+.match-link {
+  font-size: var(--font-size-sm);
+  color: var(--accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.match-excerpt {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.match-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}

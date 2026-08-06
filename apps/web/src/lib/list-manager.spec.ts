@@ -3,6 +3,9 @@ import {
   cleanDraft,
   coerceValue,
   columnFields,
+  countLabel,
+  searchScopeLabel,
+  visibleColumns,
   compareValues,
   defaultSearchKeys,
   defaultSortableKeys,
@@ -323,5 +326,62 @@ describe('field defaults', () => {
   it('defaultSortableKeys excludes textareas and form-only fields', () => {
     expect(defaultSortableKeys(GEAR_FIELDS)).toEqual(['type', 'manufacturer', 'module', 'price']);
     expect(defaultSortableKeys(IDEA_FIELDS)).toEqual(['type', 'tags']);
+  });
+});
+
+// PD-475 primitives.
+describe('visibleColumns', () => {
+  it('is columnFields when nothing is hidden', () => {
+    expect(visibleColumns(GEAR_FIELDS).map((f) => f.key)).toEqual(
+      columnFields(GEAR_FIELDS).map((f) => f.key),
+    );
+  });
+
+  // The BST page splits its list into four tables by sale status, so a sale-status column would
+  // repeat the table's own heading on every row.
+  it('drops hidden keys while leaving them searchable and editable', () => {
+    expect(visibleColumns(GEAR_FIELDS, ['type', 'price']).map((f) => f.key)).toEqual([
+      'manufacturer',
+      'module',
+    ]);
+    // Hiding a column must not remove the field — the modal and the filter still see it.
+    expect(defaultSearchKeys(GEAR_FIELDS)).toContain('type');
+  });
+
+  it('ignores a hidden key that is already form-only or unknown', () => {
+    expect(visibleColumns(GEAR_FIELDS, ['notes', 'nope']).map((f) => f.key)).toEqual(
+      columnFields(GEAR_FIELDS).map((f) => f.key),
+    );
+  });
+});
+
+describe('countLabel', () => {
+  it('pluralises on the total, not on the shown subset', () => {
+    expect(countLabel(1, 1, 'listing')).toBe('1 listing');
+    expect(countLabel(12, 12, 'listing')).toBe('12 listings');
+    // "1 of 12 listing" would be wrong — the noun agrees with what is being counted from.
+    expect(countLabel(1, 12, 'listing')).toBe('1 of 12 listings');
+  });
+
+  it('reads as a bare count when the heading already says what it holds', () => {
+    expect(countLabel(12, 12, 'listing', 'parens')).toBe('(12)');
+    expect(countLabel(3, 12, 'listing', 'parens')).toBe('(3 of 12)');
+  });
+
+  it('handles an empty list', () => {
+    expect(countLabel(0, 0, 'listing')).toBe('0 listings');
+    expect(countLabel(0, 0, 'listing', 'parens')).toBe('(0)');
+  });
+});
+
+describe('searchScopeLabel', () => {
+  it('names the fields the filter box searches, using their labels', () => {
+    expect(searchScopeLabel(GEAR_FIELDS, ['manufacturer', 'module'])).toBe(
+      'Searches Manufacturer, Module',
+    );
+  });
+
+  it('falls back to the raw key for a search key with no matching field', () => {
+    expect(searchScopeLabel(GEAR_FIELDS, ['mystery'])).toBe('Searches mystery');
   });
 });

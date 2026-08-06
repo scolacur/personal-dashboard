@@ -1,4 +1,6 @@
 import type {
+  BstDraft,
+  BstDraftFormat,
   BstImportResult,
   BstIngestResult,
   BstListing,
@@ -152,4 +154,33 @@ export async function saveTerms(terms: string): Promise<BstSettings> {
   });
   if (!res.ok) await fail(res, 'Failed to save terms');
   return res.json() as Promise<BstSettings>;
+}
+
+/* ── Drafted posts (PD-439) ─────────────────────── */
+
+/** Save one format's template. Sent alone so it cannot disturb the terms or the other two. */
+export async function saveTemplate(
+  format: BstDraftFormat,
+  template: string,
+): Promise<BstSettings> {
+  const res = await fetch(`${BASE}/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ templates: { [format]: template } }),
+  });
+  if (!res.ok) await fail(res, 'Failed to save template');
+  return res.json() as Promise<BstSettings>;
+}
+
+export async function fetchDrafts(): Promise<BstDraft[]> {
+  const res = await fetch(`${BASE}/drafts`);
+  if (!res.ok) await fail(res, 'Failed to load drafts');
+  return res.json() as Promise<BstDraft[]>;
+}
+
+/** Generate now — all three formats from the current list and terms. */
+export async function generateDrafts(): Promise<BstDraft[]> {
+  const res = await fetch(`${BASE}/drafts/generate`, { method: 'POST' });
+  if (!res.ok) await fail(res, 'Failed to generate drafts');
+  return res.json() as Promise<BstDraft[]>;
 }

@@ -3,6 +3,8 @@
   flex-direction: column;
   gap: var(--space-lg);
   padding: var(--space-lg);
+  /* Scroll clear of the fixed tab, which overlaps content rather than displacing it. */
+  padding-bottom: calc(var(--space-lg) + var(--bst-terms-tab-height));
   max-width: 72rem;
   margin: 0 auto;
 }
@@ -24,6 +26,14 @@
   font-size: var(--font-size-sm);
   color: var(--muted);
   max-width: 46rem;
+}
+
+/* The not-yet-built note. Marked out rather than blended in — it is a temporary admission, and
+   it should look like one so deleting it is obviously the right move once the jobs register. */
+.bst-sub-caveat {
+  border-left: 3px solid var(--status-warn);
+  padding-left: var(--space-sm);
+  font-size: var(--font-size-xs);
 }
 
 .bst-loading,
@@ -71,142 +81,8 @@
   }
 }
 
-/* ── Matches (PD-438) ───────────────────────────── */
-
-.bst-matches {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.bst-matches-title {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: var(--font-size-lg);
-  color: var(--text);
-}
-
-.match-group {
-  border: 1px solid var(--border);
-  border-left-width: 3px;
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: var(--space-sm) var(--space-md);
-
-  /* The scan's payoff: someone offering gear from the want list. Sorted first and marked, so
-     it can't be lost among sale-side noise. */
-  &.sig-high {
-    border-left-color: var(--accent);
-  }
-
-  &.sig-normal {
-    border-left-color: var(--border);
-  }
-
-  &.sig-low {
-    border-left-color: var(--border);
-    opacity: 0.7;
-  }
-}
-
-.match-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  margin: 0 0 var(--space-sm);
-  font-size: var(--font-size-md);
-  color: var(--text);
-}
-
-.match-flag {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--accent);
-}
-
-.match-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.match {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding-top: var(--space-sm);
-  border-top: 1px solid var(--border);
-
-  &:first-child {
-    padding-top: 0;
-    border-top: none;
-  }
-}
-
-.match-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.match-intent {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  padding: 2px var(--space-xs);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  color: var(--muted);
-
-  &.intent-WTS {
-    border-color: var(--status-done);
-    color: var(--status-done);
-  }
-
-  &.intent-WTB {
-    border-color: var(--status-queued);
-    color: var(--status-queued);
-  }
-
-  &.intent-WTT {
-    border-color: var(--status-in-review);
-    color: var(--status-in-review);
-  }
-
-  /* Deliberately plain: the matcher records `unknown` rather than guessing, and the readout
-     should look uncertain rather than authoritative. */
-  &.intent-unknown {
-    font-style: italic;
-  }
-}
-
-.match-author,
-.match-link {
-  font-size: var(--font-size-sm);
-  color: var(--accent);
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-.match-excerpt {
-  margin: 0;
-  font-size: var(--font-size-sm);
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
-.match-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
+/* Matches (PD-438) live in MatchesReadout.scss — Svelte scopes styles per component, so they
+   had to move with the markup. */
 
 /* ── Duplicate confirmation ─────────────────────── */
 
@@ -250,33 +126,30 @@
 
 /* ── Import ─────────────────────────────────────── */
 
-.bst-import,
-.bst-terms {
+.bst-import {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
 }
 
-.bst-import-help,
-.bst-terms-help {
+.bst-import-help {
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--muted);
 }
 
-.bst-csv,
-.bst-terms-input {
+.bst-csv {
   width: 100%;
   box-sizing: border-box;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--font-size-xs);
-  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-sm);
-  resize: vertical;
 
   &:focus-visible {
     outline: 2px solid var(--accent);
@@ -285,12 +158,8 @@
 
   &:disabled {
     opacity: 0.6;
+    cursor: not-allowed;
   }
-}
-
-.bst-terms-input {
-  font-family: inherit;
-  font-size: var(--font-size-sm);
 }
 
 .bst-import-result {
@@ -349,15 +218,9 @@
   padding: var(--space-sm);
 }
 
-.bst-import-actions,
-.bst-terms-actions {
+.bst-import-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-sm);
-}
-
-.bst-unsaved {
-  font-size: var(--font-size-xs);
-  color: var(--status-warn);
 }

@@ -1,0 +1,14 @@
+/* Four status tables (PD-475 B). Spacing only — each table is a ListManager and styles itself. */
+
+.gear-tables {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* A visible seam between the tables, so a collapsed one still reads as its own thing rather
+   than as a stray heading above the next table. */
+.gear-tables > :global(.list-manager + .list-manager) {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-lg);
+}

@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
 import {
   isBstCategory,
+  isBstDraftFormat,
   isBstListingType,
   isBstSaleStatus,
   type BstCategory,
   type BstCommentInput,
+  type BstDraftFormat,
   type BstSaleStatus,
   type UpdateBstListingInput,
 } from '@dashboard/shared';
@@ -14,10 +16,12 @@ import {
   createListing,
   deleteListing,
   findDuplicateListings,
+  generateDrafts,
   getListing,
   getSettings,
   importListingsCsv,
   ingestComments,
+  listDrafts,
   listListings,
   listMatches,
   setMatchDismissed,
@@ -96,6 +100,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         notes: optionalText(body.notes) ?? null,
         privateNotes: optionalText(body.privateNotes) ?? null,
         location: optionalText(body.location) ?? null,
+        aliases: optionalText(body.aliases) ?? null,
         // A hand-added WTS defaults to an actual for-sale listing; a want row gets neither.
         saleStatus: status.value ?? (body.type === 'WTS' ? 'for-sale' : null),
         category: cat.value ?? (body.type === 'WTS' ? 'Modules' : null),
@@ -135,6 +140,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       'notes',
       'privateNotes',
       'location',
+      'aliases',
     ] as const) {
       const v = optionalText(body[key]);
       if (v !== undefined) input[key] = v;
@@ -259,11 +265,59 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
 
   app.get(`${BASE}/settings`, async () => getSettings(db));
 
+  /** Partial: send `terms`, `templates`, or both. An omitted key is left alone, so saving the
+   *  terms from the fixed panel cannot blank a template. */
   app.put(`${BASE}/settings`, async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    if (typeof body.terms !== 'string') {
+
+    if (body.terms !== undefined && typeof body.terms !== 'string') {
       return reply.status(400).send({ error: 'terms must be a string', code: 'INVALID_TERMS' });
     }
-    return updateSettings(db, body.terms);
+
+    let templates: Partial<Record<BstDraftFormat, string>> | undefined;
+    if (body.templates !== undefined) {
+      if (typeof body.templates !== 'object' || body.templates === null) {
+        return reply
+          .status(400)
+          .send({ error: 'templates must be an object', code: 'INVALID_TEMPLATES' });
+      }
+      templates = {};
+      for (const [key, value] of Object.entries(body.templates as Record<string, unknown>)) {
+        // An unknown format is rejected rather than ignored: silently dropping it would look
+        // like a successful save of a template that was never stored.
+        if (!isBstDraftFormat(key)) {
+          return reply
+            .status(400)
+            .send({ error: `unknown format "${key}"`, code: 'INVALID_TEMPLATES' });
+        }
+        if (typeof value !== 'string') {
+          return reply
+            .status(400)
+            .send({ error: `template "${key}" must be a string`, code: 'INVALID_TEMPLATES' });
+        }
+        templates[key] = value;
+      }
+    }
+
+    if (body.terms === undefined && templates === undefined) {
+      return reply
+        .status(400)
+        .send({ error: 'nothing to update', code: 'EMPTY_UPDATE' });
+    }
+
+    return updateSettings(db, { terms: body.terms as string | undefined, templates });
   });
+
+  /* ── Drafted posts (PD-439) ─────────────────────── */
+
+  app.get(`${BASE}/drafts`, async () => listDrafts(db));
+
+  /**
+   * Generate now. **The whole point of this being a POST route and a button**: the monthly cron
+   * is not registered yet (it needs PD-442's shared job-run store), and Steve should not have to
+   * wait for a schedule that does not exist to get a post out of his own list.
+   */
+  app.post(`${BASE}/drafts/generate`, async (_request, reply) =>
+    reply.status(201).send(generateDrafts(db)),
+  );
 }

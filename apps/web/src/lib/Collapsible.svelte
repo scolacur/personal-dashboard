@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
+  import { readOpen, writeOpen } from './collapse-store';
 
   // A section with a clickable header that collapses its body (C4/PD-345 detail-page redesign).
   // The Overview sections — Description, Relations, Robot activity, Runs — can each get long and
@@ -24,19 +25,14 @@
     actions?: Snippet;
   } = $props();
 
-  const key = $derived(storeKey ? `tm.collapsible.${storeKey}` : null);
-
-  function initial(): boolean {
-    if (typeof localStorage === 'undefined' || !key) return openDefault;
-    const v = localStorage.getItem(key);
-    return v === null ? openDefault : v === '1';
-  }
-
-  let open = $state(initial());
+  // Seeded once, deliberately: after the user has toggled a section, a later change to the
+  // `open` prop must not yank it back. `untrack` states that intent (and silences the
+  // state_referenced_locally advisory).
+  let open = $state(untrack(() => readOpen(storeKey, openDefault)));
 
   function toggle(): void {
     open = !open;
-    if (key && typeof localStorage !== 'undefined') localStorage.setItem(key, open ? '1' : '0');
+    writeOpen(storeKey, open);
   }
 </script>
 

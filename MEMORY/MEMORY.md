@@ -9,6 +9,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-05](2026-08-05.md) — Two sessions: PD-468 gate (PD-393/467/470, D-063) and the BST matcher PD-438 shipped (D-065, already amended by PD-475).
 
-- [2026-08-06](2026-08-06.md) — PD-468 gate 17→11: PD-463/432/424/482 shipped (D-064, D-066); dead bot token found; auto-merge verified; stale-worker-image trap.
+- [2026-08-06](2026-08-06.md) — PD-468 gate 17→11: PD-463/432/424/482 shipped (D-064, D-066); dead bot token; auto-merge verified; path-guard author-scoped (D-067, PD-474).
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
