@@ -43,10 +43,24 @@ export const BST_SALE_STATUS_LABELS: Record<BstSaleStatus, string> = {
   'probably-wont-sell': "Probably Won't Sell",
 };
 
-/** What kind of thing it is, within a sale status. `Other Instruments` is the drum machines,
- *  synths and pedals that aren't Eurorack — they sell to a different audience and PD-439 should
- *  be able to section a post by this. */
-export const BST_CATEGORIES = ['Modules', 'Other Instruments', 'Misc'] as const;
+/**
+ * What kind of thing it is, within a sale status. Non-Eurorack gear sells to a different
+ * audience, which is why the drafter sections a post by this.
+ *
+ * `Synths` and `Pedals` were carved out of `Other Instruments` (PD-475) because they are the two
+ * kinds Steve actually owns and wants named. `Other Instruments` stays as the **residual
+ * instrument** bucket — drum machines and the like — while `Misc` keeps its own meaning:
+ * things that are not instruments at all (a MIDI splitter, a decoder).
+ *
+ * Purely additive; no existing row changes category. Order is display order.
+ */
+export const BST_CATEGORIES = [
+  'Modules',
+  'Synths',
+  'Pedals',
+  'Other Instruments',
+  'Misc',
+] as const;
 export type BstCategory = (typeof BST_CATEGORIES)[number];
 
 /**
@@ -87,8 +101,30 @@ export interface BstListing {
   saleStatus: BstSaleStatus | null;
   /** What kind of gear it is, within a sale status. `null` on WTB rows. */
   category: BstCategory | null;
+  /**
+   * Other names people use for this item, comma-separated (PD-475). Merged with the matcher's
+   * curated defaults rather than replacing them.
+   *
+   * This exists because **Steve knows his gear and a hard-coded table in the matcher does not**:
+   * only he knows that his `A-111-5 Mini Synth Voice` gets called "A-111-5" in a BST thread. A
+   * curated table cannot scale to 52 listings, let alone stay correct as the list changes.
+   *
+   * Free text, one field, rather than a child table: it is edited by hand a few times a year and
+   * a join would buy nothing.
+   */
+  aliases: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** Split an `aliases` field into trimmed, non-empty alias strings. Commas separate; everything
+ *  else is part of an alias, so "Pam's, PPW" yields two. */
+export function parseAliases(aliases: string | null | undefined): string[] {
+  if (!aliases) return [];
+  return aliases
+    .split(',')
+    .map((a) => a.trim())
+    .filter((a) => a !== '');
 }
 
 export interface CreateBstListingInput {
@@ -102,14 +138,67 @@ export interface CreateBstListingInput {
   location?: string | null;
   saleStatus?: BstSaleStatus | null;
   category?: BstCategory | null;
+  aliases?: string | null;
 }
 
 /** Every field optional — an omitted field means "unchanged", never "clear it". */
 export type UpdateBstListingInput = Partial<CreateBstListingInput>;
 
-/** Standing sale terms, appended to the drafted posts (PD-439). Single row. */
+/* ── Drafted posts (PD-439, on-demand half built in PD-475) ────────────────────────────────── */
+
+/**
+ * The places Steve posts. Three formats of the same list, because each renders differently:
+ * Reddit takes a markdown table, Facebook takes plain text (a markdown table renders as noise
+ * there), and Discord takes markdown but has no tables.
+ *
+ * `discord` is new in PD-475 — the page subhead promises it, so the drafter has to produce it.
+ * A subhead advertising an output nothing generates is worse than no subhead.
+ */
+export const BST_DRAFT_FORMATS = ['reddit', 'facebook', 'discord'] as const;
+export type BstDraftFormat = (typeof BST_DRAFT_FORMATS)[number];
+
+export const BST_DRAFT_FORMAT_LABELS: Record<BstDraftFormat, string> = {
+  reddit: 'Reddit',
+  facebook: 'Facebook',
+  discord: 'Discord',
+};
+
+export function isBstDraftFormat(v: unknown): v is BstDraftFormat {
+  return typeof v === 'string' && (BST_DRAFT_FORMATS as readonly string[]).includes(v);
+}
+
+/** One rendered post. History is kept — regenerating never overwrites an earlier draft, because
+ *  the one you already pasted somewhere is a record of what you said. */
+export interface BstDraft {
+  id: number;
+  format: BstDraftFormat;
+  content: string;
+  /** Shared by every draft in one generation, which is what groups them into a batch. */
+  generatedAt: number;
+}
+
+/**
+ * Tokens a template may use. Deliberately a small closed set rather than a templating engine —
+ * these are posts, not programs, and a general engine is a much larger surface to secure and
+ * explain for no gain.
+ *
+ * `{{items}}` and `{{feelers}}` are separate because they are different offers: `items` is
+ * everything firmly for sale, `feelers` is gear he will part with for the right price. Merging
+ * them would advertise 23 feelers as firm sales.
+ */
+export const BST_TEMPLATE_TOKENS = [
+  '{{items}}',
+  '{{feelers}}',
+  '{{wanted}}',
+  '{{terms}}',
+  '{{month}}',
+] as const;
+
+/** Standing sale terms and the post templates (PD-439). Single row. */
 export interface BstSettings {
   terms: string;
+  /** One editable template per format, so the layout can be tuned without a deploy. */
+  templates: Record<BstDraftFormat, string>;
   updatedAt: number;
 }
 
@@ -145,6 +234,8 @@ export const BST_CSV_COLUMNS: Record<string, keyof CreateBstListingInput> = {
   'private notes': 'privateNotes',
   'current location': 'location',
   location: 'location',
+  aliases: 'aliases',
+  'also known as': 'aliases',
 };
 
 /**
@@ -192,6 +283,26 @@ export const BST_MATCH_INTENT_LABELS: Record<BstMatchIntent, string> = {
   unknown: 'Unclear',
 };
 
+/**
+ * How sure the matcher is that this comment really means *this* listing (PD-475).
+ *
+ * `confirmed` — the name is distinctive on its own, or a generic name was corroborated by the
+ * manufacturer in the same line item. `possible` — the only evidence is a generic name or a
+ * machine-derived alias, so it is worth a two-second skim but not a claim.
+ *
+ * **Named `confirmed`/`possible` rather than PD-475's literal `high`/`low`** on purpose: a match
+ * already carries `BstMatchSignificance`, whose values are `high`/`normal`/`low`. Two fields on
+ * the same record, both reading `high`, meaning different things (how sure vs. how much it is
+ * worth your attention) is a bug waiting to be written. These names also match what the UI
+ * calls the group, "Possible matches".
+ */
+export const BST_MATCH_CONFIDENCES = ['confirmed', 'possible'] as const;
+export type BstMatchConfidence = (typeof BST_MATCH_CONFIDENCES)[number];
+
+export function isBstMatchConfidence(v: unknown): v is BstMatchConfidence {
+  return typeof v === 'string' && (BST_MATCH_CONFIDENCES as readonly string[]).includes(v);
+}
+
 /** One comment that mentioned one listing. Joined with its listing for display. */
 export interface BstMatch {
   id: number;
@@ -206,6 +317,12 @@ export interface BstMatch {
    *  different profile URL scheme doesn't need a migration. */
   authorUrl: string;
   intent: BstMatchIntent;
+  /** How sure the matcher is this is really the listing. Stored, not derived: it is a property
+   *  of the evidence at scan time, and re-deriving it would need the comment body. */
+  confidence: BstMatchConfidence;
+  /** Which needle fired, for explaining a surprising match ("matched on: a 111 5"). Only
+   *  worth showing on a `possible` match, where the answer is not self-evident. */
+  matchedOn: string;
   /** A window of the comment around the mention — enough to judge without opening Reddit. */
   excerpt: string;
   matchedAt: number;
@@ -277,4 +394,24 @@ export function isSellable(type: BstListingType): boolean {
  *  sale rather than a feeler or something he probably won't part with. */
 export function isFirmSale(listing: Pick<BstListing, 'type' | 'saleStatus'>): boolean {
   return isSellable(listing.type) && listing.saleStatus === 'for-sale';
+}
+
+/**
+ * Where the things a post offers physically are, grouped for collecting them.
+ *
+ * **Never part of a post** — `location` is private (D-065). This exists so the drafter UI can
+ * show it *beside* the draft: the post says what is for sale, this says where to go and find it.
+ *
+ * Lives in shared rather than next to the renderer because both sides want it and neither owns
+ * it — the server renders posts, the web renders the pickup list, and one copy cannot drift.
+ */
+export function pickupList(listings: BstListing[]): { item: string; location: string }[] {
+  return listings
+    .filter((l) => isSellable(l.type) && l.saleStatus !== 'probably-wont-sell')
+    .filter((l) => !!l.location?.trim())
+    .map((l) => ({
+      item: l.manufacturer ? `${l.manufacturer} ${l.item}` : l.item,
+      location: l.location!.trim(),
+    }))
+    .sort((a, b) => a.location.localeCompare(b.location) || a.item.localeCompare(b.item));
 }

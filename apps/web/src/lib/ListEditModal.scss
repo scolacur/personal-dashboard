@@ -1,14 +1,75 @@
+/* Horizontal, mimicking the table this edits (PD-475 C1). Short fields flow across the row;
+   long ones claim a row of their own. Below ~34rem the basis exceeds the width and every field
+   wraps to its own line, which is the stacked form again — the narrow-viewport fallback is the
+   layout doing its job, not a special case. */
 .list-edit-form {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--space-md);
-  min-width: min(28rem, 80vw);
+  width: min(58rem, 88vw);
 }
 
 .field {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  /* Grow to share the row, but never below a width where the value is unreadable. */
+  flex: 1 1 11rem;
+  min-width: 0;
+  /* fieldset needs these flattened — it ships with a border, padding and margin. */
+  border: none;
+  margin: 0;
+  padding: 0;
+
+  /* Prose. A textarea sharing a line with six short inputs is unusable at any of their widths. */
+  &.wide {
+    flex-basis: 100%;
+  }
+}
+
+/* ── Segmented control ──────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.segment {
+  position: relative;
+  padding: var(--space-xs) var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+
+  & + & {
+    border-left: 1px solid var(--border);
+  }
+
+  &.selected {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  /* The radio stays in the accessibility tree and keeps arrow-key navigation; it is only
+     visually replaced by its label. `display: none` would remove both. */
+  &:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+}
+
+.segment-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
 }
 
 .field-label {
@@ -66,6 +127,11 @@
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--status-stuck);
+}
+
+.save-error,
+.form-actions {
+  flex-basis: 100%;
 }
 
 .form-actions {

@@ -2,8 +2,16 @@
 // validation for any user-managed list. Kept out of the component so it is unit-testable
 // without mounting anything, the same split as timer-logic.ts and layout.ts.
 
-/** The input controls a field descriptor can ask for. */
-export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'date';
+/**
+ * The input controls a field descriptor can ask for.
+ *
+ * `segmented` is a `select` with its options laid out side by side (PD-475 C1). Worth its own
+ * type rather than a flag because it is only usable for a **small, closed, always-visible** set —
+ * two or three choices. A dropdown hides its options behind a click; a segmented control shows
+ * the whole decision at once, which is right for a field like WTB/WTS where the two values are
+ * the entire meaning of the row.
+ */
+export type FieldType = 'text' | 'textarea' | 'number' | 'select' | 'date' | 'segmented';
 
 /** A single field on the record type a list manages. Drives BOTH the add/edit form and
  *  the list columns, so a new list is a field array plus handlers — nothing more. */
@@ -192,6 +200,47 @@ export function nextSort(
 /** Fields that become list columns — everything not marked form-only. */
 export function columnFields(fields: FieldDef[]): FieldDef[] {
   return fields.filter((f) => !f.formOnly);
+}
+
+/**
+ * Columns actually rendered: not form-only, and not in `hiddenKeys`.
+ *
+ * Hiding is separate from `formOnly` because it means something different. `formOnly` says "this
+ * field would wreck the table"; hiding says "this column is redundant *here*" — the BST page
+ * splits its list into four tables by sale status, so the sale-status column would repeat the
+ * table's own heading on every row. The field is still edited in the modal and still searched.
+ */
+export function visibleColumns(fields: FieldDef[], hiddenKeys: readonly string[] = []): FieldDef[] {
+  if (hiddenKeys.length === 0) return columnFields(fields);
+  const hidden = new Set(hiddenKeys);
+  return columnFields(fields).filter((f) => !hidden.has(f.key));
+}
+
+/** How the header states its size. `noun` reads "12 listings"; `parens` reads "(12)" for a list
+ *  whose heading already says what it holds. */
+export type CountStyle = 'noun' | 'parens';
+
+/** The header's count. Pluralisation and the "3 of 12" filtered form are easy to get subtly
+ *  wrong, and neither is worth re-deriving inline in a template. */
+export function countLabel(
+  shown: number,
+  total: number,
+  noun: string,
+  style: CountStyle = 'noun',
+): string {
+  const filtered = shown !== total;
+  const n = filtered ? `${shown} of ${total}` : `${shown}`;
+  if (style === 'parens') return `(${n})`;
+  // "1 listing", but "1 of 12 listings" — the noun agrees with the total, not with the subset.
+  return `${n} ${noun}${!filtered && shown === 1 ? '' : 's'}`;
+}
+
+/** Human-readable list of what the filter box searches, for its tooltip. */
+export function searchScopeLabel(fields: FieldDef[], keys: string[]): string {
+  const byKey = new Map(fields.map((f) => [f.key, f.label]));
+  const labels = keys.map((k) => byKey.get(k) ?? k);
+  if (labels.length === 0) return 'Filter the list';
+  return `Searches ${labels.join(', ')}`;
 }
 
 /** Default search keys: every field, including form-only ones. Notes you cannot see in a

@@ -1,14 +1,17 @@
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapSchema } from './schema';
+import { DEFAULT_TEMPLATES } from './drafts';
 import {
   countOpenMatches,
   createListing,
   deleteListing,
   findDuplicateListings,
+  generateDrafts,
   getSettings,
   importListingsCsv,
   ingestComments,
+  listDrafts,
   listListings,
   listMatches,
   setMatchDismissed,
@@ -201,16 +204,90 @@ describe('settings', () => {
   });
 
   it('round-trips terms', () => {
-    updateSettings(db, 'Shipping is on the buyer.');
+    updateSettings(db, { terms: 'Shipping is on the buyer.' });
     expect(getSettings(db).terms).toBe('Shipping is on the buyer.');
   });
 
   it('overwrites rather than accumulating rows', () => {
-    updateSettings(db, 'first');
-    updateSettings(db, 'second');
+    updateSettings(db, { terms: 'first' });
+    updateSettings(db, { terms: 'second' });
     expect(getSettings(db).terms).toBe('second');
     const count = db.prepare('SELECT COUNT(*) AS n FROM buy_sell_trade_settings').get() as { n: number };
     expect(count.n).toBe(1);
+  });
+
+  /* ── Templates (PD-439) ─────────────────────────── */
+
+  it('serves the seeded default template for a format never edited', () => {
+    expect(getSettings(db).templates.reddit).toBe(DEFAULT_TEMPLATES.reddit);
+    expect(getSettings(db).templates.discord).toBe(DEFAULT_TEMPLATES.discord);
+  });
+
+  it('round-trips an edited template', () => {
+    updateSettings(db, { templates: { reddit: 'just {{items}}' } });
+    expect(getSettings(db).templates.reddit).toBe('just {{items}}');
+  });
+
+  // Saving one template must not blank the other two — the fixed terms panel and each template
+  // editor all PUT the same endpoint.
+  it('merges per format, leaving the others alone', () => {
+    updateSettings(db, { templates: { reddit: 'custom reddit' } });
+    updateSettings(db, { templates: { facebook: 'custom facebook' } });
+    const s = getSettings(db);
+    expect(s.templates.reddit).toBe('custom reddit');
+    expect(s.templates.facebook).toBe('custom facebook');
+    expect(s.templates.discord).toBe(DEFAULT_TEMPLATES.discord);
+  });
+
+  it('leaves templates alone when only terms are sent, and vice versa', () => {
+    updateSettings(db, { templates: { reddit: 'custom' } });
+    updateSettings(db, { terms: 'new terms' });
+    expect(getSettings(db).templates.reddit).toBe('custom');
+    updateSettings(db, { templates: { discord: 'custom discord' } });
+    expect(getSettings(db).terms).toBe('new terms');
+  });
+
+  // Stored empty, so it keeps tracking the default rather than freezing today's copy of it.
+  it('does not freeze a template that was saved unchanged from its default', () => {
+    updateSettings(db, { templates: { reddit: DEFAULT_TEMPLATES.reddit } });
+    const raw = db
+      .prepare('SELECT template_reddit AS t FROM buy_sell_trade_settings WHERE id = 1')
+      .get() as { t: string };
+    expect(raw.t).toBe('');
+    expect(getSettings(db).templates.reddit).toBe(DEFAULT_TEMPLATES.reddit);
+  });
+});
+
+describe('drafts', () => {
+  it('renders one draft per format and records them as a batch', () => {
+    createListing(db, { type: 'WTS', item: 'Maths', saleStatus: 'for-sale', price: '$250' });
+    const out = generateDrafts(db);
+    expect(out.map((d) => d.format).sort()).toEqual(['discord', 'facebook', 'reddit']);
+    expect(new Set(out.map((d) => d.generatedAt)).size).toBe(1);
+    expect(out.every((d) => d.content.includes('Maths'))).toBe(true);
+  });
+
+  // The draft already pasted somewhere is a record of what was offered, at what price.
+  it('adds a new batch rather than replacing the previous one', () => {
+    createListing(db, { type: 'WTS', item: 'Maths', saleStatus: 'for-sale' });
+    generateDrafts(db);
+    generateDrafts(db);
+    expect(listDrafts(db)).toHaveLength(6);
+  });
+
+  it('lists newest first', () => {
+    createListing(db, { type: 'WTS', item: 'Maths', saleStatus: 'for-sale' });
+    const first = generateDrafts(db)[0].generatedAt;
+    const second = generateDrafts(db)[0].generatedAt;
+    if (second > first) expect(listDrafts(db)[0].generatedAt).toBe(second);
+    expect(listDrafts(db)[0].id).toBeGreaterThan(listDrafts(db)[5].id);
+  });
+
+  it('renders through the edited template, not the default', () => {
+    createListing(db, { type: 'WTS', item: 'Maths', saleStatus: 'for-sale' });
+    updateSettings(db, { templates: { reddit: 'ONLY THIS' } });
+    const reddit = generateDrafts(db).find((d) => d.format === 'reddit')!;
+    expect(reddit.content).toBe('ONLY THIS');
   });
 });
 

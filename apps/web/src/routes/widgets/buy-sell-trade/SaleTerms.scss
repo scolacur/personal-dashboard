@@ -1,0 +1,101 @@
+/* Sale terms as a fixed, bottom-centred collapsible (PD-475 C2).
+   The page reserves space for the collapsed tab via --bst-terms-tab-height, so the last row of
+   the last gear table is never hidden under it. */
+
+.sale-terms {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+
+  display: flex;
+  flex-direction: column-reverse; /* the tab stays at the bottom; the panel grows upward */
+  align-items: center;
+
+  /* Never wider than the viewport on a narrow screen — the readout sits behind this, and a
+     panel wider than the page would overlap it sideways as well as vertically. */
+  width: min(42rem, calc(100vw - var(--space-md) * 2));
+}
+
+.terms-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: var(--bst-terms-tab-height, 2.25rem);
+  padding: 0 var(--space-lg);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+}
+
+.terms-chevron {
+  color: var(--muted);
+}
+
+.terms-panel {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  /* Lifted off the page behind it, since it overlaps content rather than displacing it. */
+  box-shadow: 0 -4px 16px rgb(0 0 0 / 25%);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.terms-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+.terms-error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--status-stuck);
+}
+
+.terms-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.terms-unsaved {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}

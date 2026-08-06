@@ -69,9 +69,44 @@
 </script>
 
 <Modal open={true} {title} onClose={onCancel}>
+  <!-- Laid out horizontally, mimicking the table it edits (PD-475 C1). It is deliberately
+       old-fashioned: the form has the same shape as the row, so the mapping is obvious.
+       ~10 fields will not fit on one line at usable widths, so the short fields flow and the
+       long ones (`textarea`) claim a row of their own — see the `wide` class. -->
   <form class="list-edit-form" onsubmit={submit}>
     {#each fields as field (field.key)}
-      <label class="field">
+      {#if field.type === 'segmented'}
+        <!-- A radiogroup, not a label-wrapped control: one <label> may not wrap several inputs.
+             Native radios rather than buttons+aria, so arrow-key navigation is free. -->
+        <fieldset class="field segmented-field">
+          <legend class="field-label">
+            {field.label}
+            {#if field.required}<span class="req" aria-hidden="true">*</span>{/if}
+          </legend>
+          <div class="segmented">
+            {#each field.options ?? [] as opt (opt)}
+              <label class="segment" class:selected={display(field.key) === opt}>
+                <input
+                  class="segment-input"
+                  type="radio"
+                  name={`seg-${field.key}`}
+                  value={opt}
+                  checked={display(field.key) === opt}
+                  disabled={saving}
+                  onchange={() => set(field, opt)}
+                />
+                <span>{opt}</span>
+              </label>
+            {/each}
+          </div>
+          {#if errors[field.key]}
+            <span class="field-error">{errors[field.key]}</span>
+          {:else if field.hint}
+            <span class="field-hint">{field.hint}</span>
+          {/if}
+        </fieldset>
+      {:else}
+      <label class="field" class:wide={field.type === 'textarea'}>
         <span class="field-label">
           {field.label}
           {#if field.required}<span class="req" aria-hidden="true">*</span>{/if}
@@ -118,6 +153,7 @@
           <span class="field-hint">{field.hint}</span>
         {/if}
       </label>
+      {/if}
     {/each}
 
     {#if saveError}

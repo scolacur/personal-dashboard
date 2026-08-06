@@ -1,0 +1,166 @@
+/* Drafted posts (PD-439). */
+
+.drafts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.drafts-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.drafts-history {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+
+  select {
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-xs) var(--space-sm);
+  }
+}
+
+.drafts-when,
+.drafts-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.drafts-error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--status-stuck);
+}
+
+.draft {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.draft-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.draft-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-md);
+  color: var(--text);
+}
+
+.draft-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+/* Read-only and monospace: this is text to be pasted verbatim, so it should look like it.
+   Scrolls inside its own box rather than pushing the page sideways. */
+.draft-body {
+  margin: 0;
+  padding: var(--space-md);
+  max-height: 22rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.pickup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-md);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--space-xs);
+  }
+}
+
+.pickup-item {
+  color: var(--text);
+}
+
+.pickup-where {
+  color: var(--muted);
+  text-align: right;
+}
+
+/* ── Template editor ────────────────────────────── */
+
+.template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.template-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--font-size-md);
+  color: var(--text);
+}
+
+.template-help {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+.template-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+.template-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}

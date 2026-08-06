@@ -3,16 +3,15 @@
   import {
     BST_CATEGORIES,
     BST_LISTING_TYPES,
-    BST_MATCH_INTENT_LABELS,
     BST_SALE_STATUSES,
-    matchSignificance,
     type BstImportResult,
+    type BstDraftFormat,
     type BstListing,
     type BstMatch,
+    type UpdateBstListingInput,
   } from '@dashboard/shared';
   import Button from '$lib/Button.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
-  import ListManager from '$lib/ListManager.svelte';
   import Modal from '$lib/Modal.svelte';
   import type { Draft, FieldDef } from '$lib/list-manager';
   import {
@@ -24,9 +23,12 @@
     fetchSettings,
     importCsv,
     saveTerms,
-    setMatchDismissed,
     updateListing,
   } from '$lib/buy-sell-trade/api';
+  import DraftsPanel from './DraftsPanel.svelte';
+  import GearTables from './GearTables.svelte';
+  import MatchesReadout from './MatchesReadout.svelte';
+  import SaleTerms from './SaleTerms.svelte';
 
   // Buy/Sell/Trade expanded view (PD-437, matches PD-438). The gear list is the shared input
   // for the epic's two jobs: the weekly r/modular scan matches against it and the monthly
@@ -36,12 +38,10 @@
   let listings = $state<BstListing[]>([]);
   let matches = $state<BstMatch[]>([]);
   let terms = $state('');
-  let savedTerms = $state('');
+  let templates = $state<Record<BstDraftFormat, string>>({} as Record<BstDraftFormat, string>);
   let loading = $state(true);
   let loadError = $state('');
-
-  let matchBusy = $state<number | null>(null);
-  let matchError = $state('');
+  let moveError = $state('');
 
   /**
    * A pending "you already have one of these — add another?" question. Duplicates are legal
@@ -68,7 +68,6 @@
 
   let termsSaving = $state(false);
   let termsError = $state('');
-  const termsDirty = $derived(terms !== savedTerms);
 
   let csv = $state('');
   let importing = $state(false);
@@ -76,7 +75,10 @@
   let importResult = $state<BstImportResult | null>(null);
 
   const FIELDS: FieldDef[] = [
-    { key: 'type', label: 'Type', type: 'select', options: BST_LISTING_TYPES, required: true },
+    // Segmented rather than a dropdown: two values that are the whole meaning of the row, so
+    // showing both beats hiding them behind a click. Kept in the modal even though the column
+    // is hidden — this is the accessible alternative to dragging a row between tables.
+    { key: 'type', label: 'Type', type: 'segmented', options: BST_LISTING_TYPES, required: true },
     { key: 'manufacturer', label: 'Maker', type: 'text', placeholder: 'e.g. Make Noise' },
     { key: 'item', label: 'Item', type: 'text', required: true, placeholder: 'e.g. Maths' },
     // Price is free text on purpose: "$250 shipped" / "offers" / "trade only" are all real.
@@ -90,6 +92,13 @@
       hint: 'Only “for-sale” is drafted as a firm sale',
     },
     { key: 'category', label: 'Category', type: 'select', options: BST_CATEGORIES },
+    {
+      key: 'aliases',
+      label: 'Also known as',
+      type: 'text',
+      placeholder: 'e.g. A-111-5, mini synth voice',
+      hint: 'Comma-separated. What people call it in a thread — the scan matches these too.',
+    },
     {
       key: 'notes',
       label: 'Public notes',
@@ -119,7 +128,7 @@
       const [l, s, m] = await Promise.all([fetchListings(), fetchSettings(), fetchMatches()]);
       listings = l;
       terms = s.terms;
-      savedTerms = s.terms;
+      templates = s.templates;
       matches = m;
     } catch (e) {
       loadError = e instanceof Error ? e.message : 'Failed to load';
@@ -162,6 +171,21 @@
     listings = await fetchListings();
   }
 
+  /**
+   * A row was dragged into another status table. `confirmDuplicate` is sent up front, unlike
+   * create and edit: a move does not change what the listing *is*, so a duplicate warning here
+   * would be asking about a clash the drag did not create — and there is no modal open to ask in.
+   */
+  async function onMove(listing: BstListing, patch: UpdateBstListingInput): Promise<void> {
+    moveError = '';
+    try {
+      await updateListing(listing.id, patch as never, true);
+      listings = await fetchListings();
+    } catch (e) {
+      moveError = e instanceof Error ? e.message : 'Failed to move that listing';
+    }
+  }
+
   async function runImport(): Promise<void> {
     if (!csv.trim()) return;
     importing = true;
@@ -178,12 +202,18 @@
     }
   }
 
-  async function persistTerms(): Promise<void> {
+  /**
+   * Adopt the terms the importer found in the sheet. **Saves rather than just filling the box**:
+   * the editor is now a fixed panel that seeds its draft when opened, so setting the value
+   * without persisting it would show Steve terms that are not actually stored anywhere.
+   */
+  async function adoptExtractedTerms(): Promise<void> {
+    const found = importResult?.extractedTerms;
+    if (!found) return;
     termsSaving = true;
     termsError = '';
     try {
-      const s = await saveTerms(terms);
-      savedTerms = s.terms;
+      terms = (await saveTerms(found)).terms;
     } catch (e) {
       termsError = e instanceof Error ? e.message : 'Failed to save terms';
     } finally {
@@ -196,57 +226,24 @@
     WTB: listings.filter((l) => l.type === 'WTB').length,
   });
 
-  async function dismiss(m: BstMatch): Promise<void> {
-    matchBusy = m.id;
-    matchError = '';
-    try {
-      await setMatchDismissed(m.id, true);
-      matches = matches.filter((x) => x.id !== m.id);
-    } catch (e) {
-      matchError = e instanceof Error ? e.message : 'Failed to dismiss';
-    } finally {
-      matchBusy = null;
-    }
-  }
-
-  /**
-   * Grouped by item, because one comment can mention several things and one thing can be
-   * mentioned by several people — and because duplicate listings for the same item would
-   * otherwise show the same comment twice.
-   *
-   * Ordered by significance first: a stranger selling something on Steve's want list is the
-   * payoff of the whole scan, and sorting purely by recency buries it under sale-side noise.
-   */
-  const grouped = $derived.by(() => {
-    const rank = { high: 0, normal: 1, low: 2 } as const;
-    // Null-prototype rather than `{}` so an item literally named "__proto__" is just a key,
-    // and rather than a Map because the lint rule wants SvelteMap for anything reactive —
-    // this is rebuilt from scratch on every change, so neither applies.
-    const byItem = Object.create(null) as Record<string, BstMatch[]>;
-    for (const m of matches) {
-      const key = m.manufacturer ? `${m.manufacturer} ${m.item}` : m.item;
-      (byItem[key] ??= []).push(m);
-    }
-    return Object.entries(byItem)
-      .map(([label, items]) => ({
-        label,
-        items,
-        significance: items
-          .map((m) =>
-            matchSignificance({ type: m.listingType, saleStatus: m.saleStatus }, m.intent),
-          )
-          .sort((a, b) => rank[a] - rank[b])[0],
-      }))
-      .sort((a, b) => rank[a.significance] - rank[b.significance] || a.label.localeCompare(b.label));
-  });
 </script>
 
 <section class="bst-page">
   <header class="bst-head">
     <h1 class="bst-title">Buy, Sell, Trade</h1>
+    <!-- States what actually runs, and says plainly what does not yet (PD-475 E). A subhead that
+         describes an aspiration is worse than one honest about its own status; the note is cheap
+         to delete once the jobs register, and PD-476 replaces it with a readout derived from the
+         real registration rather than retyped here. -->
     <p class="bst-sub">
-      Your gear list and standing sale terms. The weekly r/modular scan matches against this
-      list, and the monthly drafter posts from it.
+      Every <strong>Monday</strong>, a job scans the r/modular monthly Buy/Sell/Trade thread and
+      looks for matches with items on my list. On the <strong>15th</strong> of each month, it
+      drafts for-sale posts formatted for Reddit, Discord and Facebook.
+    </p>
+    <p class="bst-sub bst-sub-caveat">
+      <strong>Neither job is scheduled yet.</strong> The scan needs Reddit API approval
+      (PD-471) and the monthly drafter has no cron registered (PD-439) — but the drafter itself
+      works: “Generate now” under Drafted posts renders all three formats from the current list.
     </p>
   </header>
 
@@ -264,58 +261,20 @@
     </div>
 
     {#if matches.length > 0}
-      <section class="bst-matches" aria-label="Matches from r/modular">
-        <h2 class="bst-matches-title">Matches from r/modular</h2>
-        {#if matchError}<p class="bst-error" role="alert">{matchError}</p>{/if}
-
-        {#each grouped as group (group.label)}
-          <article class="match-group sig-{group.significance}">
-            <h3 class="match-item">
-              {group.label}
-              {#if group.significance === 'high'}
-                <span class="match-flag">worth a look</span>
-              {/if}
-            </h3>
-            <ul class="match-list">
-              {#each group.items as m (m.id)}
-                <li class="match">
-                  <div class="match-meta">
-                    <span class="match-intent intent-{m.intent}">
-                      {BST_MATCH_INTENT_LABELS[m.intent]}
-                    </span>
-                    <a class="match-author" href={m.authorUrl} target="_blank" rel="noreferrer noopener">
-                      u/{m.author}
-                    </a>
-                  </div>
-                  <p class="match-excerpt">{m.excerpt}</p>
-                  <div class="match-actions">
-                    <a class="match-link" href={m.permalink} target="_blank" rel="noreferrer noopener">
-                      Open comment ↗
-                    </a>
-                    <Button variant="ghost" onclick={() => dismiss(m)} disabled={matchBusy === m.id}>
-                      {matchBusy === m.id ? 'Dismissing…' : 'Dismiss'}
-                    </Button>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-          </article>
-        {/each}
-      </section>
+      <MatchesReadout
+        {matches}
+        onDismissed={(id) => (matches = matches.filter((m) => m.id !== id))}
+      />
     {/if}
 
-    <ListManager
-      items={listings}
-      fields={FIELDS}
-      getId={(l) => l.id}
-      {onCreate}
-      {onUpdate}
-      {onDelete}
-      title="Gear list"
-      itemNoun="listing"
-      addLabel="+ Add listing"
-      searchPlaceholder="Filter by item, maker, notes…"
-      emptyText="No listings yet — add one, or import your sheet below."
+    {#if moveError}<p class="bst-error" role="alert">{moveError}</p>{/if}
+
+    <GearTables listings={listings} fields={FIELDS} {onCreate} {onUpdate} {onDelete} {onMove} />
+
+    <DraftsPanel
+      {listings}
+      {templates}
+      onTemplatesSaved={(t) => (templates = t)}
     />
 
     <Collapsible title="Import from CSV" storeKey="bst-import">
@@ -357,13 +316,9 @@
               <div class="bst-found-terms">
                 <p class="bst-found-terms-head">Sale terms found in the sheet:</p>
                 <pre class="bst-found-terms-body">{importResult.extractedTerms}</pre>
-                <Button
-                  variant="ghost"
-                  onclick={() => {
-                    terms = importResult?.extractedTerms ?? terms;
-                  }}
-                >
-                  Use these terms
+                {#if termsError}<p class="bst-error" role="alert">{termsError}</p>{/if}
+                <Button variant="ghost" onclick={adoptExtractedTerms} disabled={termsSaving}>
+                  {termsSaving ? 'Saving…' : 'Use these terms'}
                 </Button>
               </div>
             {/if}
@@ -378,25 +333,14 @@
       </div>
     </Collapsible>
 
-    <Collapsible title="Sale terms" storeKey="bst-terms">
-      <div class="bst-terms">
-        <p class="bst-terms-help">
-          Appended to every drafted post. Changes rarely — shipping, payment, packing.
-        </p>
-        <textarea class="bst-terms-input" rows="8" bind:value={terms} disabled={termsSaving}></textarea>
-        {#if termsError}
-          <p class="bst-error" role="alert">{termsError}</p>
-        {/if}
-        <div class="bst-terms-actions">
-          {#if termsDirty}<span class="bst-unsaved">Unsaved changes</span>{/if}
-          <Button variant="primary" onclick={persistTerms} disabled={termsSaving || !termsDirty}>
-            {termsSaving ? 'Saving…' : 'Save terms'}
-          </Button>
-        </div>
-      </div>
-    </Collapsible>
   {/if}
 </section>
+
+{#if !loading && !loadError}
+  <!-- Out of the page flow: fixed to the bottom, collapsed, expanding upward. The page reserves
+       its collapsed height (see .bst-page) so it never covers the last row of a gear table. -->
+  <SaleTerms bind:terms />
+{/if}
 
 {#if dupPrompt}
   <!-- Layered over ListManager's edit modal, which stays open behind it: answering resolves the
