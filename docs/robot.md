@@ -223,6 +223,18 @@ practice `sortie-bot-55`. A test therefore needs a bot-authored PR.
 as `UNSTABLE` and skipping) bites *only* the approve-after-green ordering. Approving while CI is
 still running exercises the `workflow_run` re-fire, which always worked — a pass there proves nothing.
 
+**Check the bot's credential first.** Opening a PR as the bot needs `ROBOT_GITHUB_TOKEN`, and a
+classic PAT expires silently — on 2026-08-06 it was found dead (401) only when this test was
+attempted, which also meant every Robot hand-off would have 401'd the moment dispatch resumed
+(PD-482). Run this on the NAS before anything else; it must return 200 **and** the bot's login, not
+`scolacur`:
+
+```sh
+T=$(grep "^ROBOT_GITHUB_TOKEN=" /volume1/docker/personal-dashboard/agent-worker.env \
+      | head -1 | cut -d= -f2- | cut -d"#" -f1 | tr -d " \r")
+curl -s -H "Authorization: token $T" https://api.github.com/user | grep '"login"'
+```
+
 The test:
 
 1. Open a trivial PR as the bot. It must **not** touch a path in `.github/sensitive-paths.txt`, or
