@@ -1,243 +1,216 @@
 # Handoff — Robot loop re-enablement (PD-468) and the work in front of it
 
-Written 2026-08-04 at the end of the session that shipped PD-413/414/415, PD-409, PD-308 and
-PD-426. Read this **after** `/harness pd`, which loads PROJECT.md and the recent `MEMORY/` day
-files. Delete or rewrite it once PD-468 is done.
-
-Your priority is the **PD-468 blockers** and the **Queue lane**, in whatever order makes sense.
-This document exists to stop you rediscovering what already cost a day to learn.
-
----
+*Rewritten 2026-08-06. Supersedes the 2026-08-04 version, which described a 17-blocker gate that no
+longer exists. Ticket IDs are always given with their titles — bare numbers are unreadable.*
 
 ## The one thing to know first
 
-**Robot dispatch is PAUSED and must stay paused until PD-468 says otherwise.** Steve's plan has a
-lower token budget and the loop exhausted the session quota three times in two days. The reason is
-recorded on the loop itself (`GET /api/widgets/task-monitor/system-status` → `dispatch`).
-
-**Do this work by hand. Do not queue it to the robot** — the robot is what you are repairing.
-Note your own session draws on the **same Claude account** as the robot and Refine, so budget
-accordingly.
-
-**PD-468** is the single gate ticket: "turn the loop back on". It is blocked by everything below.
-**PD-469** (verify PD-426 against a real failing run) is blocked by PD-468 — it cannot start until
-the loop is actually running.
-
----
-
-## ⚠️ What changed today that will affect your very first PR
-
-**The path-guard is LIVE and is a required status check** (PD-308, D-047 Tier 1). Any PR whose diff
-touches a glob in `.github/sensitive-paths.txt` turns `path-guard` **red** and cannot merge without
-a write+ collaborator applying the **`sensitive-change-approved`** label.
-
-This applies in full to **you** — the guard is author-scoped as of D-067 (PD-474), but only Steve's
-own PRs are exempt, and a `robot/*` head branch is gated regardless of the account that opened it.
-
-The list covers `.github/**`, `ops/**`, `docker/**`, `**/Dockerfile`, `**/docker-compose*.yml`,
-`**/.env*`, `**/schema.ts`, `apps/server/src/migrate.ts`, `.claude/**`, `**/package.json`,
-`package-lock.json`, and the forward-looking `**/auth/**`, `**/session/**`, `**/*cors*`, `**/*csp*`.
-
-**Predict it before you push** — same matching the CI job uses:
-
-```sh
-SPECS=(); while IFS= read -r p; do [ -n "$p" ] && SPECS+=( ":(glob)$p" ); done \
-  < <(sed -e 's/#.*//' -e 's/[[:space:]]*$//' .github/sensitive-paths.txt | grep -v '^$')
-git diff --name-only main -- "${SPECS[@]}"   # any output ⇒ the guard will go red
-```
-
-**Do not apply the label to your own PR.** It is a *human* ack — an agent self-approving reproduces
-the exact incident (PR #268) the guard exists to prevent. Ask Steve.
-
-`enforce_admins` is false, so `gh pr merge --admin` still merges past a red guard. Steve used that
-on #283. It works, but it leaves no record of the ack on the PR, so prefer the label.
-
-**Adding any dependency is now a labelled PR** — `**/package.json` is on the list. Budget for that
-before reaching for a new library.
-
----
+**Robot dispatch has been paused since 2026-07-30** and every ticket since has been built by hand.
+**PD-468 — [Robot] Turn the Robot loop back on** is the single gate for resuming it. Do not resume
+piecemeal, and do not resume without walking its **go-live checklist**, which lives on the ticket body
+and not in this doc (it is operational and changes; the doc goes stale, the ticket does not).
 
 ## Where things stand
 
-Shipped 2026-08-04 (all by hand, all merged):
+The gate has gone **17 → 9** live blockers. Shipped since the pause, all by hand:
 
-| | |
+| Ticket | What it bought |
 |---|---|
-| PD-413 / PD-414 / PD-415 (#274/#275/#276) | Dev Ops restructure — epic PD-382 now 7/8, only the deferred P4 PD-416 left |
-| PD-409 (#277) | Ticket description renders markdown, with a Raw toggle |
-| PD-308 (#279, #283) | **Path-guard live + wired as a required check** |
-| PD-426 (#285) | Bounded 8 KB output tail captured onto the run row |
+| PD-308 — Guardrail Tier 1, the CI sensitive-path guard | An agent can't merge CI/deploy/schema/dependency changes without a human ack |
+| PD-393 — awaiting-human UX | The reply box names the question instead of describing a generic park |
+| PD-467 — queued tickets stuck in `agent_state` | A parked state clears on queue entry, logged as `robot_unstick` so the retry budget resets |
+| PD-470 — reset-aware retry (D-063) | A session limit holds the whole loop and **self-resumes**; no ticket is blamed, no budget burned |
+| PD-463 — loop-wide budget ceiling (D-064) | Cumulative turn/token ceiling pauses dispatch before a runaway |
+| PD-432 — per-ticket `max_turns` (D-066) | Refine estimates a turn budget; an easy ticket stops holding a 200-turn licence |
+| PD-424 — auto-merge bridge deadlock | The bridge no longer waits on its own in-flight check. **Verified live on a bot-authored PR** |
+| PD-482 — `ROBOT_GITHUB_TOKEN` was dead (401) | Found by trying to use it. Every hand-off would have failed at `gh pr create` |
+| PD-394 — rework poll missed inline PR comments | Was already fixed in #255; verification found and fixed a page-ordering bug in it (#300) |
 
-Filed today: **PD-444** (retire the widget flip, D-062), **PD-448** (sanitize rendered markdown),
-**PD-467**, **PD-468**, **PD-469**, **PD-470**.
+## The gate was over-drawn — read this before working any of it
 
-Closed today: **PD-411** (multi-plan failover) — superseded, see below.
+A spot check on 2026-08-06 pulled every remaining blocker and checked it against the code. **Three
+kinds of rot showed up, and they will show up again:**
 
-Other sessions are working this board concurrently. PD-441 and PD-294 landed while this session was
-mid-branch, and the board was reorganised into ~42 epics. **Re-read the board; do not trust a
-remembered lane.** This session got the Queue wrong once by working from a four-day-old memory file.
+1. **PD-394 was already done** — fixed 2026-07-17 in #255, the board row just never moved. A session
+   was about to rebuild it.
+2. **PD-162 — Activity Feed is largely realised.** `apps/web/src/lib/ActivityTimeline.svelte` ships a
+   per-ticket timeline over `agent_ticket_events` (C3/PD-344). What does *not* exist is a board-wide
+   cross-ticket feed, and there is no route for one (`/tickets/:id/events` is per-ticket only). The
+   ticket reads much bigger than the work left.
+3. **C-3 — User visibility into agent-agent communication is mis-filed.** Its `source` is
+   `seed:core/META-TODOS.md` and its body is about Warren, Tank-as-router and `IMPROVEMENTS.md` —
+   **harness** concerns. It carries `projectId: 1` (personal-dashboard) anyway, and from there it was
+   made to gate a personal-dashboard go-live. It has nothing to do with the Robot loop.
 
----
+**So: before building any ticket on this list, spend five minutes checking it isn't already done.**
+Grep for the symbol the ticket names. It costs minutes and has now paid off twice.
 
-## The gate: PD-468's blockers
+### What is genuinely a blocker for turning the Robot on
 
-18 edges, but **PD-426 is already completed** (a resolved blocker no longer gates), so 17 are live.
+The question that separates them: *does this change whether an unattended loop is safe or produces
+good work?* Not *is it good to have*.
 
-| Ticket | Pri | Ready | State | What |
-|---|---|---|---|---|
-| PD-162 | P1 | ✗ | prioritized | Activity Feed |
-| PD-248 | P1 | ✓ | prioritized | Surface GitHub rate-limit headroom |
-| PD-306 | P1 | ✗ | prioritized | Robot agents use `/harness [project]` |
-| **PD-310** | P1 | ✗ | backlog | **Enable + instruct agents to `ask_human`** |
-| PD-432 | P1 | ✓ | queue | Per-ticket `max_turns` + Refine estimates budget |
-| **PD-470** | P1 | ✓ | backlog | **Reset-aware retry — a session-limit park expires itself** |
-| C-3 | P2 | ✗ | backlog | Visibility into agent-agent communication |
-| PD-383 | P2 | ✗ | backlog | Remove the `prioritized` lane |
-| PD-391 | P2 | ✓ | backlog | `robot-*` helper commands in `pd-help` |
-| PD-393 | P2 | ✓ | backlog | **Looks already done — verify and close (see below)** |
-| PD-394 | P2 | ✓ | backlog | Rework poll misses inline PR review comments |
-| PD-410 | P2 | ✓ | backlog | Nav-level dispatch killswitch |
-| PD-424 | P2 | ✓ | backlog | Auto-merge bridge deadlocks on its own check |
-| PD-433 | P2 | ✓ | backlog | Refine gets read-only board access via MCP |
-| PD-435 | P2 | ✓ | backlog | Refine may update EXISTING tickets |
-| PD-463 | P2 | ✓ | queue | Loop-wide budget ceiling |
-| PD-467 | P2 | ✓ | backlog | Queued + `agent_state='stuck'` is silently undispatchable |
+**True blockers — 4:**
 
-Deliberately **not** blockers, after review with Steve: PD-247 (spike), PD-378 (de-root the loop),
-PD-385 (npm cache) — performance/exploration, not safety. **PD-419** (cheaper model access) is
-linked `relates`, not `blocks`: it is an investigation, and the loop should not wait on a write-up.
-**PD-312** (Guardrail Tier 2) is not a blocker either — D-047 is explicit that Tier 2 is early
-feedback and UX, never the boundary. Tier 1 is the boundary and it is live.
+| | Ticket | Why it gates |
+|---|---|---|
+| 1 | **PD-410 — UI killswitch (dispatch pause/resume in the nav)** | The thing you want *in hand* the moment you flip the switch. The pause already exists in Site Status; this makes it unmissable. Smallest of the four. **Currently P2 — it should be P1.** |
+| 2 | **PD-306 — robot agents use `/harness` and `/wrap-up`** | Quality floor on *every* dispatched run. A Robot that never reads PROJECT.md or the project MEMORY re-derives context and contradicts settled conventions. Nothing in `prompt.ts` mentions either command today. |
+| 3 | **PD-248 — surface GitHub rate-limit / API errors** | Unattended-operation safety. The core is one distinction: a **secondary rate limit** (403 + `Retry-After`) must back off, while an **auth failure** (401/403 invalid token) pauses the loop system-wide. Conflating them takes the whole loop down over a transient throttle. |
+| 4 | **PD-310 — robots ask_human instead of guessing when they need docs** | Only the **instruct** half gates: tell the agent to raise an `ask_human` rather than guess when it needs a lookup. |
 
----
+**PD-248 and PD-310 should both be trimmed, not built as written.** PD-248's Dev Ops rate-limit
+readout is a follow-up; the fault-classification fix is the blocker. PD-310's domain allow/deny UI
+(one-time / permanent, plus the safety-check agent) is a whole feature and is *not* a blocker — split
+it. Note PD-310's body still says "Sortie agents" throughout and predates the Robot loop; re-read it
+against `prompt.ts` before starting.
 
-## Suggested order, and why
+**Not blockers — 5.** Recommend dropping the `blocks` edge on each (`PD-383` already done):
 
-**Tier 0 — free wins, do first.**
+- **PD-383 — Get rid of prioritized lane** — de-gated 2026-08-06, now `relates`. Steve still wants it
+  soon (it helps him read the board), just not as a gate. Note three remaining blockers currently
+  *sit* in the prioritized lane.
+- **C-3 — agent-agent communication visibility** — Core project, mis-filed (above).
+- **PD-162 — Activity Feed** — per-ticket timeline already ships; the remainder is observability, not
+  loop safety.
+- **PD-433 — Refine read-only board access via MCP** and **PD-435 — Refine updates existing tickets**
+  — Refine is an **interactive** agent with a human in the loop. Nothing about its board access
+  affects whether the **autonomous** Robot loop is safe to resume. Both are ticket-authoring quality.
+  (PD-435 depends on PD-433; keep that edge.)
 
-1. **PD-393** — verify and close. All three of its requirements appear implemented on the
-   ticket-detail page, with code comments citing PD-393 by name: the `ask_human` question renders
-   above the reply textarea (`askHumanQuestion`), `awaiting-human` is excluded from `isRobotParked`,
-   and `stuck`/`needs-human` still get Reset/Unstick. The one thing not verified is the banner
-   *copy* requirement. Check that, then close it — it removes a blocker for minutes of work.
+If those four edges are dropped, **the gate is 4 tickets, not 9.**
 
-**Tier 1 — make the loop's failures visible before you trust it again.** Turning the loop on
-without these means a failure looks identical to an idle loop.
+### Suggested order
 
-2. **PD-467** — a queued, robot-assigned, Ready, unblocked ticket can still never dispatch, because
-   `select.ts` gates on `agent_state IS NULL OR 'queued'` and dragging a card back to the Queue does
-   not clear a `stuck` state. **PD-426 was in exactly this state this morning.** Preferred fix is to
-   clear a terminal `agent_state` on queue entry — remove the trap, don't just report it.
-3. **PD-470** — a session-limit park currently outlives its cause. PD-420 parked at 21:45, quota
-   reset at 1:30 AM, ticket sat idle ~12h with four tickets stranded behind it. With a single plan
-   this is the *only* unattended recovery.
-4. **PD-463** — the loop-wide budget ceiling. This is the structural fix for the exact thing that
-   caused the pause. Turning the loop back on without it invites the same failure.
-5. **PD-432** — per-ticket `max_turns`. P1, Ready, already in the Queue.
+1. **PD-410 — UI killswitch.** Smallest, and it is the safety net for everything after it. Do it first
+   so the rest of the work is done with a stop button on screen.
+2. **PD-306 — `/harness` + `/wrap-up` in the robot prompt.** Prompt-only; no schema, no UI. Raises the
+   floor on every run that follows.
+3. **PD-248 (trimmed) — rate-limit vs auth-fault classification.** Touches `faults.ts`, which is
+   well-tested and where PD-470's session-limit branch already lives — read that first, the shape is
+   the same problem solved once already.
+4. **PD-310 (instruct half only) — ask_human for lookups.** Same file as PD-306; consider doing both
+   in one pass if PD-306 goes smoothly.
 
-**Tier 2 — the loop's outward mechanics, which strand work when broken.**
+Then **PD-468** itself: walk the go-live checklist, resume, and *watch* the first run.
 
-6. **PD-424** — the auto-merge bridge reads its own in-flight check as `UNSTABLE` and skips, then
-   nothing re-fires. Every robot PR needs hand-merging until this is fixed.
-7. **PD-394** — the rework poll misses inline PR review comments, so review feedback silently fails
-   to re-activate a ticket.
-8. **PD-410** — nav-level killswitch. **Not already done**: the existing pause/resume toggle is the
-   Site Status one (now on `/devops/agent-dashboard`), and this ticket exists *because* that is easy
-   to miss. It wants an always-visible nav control.
-9. **PD-391**, **PD-433**, **PD-435** — helper commands and Refine improvements. Mechanical, Ready.
-
-**Tier 3 — needs shaping before it can be worked (all `ready=false`).**
-
-10. **PD-310** is the important one here: P1, and behaviourally the core of the whole safety model —
-    an agent that cannot `ask_human` guesses instead. **Shape it early** even if you build it late,
-    because shaping needs Steve and a Refine session costs the same quota as everything else.
-11. **PD-306**, **PD-162**, **PD-383**, **C-3**, and **PD-248** (Ready but steve-assigned).
-
----
+**Do PD-391 — robot-* / agent-worker helpers in `pd-help` the same day you go live**, not before. It
+is not a safety blocker, but `robot-logs` and `robot-refresh` are exactly what you will be typing by
+hand all afternoon otherwise — and `robot-refresh` *is* the image-rebuild step from the go-live
+checklist, which is the step that silently failed once already.
 
 ## Per-ticket landmines
 
-### PD-470 — reset-aware retry
-- The error text carries the reset time verbatim: `You've hit your session limit · resets 5:30am (UTC)`.
-  Parse **defensively** — an unparseable variant must degrade to a bounded retry, never an
-  indefinite park.
-- The real bug is the **promotion**: two identical session-limit signatures are one transient cause
-  seen twice, but C2 promotes transient→deterministic at N=2 and parks. Stop that promotion for this
-  fault class specifically; do not weaken the general rule.
-- Distinct from PD-463: PD-463 is about *not spending*, PD-470 is about *recovering* after the
-  provider says stop.
+### PD-410 — UI killswitch
+The backend exists (C4/PD-345, `robot_state.dispatch_paused`, pause/resume routes at
+`POST .../robot/pause|resume`). This is a UI ticket. `apps/web/src/routes/devops/api.ts` is the only
+web file that mentions the pause today — there is no nav component. **A paused loop must be
+unmistakable**, which is the whole point; a subtle badge repeats the problem the ticket describes.
 
-### PD-467 — the silently-undispatchable trap
-- `robotQueueCandidates` in `apps/agent-worker/src/jobs/robot/select.ts` is the gate.
-- Unstick is `resetRobotRuns(db, id, 'unstick')` — despite the name it does **not** delete
-  `agent_runs` rows; it flips `agent_state` to `queued` and logs an audit event. Non-destructive.
-- Whatever fix you choose, add the loop-side warn log. Silence is the actual defect.
+### PD-306 / PD-310 — the robot prompt
+`apps/agent-worker/src/jobs/robot/prompt.ts`. Step 0 (resume) and the hand-off steps are load-bearing
+and heavily commented — read the whole file before inserting anything. Note the prompt already tells a
+reworking Robot to read inline PR comments via `gh api`; that is deliberate (PD-394's out-of-scope
+half) and should not be duplicated.
 
-### PD-426 follow-ups (do not fold into other work)
-PD-426 deliberately deferred three things, all written up in its body: durable per-run forensics
-under `/data`, relocating the coding transcript off the image, and reclassifying a budget-exhausted
-`no-verify` as a *sizing* signal rather than an identical-failure promotion. **PD-469** verifies the
-capture itself against a real run — the one assumption its unit tests had to make is the real SDK's
-tool-result shape.
-
----
+### PD-248 — rate limits
+Read `apps/agent-worker/src/jobs/robot/faults.ts` first. It already classifies auth 401/403 as a
+**system-wide** fault that pauses the loop, and PD-470 added a `wait` decision with a self-clearing
+hold — a rate limit is much closer to the latter than the former. The ticket's own note that
+`gh pr view` does not surface `x-ratelimit-*` headers is correct and is the real design problem;
+a periodic `gh api rate_limit` probe is likely simpler than threading headers through every call site.
 
 ## Conventions that will bite you
 
-- **`npm run verify` is the gate.** Baseline as of this handoff: **server 309 / web 166 /
-  agent-worker 222**, exit 0, with **8** pre-existing svelte-check warnings (`RunHistory`,
-  `IdeaEditModal`). Baselines move as other sessions land work — re-measure on `main` before
-  assuming you broke something.
+- **`npm run verify` is the gate.** Baseline on `main` at `d3f3866`: **server 528 / web 196 /
+  agent-worker 271**, exit 0, with **8** pre-existing svelte-check warnings across 3 files
+  (`RunHistory`, both `IdeaEditModal`s), 0 errors. Baselines move as other sessions land work —
+  re-measure on `main` before assuming you broke something.
+- **A local full `verify` is not authoritative.** Other sessions' worktrees live under
+  `.claude/worktrees/` inside this checkout, and their work-in-progress has broken local runs twice.
+  CI runs a clean checkout; that is the authority.
 - **A new "Unused CSS selector" warning means you left dead rules behind.** That is how every scss
   change in this project gets validated.
 - **`apps/web/src/lib/nav-utils.ts` must stay free of `.svelte` imports.** `apps/web/vitest.config.ts`
-  deliberately runs *without* the SvelteKit plugin ("pure-TS unit tests"), so a transitive `.svelte`
-  import breaks the entire web suite. This cost real time today. Anything a `.spec.ts` imports must
-  not reach a `.svelte` file.
+  deliberately runs *without* the SvelteKit plugin, so a transitive `.svelte` import breaks the entire
+  web suite. Anything a `.spec.ts` imports must not reach a `.svelte` file.
 - **Styles are never inline.** Sibling `.scss` via `<style lang="scss" src="./X.scss">`, and use the
   design tokens in `apps/web/src/lib/styles/global.scss` rather than raw hex/px.
-- **Svelte scopes styles per component**, so shared chrome (`.section-head`, `.sr-only`) is
-  duplicated per file on purpose. That is not cleanup waiting to happen.
+- **Svelte scopes styles per component**, so shared chrome (`.section-head`, `.sr-only`) is duplicated
+  per file on purpose. That is not cleanup waiting to happen.
 - **Markdown rendered via `innerHTML` is not sanitized** (`$lib/markdown.ts`). PD-448 tracks it.
   Current exposure is nil; do not widen it.
 
 ## Workflow gotchas
 
-- **Commit `MEMORY/` straight to main.** On 2026-07-30 a memory commit landed on a feature branch at
-  the same minute its PR was squash-merged; the squash dropped it, and the next session recorded a
-  "~2.5 week gap" because the log was not on `main` to read. Recovered in `c0ef7e1`. **A squash merge
-  is not a promise your last commit is included** — verify after merging.
+- **Check `origin/main` for the next free `D-NNN` immediately before committing**, not when you start
+  writing. Two sessions minted D-065 simultaneously on 2026-08-05. `DECISIONS.md` is the one file that
+  always conflicts — every session appends to the top.
+- **Never `git add -A` in this repo.** Other sessions leave uncommitted work in the shared checkout;
+  stage by explicit path every time. `git pull` will also refuse while their edits are live — branch
+  from `origin/main` instead.
+- **CI silently not running means your PR conflicts with main.** `pull_request`-triggered workflows do
+  not queue when GitHub can't build `refs/pull/N/merge`, while `pull_request_target` ones (path-guard)
+  still run. **path-guard running alone is the tell.**
+- **Commit `MEMORY/` straight to main.** A memory commit on a feature branch was dropped by a squash
+  merge on 2026-07-30 and a session later recorded a phantom "2.5 week gap". A squash merge is not a
+  promise your last commit is included.
+- **The agent-worker image is a build artifact.** Merging agent-worker code to `main` does not update
+  the running container, and `docker-compose up -d` recreates from the **existing** image. The
+  heartbeat `sha` will not tell you — it reports the worker's grounding checkout, which pulls on boot.
+  The honest check is **`budget != null` on `/system-status`**.
 - **git pushes as the wrong account.** The macOS keychain hands back `scolacurcio` (Splice) for this
   `scolacur` repo; the repo routes git through `gh` to fix it. A 403 on push is this.
-- **You cannot approve your own PR** — merging needs `gh pr merge <n> --admin`.
-- **Don't stack PRs.** Branch each ticket off a freshly-pulled `main`; a stacked PR merged into the
-  wrong base lost a whole ticket's work on 07-09 (PD-338).
-- **Mark the ticket `completed` on the board yourself after merging.** The loop will not: its
-  PR-state poll only completes tickets **it** dispatched (`status='queue' AND assignee='robot' AND
-  agent_state='in-review'`, with the PR found via the run's recorded `pr_url`). A hand-built PR has
-  no link to the ticket at all.
-- **The Mac's disk filled completely** during this session and broke tool calls mid-task. If commands
-  start failing with `ENOSPC`, that is why — `df -h /`.
+- **You cannot approve your own PR** — your own PRs merge with `gh pr merge <n> --admin`. This is also
+  why the auto-merge bridge can only ever be exercised by a **bot-authored** PR; see the runbook in
+  `docs/robot.md`.
+- **Do not apply `sensitive-change-approved` to your own PR.** It is a *human* ack. An agent
+  self-approving reproduces the exact incident (#268) the guard exists to prevent.
+- **Don't stack PRs.** Branch each ticket off a freshly-pulled `main`.
+- **Mark the ticket `completed` on the board yourself after merging.** The loop will not: its PR-state
+  poll only completes tickets **it** dispatched. A hand-built PR has no link to the ticket at all.
 - NAS clock runs **UTC−5** while the Mac is EDT, so NAS timestamps read an hour behind.
 
 ## Board quick reference
 
-Prod on the NAS is the **only** source of truth — local `:8080` serves seeded dummy data. There is
-no by-id route; fetch the array and filter on `displayId`. Internal ids ≠ display ids.
+Prod on the NAS is the **only** source of truth — local `:8080` serves seeded dummy data. There is no
+by-id route; fetch the array and filter on `displayId`. Internal ids ≠ display ids.
 
 ```sh
 # read one ticket's body
 curl -s http://192.168.68.50:8088/api/widgets/task-monitor/tickets \
-  | python3 -c "import sys,json;print([t for t in json.load(sys.stdin) if t['displayId']=='PD-470'][0]['body'])"
+  | python3 -c "import sys,json;print([t for t in json.load(sys.stdin) if t['displayId']=='PD-410'][0]['body'])"
 
 # mark completed after merging
 curl -s -X PATCH http://192.168.68.50:8088/api/widgets/task-monitor/tickets/<id> \
   -H 'Content-Type: application/json' -d '{"status":"completed"}'
 
-# relations — `from` is the BLOCKER, `to` is the blocked ticket
+# relations — `from` is the BLOCKER, `to` is the blocked ticket.
+# NOTE the asymmetry: GET returns `fromTicketId`/`toTicketId`, but POST wants `fromId`/`toId`.
+# Sending the GET field names back is a 400.
 curl -s -X POST http://192.168.68.50:8088/api/widgets/task-monitor/tickets/<id>/relations \
   -H 'Content-Type: application/json' -d '{"fromId":<blocker>,"toId":<blocked>,"type":"blocks"}'
 
+# drop a relation (de-gating a ticket) — relation id comes from GET /relations
+curl -s -X DELETE http://192.168.68.50:8088/api/widgets/task-monitor/tickets/<id>/relations/<relationId>
+
 # clear a stuck agent_state so a queued ticket can actually dispatch
 curl -s -X POST http://192.168.68.50:8088/api/widgets/task-monitor/tickets/<id>/robot/unstick
+```
+
+To recount the gate at any time:
+
+```sh
+python3 - <<'PY'
+import json, urllib.request
+B = "http://192.168.68.50:8088/api/widgets/task-monitor"
+tix = {t['id']: t for t in json.load(urllib.request.urlopen(f"{B}/tickets"))}
+rel = json.load(urllib.request.urlopen(f"{B}/relations"))
+live = [tix[r['fromTicketId']] for r in rel
+        if r['toTicketId'] == 557 and r['type'] == 'blocks'
+        and tix.get(r['fromTicketId'], {}).get('status') not in ('completed', 'closed', 'archived')]
+print(f"PD-468 live blockers: {len(live)}")
+for t in sorted(live, key=lambda x: (x['priority'], x['displayId'])):
+    print(' ', t['priority'], t['displayId'], '|', t['status'], '|', t['title'][:64])
+PY
 ```
