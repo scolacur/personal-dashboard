@@ -209,6 +209,54 @@ The Task Monitor's status legend modal lists recommended human actions for each 
 
 ---
 
+## Verifying the auto-merge bridge
+
+`robot-auto-merge.yml` squash-merges a PR once an authorized human has approved it. Two things make
+it awkward to test, and both have caught someone out:
+
+**You cannot test it with your own PR.** GitHub forbids approving a pull request you authored, so a
+PR pushed from Steve's account can never satisfy the bridge's approval gate — that is why those are
+merged with `gh pr merge --admin`. The bridge exists for PRs authored by **someone else**, in
+practice `sortie-bot-55`. A test therefore needs a bot-authored PR.
+
+**Approve only after CI is green.** The bug PD-424 fixed (the bridge reading its own in-flight check
+as `UNSTABLE` and skipping) bites *only* the approve-after-green ordering. Approving while CI is
+still running exercises the `workflow_run` re-fire, which always worked — a pass there proves nothing.
+
+**Check the bot's credential first.** Opening a PR as the bot needs `ROBOT_GITHUB_TOKEN`, and a
+classic PAT expires silently — on 2026-08-06 it was found dead (401) only when this test was
+attempted, which also meant every Robot hand-off would have 401'd the moment dispatch resumed
+(PD-482). Run this on the NAS before anything else; it must return 200 **and** the bot's login, not
+`scolacur`:
+
+```sh
+T=$(grep "^ROBOT_GITHUB_TOKEN=" /volume1/docker/personal-dashboard/agent-worker.env \
+      | head -1 | cut -d= -f2- | cut -d"#" -f1 | tr -d " \r")
+curl -s -H "Authorization: token $T" https://api.github.com/user | grep '"login"'
+```
+
+The test:
+
+1. Open a trivial PR as the bot. It must **not** touch a path in `.github/sensitive-paths.txt`, or
+   the path-guard blocks the merge and the run tells you nothing about the bridge.
+2. Wait for `verify` to report green.
+3. Approve it.
+4. Expect a squash-merge with no further action.
+
+Read the result in the run log (`gh run list --workflow robot-auto-merge.yml --limit 1`, then
+`gh run view <id> --log`):
+
+| Log line | Means |
+|---|---|
+| `mergeable=MERGEABLE reviewDecision=APPROVED others_pending=0 others_failed=0` then `is this bridge's own in-flight check (PD-424) … attempting merge` | The PD-424 path ran and worked — this is the one that proves the fix. |
+| `is CLEAN … squash-merging` | Merged, but GitHub happened to report CLEAN, so the fixed path never ran. Not evidence either way. |
+| `not mergeable yet (mergeStateStatus=UNSTABLE) — skip` | The self-block is back. |
+
+Worth re-running after any change to the workflow's mergeability logic, and after any new **required**
+check is added to `main` — a required check that never reports would hold every merge silently.
+
+---
+
 ## Related decisions
 
 - **D-016** — hand-off is done by the run's coding session in-turn; the loop writes the state transition.
