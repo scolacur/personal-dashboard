@@ -113,14 +113,20 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
  * `[]` (a poll without inline data) rather than nulling the whole PR-state, so a hiccup here can't
  * strand an in-review ticket. Normalized to the `PrComment` shape (REST uses `user`/`author_association`/
  * `created_at`, not `gh pr view`'s camelCase).
+ *
+ * `direction=desc` matters and is not cosmetic: this reads ONE page, and the endpoint's default order
+ * is created-ascending — so on a PR that accumulated more than `per_page` inline comments across
+ * rework rounds, page 1 would hold only the OLDEST, every one of them already behind `lastHandoffAt`.
+ * New feedback would be truncated away with no error, which is this ticket's original bug wearing a
+ * different hat. Newest-first means the page always contains the only comments that can trigger.
  */
+export function inlineCommentsPath(repo: string, prNumber: number): string {
+  return `repos/${repo}/pulls/${prNumber}/comments?per_page=100&sort=created&direction=desc`;
+}
+
 async function fetchInlineComments(repo: string, prNumber: number, env: NodeJS.ProcessEnv): Promise<PrComment[]> {
   try {
-    const { stdout } = await run(
-      'gh',
-      ['api', `repos/${repo}/pulls/${prNumber}/comments?per_page=100`],
-      { env },
-    );
+    const { stdout } = await run('gh', ['api', inlineCommentsPath(repo, prNumber)], { env });
     const raw = JSON.parse(stdout) as {
       user?: { login?: string };
       author_association?: string;
