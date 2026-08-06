@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import { loadConfig } from '../../shared/config';
-import { decideReactivation, parsePrUrl, pollInReviewPrs, type PrState, type PrFetcher } from './pr-state';
+import { decideReactivation, inlineCommentsPath, parsePrUrl, pollInReviewPrs, type PrState, type PrFetcher } from './pr-state';
 import { ensureRunsTable, startRun, finishRun } from './runs';
 import { ensureRobotStateTable } from './state';
 
@@ -19,6 +19,19 @@ describe('parsePrUrl', () => {
   it('returns null for junk / null', () => {
     expect(parsePrUrl(null)).toBeNull();
     expect(parsePrUrl('not a url')).toBeNull();
+  });
+});
+
+describe('inlineCommentsPath', () => {
+  // Newest-first is load-bearing, not cosmetic: the fetch reads one page, and GitHub's default
+  // created-ascending order would fill it with the OLDEST comments — all behind lastHandoffAt — on
+  // any PR that gathered more than per_page inline comments over successive rework rounds. New
+  // feedback would then be truncated away silently. Do not "tidy" these params away.
+  it('asks for the newest page of inline comments, not the oldest', () => {
+    const path = inlineCommentsPath('scolacur/personal-dashboard', 314);
+    expect(path).toContain('repos/scolacur/personal-dashboard/pulls/314/comments');
+    expect(path).toContain('direction=desc');
+    expect(path).toContain('sort=created');
   });
 });
 
