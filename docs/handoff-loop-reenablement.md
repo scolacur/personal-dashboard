@@ -31,6 +31,9 @@ the loop is actually running.
 touches a glob in `.github/sensitive-paths.txt` turns `path-guard` **red** and cannot merge without
 a write+ collaborator applying the **`sensitive-change-approved`** label.
 
+This applies in full to **you** — the guard is author-scoped as of D-067 (PD-474), but only Steve's
+own PRs are exempt, and a `robot/*` head branch is gated regardless of the account that opened it.
+
 The list covers `.github/**`, `ops/**`, `docker/**`, `**/Dockerfile`, `**/docker-compose*.yml`,
 `**/.env*`, `**/schema.ts`, `apps/server/src/migrate.ts`, `.claude/**`, `**/package.json`,
 `package-lock.json`, and the forward-looking `**/auth/**`, `**/session/**`, `**/*cors*`, `**/*csp*`.

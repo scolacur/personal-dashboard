@@ -11,6 +11,31 @@
 # it requires a conscious ack from a write+ collaborator (strangers cannot apply labels, which is
 # the same trust boundary the Robot loop already relies on).
 #
+# WHO IT GATES (PD-474, 2026-08-05): every author EXCEPT the allowlist in AUTHORS_EXEMPT below —
+# in practice, Steve. The teeth were always aimed at the *unsupervised* Robot (#268 was a Robot,
+# and the ack label is collaborator-gated precisely as a trust boundary), but in practice the check
+# fired mostly on Steve's own feature work: every widget owns a `schema.ts` by convention, so an
+# in-development widget trips `**/schema.ts` on every PR of its epic. A control that cries wolf gets
+# habitually bypassed, and this one is bypassable by design (`enforce_admins: false`) — so noise
+# converts directly into `--admin` merges, which has already happened (#283 merged past a red guard
+# with no label). Scoping the gate to the population it was built for is what keeps it credible for
+# that population.
+#
+# The author comes from the `pull_request_target` payload, which GitHub populates — a PR cannot
+# declare its own author. TWO things must both hold to skip the ack:
+#   1. the author is on AUTHORS_EXEMPT, AND
+#   2. the head branch is not one the Robot loop uses (`robot/*`, or legacy `sortie/*`).
+# (2) is belt-and-braces. The Robot pushes as its own account (`sortie-bot-55`, via
+# ROBOT_GITHUB_TOKEN — a bot PAT distinct from Steve's), so (1) alone would hold today; if that
+# identity ever collapses onto Steve's token, the branch prefix still catches it and the guard
+# fails CLOSED rather than silently covering nothing.
+#
+# What this gives up: "protect Steve from himself". Deliberate — but not silent: an exempt PR that
+# touches sensitive paths still lists them in the job summary, it just reports green.
+#
+# NOT scoped this way: Tier 2 (PD-312) has no author concept, so a Robot's in-loop deny rules stay
+# unconditional — the same population this tier now targets.
+#
 # WHY pull_request_target, NOT pull_request: GitHub runs `pull_request_target` workflows from the
 # BASE branch, and checkout defaults to the base ref. So both this workflow and the denylist are
 # read from `main`, never from the PR. A PR cannot weaken the guard or the list within the same
@@ -81,6 +106,14 @@ jobs:
           PR: ${{ github.event.number }}
           BASE_REF: ${{ github.base_ref }}
           LABEL: sensitive-change-approved
+          # Author scope (PD-474). Evaluated INSIDE the step, deliberately: `path-guard` is a
+          # required status check, and a job skipped by a job-level `if:` reports a `skipped`
+          # conclusion rather than the plain success this branch protection expects. The job
+          # therefore always runs and always reports — exemption is a green exit, not a no-run.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # Space-separated GitHub logins exempt from the ack (see WHO IT GATES at the top).
+          AUTHORS_EXEMPT: scolacur
         run: |
           set -euo pipefail
 
@@ -120,6 +153,38 @@ jobs:
           echo "Sensitive paths touched by this PR:"
           echo "$HITS" | sed 's/^/  - /'
 
+          # ── Author scope (PD-474) ──
+          # Same `printf | grep -qx` idiom as the label check below, wrapped in `if` so a non-match
+          # cannot trip `set -e`. Default is GATED=yes: an unknown author is always gated, and the
+          # Robot-branch check can only ever add gating, never remove it.
+          GATED=yes
+          if printf '%s\n' $AUTHORS_EXEMPT | grep -qx "$PR_AUTHOR"; then
+            GATED=no
+          fi
+          case "$HEAD_REF" in
+            robot/*|sortie/*)
+              echo "Head branch '$HEAD_REF' belongs to the Robot loop — gated regardless of author."
+              GATED=yes
+              ;;
+          esac
+
+          if [ "$GATED" = "no" ]; then
+            {
+              echo "### ✅ path-guard: sensitive paths touched, ack not required"
+              echo
+              echo "This PR changes files on the sensitive-path denylist:"
+              echo
+              echo "$HITS" | sed 's/^/- `/;s/$/`/'
+              echo
+              echo "\`@$PR_AUTHOR\` is exempt from the ack (see \`WHO IT GATES\` in"
+              echo "\`.github/workflows/path-guard.yml\`), so this check is **green**. Listed anyway —"
+              echo "the gate is off for you, the paths are still sensitive."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "✅ '@$PR_AUTHOR' is exempt from the ack — sensitive paths listed above, not gated."
+            exit 0
+          fi
+
           # Live label state, not the (possibly stale on re-run) event payload.
           LABELS=$(gh api "repos/${REPO}/pulls/${PR}" --jq '[.labels[].name] | join(" ")')
           if printf '%s\n' $LABELS | grep -qx "$LABEL"; then
@@ -137,6 +202,9 @@ jobs:
             echo "That is allowed — it just needs a conscious ack. A collaborator with write access"
             echo "should review the change and apply the **\`$LABEL\`** label, which re-runs this"
             echo "check and turns it green."
+            echo
+            echo "_Gated because \`@$PR_AUTHOR\` is not on the ack exemption list. Robot-authored"
+            echo "PRs are always gated — that is the population this guard exists for._"
           } >> "$GITHUB_STEP_SUMMARY"
 
           echo "::error::Sensitive paths touched without the '$LABEL' label. See the job summary."
