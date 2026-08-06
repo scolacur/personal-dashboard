@@ -111,6 +111,16 @@ export async function processRobotQueue(
   // injected clock the rest of the cycle does (the tests drive time through `deps.now`).
   const now = deps.now ?? Date.now;
 
+  // PD-463: publish the ceiling the loop is enforcing, BEFORE the pause/hold gates below.
+  // Deliberately above them: a paused loop is exactly when you need to confirm the running code is
+  // the code you think it is. The agent-worker image is a build artifact, so a container recreated
+  // without a rebuild silently runs old code (hit on 2026-08-06), and a non-null `budget` on
+  // /system-status is the honest check for that — the heartbeat sha is not, since it reports the
+  // grounding checkout, which pulls on boot. Publishing only while dispatching made that check
+  // available only after the switch was already flipped, which is backwards for a pre-flight.
+  const budget = budgetPolicy(config);
+  publishBudgetPolicy(db, budget, now());
+
   // System-wide fault gate (C2): a prior auth/credit fault paused the whole loop. Stay inert until
   // a human resumes (C4) — auto-resuming would re-burn the board (the PD-320/#202 failure mode).
   const pause = isDispatchPaused(db);
@@ -157,12 +167,6 @@ export async function processRobotQueue(
       'robot: queued + robot-assigned + Ready but NOT dispatchable — parked agent_state; Unstick to clear',
     );
   }
-
-  // PD-463: publish the ceiling the loop is actually enforcing, so the board can show consumption
-  // against it. The web process cannot read the worker's env, so the worker states its own numbers
-  // rather than letting a second copy of them drift.
-  const budget = budgetPolicy(config);
-  publishBudgetPolicy(db, budget, now());
 
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
   const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);
