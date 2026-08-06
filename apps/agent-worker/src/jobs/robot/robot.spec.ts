@@ -3,7 +3,13 @@ import Database from 'better-sqlite3';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { processRobotQueue, branchFor, type RobotDeps } from './robot';
 import { startRun, finishRun, listRunsForTicket, failedRunsForTicket, ensureRunsTable } from './runs';
-import { activeSessionLimitHold, dispatchPauseState, isDispatchPaused } from './state';
+import {
+  activeSessionLimitHold,
+  dispatchPauseState,
+  ensureRobotStateTable,
+  isDispatchPaused,
+  pauseDispatch,
+} from './state';
 import { SESSION_LIMIT_FALLBACK_MS } from './faults';
 import type { RobotSessionResult } from './session';
 
@@ -459,6 +465,21 @@ describe('processRobotQueue', () => {
     spend(db, 10_000, 1000);
     expect(await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '0' }), deps())).toBe(1);
     expect(isDispatchPaused(db)).toBe(false);
+  });
+
+  // The pre-flight check in PD-468's go-live checklist: `budget != null` on /system-status is how you
+  // confirm a rebuilt worker image is actually running. It has to work while the loop is still
+  // PAUSED, or the check is only available after the switch you were trying to de-risk.
+  it('publishes the ceiling even while dispatch is paused', async () => {
+    addQueued(db, 1);
+    ensureRobotStateTable(db);
+    pauseDispatch(db, 'manual hold', 1000);
+
+    expect(await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '400' }), deps())).toBe(0);
+
+    expect(listRunsForTicket(db, 1)).toEqual([]); // still paused — nothing dispatched
+    const row = db.prepare("SELECT value FROM robot_state WHERE key = 'budget_policy'").get() as { value: string };
+    expect(JSON.parse(row.value)).toMatchObject({ turns: 400 });
   });
 
   it('publishes the effective ceiling for the board to read', async () => {
