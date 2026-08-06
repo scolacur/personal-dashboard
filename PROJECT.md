@@ -474,6 +474,11 @@ Definitions for the sensitive-path guardrail model (D-047).
 > you follow yourself and raise an **ask_human** rather than editing one unprompted. What you
 > must NOT do is what happened in the incident below: assume a control caught something.
 >
+> **The 2026-08-05 author-scoping (D-067) changes nothing for you.** Steve's own PRs no longer
+> need the ack; every Robot PR still does, and a `robot/*` branch is gated no matter whose
+> account opened it. If you read "the guard was relaxed" and conclude your PR will sail through,
+> you are repeating the #268 reasoning error below.
+>
 > This banner exists because of a real incident: on 2026-07-28 a Robot added a dependency to
 > `apps/server/package.json` in PR #268, wrote in its PR body that "the path-guard will flag
 > package.json … needs the `sensitive-change-approved` label", and merged with no such check
@@ -499,6 +504,14 @@ diff touches any **sensitive path**, unless the PR carries the **`sensitive-chan
 label. Runs against the **base branch** (not the PR head) so a PR can't weaken the guard or the
 list in the same change. Authoritative and **runtime-independent** — it inspects the diff, not
 the agent, so it survives an agent-runtime swap.
+**Author-scoped since D-067 (PD-474):** the ack is required on every PR *except* those from an
+author on the workflow's `AUTHORS_EXEMPT` allowlist (in practice Steve) — and never skipped on a
+`robot/*` / `sortie/*` head branch, whoever the author is. An exempt PR still *lists* the
+sensitive paths it touched in the job summary; it just reports green. The check always runs and
+always reports — exemption is a green exit, never a skipped job (a `skipped` conclusion is not
+what a required check expects).
+_Avoid_: describing it as gating "any PR" — it gates **unsupervised-agent** PRs, which is the
+population D-047 drew it against.
 
 **Guardrail tier**:
 Which enforcement layer a control lives in, split by whether it survives an agent-runtime swap.
@@ -509,10 +522,24 @@ runtime, never the sole line of defense.
 _Avoid_: treating Tier 2 as the boundary; if it's the only thing stopping a change, a runtime
 swap silently removes it.
 
+**Firewall** (as distinct from **middleware**):
+A **firewall** is a *boundary property* — it is the **only** route through, and that
+unavoidability is enforced by something outside the code (process privileges, a uid, network
+topology). **Middleware** is a *composition pattern* — a function in a pipeline, which a caller
+can simply decline to call. A firewall is often *implemented* as middleware; the two are not
+interchangeable. In this system the one thing that genuinely is a firewall is the **Robot's
+DB-blind uid** (D-055): it cannot reach `dashboard.db` at all, which is what structurally
+enforces D-039. A shared DB access layer in `apps/server/src/lib/` would be **middleware** —
+good convention enforcement (PROJECT.md §5), not an enforcement boundary.
+_Avoid_: calling a shared access layer a "DB firewall" (PD-474 direction D). A widget can always
+open its own `better-sqlite3` handle, so a later reader would be trusting it for something it
+cannot do. Same test for any proposed control: *can the caller decline to use it?*
+
 **`sensitive-change-approved`**:
 The GitHub label a write+ collaborator applies to consciously ack a PR that touches a
 **sensitive path**, turning the **path-guard** from red to green. Collaborator-gated (the same
-trust boundary the Robot loop relies on for issue labels); a stranger cannot apply it.
+trust boundary the Robot loop relies on for issue labels); a stranger cannot apply it. Since
+D-067 it is only ever *needed* on a gated PR — Steve's own PRs go green without one.
 
 ### Ticket relations
 
