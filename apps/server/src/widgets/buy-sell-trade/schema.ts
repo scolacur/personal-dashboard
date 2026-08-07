@@ -60,6 +60,25 @@ export function bootstrapSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_bst_drafts_generated
       ON buy_sell_trade_drafts (generated_at DESC);
 
+    /* One r/modular scan (PD-471).
+       Persisted so a failure at 3am is still visible at 9am — loudness that lives only in an
+       HTTP response is no use to a scheduled job. The detail column is the per-thread JSON
+       breakdown; status is deliberately three-valued (see BstScanStatus) so a partial read can
+       never be reported as a clean one.
+       NOTE: PD-442's generic job_runs store should absorb this table; it is here because the
+       scan needed a durable record before that shared store exists. */
+    CREATE TABLE IF NOT EXISTS buy_sell_trade_scans (
+      id           INTEGER PRIMARY KEY,
+      started_at   INTEGER NOT NULL,
+      finished_at  INTEGER NOT NULL,
+      status       TEXT    NOT NULL,
+      error        TEXT,
+      detail       TEXT    NOT NULL DEFAULT '[]'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bst_scans_started
+      ON buy_sell_trade_scans (started_at DESC);
+
     /* One comment that mentioned one listing (PD-438).
        ON DELETE CASCADE is load-bearing rather than decorative: a match whose listing is gone
        has nothing to display — no item, no type, no significance. db.ts sets

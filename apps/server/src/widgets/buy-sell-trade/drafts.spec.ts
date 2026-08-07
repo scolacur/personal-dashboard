@@ -131,6 +131,24 @@ describe('fillTemplate — formats', () => {
     expect(out).not.toContain('| ---');
   });
 
+  // A want is a bare name — Steve's 14 WTB rows carry no price at all — so the Reddit table
+  // would be one column of content and three of whitespace.
+  it('renders {{wanted}} as a list even on Reddit, where sales are a table', () => {
+    const ctx2 = ctx([
+      listing({ item: 'Maths', manufacturer: 'Make Noise', price: '$250' }),
+      listing({ item: 'Rhodes', type: 'WTB', saleStatus: null, category: null }),
+    ]);
+    expect(fillTemplate('{{items}}', 'reddit', ctx2)).toContain('| Item | Condition |');
+    const wanted = fillTemplate('{{wanted}}', 'reddit', ctx2);
+    expect(wanted).toBe('- Rhodes');
+    expect(wanted).not.toContain('|');
+  });
+
+  it('does not bold the wanted list on Reddit, matching its table', () => {
+    const out = fillTemplate('{{wanted}}', 'reddit', ctx([listing({ item: 'Rhodes', type: 'WTB' })]));
+    expect(out).not.toContain('**');
+  });
+
   it('sections by category when there is more than one', () => {
     const out = fillTemplate('{{items}}', 'facebook', ctx(two));
     expect(out).toContain('Modules');

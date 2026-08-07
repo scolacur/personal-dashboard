@@ -23,11 +23,13 @@ import {
   ingestComments,
   listDrafts,
   listListings,
+  listScans,
   listMatches,
   setMatchDismissed,
   updateListing,
   updateSettings,
 } from './store';
+import { runScan } from './scan';
 
 const BASE = '/api/widgets/buy-sell-trade';
 
@@ -307,6 +309,20 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
 
     return updateSettings(db, { terms: body.terms as string | undefined, templates });
   });
+
+  /* ── Scans (PD-471) ─────────────────────────────── */
+
+  app.get(`${BASE}/scans`, async () => listScans(db));
+
+  /**
+   * Scan r/modular now.
+   *
+   * **Always 200 with the scan record**, including when the scan failed — the outcome is the
+   * payload, not the HTTP status. A 5xx here would make the UI render a generic "request failed"
+   * and lose the reason, which is the one thing this route exists to deliver. `runScan` never
+   * throws: it converts every failure into a `failed`/`partial` status carrying the message.
+   */
+  app.post(`${BASE}/scans`, async () => runScan(db));
 
   /* ── Drafted posts (PD-439) ─────────────────────── */
 

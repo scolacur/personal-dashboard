@@ -5,6 +5,9 @@ import type {
   BstCommentInput,
   BstDraft,
   BstDraftFormat,
+  BstScan,
+  BstScanStatus,
+  BstScanThreadResult,
   BstImportResult,
   BstIngestResult,
   BstListing,
@@ -485,4 +488,64 @@ export function generateDrafts(db: Database.Database): BstDraft[] {
   run();
 
   return created;
+}
+
+/* ── Scans (PD-471) ─────────────────────────────── */
+
+interface ScanRow {
+  id: number;
+  started_at: number;
+  finished_at: number;
+  status: string;
+  error: string | null;
+  detail: string;
+}
+
+function rowToScan(r: ScanRow): BstScan {
+  let threads: BstScanThreadResult[] = [];
+  try {
+    // Defensive: a hand-edited or truncated row must not take the whole readout down — the
+    // readout's job is to surface problems, so it cannot itself throw on a malformed one.
+    const parsed: unknown = JSON.parse(r.detail ?? '[]');
+    if (Array.isArray(parsed)) threads = parsed as BstScanThreadResult[];
+  } catch {
+    threads = [];
+  }
+  return {
+    id: r.id,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    status: r.status as BstScanStatus,
+    error: r.error,
+    threads,
+  };
+}
+
+export function recordScan(db: Database.Database, scan: Omit<BstScan, 'id'>): BstScan {
+  const { lastInsertRowid } = db
+    .prepare(
+      `INSERT INTO buy_sell_trade_scans (started_at, finished_at, status, error, detail)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(
+      scan.startedAt,
+      scan.finishedAt,
+      scan.status,
+      scan.error,
+      JSON.stringify(scan.threads ?? []),
+    );
+  return { ...scan, id: Number(lastInsertRowid) };
+}
+
+/** Newest first. Bounded — this is a status readout, not an audit log. */
+export function listScans(db: Database.Database, limit = 20): BstScan[] {
+  const rows = db
+    .prepare('SELECT * FROM buy_sell_trade_scans ORDER BY started_at DESC, id DESC LIMIT ?')
+    .all(limit) as ScanRow[];
+  return rows.map(rowToScan);
+}
+
+/** The one the page leads with. `null` when the scanner has never run. */
+export function latestScan(db: Database.Database): BstScan | null {
+  return listScans(db, 1)[0] ?? null;
 }

@@ -384,6 +384,49 @@ export interface BstCommentInput {
   permalink: string;
 }
 
+/* ── Scans (PD-471, over public RSS) ───────────────────────────────────────────────────────── */
+
+/**
+ * How a scan ended.
+ *
+ * **`ok` and `failed` are not the only outcomes, and that is the point.** A scan that read one
+ * thread and got rate-limited on the second saw *some* of the week's offers, and reporting that
+ * as `ok` would be a lie of exactly the kind this feature cannot afford — "no offers this week"
+ * and "Reddit refused the request" must never look alike.
+ */
+export const BST_SCAN_STATUSES = ['ok', 'partial', 'failed'] as const;
+export type BstScanStatus = (typeof BST_SCAN_STATUSES)[number];
+
+export interface BstScanThreadResult {
+  title: string;
+  url: string;
+  /** Comments read from the feed. */
+  scanned: number;
+  /** (listing, comment) pairs the matcher found. */
+  matched: number;
+  /** Rows written — `matched` minus anything already recorded. */
+  created: number;
+  /** Present when this thread could not be read. The others may still have succeeded. */
+  error: string | null;
+}
+
+/** The record of one scan. Persisted so a failure that happened at 3am is still visible at 9am —
+ *  loudness that only exists in an HTTP response is not loudness for a scheduled job. */
+export interface BstScan {
+  id: number;
+  startedAt: number;
+  finishedAt: number;
+  status: BstScanStatus;
+  /** Set when the scan could not start at all (discovery failed) — distinct from a thread error. */
+  error: string | null;
+  threads: BstScanThreadResult[];
+}
+
+/** Did this scan see everything it was supposed to? The readout leads with this. */
+export function scanIsComplete(scan: Pick<BstScan, 'status'>): boolean {
+  return scan.status === 'ok';
+}
+
 /** What Steve is offering — the for-sale table of a drafted post (PD-439). WTB is a want and
  *  belongs in the post's wanted section instead. */
 export function isSellable(type: BstListingType): boolean {
