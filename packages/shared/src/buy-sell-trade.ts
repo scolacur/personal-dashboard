@@ -458,3 +458,38 @@ export function pickupList(listings: BstListing[]): { item: string; location: st
     }))
     .sort((a, b) => a.location.localeCompare(b.location) || a.item.localeCompare(b.item));
 }
+
+/* ── Scheduled jobs (PD-439, PD-440) ─────────────────────────────────────────────────────────── */
+
+/**
+ * The `job_name` each BST cron records runs under in the shared `job_runs` store (PD-442).
+ *
+ * Shared because both sides need the exact string and a typo would fail silently as "this job
+ * has never run" — indistinguishable from a job that genuinely hasn't. The server writes under
+ * these names; the web registry and the widget's Runs panel read under them.
+ */
+export const BST_SCAN_JOB = 'buy-sell-trade:scan';
+export const BST_DRAFTS_JOB = 'buy-sell-trade:drafts';
+
+/**
+ * The scan's headline numbers, as written into `JobRun.summary`.
+ *
+ * Flat and scalar on purpose: the generic run-detail page renders scalars as a definition list
+ * without needing a custom renderer, and the per-thread breakdown already lives in the scan's own
+ * `buy_sell_trade_scans` row, which is what the widget's loud readout reads.
+ */
+export interface BstScanRunSummary {
+  threads: number;
+  scanned: number;
+  matched: number;
+  created: number;
+  threadsFailed: number;
+  [key: string]: unknown;
+}
+
+/** The drafter's headline numbers, as written into `JobRun.summary`. */
+export interface BstDraftsRunSummary {
+  drafts: number;
+  formats: string;
+  [key: string]: unknown;
+}

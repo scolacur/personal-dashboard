@@ -7,19 +7,34 @@
 // run, did it work, what did it find — and answering them once is the whole point of the ticket.
 
 /**
- * `interrupted` is its own status rather than an `error` with a distinctive message.
+ * Two of these are not "did it work" answers, and both are here for the same reason: an outcome
+ * the system knows belongs in the schema, not in prose.
  *
- * A run the server never got to finish is not a job that failed — counting the two together
- * would let a week of deploys look like a week of breakage, and telling them apart by
- * string-matching the error text is the kind of check that rots silently. It is also the one
- * outcome whose duration is genuinely unknown (see `JobRun.finishedAt`).
+ * - `interrupted` — the server never got to finish this run. Not a job failure; counting the two
+ *   together would let a week of deploys look like a week of breakage. It is also the one outcome
+ *   whose duration is genuinely unknown (see `JobRun.finishedAt`).
+ * - `partial` — the job ran and did some, but not all, of its work. Added for the r/modular scan
+ *   (PD-471), whose contract is that a half-read week must never be reported as a clean one, but
+ *   general to any job that processes a batch: some of N succeeded. Collapsing it into `ok` hides
+ *   a degrading job; collapsing it into `error` overcounts failures and contradicts the widget's
+ *   own readout, which shows the successful half.
  */
-export const JOB_RUN_STATUSES = ['running', 'ok', 'error', 'interrupted'] as const;
+export const JOB_RUN_STATUSES = ['running', 'ok', 'error', 'partial', 'interrupted'] as const;
 export type JobRunStatus = (typeof JOB_RUN_STATUSES)[number];
 
-/** Did this run fail? An `interrupted` run did not — nobody knows what it would have done. */
+/**
+ * Did this run fail outright?
+ *
+ * False for `partial` (it did real work) and for `interrupted` (nobody knows what it would have
+ * done). Both still want attention — use `isRunClean` for "nothing to look at here".
+ */
 export function isRunFailure(status: JobRunStatus): boolean {
   return status === 'error';
+}
+
+/** Did this run finish having done everything it set out to do? */
+export function isRunClean(status: JobRunStatus): boolean {
+  return status === 'ok';
 }
 
 /**
