@@ -31,7 +31,7 @@ interface RawFinding {
 /** Injectable seams so the pass is unit-testable without a live agent or a real checkout. */
 export interface AuditPassDeps {
   runAgent?: (config: AgentWorkerConfig, systemPrompt: string, prompt: string) => Promise<{ text: string; ok: boolean }>;
-  buildContext?: (checkoutDir: string) => string;
+  buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
 }
 
 const AUDIT_SYSTEM_PROMPT = [
@@ -105,7 +105,10 @@ export async function runAuditPass(
   const byDisplayId = new Map(tickets.filter((t) => t.displayId).map((t) => [t.displayId as string, t.id]));
   const validIds = new Set(tickets.map((t) => t.id));
 
-  const systemPrompt = `${AUDIT_SYSTEM_PROMPT}\n${buildContext(config.checkoutDir)}`;
+  const contextPack = buildContext(config.checkoutDir, (what) =>
+    logger.warn({ what }, 'audit: context pack is missing an expected section — the agent runs degraded'),
+  );
+  const systemPrompt = `${AUDIT_SYSTEM_PROMPT}\n${contextPack}`;
   const reply = await runAgent(config, systemPrompt, ticketsPrompt(project.name, tickets));
   if (!reply.ok) {
     // API/billing/rate error — surface it as an errored run so it's retried, don't persist junk.
