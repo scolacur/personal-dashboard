@@ -28,13 +28,8 @@
   max-width: 46rem;
 }
 
-/* The not-yet-built note. Marked out rather than blended in — it is a temporary admission, and
-   it should look like one so deleting it is obviously the right move once the jobs register. */
-.bst-sub-caveat {
-  border-left: 3px solid var(--status-warn);
-  padding-left: var(--space-sm);
-  font-size: var(--font-size-xs);
-}
+/* (`.bst-sub-caveat` lived here — the "neither job is scheduled yet" note. Both jobs register as
+   of PD-439/PD-440, so the note and its style are gone rather than left to rot.) */
 
 .bst-loading,
 .bst-error {

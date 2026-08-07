@@ -16,7 +16,6 @@ import {
   createListing,
   deleteListing,
   findDuplicateListings,
-  generateDrafts,
   getListing,
   getSettings,
   importListingsCsv,
@@ -29,7 +28,7 @@ import {
   updateListing,
   updateSettings,
 } from './store';
-import { runScan } from './scan';
+import { generateDraftsRecorded, runScanRecorded } from './jobs';
 
 const BASE = '/api/widgets/buy-sell-trade';
 
@@ -321,19 +320,25 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
    * payload, not the HTTP status. A 5xx here would make the UI render a generic "request failed"
    * and lose the reason, which is the one thing this route exists to deliver. `runScan` never
    * throws: it converts every failure into a `failed`/`partial` status carrying the message.
+   *
+   * Records a run row like the cron does (PD-440). A manual scan is still a scan — if only the
+   * scheduled path recorded one, the Runs list would sit empty right after you watched a scan
+   * finish, which is precisely the "did it run?" ambiguity the run history exists to remove.
    */
-  app.post(`${BASE}/scans`, async () => runScan(db));
+  app.post(`${BASE}/scans`, async () => runScanRecorded(db));
 
   /* ── Drafted posts (PD-439) ─────────────────────── */
 
   app.get(`${BASE}/drafts`, async () => listDrafts(db));
 
   /**
-   * Generate now. **The whole point of this being a POST route and a button**: the monthly cron
-   * is not registered yet (it needs PD-442's shared job-run store), and Steve should not have to
-   * wait for a schedule that does not exist to get a post out of his own list.
+   * Generate now. The monthly cron exists as of PD-439, but the button stays and is not
+   * redundant: it is what you press when you decide to post on the 3rd, and it is how you see
+   * the effect of a template edit without waiting two weeks.
+   *
+   * Records a run row, same as the cron — see the note on `POST /scans`.
    */
   app.post(`${BASE}/drafts/generate`, async (_request, reply) =>
-    reply.status(201).send(generateDrafts(db)),
+    reply.status(201).send(await generateDraftsRecorded(db)),
   );
 }

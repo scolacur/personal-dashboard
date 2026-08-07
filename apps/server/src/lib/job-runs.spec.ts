@@ -180,6 +180,36 @@ describe('recordRun', () => {
     });
   });
 
+  it('honours an outcome the work reported by return value', async () => {
+    // Not every job signals trouble by throwing — the r/modular scan reports `partial` in its
+    // return value on purpose, so the wrapper must not close every non-throwing run `ok`.
+    await recordRun(db, 'job-a', (ctx) => {
+      ctx.setSummary({ read: 1 });
+      ctx.setOutcome('partial', '1 of 2 threads could not be read');
+    });
+
+    expect(listRuns(db, 'job-a')[0]).toMatchObject({
+      status: 'partial',
+      summary: { read: 1 },
+      error: '1 of 2 threads could not be read',
+    });
+  });
+
+  it('lets a throw override an outcome already set', async () => {
+    // The throw is the later and more severe fact.
+    await expect(
+      recordRun(db, 'job-a', (ctx) => {
+        ctx.setOutcome('partial', 'one thread failed');
+        throw new Error('then the DB went away');
+      }),
+    ).rejects.toThrow();
+
+    expect(listRuns(db, 'job-a')[0]).toMatchObject({
+      status: 'error',
+      error: 'then the DB went away',
+    });
+  });
+
   it('stringifies a non-Error throw rather than losing it', async () => {
     await expect(recordRun(db, 'job-a', () => Promise.reject('plain string'))).rejects.toBeTruthy();
     expect(listRuns(db, 'job-a')[0].error).toBe('plain string');

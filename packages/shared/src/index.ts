@@ -11,7 +11,13 @@ export type { TrackStatus, Track, CreateManualTrackInput } from './music-tracker
 export { TRACK_STATUSES } from './music-tracker';
 export type { SpotifyTrack } from './inspirations-list';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
-export { JOB_RUN_STATUSES, isJobRunStatus, isRunFinished, isRunFailure } from './jobs';
+export {
+  JOB_RUN_STATUSES,
+  isJobRunStatus,
+  isRunFinished,
+  isRunFailure,
+  isRunClean,
+} from './jobs';
 export type {
   BstListingType,
   BstSaleStatus,
@@ -33,6 +39,8 @@ export type {
   BstIngestResult,
   BstCommentInput,
   BstDuplicateWarning,
+  BstScanRunSummary,
+  BstDraftsRunSummary,
 } from './buy-sell-trade';
 export {
   BST_LISTING_TYPES,
@@ -60,6 +68,8 @@ export {
   matchSignificance,
   pickupList,
   parseAliases,
+  BST_SCAN_JOB,
+  BST_DRAFTS_JOB,
 } from './buy-sell-trade';
 export type {
   TicketStatus,

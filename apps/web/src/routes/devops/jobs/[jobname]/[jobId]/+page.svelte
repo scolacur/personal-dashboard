@@ -105,7 +105,8 @@
     {#if run.error}
       <div
         class="jrd-failure"
-        class:jrd-failure-soft={run.status === 'interrupted'}
+        class:jrd-failure-soft={run.status !== 'error'}
+        style="--oc: {runStatusColor(run.status)}"
         role="alert"
       >
         <span class="jrd-failure-label">{outcomeLabel(run.status)}</span>

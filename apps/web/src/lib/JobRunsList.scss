@@ -37,18 +37,14 @@
   }
 }
 
-// A failed run has to be distinguishable from a clean run with zero results at a glance — the
-// two are the same row otherwise, and confusing them is the exact ambiguity run history exists
-// to remove. Colour alone would not do it (it fails for colour-blind readers and in a
-// screenshot), so the status word carries the meaning and the rule reinforces it.
-.job-run-error {
-  box-shadow: inset 2px 0 0 var(--status-stuck);
-}
-
-// An interrupted run is flagged too, but in amber — it wants attention without being counted,
-// or read, as breakage.
-.job-run-interrupted {
-  box-shadow: inset 2px 0 0 var(--status-warn);
+// A run that did not finish cleanly has to be distinguishable from a clean run with zero results
+// at a glance — the two are the same row otherwise, and confusing them is the exact ambiguity run
+// history exists to remove. The bar takes the status's own colour (red for a failure, orange for
+// a partial, amber for an interruption), but colour alone would not do it — it fails for
+// colour-blind readers and in a screenshot — so the status word carries the meaning and the bar
+// only reinforces it.
+.job-run-flagged {
+  box-shadow: inset 2px 0 0 var(--rc);
 }
 
 .job-run-status {

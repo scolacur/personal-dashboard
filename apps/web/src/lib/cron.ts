@@ -83,8 +83,14 @@ export function nextCronRun(expr: string, fromMs: number): number | null {
 
 const DOW_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-/** A short human label for the common schedule shapes we register (weekly/daily). Falls back
- *  to the raw expression for anything it doesn't recognise. */
+/** 15 → "15th". Only used for day-of-month, so 1–31. */
+function ordinal(n: number): string {
+  if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
+}
+
+/** A short human label for the common schedule shapes we register (monthly/weekly/daily).
+ *  Falls back to the raw expression for anything it doesn't recognise. */
 export function scheduleLabel(expr: string): string {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return expr;
@@ -95,5 +101,8 @@ export function scheduleLabel(expr: string): string {
       : null;
   if (dom === '*' && dow === '*' && time) return `Daily · ${time}`;
   if (dom === '*' && /^\d+$/.test(dow) && time) return `Weekly · ${DOW_NAMES[Number(dow)]} ${time}`;
+  // Monthly, added for the BST drafter's `0 9 15 * *` (PD-439). Without this the Jobs surface
+  // printed the raw cron expression at the user — the fallback is honest, but it is not a label.
+  if (dow === '*' && /^\d+$/.test(dom) && time) return `Monthly · ${ordinal(Number(dom))} ${time}`;
   return expr;
 }

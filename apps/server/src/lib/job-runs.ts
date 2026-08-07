@@ -148,14 +148,26 @@ export interface JobRunContext {
    * job that partly succeeded.
    */
   setSummary(summary: JobRunSummary): void;
+  /**
+   * Report an outcome the work **returned** rather than threw. Defaults to `ok`.
+   *
+   * Not every job signals trouble by throwing. The r/modular scan deliberately does not: it
+   * catches per-thread failures so half the week's offers beat none, and reports `partial` or
+   * `failed` in its return value. Without this the wrapper would close every such run `ok` and
+   * quietly undo the one property that scan was built to guarantee.
+   */
+  setOutcome(status: Exclude<JobRunStatus, 'running'>, error?: string | null): void;
 }
 
 /**
- * Wrap a job's work in a run record: opens a `running` row, closes it `ok` or `error`.
+ * Wrap a job's work in a run record: opens a `running` row and closes it.
  *
  * A throw is recorded and **rethrown** — `CronRegistry` already logs and swallows job failures,
  * and swallowing it here as well would make a broken job look like a job that never fired. The
  * run row is written before the rethrow, so the failure is visible in the UI either way.
+ *
+ * A job that reports trouble by return value calls `ctx.setOutcome` instead; a throw always wins
+ * over whatever outcome was set, because the throw is the later and more severe fact.
  */
 export async function recordRun<T>(
   db: Database.Database,
@@ -164,6 +176,8 @@ export async function recordRun<T>(
 ): Promise<T> {
   const run = startRun(db, jobName);
   let summary: JobRunSummary | null = null;
+  let outcome: Exclude<JobRunStatus, 'running'> = 'ok';
+  let outcomeError: string | null = null;
 
   try {
     const result = await work({
@@ -171,8 +185,12 @@ export async function recordRun<T>(
       setSummary: (s) => {
         summary = s;
       },
+      setOutcome: (status, error) => {
+        outcome = status;
+        outcomeError = error ?? null;
+      },
     });
-    finishRun(db, run.id, { status: 'ok', summary });
+    finishRun(db, run.id, { status: outcome, summary, error: outcomeError });
     return result;
   } catch (e) {
     // The summary is kept even on failure: a job that scanned two threads and then threw knows

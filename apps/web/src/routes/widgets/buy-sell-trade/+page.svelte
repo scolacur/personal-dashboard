@@ -6,6 +6,8 @@
     BST_SALE_STATUSES,
     type BstImportResult,
     type BstDraftFormat,
+    BST_DRAFTS_JOB,
+    BST_SCAN_JOB,
     type BstListing,
     type BstMatch,
     type UpdateBstListingInput,
@@ -25,9 +27,12 @@
     saveTerms,
     updateListing,
   } from '$lib/buy-sell-trade/api';
+  import { RECURRING_JOBS } from '$lib/jobs';
+  import { scheduleLabel } from '$lib/cron';
   import DraftsPanel from './DraftsPanel.svelte';
   import GearTables from './GearTables.svelte';
   import MatchesReadout from './MatchesReadout.svelte';
+  import RunsPanel from './RunsPanel.svelte';
   import ScanStatus from './ScanStatus.svelte';
   import SaleTerms from './SaleTerms.svelte';
 
@@ -35,6 +40,32 @@
   // for the epic's two jobs: the weekly r/modular scan matches against it and the monthly
   // drafter renders from it (PD-439). Management is the generic ListManager (PD-441) configured
   // with the list's columns — no bespoke list here.
+
+  /** "Weekly · Mon 9:00 AM" → "Every Monday". Reads the registry so the copy cannot claim a
+   *  schedule the server does not actually register. */
+  function cadence(jobName: string, fallback: string): string {
+    const job = RECURRING_JOBS.find((j) => j.runs?.jobName === jobName);
+    if (!job) return fallback;
+    const label = scheduleLabel(job.schedule);
+    const weekly = /^Weekly · (\w+)/.exec(label);
+    if (weekly) return `Every ${DAY_NAMES[weekly[1]] ?? weekly[1]}`;
+    const monthly = /^Monthly · (\S+)/.exec(label);
+    if (monthly) return `On the ${monthly[1]} of each month`;
+    return label;
+  }
+
+  const DAY_NAMES: Record<string, string> = {
+    Sun: 'Sunday',
+    Mon: 'Monday',
+    Tue: 'Tuesday',
+    Wed: 'Wednesday',
+    Thu: 'Thursday',
+    Fri: 'Friday',
+    Sat: 'Saturday',
+  };
+
+  const scanCadence = cadence(BST_SCAN_JOB, 'Weekly');
+  const draftCadence = cadence(BST_DRAFTS_JOB, 'Monthly');
 
   let listings = $state<BstListing[]>([]);
   let matches = $state<BstMatch[]>([]);
@@ -232,19 +263,15 @@
 <section class="bst-page">
   <header class="bst-head">
     <h1 class="bst-title">Buy, Sell, Trade</h1>
-    <!-- States what actually runs, and says plainly what does not yet (PD-475 E). A subhead that
-         describes an aspiration is worse than one honest about its own status; the note is cheap
-         to delete once the jobs register, and PD-476 replaces it with a readout derived from the
-         real registration rather than retyped here. -->
+    <!-- Both jobs are registered as of PD-439/PD-440, so the "neither is scheduled yet" caveat
+         that used to sit here is gone. The cadences are DERIVED from the job registry rather
+         than retyped: the previous version claimed "every Monday" while nothing was scheduled at
+         all, and a subhead that has to be kept in sync by hand will drift again. (PD-476 still
+         owns the general, shell-wide version of this readout.) -->
     <p class="bst-sub">
-      Every <strong>Monday</strong>, a job scans the r/modular monthly Buy/Sell/Trade thread and
-      looks for matches with items on my list. On the <strong>15th</strong> of each month, it
-      drafts for-sale posts formatted for Reddit, Discord and Facebook.
-    </p>
-    <p class="bst-sub bst-sub-caveat">
-      <strong>Neither job is scheduled yet.</strong> The scan needs Reddit API approval
-      (PD-471) and the monthly drafter has no cron registered (PD-439) — but the drafter itself
-      works: “Generate now” under Drafted posts renders all three formats from the current list.
+      {scanCadence}, a job scans the r/modular monthly Buy/Sell/Trade thread and looks for
+      matches with items on my list. {draftCadence}, it drafts for-sale posts formatted for
+      Reddit, Discord and Facebook. Run history for both is under <strong>Runs</strong> below.
     </p>
   </header>
 
@@ -279,6 +306,8 @@
       {templates}
       onTemplatesSaved={(t) => (templates = t)}
     />
+
+    <RunsPanel />
 
     <Collapsible title="Import from CSV" storeKey="bst-import">
       <div class="bst-import">
