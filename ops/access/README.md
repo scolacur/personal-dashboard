@@ -5,7 +5,7 @@ without exposing it to the public internet.
 
 **Status legend:** 🧑 = Steve (needs your hands / NAS / phone) · 🤖 = Tank can run it.
 
-See [DECISIONS.md D-030](../../DECISIONS.md) for the *why*.
+See [D-030](../../DECISIONS/D-030-off-lan-access-via-tailscale-with.md) for the *why*.
 
 ---
 

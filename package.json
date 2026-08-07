@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "decisions:index": "npm run decisions:index -w apps/agent-worker",
     "test": "npm run test -w apps/server && npm run test -w apps/web && npm run test -w apps/agent-worker",
     "test:coverage": "npm run test:coverage -w apps/server && npm run test:coverage -w apps/web && npm run test:coverage -w apps/agent-worker",
     "verify": "npm run build && npm run typecheck && npm run lint && npm run test",

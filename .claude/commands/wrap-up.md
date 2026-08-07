@@ -14,8 +14,8 @@ Read and follow the full instructions in `~/.claude/commands/wrap-up.md`, using 
 
 Robot runs never write to MEMORY/ (concurrent merges would conflict on the daily
 file). Instead, each run's durable record lives in its PR (title, `Closes #N`,
-`## Assumptions` block, and any `DECISIONS.md` entry). This step folds the non-obvious
-parts of recently-merged Robot work into a single curated memory entry.
+`## Assumptions` block, and any `DECISIONS/D-NNN-*.md` file it added). This step folds the
+non-obvious parts of recently-merged Robot work into a single curated memory entry.
 
 1. Determine the boundary: the date of the most recent `MEMORY/YYYY-MM-DD.md` file.
 2. List Robot PRs merged since then:
@@ -35,6 +35,15 @@ parts of recently-merged Robot work into a single curated memory entry.
 This is the only path by which agent work reaches MEMORY — agents capture in PRs, Tank
 curates here.
 
-### Step 3 — Project-specific steps
+### Step 3 — Log any decision this session made
+
+A durable architectural decision goes in its own file, **`DECISIONS/D-NNN-slug.md`**, first line
+`# D-NNN: Title` (D-070). Take the next free number — `npm run decisions:index` prints it — then run
+that script to regenerate `DECISIONS.md`. Never hand-edit `DECISIONS.md`; it is generated.
+
+Then the day-file entry for it is SHORT and links to the `D-NNN` (per the global wrap-up Step 3) —
+the decision file is canonical, MEMORY does not re-narrate it.
+
+### Step 4 — Project-specific steps
 
 [Add more project-specific wrap-up steps here as the project grows.]

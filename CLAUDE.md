@@ -52,7 +52,9 @@ A worktree makes every one of these impossible. It is one command.
   feature branch have been dropped by a squash here before. After a merge, verify what you care
   about actually reached `main`: `git show origin/main:<path>`.
 - **Check the highest `D-NNN` on `origin/main`, not on your branch, immediately before
-  committing a decision.** Parallel sessions reserve the same number.
+  committing a decision** (`npm run decisions:index` prints the next free id). Parallel sessions
+  reserve the same number. This avoids a collision; it is no longer what *catches* one — a test
+  over the merged `DECISIONS/` does that (D-070).
 
 ---
 
@@ -63,11 +65,18 @@ API — `GET /api/widgets/task-monitor/tickets` on the NAS (`http://192.168.68.5
 the only source of real data; local `:8080` serves dummy dev data. There is no by-id route: fetch
 the array and filter on `displayId`. (The older `/api/widgets/agent-dashboard/…` base is **stale
 and 404s** — it was renamed.) The old `TODO.md`/`META-TODOS.md` files were seeded into the board
-and archived to `/Users/steve/Documents/Dev/archive/` (see DECISIONS.md D-020).
+and archived to `/Users/steve/Documents/Dev/archive/` (see D-020).
 
 **A merged PR does not complete its ticket.** The Robot loop only completes tickets *it*
 dispatched, so anything built by hand must be `PATCH`ed to `completed` yourself.
 
-If you are ever uncertain about why we are taking a certain design approach, read `DECISIONS.md` to see if the reasoning is there.
+**Decisions (D-070).** Each decision is its own file, `DECISIONS/D-NNN-slug.md`; `DECISIONS.md` is
+a **generated** index over them and must never be hand-edited — that edit is lost on the next
+regeneration.
 
-Whenever we make a significant architectural decision, add it to `DECISIONS.md`.
+- If you are ever uncertain about why we are taking a certain design approach, skim the index in
+  `DECISIONS.md` and open the file that looks relevant.
+- Whenever we make a significant architectural decision, **write a new
+  `DECISIONS/D-NNN-slug.md`** — first line `# D-NNN: Title` — and run `npm run decisions:index`.
+  Do not append to `DECISIONS.md`. Writing a file is what lets parallel sessions each log a
+  decision without touching the same lines.

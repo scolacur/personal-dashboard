@@ -1,0 +1,18 @@
+# D-039: Board↔issue authority — ticket is the durable spec, issue is an execution lease; ticket stays amendable post-queue; agent-created tickets are backlog-only, queuing gated by a server-computed depth cap (PD-207, PD-232)
+
+**Decision:** Defines who owns a ticket's content across its lifecycle, resolving the question [[D-038]]'s async-grill pipeline raised:
+
+- **The ticket is the durable spec; the GitHub issue is an execution lease.** At Queue the issue is minted from the ticket (PD-164, unchanged), but the ticket does **not** freeze. Post-queue edits and `ask_human` answers are written **back into the ticket body** (so the durable record improves) and **propagate to the linked open issue** via the write token. There is no 409 content-lock. *(This reworks PD-207 part B, which had specified a hard freeze-at-queue on the now-rejected premise that the issue becomes the sole operative spec.)*
+- **Deletion is ticket-authoritative.** Archiving a ticket closes its linked issue as `not planned` (PD-207 part A); a GitHub-side delete never deletes the ticket — it only unlinks it (PD-207 part C). *(Parts A + C are built; part B — propagation — is deferred behind the board redesign.)*
+- **Agent-created tickets are backlog-only for now.** A Sortie worker that decides a ticket is really several may create child tickets, but only into `backlog` — never a queue lane. A human advances them. This structurally prevents runaway self-dispatch.
+- **Queuing is gated by a server-computed depth cap, enabled later.** When an agent→dashboard ticket-creation path is built, `agent_tickets` gains `spawned_by_ticket_id` + `agent_queue_depth` (server-computed as `parent.depth + 1`, **never agent-supplied**). Agent-queuing is allowed only when the result is `≤ 1` ("one level of agent queuing"); deeper spawns can still be created into backlog. Enforced at the queue transition.
+
+**Why:**
+
+- **Async grilling requires a mutable spec.** [[D-038]] moves clarification *after* dispatch, so the spec keeps evolving while the issue is open; a freeze-at-queue would strand those answers in issue comments instead of improving the ticket. Ticket-as-durable-spec keeps the board the source of truth.
+- **Least-authority loop-breaking.** Backlog-only agent creation makes the infinite-dispatch loop impossible by construction (a spawned ticket cannot dispatch itself). The depth cap is the graduated relaxation for once a verified agent identity exists.
+- **The cap must be unforgeable to be worth anything.** Depth is server-computed from a **server-verified parent** (the issue the agent's run is scoped to), not an agent-declared field — otherwise an agent could reset its own depth. Hence the cap ships with, and depends on, the agent-auth design; until then agent ticket-creation does not exist at all, and backlog-only vs. capped-queuing are the same zero code on the agent side.
+
+**Trade-off:** Propagating ticket edits to an open issue adds a write path and a small divergence window (ticket and issue can briefly differ between polls) — accepted over a freeze, which the async pipeline can't tolerate. Backlog-only means a human must advance agent-split tickets even when they're obviously fine — accepted as the safe default until the depth cap + agent identity land.
+
+**Implications:** Reworks PD-207 (parts A + C build as-is — done here; part B becomes "propagate post-queue ticket edits to the linked issue", deferred behind the board redesign). Follow-on: agent ticket-creation API with server-verifiable identity + `spawned_by_ticket_id`/`agent_queue_depth` columns + the `≤ 1` queue guard. Columns are additive (D-021 migration framework). See [[D-038]] for the pipeline this serves.
