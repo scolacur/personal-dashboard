@@ -236,7 +236,7 @@ See the migration comments at the top of `scripts/pd-aliases.sh` for NAS and Mac
 ## 9. Glossary / Domain Language
 
 Definitions of the domain language used across the board and the Robot agent pipeline.
-Definitions only — no implementation detail. Decisions live in `DECISIONS.md` (`D-NNN`).
+Definitions only — no implementation detail. Decisions live one-per-file in `DECISIONS/` (`D-NNN`), indexed by the generated `DECISIONS.md` (D-070).
 
 ### Agent pipeline
 
@@ -354,7 +354,7 @@ spec. Deletion is ticket-authoritative (D-039).
 
 > **D-055:** the third-party **Sortie** runtime has been retired and replaced by the in-house
 > **Robot loop** in `agent-worker` (cutover complete). All agent state is now DB-native. See
-> `DECISIONS.md` D-055.
+> D-055.
 
 **Osiris**:
 The **agent control plane** (D-061) — the umbrella name covering the **Robot loop**, the queue and

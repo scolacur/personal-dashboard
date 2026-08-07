@@ -143,9 +143,13 @@ a periodic `gh api rate_limit` probe is likely simpler than threading headers th
 
 ## Workflow gotchas
 
-- **Check `origin/main` for the next free `D-NNN` immediately before committing**, not when you start
-  writing. Two sessions minted D-065 simultaneously on 2026-08-05. `DECISIONS.md` is the one file that
-  always conflicts — every session appends to the top.
+- **A decision is a new file, `DECISIONS/D-NNN-slug.md` — `DECISIONS.md` is generated** (D-070).
+  Run `npm run decisions:index` after writing one; it also prints the next free id. Hand-edits to
+  `DECISIONS.md` are silently overwritten. Still check `origin/main` for the free number immediately
+  before committing, not when you start writing — two sessions minted D-065 simultaneously on
+  2026-08-05. Two branches *can* still both take D-071 (different slugs make different paths, which
+  git merges cleanly); what catches it is the duplicate-id test running over the merged tree, and the
+  fix is to renumber the newer file.
 - **Never `git add -A` in this repo.** Other sessions leave uncommitted work in the shared checkout;
   stage by explicit path every time. `git pull` will also refuse while their edits are live — branch
   from `origin/main` instead.

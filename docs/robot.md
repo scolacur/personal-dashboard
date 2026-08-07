@@ -5,7 +5,7 @@
 > the four `sortie-*.yml` reaction bridges (watchdog, ask-human, review-rework, conflict-rework) and
 > the once-a-minute label-sync cron are all gone, folded into the loop as native, DB-driven behavior.
 > Dispatch and state now key off the board DB (`agent_tickets`), **not** GitHub labels. See
-> `DECISIONS.md` D-055 for the cutover, and the Robot glossary in `PROJECT.md`.
+> D-055 for the cutover, and the Robot glossary in `PROJECT.md`.
 
 The **Robot loop** is the autonomous coding-agent dispatcher that picks up board tickets and
 produces PRs for the Personal Dashboard. It lives in `apps/agent-worker` as the `robot` job. The
@@ -23,7 +23,7 @@ Everything here is grounded in the real code:
 - Board-state writes (the sole `dashboard.db` writer): [`board.ts`](../apps/agent-worker/src/jobs/robot/board.ts)
 - Dispatch candidate selection: [`select.ts`](../apps/agent-worker/src/jobs/robot/select.ts)
 - State/label types + descriptions: [`packages/shared/src/task-monitor.ts`](../packages/shared/src/task-monitor.ts)
-- Architectural decisions cited below live in [`DECISIONS.md`](../DECISIONS.md).
+- Architectural decisions cited below live one-per-file in [`DECISIONS/`](../DECISIONS/); [`DECISIONS.md`](../DECISIONS.md) is the generated index (D-070).
 
 > Terminology follows `PROJECT.md` §8 (Glossary): **ticket** = the durable spec owned by the
 > board (`agent_tickets`); **issue** = the GitHub issue optionally linked to it; **run** = one
