@@ -5,6 +5,8 @@ import { existsSync } from 'node:fs';
 import { db, dataDir } from './db';
 import { CronRegistry } from './cron';
 import { registerBackupJob } from './backup';
+import { bootstrapJobRunsSchema } from './lib/job-runs';
+import { registerJobRunRoutes } from './lib/job-runs-routes';
 import type { BackendWidget } from './types';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as taskMonitorWidget } from './widgets/task-monitor/index';
@@ -31,6 +33,11 @@ const app = Fastify({
       : true,
 });
 
+// Shared job-run store (PD-442). Bootstrapped before the widgets so a widget's cron can write a
+// run row on its very first tick, and because the boot-time sweep of interrupted runs should
+// happen once, up front.
+bootstrapJobRunsSchema(db);
+
 for (const widget of widgets) {
   widget.bootstrapSchema?.(db);
 }
@@ -38,6 +45,8 @@ for (const widget of widgets) {
 for (const widget of widgets) {
   widget.registerRoutes(app);
 }
+
+registerJobRunRoutes(app, db);
 
 // In-process scheduler (PROJECT.md §2). Widgets register jobs via registerCron;
 // core jobs (DB backups) register directly. Uses Fastify's pino logger.

@@ -5,6 +5,27 @@
 
 export type JobKind = 'audit' | 'backup';
 
+/**
+ * A job's declaration that it writes `job_runs` rows (PD-442) — which is all it takes to get a
+ * run list on the Jobs surfaces and a working detail page, with no new UI code.
+ *
+ * This replaces `kind === 'audit'` as the way a job earns a rich row: `kind` picks the row
+ * *renderer*, this declares the job *has history*. The audit keeps its bespoke row until it is
+ * migrated onto the shared store (PD-443).
+ */
+export interface JobRunHistory {
+  /** The `job_name` the server writes runs under — the key both API routes take. */
+  jobName: string;
+  /**
+   * Optional richer report page for one run, overriding the generic
+   * `/devops/jobs/<jobname>/<runId>` route. This is how the Ticket Audit keeps its findings
+   * report once it moves onto the shared store.
+   */
+  detailHref?: (runId: number) => string;
+  /** How many runs to show inline on a job row. */
+  limit?: number;
+}
+
 export interface RecurringJob {
   id: string;
   name: string;
@@ -14,6 +35,8 @@ export interface RecurringJob {
   kind: JobKind;
   /** Report/detail route for jobs that have one (the audit). */
   reportRoute?: string;
+  /** Set when this job records runs in the shared `job_runs` store (PD-442). */
+  runs?: JobRunHistory;
 }
 
 export const RECURRING_JOBS: RecurringJob[] = [
