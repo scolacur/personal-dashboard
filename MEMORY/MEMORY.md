@@ -11,6 +11,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-06](2026-08-06.md) — Busy: gate 17→9 (PD-463/432/424/482/394, D-064/D-066) then re-scoped to 4 real blockers; path-guard author-scoped (D-067); **PD-475 BST shipped** (D-065 amended).
 
-- [2026-08-07](2026-08-06.md) — *(in the 08-06 file, ran past midnight)* Coverage first measured (~71%, PD-484); **BST inbound shipped over public RSS** (PD-471) after the Reddit API denial.
+- [2026-08-07](2026-08-07.md) — Board hygiene: PD-382 closed, PD-365 split into PD-493/494/495. Earlier, [in the 08-06 file](2026-08-06.md): coverage ~71% (PD-484), BST inbound over RSS (PD-471).
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
