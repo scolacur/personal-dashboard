@@ -83,8 +83,27 @@ function plainLines(listings: BstListing[], bold: (s: string) => string): string
     .join('\n');
 }
 
+/**
+ * How a section renders its rows.
+ *
+ * `table` is for things being *offered* — they carry price, condition and notes, which is four
+ * columns of real content. `list` is for wants: a WTB row is a name and nothing else (Steve's
+ * are all price-less), so a table would be one column of content and three of whitespace.
+ */
+type SectionStyle = 'table' | 'list';
+
+/** Emphasis for a plain-text line, per format. Reddit's table does not bold item names, so its
+ *  list does not either — the two stay consistent within one post. */
+function bolderFor(format: BstDraftFormat): (s: string) => string {
+  return format === 'discord' ? (s) => `**${s}**` : (s) => s;
+}
+
 /** A whole section — heading per category, then the format's own row rendering. */
-function section(listings: BstListing[], format: BstDraftFormat): string {
+function section(
+  listings: BstListing[],
+  format: BstDraftFormat,
+  style: SectionStyle = 'table',
+): string {
   if (listings.length === 0) return '';
   const groups = byCategory(listings);
   // One category means the heading would just repeat the section's own title.
@@ -93,9 +112,9 @@ function section(listings: BstListing[], format: BstDraftFormat): string {
   return groups
     .map(({ category, items }) => {
       const body =
-        format === 'reddit'
+        format === 'reddit' && style === 'table'
           ? redditTable(items)
-          : plainLines(items, format === 'discord' ? (s) => `**${s}**` : (s) => s);
+          : plainLines(items, bolderFor(format));
       if (!withHeadings) return body;
       const heading =
         format === 'reddit' ? `**${category}**` : format === 'discord' ? `__${category}__` : category;
@@ -129,8 +148,9 @@ export function fillTemplate(template: string, format: BstDraftFormat, ctx: Draf
 
   const values: Record<string, string> = {
     '{{items}}': section(sale, format),
+    // Feelers are priced, so they earn the table. Wants are bare names — a list (PD-475 follow-up).
     '{{feelers}}': section(feelers, format),
-    '{{wanted}}': section(wanted, format),
+    '{{wanted}}': section(wanted, format, 'list'),
     '{{terms}}': ctx.terms.trim(),
     '{{month}}': monthLabel(ctx.at),
   };

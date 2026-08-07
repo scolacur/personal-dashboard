@@ -28,6 +28,7 @@
   import DraftsPanel from './DraftsPanel.svelte';
   import GearTables from './GearTables.svelte';
   import MatchesReadout from './MatchesReadout.svelte';
+  import ScanStatus from './ScanStatus.svelte';
   import SaleTerms from './SaleTerms.svelte';
 
   // Buy/Sell/Trade expanded view (PD-437, matches PD-438). The gear list is the shared input
@@ -259,6 +260,8 @@
         <span class="count-pill type-match">{matches.length} new match{matches.length === 1 ? '' : 'es'}</span>
       {/if}
     </div>
+
+    <ScanStatus onMatchesChanged={async () => (matches = await fetchMatches())} />
 
     {#if matches.length > 0}
       <MatchesReadout

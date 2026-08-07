@@ -1,0 +1,88 @@
+/* r/modular scan status (PD-471). Styled so a degraded scan cannot be mistaken for a clean one —
+   the alerts are deliberately heavier than the success line. */
+
+.scan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.scan-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.scan-when,
+.scan-ok {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.scan-alert {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius);
+  border-left: 3px solid;
+  font-size: var(--font-size-sm);
+
+  strong {
+    display: block;
+  }
+
+  &.failed {
+    border-color: var(--status-stuck);
+    color: var(--status-stuck);
+    background: color-mix(in srgb, var(--status-stuck) 8%, transparent);
+  }
+
+  &.partial {
+    border-color: var(--status-warn);
+    color: var(--status-warn);
+    background: color-mix(in srgb, var(--status-warn) 8%, transparent);
+  }
+}
+
+.scan-reason {
+  margin: var(--space-xs) 0 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+.scan-note {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.scan-threads {
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-xs);
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  a {
+    color: inherit;
+  }
+}
+
+.thread-error {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  overflow-wrap: anywhere;
+}
+
+.thread-ok {
+  color: var(--muted);
+}

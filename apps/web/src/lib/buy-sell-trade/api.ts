@@ -1,6 +1,7 @@
 import type {
   BstDraft,
   BstDraftFormat,
+  BstScan,
   BstImportResult,
   BstIngestResult,
   BstListing,
@@ -183,4 +184,25 @@ export async function generateDrafts(): Promise<BstDraft[]> {
   const res = await fetch(`${BASE}/drafts/generate`, { method: 'POST' });
   if (!res.ok) await fail(res, 'Failed to generate drafts');
   return res.json() as Promise<BstDraft[]>;
+}
+
+/* ── Scans (PD-471) ─────────────────────────────── */
+
+export async function fetchScans(): Promise<BstScan[]> {
+  const res = await fetch(`${BASE}/scans`);
+  if (!res.ok) await fail(res, 'Failed to load scans');
+  return res.json() as Promise<BstScan[]>;
+}
+
+/**
+ * Scan r/modular now.
+ *
+ * **A failed scan is a 200 carrying a `failed` status, not an HTTP error** — the reason is the
+ * payload. Callers must check `scan.status`; a resolved promise here does not mean the scan
+ * worked, only that the server answered.
+ */
+export async function runScanNow(): Promise<BstScan> {
+  const res = await fetch(`${BASE}/scans`, { method: 'POST' });
+  if (!res.ok) await fail(res, 'Failed to start a scan');
+  return res.json() as Promise<BstScan>;
 }
