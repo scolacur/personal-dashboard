@@ -301,7 +301,7 @@ export interface ProcessDeps {
    *  a fresh (cold-every-time) one is created if omitted. */
   sessions?: WarmSessions;
   /** Injectable for tests; defaults to reading the grounding checkout. */
-  buildContext?: (checkoutDir: string) => string;
+  buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
   /** Injectable clock for the written event/notification timestamps (tests want it monotonic). */
   now?: () => number;
 }
@@ -325,7 +325,9 @@ export async function processPendingRefines(
   const ticketIds = findPendingRefineTicketIds(db);
   if (ticketIds.length === 0) return 0;
 
-  const contextPack = buildContext(config.checkoutDir);
+  const contextPack = buildContext(config.checkoutDir, (what) =>
+    logger.warn({ what }, 'refine: context pack is missing an expected section — the agent runs degraded'),
+  );
   let handled = 0;
 
   for (const ticketId of ticketIds) {
