@@ -63,16 +63,23 @@ export function bootstrapJobRunsSchema(db: Database.Database): void {
  *
  * Jobs run in-process on `node-cron`, so a `running` row at startup cannot belong to a live run —
  * it belongs to a process that died mid-job. Left alone it renders as a spinner that never
- * resolves, which reads as "still working" forever. Recording it as an error that says what
- * happened is the honest version, and it is the same principle as the BST scan's three-valued
- * status: never present an unknown outcome as a clean one.
+ * resolves, which reads as "still working" forever.
+ *
+ * Recorded as `interrupted`, **not** as an `error` carrying a distinctive message. The cause
+ * belongs in the schema, not in prose: a deploy is not a job failure, and anything wanting to
+ * count real failures would otherwise have to string-match this sentence. Same principle as the
+ * BST scan's three-valued status — never present an unknown outcome as a known one.
+ *
+ * `finished_at` records when the restart was *detected*, which is the only end time anyone has.
+ * A run interrupted on Monday and swept on Thursday did not take three days, so the display layer
+ * refuses to derive a duration from it (`runDuration` returns null for `interrupted`).
  */
 function closeInterruptedRuns(db: Database.Database): void {
   db.prepare(
     `UPDATE job_runs
-        SET status = 'error',
+        SET status = 'interrupted',
             finished_at = ?,
-            error = 'interrupted — the server restarted while this run was in flight'
+            error = 'the server restarted while this run was in flight'
       WHERE status = 'running'`,
   ).run(Date.now());
 }

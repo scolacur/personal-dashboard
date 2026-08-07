@@ -9,16 +9,21 @@ const STATUS_LABELS: Record<JobRunStatus, string> = {
   running: 'Running',
   ok: 'OK',
   error: 'Error',
+  interrupted: 'Interrupted',
 };
 
 export function runStatusLabel(status: JobRunStatus): string {
   return STATUS_LABELS[status] ?? status;
 }
 
+// `interrupted` gets amber rather than the red `error` uses: a run cut short by a deploy is an
+// unknown outcome, not a failure, and colouring it red would make every restart look like
+// breakage. Amber over neutral grey because grey reads as "nothing happened", and something did.
 const STATUS_COLORS: Record<JobRunStatus, string> = {
   running: 'var(--status-working)',
   ok: 'var(--status-done)',
   error: 'var(--status-stuck)',
+  interrupted: 'var(--status-warn)',
 };
 
 export function runStatusColor(status: JobRunStatus): string {
@@ -43,13 +48,18 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * How long a run took, or null while it is still in flight.
+ * How long a run took, or null when that is unknowable.
  *
- * Null rather than a live-ticking elapsed time: the caller renders "—", and a number that only
- * updates when the poll happens to fire is worse than no number.
+ * Two cases return null and the caller renders "—":
+ *
+ * - **Still in flight.** A live-ticking elapsed time that only updates when the poll happens to
+ *   fire is worse than no number.
+ * - **`interrupted`.** Its `finishedAt` is when the restart was *detected*, not when the work
+ *   stopped. A run interrupted on Monday and swept on Thursday would otherwise report "3d",
+ *   which is a confident lie sitting next to a message saying we don't know what happened.
  */
 export function runDuration(run: JobRun): string | null {
-  if (run.finishedAt === null) return null;
+  if (run.finishedAt === null || run.status === 'interrupted') return null;
   return formatDuration(run.finishedAt - run.startedAt);
 }
 
@@ -76,6 +86,21 @@ export function relativeTime(ts: number, now: number = Date.now()): string {
 
 function plural(n: number, unit: string): string {
   return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * What a run's closing timestamp actually means.
+ *
+ * For an `interrupted` run it is when the restart was noticed, not when the job stopped — so the
+ * detail page says "detected" rather than claiming a finish time it does not have.
+ */
+export function endTimeLabel(status: JobRunStatus): string {
+  return status === 'interrupted' ? 'detected' : 'finished';
+}
+
+/** Heading for the callout carrying `run.error` — an interruption is not a failure. */
+export function outcomeLabel(status: JobRunStatus): string {
+  return status === 'interrupted' ? 'Interrupted' : 'Failure';
 }
 
 /** Unix-ms → local wall-clock string. Matches audit-display's `formatTs`. */
@@ -109,6 +134,7 @@ export function runDetailPath(job: RecurringJob, runId: number): string | null {
  */
 export function defaultHeadline(run: JobRun): string {
   if (run.status === 'error') return run.error ?? 'Failed';
+  if (run.status === 'interrupted') return run.error ?? 'Interrupted before it finished';
   if (run.status === 'running') return 'In progress…';
   if (!run.summary) return 'No details recorded';
 

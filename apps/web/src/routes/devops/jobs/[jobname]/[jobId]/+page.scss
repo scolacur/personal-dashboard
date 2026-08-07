@@ -78,6 +78,16 @@
   background: var(--surface);
 }
 
+// An interruption uses the same callout — it is still the reason the run ended badly — but in
+// amber, so a page full of restarts does not read as a page full of breakage.
+.jrd-failure-soft {
+  border-color: var(--status-warn);
+
+  .jrd-failure-label {
+    color: var(--status-warn);
+  }
+}
+
 .jrd-failure-label {
   color: var(--status-stuck);
   font-size: var(--font-size-xs);

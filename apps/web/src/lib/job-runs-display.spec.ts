@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { JobRun } from '@dashboard/shared';
+import { JOB_RUN_STATUSES, isRunFailure } from '@dashboard/shared';
 import type { RecurringJob } from './jobs';
 import {
   defaultHeadline,
+  endTimeLabel,
   formatDuration,
   genericRunDetailPath,
   humanizeKey,
+  outcomeLabel,
   relativeTime,
   runDetailPath,
   runDuration,
@@ -38,15 +41,39 @@ function job(over: Partial<RecurringJob> = {}): RecurringJob {
 }
 
 describe('status display', () => {
-  it('labels and colours each status distinctly', () => {
-    const labels = (['running', 'ok', 'error'] as const).map(runStatusLabel);
-    expect(labels).toEqual(['Running', 'OK', 'Error']);
-    expect(new Set((['running', 'ok', 'error'] as const).map(runStatusColor)).size).toBe(3);
+  it('labels and colours every status distinctly', () => {
+    expect(JOB_RUN_STATUSES.map(runStatusLabel)).toEqual([
+      'Running',
+      'OK',
+      'Error',
+      'Interrupted',
+    ]);
+    expect(new Set(JOB_RUN_STATUSES.map(runStatusColor)).size).toBe(JOB_RUN_STATUSES.length);
   });
 
   it('gives error its own colour token, so a failure never reads as a quiet success', () => {
     expect(runStatusColor('error')).toBe('var(--status-stuck)');
     expect(runStatusColor('ok')).toBe('var(--status-done)');
+  });
+
+  it('does not colour an interruption as a failure', () => {
+    // A deploy mid-run is an unknown outcome, not breakage. Red would make every restart look
+    // like a broken job.
+    expect(runStatusColor('interrupted')).not.toBe(runStatusColor('error'));
+    expect(isRunFailure('interrupted')).toBe(false);
+    expect(isRunFailure('error')).toBe(true);
+  });
+
+  it('relabels the closing timestamp for an interrupted run', () => {
+    // Its finishedAt is when the restart was noticed, not when the job stopped.
+    expect(endTimeLabel('ok')).toBe('finished');
+    expect(endTimeLabel('error')).toBe('finished');
+    expect(endTimeLabel('interrupted')).toBe('detected');
+  });
+
+  it('titles the reason callout by outcome, not always "Failure"', () => {
+    expect(outcomeLabel('error')).toBe('Failure');
+    expect(outcomeLabel('interrupted')).toBe('Interrupted');
   });
 });
 
@@ -79,6 +106,17 @@ describe('runDuration', () => {
 
   it('is null while the run is in flight', () => {
     expect(runDuration(run({ status: 'running', finishedAt: null }))).toBeNull();
+  });
+
+  it('refuses to derive a duration for an interrupted run', () => {
+    // Interrupted Monday, swept Thursday: finishedAt - startedAt is three days, and the run
+    // certainly did not take three days. "3d" would be a confident lie sitting right next to a
+    // message saying we don't know what happened.
+    const threeDays = 3 * 24 * 60 * 60 * 1000;
+    const swept = run({ status: 'interrupted', startedAt: 0, finishedAt: threeDays });
+    expect(runDuration(swept)).toBeNull();
+    // The same span on a real run is reported normally — it is the status that makes it unknown.
+    expect(runDuration(run({ status: 'ok', startedAt: 0, finishedAt: threeDays }))).toBe('72h');
   });
 });
 
@@ -147,6 +185,18 @@ describe('defaultHeadline', () => {
 
   it('says so while in flight', () => {
     expect(defaultHeadline(run({ status: 'running', finishedAt: null }))).toBe('In progress…');
+  });
+
+  it('explains an interrupted run rather than showing stale numbers', () => {
+    const swept = run({
+      status: 'interrupted',
+      error: 'the server restarted while this run was in flight',
+      summary: { scanned: 12 },
+    });
+    expect(defaultHeadline(swept)).toBe('the server restarted while this run was in flight');
+    expect(defaultHeadline(run({ status: 'interrupted', error: null }))).toBe(
+      'Interrupted before it finished',
+    );
   });
 
   it('handles a run with no summary, and one whose summary is all nested', () => {

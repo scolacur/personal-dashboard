@@ -4,8 +4,10 @@
   import { fetchJobRun } from '$lib/job-runs-api';
   import { RECURRING_JOBS } from '$lib/jobs';
   import {
+    endTimeLabel,
     formatTs,
     humanizeKey,
+    outcomeLabel,
     relativeTime,
     runDuration,
     runStatusColor,
@@ -94,14 +96,19 @@
       </span>
       <span>
         started {formatTs(run.startedAt)} ({relativeTime(run.startedAt)})
-        · finished {formatTs(run.finishedAt)}
+        · {endTimeLabel(run.status)}
+        {formatTs(run.finishedAt)}
         · took {runDuration(run) ?? '—'}
       </span>
     </div>
 
     {#if run.error}
-      <div class="jrd-failure" role="alert">
-        <span class="jrd-failure-label">Failure</span>
+      <div
+        class="jrd-failure"
+        class:jrd-failure-soft={run.status === 'interrupted'}
+        role="alert"
+      >
+        <span class="jrd-failure-label">{outcomeLabel(run.status)}</span>
         <span class="jrd-failure-reason">{run.error}</span>
       </div>
     {/if}

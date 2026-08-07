@@ -30,9 +30,29 @@ describe('bootstrapJobRunsSchema', () => {
     bootstrapJobRunsSchema(db); // stands in for the next boot
 
     const after = getRun(db, orphan.id);
-    expect(after?.status).toBe('error');
+    expect(after?.status).toBe('interrupted');
     expect(after?.finishedAt).not.toBeNull();
-    expect(after?.error).toMatch(/interrupted/);
+    expect(after?.error).toMatch(/restarted/);
+  });
+
+  it('marks an interrupted run `interrupted`, never `error`', () => {
+    // The cause belongs in the schema, not in prose. Counting deploys as job failures — or
+    // telling them apart by string-matching the message — is exactly what this prevents.
+    startRun(db, 'a-job');
+    bootstrapJobRunsSchema(db);
+    expect(listRuns(db, 'a-job').filter((r) => r.status === 'error')).toHaveLength(0);
+  });
+
+  it('leaves already-closed runs alone across a boot', () => {
+    const ok = startRun(db, 'a-job');
+    finishRun(db, ok.id, { status: 'ok', summary: { n: 1 } });
+    const failed = startRun(db, 'a-job');
+    finishRun(db, failed.id, { status: 'error', error: 'real failure' });
+
+    bootstrapJobRunsSchema(db);
+
+    expect(getRun(db, ok.id)).toMatchObject({ status: 'ok', summary: { n: 1 } });
+    expect(getRun(db, failed.id)).toMatchObject({ status: 'error', error: 'real failure' });
   });
 });
 

@@ -97,7 +97,11 @@
         {#each shown as run (run.id)}
           {@const href = runDetailPath(job, run.id)}
           {@const duration = runDuration(run)}
-          <li class="job-run" class:job-run-error={run.status === 'error'}>
+          <li
+            class="job-run"
+            class:job-run-error={run.status === 'error'}
+            class:job-run-interrupted={run.status === 'interrupted'}
+          >
             <span
               class="job-run-status"
               style="--rc: {runStatusColor(run.status)}"

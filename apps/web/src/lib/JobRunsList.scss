@@ -45,6 +45,12 @@
   box-shadow: inset 2px 0 0 var(--status-stuck);
 }
 
+// An interrupted run is flagged too, but in amber — it wants attention without being counted,
+// or read, as breakage.
+.job-run-interrupted {
+  box-shadow: inset 2px 0 0 var(--status-warn);
+}
+
 .job-run-status {
   flex-shrink: 0;
   min-width: 4.5rem;
