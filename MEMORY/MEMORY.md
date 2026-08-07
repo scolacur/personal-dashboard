@@ -11,4 +11,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-06](2026-08-06.md) — Busy: gate 17→9 (PD-463/432/424/482/394, D-064/D-066) then re-scoped to 4 real blockers; path-guard author-scoped (D-067); **PD-475 BST shipped** (D-065 amended).
 
+- [2026-08-07](2026-08-06.md) — *(written into the 08-06 file, ran past midnight)* Coverage measured for the first time: ~71%, `.svelte` unmeasured; tooling shipped, PD-484 filed, a dead test file revived.
+
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*

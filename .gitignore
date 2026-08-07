@@ -13,6 +13,8 @@ data/
 .robot/
 apps/web/.svelte-kit/
 apps/web/build/
+# `npm run test:coverage` output (v8 provider, html reporter) — a build artifact per workspace.
+coverage/
 
 # also match node_modules symlinks/files, not just directories
 node_modules

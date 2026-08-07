@@ -2,8 +2,6 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // The suffix is `.spec.ts`, not `.test.ts` — a `.test.ts` file is silently never run.
-    include: ['src/**/*.spec.ts'],
     coverage: {
       provider: 'v8',
       // Count every source file, not just the ones a test happens to import —

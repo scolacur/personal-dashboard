@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "prepare": "svelte-kit sync || true"
   },
   "devDependencies": {
@@ -16,6 +17,7 @@
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/kit": "^2.0.0",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
     "sass": "^1.101.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
