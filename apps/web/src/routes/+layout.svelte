@@ -8,6 +8,7 @@
   import YinYang from '$lib/icons/YinYang.svelte';
   import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from '$lib/nav-utils';
   import DeployStatus from './DeployStatus.svelte';
+  import DispatchKillswitch from './DispatchKillswitch.svelte';
   import { homeWidgets, widgetsForPage } from '$lib/widgets';
   import { arrangeMode } from '$lib/arrange.svelte';
   import FloatingPomodoro from './widgets/pomodoro/FloatingPomodoro.svelte';
@@ -29,9 +30,10 @@
   // Refine chat window on mobile — hide it there. Match on route id (exact) not pathname.
   const showPomodoro = $derived(page.route.id !== '/devops/tickets/[ticketId]');
 
-  // Deploy/commit readout: Dev Ops routes only (PD-414). It re-homes the DeployStatus that
-  // PD-422 left unmounted when it removed the old `#site-status` section.
-  const showDeployStatus = $derived(isDevOpsRoute(page.url.pathname));
+  // Dev Ops section context in the nav: the deploy/commit readout (PD-414, re-homed from the
+  // `#site-status` section PD-422 removed) and the Robot dispatch killswitch (PD-410). Both are
+  // section-wide operational state, so both ride the same predicate.
+  const showDevOpsNav = $derived(isDevOpsRoute(page.url.pathname));
 
   // Arrange button: shown only on widget-bearing pages at >=768px (enforced in CSS).
   // The route half of the rule lives in nav-utils so it's unit-tested (nav-utils.spec.ts);
@@ -91,7 +93,8 @@
         <span class="env-badge" title="Local development — not production">DEV</span>
       {/if}
       <div class="nav-spacer"></div>
-      {#if showDeployStatus}
+      {#if showDevOpsNav}
+        <DispatchKillswitch />
         <DeployStatus />
       {/if}
       <NotificationBell />
