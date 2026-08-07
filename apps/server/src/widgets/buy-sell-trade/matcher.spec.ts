@@ -505,3 +505,30 @@ describe('excerptFor', () => {
     expect(out).toContain('Chronoblob');
   });
 });
+
+// Found by running the matcher against Steve's real 52 listings (2026-08-07), not by fixtures:
+// one WTB row produced ~8 of 39 possible matches on its own.
+describe('a leading manufacturer is never derived as a model number', () => {
+  const rout = listing({ item: '2hp Rout', manufacturer: null }); // as it really is on his list
+  const mix = listing({ item: 'Mix', manufacturer: '2hp' }); // …and 2hp IS a maker on another row
+
+  it('does not derive "2hp" from a row that records no manufacturer of its own', () => {
+    // Alone, the row has no way to know 2hp is a brand — this is the buggy case.
+    expect(needlesFor(rout).map((n) => n.text)).toContain('2hp');
+    // Given the list's manufacturer vocabulary, it does.
+    const makers = new Set(['2hp']);
+    expect(needlesFor(rout, makers).map((n) => n.text)).not.toContain('2hp');
+  });
+
+  it('stops that row matching every 2hp module in a thread', () => {
+    const comment2hp = comment('WTS: 2hp Verb $60, 2hp Tune $55, Doepfer A-138 $40');
+    // matchComments builds the vocabulary from the whole list, so Rout must not fire here.
+    const out = matchComments([rout, mix], [comment2hp]);
+    expect(out.filter((m) => m.listingId === rout.id)).toEqual([]);
+  });
+
+  it('still derives a genuine model number that is not anyone’s maker', () => {
+    const l = listing({ item: 'A-111-5 Mini Synth Voice', manufacturer: 'Doepfer' });
+    expect(needlesFor(l, new Set(['2hp', 'doepfer'])).map((n) => n.text)).toContain('a 111 5');
+  });
+});
