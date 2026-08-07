@@ -1,0 +1,148 @@
+// The nav killswitch (PD-410). Styled for its one consumer, the Dev Ops top nav, like
+// DeployStatus beside it: no trailing margin, no wrapping.
+//
+// The visual weight is deliberately asymmetric. `running` is quiet — it is the normal state and
+// must not compete with the page. `paused` is loud, because the whole ticket exists to stop a
+// stopped loop from looking like an idle one. `holding` sits between: it is worth seeing, but it
+// resolves itself and is not something to act on.
+.killswitch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  padding: 0.15rem var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.ks-state {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+
+.ks-label {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.ks-detail {
+  color: var(--muted);
+  max-width: 32ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ks-note {
+  color: var(--status-warn);
+  font-size: var(--font-size-xs);
+}
+
+.ks-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  padding: 0.1rem var(--space-sm);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+// ── Running: quiet. A green dot and nothing else competing for attention. ──
+.mode-running {
+  .dot {
+    background: var(--status-done);
+  }
+}
+
+// ── Paused: unmistakable. Tinted panel, red border, the label in full colour. ──
+.mode-paused {
+  border-color: var(--status-stuck);
+  background: color-mix(in srgb, var(--status-stuck) 12%, transparent);
+
+  .dot {
+    background: var(--status-stuck);
+  }
+
+  .ks-label {
+    color: var(--status-stuck);
+    font-weight: 600;
+  }
+
+  .ks-btn {
+    border-color: var(--status-stuck);
+    color: var(--status-stuck);
+
+    &:hover:not(:disabled) {
+      background: var(--status-stuck);
+      color: var(--bg);
+      border-color: var(--status-stuck);
+    }
+  }
+}
+
+// ── Holding: visible, not alarming. It ends on its own. ──
+.mode-holding {
+  border-color: color-mix(in srgb, var(--status-warn) 50%, transparent);
+
+  .dot {
+    background: var(--status-warn);
+  }
+
+  .ks-label {
+    color: var(--status-warn);
+  }
+}
+
+/* ── Narrow viewports ──────────────────────────────────────────────────────
+   Shed detail as the nav tightens, but NEVER the paused state itself — the whole point is that
+   it is always visible. The label and the button survive at every width. */
+
+@media (max-width: 1100px) {
+  .ks-note {
+    display: none;
+  }
+
+  .ks-detail {
+    max-width: 18ch;
+  }
+}
+
+@media (max-width: 768px) {
+  .ks-detail {
+    display: none;
+  }
+
+  // Running is the quiet default and the least worth nav space when it is scarce; a paused or
+  // holding loop keeps its label.
+  .mode-running .ks-label {
+    display: none;
+  }
+
+  .killswitch {
+    gap: var(--space-xs);
+    font-size: var(--font-size-xs);
+  }
+}
