@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
-import { appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, type RunQuery } from './session';
+import { appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, ROBOT_TOOLS, type RunQuery } from './session';
 import { OUTPUT_TAIL_MAX } from './runs';
 import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
 import type { RobotCandidate } from './select';
@@ -76,6 +76,51 @@ describe('readHandoff', () => {
     mkdirSync(path.join(dir, '.robot'), { recursive: true });
     writeFileSync(path.join(dir, ASK_HUMAN_MARKER), 'Should this use the new or old API?\n');
     expect(readHandoff(dir).askHuman).toBe('Should this use the new or old API?');
+  });
+});
+
+// PD-486 / D-068. These assert the SESSION's tool surface, not just the constant — the failure this
+// guards against is the option being dropped or renamed while ROBOT_TOOLS stays innocently correct.
+describe('the Robot tool surface', () => {
+  /** Capture the options the session actually hands the SDK. */
+  async function optionsPassedToSdk(): Promise<Record<string, unknown>> {
+    const dir = mkdtempSync(path.join(tmpdir(), 'robot-tools-'));
+    let seen: Record<string, unknown> = {};
+    const fake: RunQuery = ((args: { options: Record<string, unknown> }) => {
+      seen = args.options;
+      return (async function* () {
+        yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 1 } as never;
+      })();
+    }) as unknown as RunQuery;
+    await runRobotSession(loadConfig({}), candidate, { dir, branch: 'robot/220' }, undefined, fake);
+    rmSync(dir, { recursive: true, force: true });
+    return seen;
+  }
+
+  it('does NOT give the Robot the Task tool — sub-agent turns are invisible to the cap', async () => {
+    expect(ROBOT_TOOLS).not.toContain('Task');
+    expect((await optionsPassedToSdk()).tools).not.toContain('Task');
+  });
+
+  it('declares the surface via `tools`, not `allowedTools`', async () => {
+    // `allowedTools` is a permission auto-approve list; under `bypassPermissions` it restricts
+    // nothing. Setting it here instead of `tools` would look right and do nothing at all.
+    const options = await optionsPassedToSdk();
+    expect(Array.isArray(options.tools)).toBe(true);
+    expect(options.allowedTools).toBeUndefined();
+  });
+
+  it('still carries everything the Finish sequence needs', async () => {
+    // Losing one of these does not fail loudly — it degrades or hangs a live run, which is why
+    // they are pinned here rather than left to review.
+    for (const tool of ['Bash', 'BashOutput', 'KillShell', 'Read', 'Write', 'Edit', 'Glob', 'Grep']) {
+      expect(ROBOT_TOOLS).toContain(tool);
+    }
+  });
+
+  it('excludes the web tools the egress allowlist would refuse anyway', () => {
+    expect(ROBOT_TOOLS).not.toContain('WebFetch');
+    expect(ROBOT_TOOLS).not.toContain('WebSearch');
   });
 });
 

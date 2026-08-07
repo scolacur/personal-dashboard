@@ -295,6 +295,23 @@ An agent operating *unsupervised*. **May not queue tickets** — it can create t
 something stronger than a prompt (PD-244). This is the class D-039's backlog-only rule
 governs.
 
+**Sub-agent depth** (D-068):
+How many levels of agent-spawning-agent happen *inside one run*. Set to **zero** for the Robot: its
+tool allowlist omits `Task`, so it cannot spawn sub-agents at all. Enforced mechanically (the tool is
+absent from the session), never by prompt — a prompt limit is not trustworthy for an unsupervised
+agent. The reason it matters is accounting: sub-agent turns carry a non-null `parent_tool_use_id` and
+are **excluded from `num_turns`**, so they are invisible to the per-ticket ceiling (D-066) and to the
+turns limb of the budget (D-064). The SDK offers no depth knob — the cheap options are 0 or
+unbounded.
+_Avoid_: bare **"depth"** anywhere in this area, and conflating this with **ticket-spawn depth** —
+they share no mechanism and no enforcement point.
+
+**Ticket-spawn depth** (`agent_queue_depth`, D-039):
+How many levels of ticket-creates-ticket separate a queued ticket from a human-authored one.
+Server-computed as `parent.depth + 1` and **never agent-supplied**; agent-queuing is allowed only at
+`≤ 1`. About the **board**, not about a run. Still unbuilt (PD-244).
+_Avoid_: reading this as a limit on sub-agents — see **sub-agent depth**.
+
 **Interactive agent** (e.g. the **Refine** agent):
 An agent that is *always working with Steve in the loop*. **May queue tickets — but only
 after Steve's explicit approval.** Human-in-the-loop is the enforcement, so it is safe in
