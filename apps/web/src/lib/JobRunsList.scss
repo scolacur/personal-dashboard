@@ -1,0 +1,116 @@
+// Generic job-run list (PD-442). Deliberately close to AuditJobRow's `.run-row` styling — this
+// is the surface that eventually replaces it, so the two should not look like different features.
+
+.job-runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.job-runs-muted {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+}
+
+.job-runs-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-sm) 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.job-run {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.3rem var(--space-sm);
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+
+  &:nth-child(even) {
+    background: var(--surface-2);
+  }
+}
+
+// A failed run has to be distinguishable from a clean run with zero results at a glance — the
+// two are the same row otherwise, and confusing them is the exact ambiguity run history exists
+// to remove. Colour alone would not do it (it fails for colour-blind readers and in a
+// screenshot), so the status word carries the meaning and the rule reinforces it.
+.job-run-error {
+  box-shadow: inset 2px 0 0 var(--status-stuck);
+}
+
+.job-run-status {
+  flex-shrink: 0;
+  min-width: 4.5rem;
+  color: var(--rc);
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.job-run-when {
+  flex-shrink: 0;
+  min-width: 7rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.job-run-duration {
+  flex-shrink: 0;
+  min-width: 3.5rem;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.job-run-headline {
+  flex: 1;
+  min-width: 8rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-run-link {
+  flex-shrink: 0;
+  color: var(--accent-2);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.job-runs-view-all {
+  align-self: flex-start;
+  padding-left: var(--space-sm);
+  color: var(--accent-2);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// Phones: the fixed min-widths add up past a 375px viewport and would scroll the page sideways.
+// Wrap instead, with the headline dropping to its own line where it has room to be readable.
+@media (max-width: 600px) {
+  .job-run {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+
+  .job-run-headline {
+    flex: 1 0 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+}

@@ -4,10 +4,14 @@
   import { nextCronRun, scheduleLabel } from '$lib/cron';
   import { formatTs } from '$lib/audit-display';
   import Modal from '$lib/Modal.svelte';
+  import JobRunsList from '$lib/JobRunsList.svelte';
 
-  // Schedule-only Recurring-Jobs row (PD-286) for jobs without a run engine (e.g. the nightly
-  // DB backup). Shows the cadence + next fire time computed from the cron. Real run history for
-  // the backup is tracked by PD-317.
+  // Recurring-Jobs row (PD-286) for every job except the Ticket Audit, which keeps its bespoke
+  // row until PD-443 migrates it. Shows the cadence + next fire time computed from the cron.
+  //
+  // A job that declares `runs` in the registry also gets its run history here (PD-442) — that
+  // declaration is the entire integration, which is what makes the store worth having. Without
+  // one this stays the schedule-only row it has always been.
   let { job }: { job: RecurringJob } = $props();
 
   const nextRunAt = $derived(nextCronRun(job.schedule, Date.now()));
@@ -28,6 +32,10 @@
       {#if nextRunAt}<span class="job-nextrun">Next run: {formatTs(nextRunAt)}</span>{/if}
     </div>
   </div>
+
+  {#if job.runs}
+    <JobRunsList {job} />
+  {/if}
 
   <Modal open={infoOpen} title={job.name} onClose={() => (infoOpen = false)}>
     <p class="job-about">{job.description}</p>
