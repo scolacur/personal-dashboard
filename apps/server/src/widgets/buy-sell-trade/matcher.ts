@@ -264,12 +264,22 @@ const CATEGORY_TAILS = new Set([
  * the token when it is really the manufacturer — `2hp Mix` starts with "2hp", and deriving that
  * as an alias for `Mix` would match every 2hp module in the thread.
  */
-function leadingModelNumber(item: string, maker: string | null): string | null {
+function leadingModelNumber(
+  item: string,
+  maker: string | null,
+  knownMakers: ReadonlySet<string> = new Set(),
+): string | null {
   const first = item.trim().split(/\s+/)[0] ?? '';
   if (!/\d/.test(first) || !/\p{L}/u.test(first)) return null;
   const n = normalize(first);
   if (n.length < 3) return null;
   if (maker && (maker === n || maker.startsWith(`${n} `))) return null;
+  // The listing's OWN manufacturer field is not enough. Found against real data (2026-08-07):
+  // the WTB row `2hp Rout` records no manufacturer, so `2hp` looked like a model number and was
+  // derived as an alias — which then matched every 2hp module anyone mentioned, producing ~8 of
+  // 39 possible matches from one row. `2hp` is a manufacturer on OTHER rows of the same list, so
+  // the vocabulary to check against is the whole list, not the row.
+  if (knownMakers.has(n)) return null;
   return n;
 }
 
@@ -353,6 +363,9 @@ export interface Needle {
 /** Every string that should be taken as a mention of this listing, and how far each is trusted. */
 export function needlesFor(
   listing: Pick<BstListing, 'item' | 'manufacturer' | 'aliases'>,
+  /** Every manufacturer named anywhere on the list — see `leadingModelNumber` for why one row's
+   *  own field is not enough. `matchComments` supplies it; callers testing one listing may omit. */
+  knownMakers: ReadonlySet<string> = new Set(),
 ): Needle[] {
   const core = coreName(listing.item);
   if (!core) return [];
@@ -375,7 +388,7 @@ export function needlesFor(
   for (const alias of MODULE_ALIASES[core] ?? []) add(alias, { derived: false });
 
   // Machine-derived.
-  const model = leadingModelNumber(listing.item, maker);
+  const model = leadingModelNumber(listing.item, maker, knownMakers);
   if (model) add(model, { derived: true });
   for (const short of shortenings(core, maker)) add(short, { derived: true });
 
@@ -575,9 +588,15 @@ export interface CommentMatch {
  * mentions Maths three times is one match, and the mention that wins sets the intent.
  */
 export function matchComments(listings: BstListing[], comments: BstCommentInput[]): CommentMatch[] {
+  // Manufacturer vocabulary drawn from the whole list, so a maker recorded on one row stops
+  // another row's identically-prefixed name being mistaken for a model number.
+  const knownMakers = new Set(
+    listings.map((l) => manufacturerNeedle(l)).filter((m): m is string => m !== null),
+  );
+
   const prepared = listings.map((listing) => ({
     listing,
-    needles: needlesFor(listing),
+    needles: needlesFor(listing, knownMakers),
     maker: manufacturerNeedle(listing),
   }));
 
