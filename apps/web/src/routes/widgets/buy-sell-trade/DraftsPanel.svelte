@@ -18,10 +18,11 @@
 
   // Drafted posts (PD-439's on-demand half, built in PD-475).
   //
-  // **Why there is a button at all.** The monthly job is not registered yet — it needs PD-442's
-  // shared job-run store — and even once it is, waiting for the 15th to post something you
-  // decided to sell today is a silly constraint for a tool you own. Generating is deterministic
-  // template expansion, so doing it on demand costs nothing.
+  // **Why there is a button at all.** The monthly cron is registered as of PD-439, and the
+  // button is still not redundant: waiting for the 15th to post something you decided to sell
+  // today is a silly constraint for a tool you own, and it is how you see a template edit take
+  // effect without waiting two weeks. Generating is deterministic template expansion, so doing
+  // it on demand costs nothing — and since PD-440 it records a run row exactly like the cron.
   let {
     listings,
     templates,

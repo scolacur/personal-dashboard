@@ -1,0 +1,24 @@
+// Run history for the BST widget's two jobs (PD-440). The rows themselves are styled by
+// JobRunsList; this only lays the two job blocks out inside the collapsible.
+
+.bst-runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-sm) 0;
+}
+
+.bst-runs-job {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.bst-runs-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}

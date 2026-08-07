@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { JobRun } from '@dashboard/shared';
-import { JOB_RUN_STATUSES, isRunFailure } from '@dashboard/shared';
+import { JOB_RUN_STATUSES, isRunFailure, isRunClean } from '@dashboard/shared';
 import type { RecurringJob } from './jobs';
 import {
   defaultHeadline,
@@ -46,6 +46,7 @@ describe('status display', () => {
       'Running',
       'OK',
       'Error',
+      'Partial',
       'Interrupted',
     ]);
     expect(new Set(JOB_RUN_STATUSES.map(runStatusColor)).size).toBe(JOB_RUN_STATUSES.length);
@@ -54,6 +55,20 @@ describe('status display', () => {
   it('gives error its own colour token, so a failure never reads as a quiet success', () => {
     expect(runStatusColor('error')).toBe('var(--status-stuck)');
     expect(runStatusColor('ok')).toBe('var(--status-done)');
+  });
+
+  it('does not treat a partial run as a failure, or as clean', () => {
+    // A half-read week did real work, so it is not an error; it is also emphatically not `ok` —
+    // reporting it as clean is the exact failure PD-471's three-valued scan status prevents.
+    expect(isRunFailure('partial')).toBe(false);
+    expect(isRunClean('partial')).toBe(false);
+    expect(isRunClean('ok')).toBe(true);
+    expect(runStatusColor('partial')).not.toBe(runStatusColor('ok'));
+    expect(runStatusColor('partial')).not.toBe(runStatusColor('error'));
+  });
+
+  it('titles a partial run "Incomplete", not "Failure"', () => {
+    expect(outcomeLabel('partial')).toBe('Incomplete');
   });
 
   it('does not colour an interruption as a failure', () => {
@@ -197,6 +212,16 @@ describe('defaultHeadline', () => {
     expect(defaultHeadline(run({ status: 'interrupted', error: null }))).toBe(
       'Interrupted before it finished',
     );
+  });
+
+  it('leads a partial run with what went wrong, not with the half that worked', () => {
+    const partial = run({
+      status: 'partial',
+      error: '1 of 2 threads could not be read: HTTP 429',
+      summary: { scanned: 100, created: 3 },
+    });
+    expect(defaultHeadline(partial)).toBe('1 of 2 threads could not be read: HTTP 429');
+    expect(defaultHeadline(run({ status: 'partial', error: null }))).toBe('Completed only partly');
   });
 
   it('handles a run with no summary, and one whose summary is all nested', () => {

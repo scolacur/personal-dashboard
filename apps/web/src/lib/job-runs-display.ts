@@ -9,6 +9,7 @@ const STATUS_LABELS: Record<JobRunStatus, string> = {
   running: 'Running',
   ok: 'OK',
   error: 'Error',
+  partial: 'Partial',
   interrupted: 'Interrupted',
 };
 
@@ -16,13 +17,15 @@ export function runStatusLabel(status: JobRunStatus): string {
   return STATUS_LABELS[status] ?? status;
 }
 
-// `interrupted` gets amber rather than the red `error` uses: a run cut short by a deploy is an
-// unknown outcome, not a failure, and colouring it red would make every restart look like
-// breakage. Amber over neutral grey because grey reads as "nothing happened", and something did.
+// Neither `partial` nor `interrupted` gets the red `error` uses. A run cut short by a deploy is
+// an unknown outcome and a partial run did real work — colouring either red would make every
+// restart, and every half-readable week, look like breakage. Neither gets neutral grey either:
+// grey reads as "nothing happened", and in both cases something did.
 const STATUS_COLORS: Record<JobRunStatus, string> = {
   running: 'var(--status-working)',
   ok: 'var(--status-done)',
   error: 'var(--status-stuck)',
+  partial: 'var(--status-needs-human)',
   interrupted: 'var(--status-warn)',
 };
 
@@ -98,9 +101,17 @@ export function endTimeLabel(status: JobRunStatus): string {
   return status === 'interrupted' ? 'detected' : 'finished';
 }
 
-/** Heading for the callout carrying `run.error` — an interruption is not a failure. */
+/**
+ * Heading for the callout carrying `run.error`.
+ *
+ * Only `error` is a failure. An interruption and a partial run both ended badly enough to
+ * explain themselves, but calling either one "Failure" is the mislabelling these statuses exist
+ * to prevent.
+ */
 export function outcomeLabel(status: JobRunStatus): string {
-  return status === 'interrupted' ? 'Interrupted' : 'Failure';
+  if (status === 'interrupted') return 'Interrupted';
+  if (status === 'partial') return 'Incomplete';
+  return 'Failure';
 }
 
 /** Unix-ms → local wall-clock string. Matches audit-display's `formatTs`. */
@@ -135,6 +146,9 @@ export function runDetailPath(job: RecurringJob, runId: number): string | null {
 export function defaultHeadline(run: JobRun): string {
   if (run.status === 'error') return run.error ?? 'Failed';
   if (run.status === 'interrupted') return run.error ?? 'Interrupted before it finished';
+  // A partial run leads with what went wrong, not with the numbers it did manage — the numbers
+  // are the half that worked, and showing them alone is how a degrading job looks healthy.
+  if (run.status === 'partial') return run.error ?? 'Completed only partly';
   if (run.status === 'running') return 'In progress…';
   if (!run.summary) return 'No details recorded';
 

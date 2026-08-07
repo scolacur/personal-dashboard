@@ -1,9 +1,13 @@
 // The dashboard's recurring background jobs (PD-286), surfaced in the Dev Ops "Jobs"
-// section + /devops/jobs. Kept in lockstep with the crons the server registers in
-// apps/server/src/index.ts (task-monitor:audit + db-backup). `kind` picks the row renderer:
-// 'audit' gets the rich row (live status, Run now, report link); everything else is schedule-only.
+// section + /devops/jobs. Kept in lockstep with the crons the server registers — core ones in
+// apps/server/src/index.ts (db-backup), the rest in each widget's `registerCron`.
+//
+// `kind` picks the row *renderer*: 'audit' gets the bespoke rich row (live status, Run now,
+// report link) until PD-443 migrates it; everything else gets the standard row. Since PD-442 it
+// is `runs` — not `kind` — that decides whether a job shows history, which is why new jobs are
+// plain 'generic' rather than growing this union one entry per job.
 
-export type JobKind = 'audit' | 'backup';
+export type JobKind = 'audit' | 'backup' | 'generic';
 
 /**
  * A job's declaration that it writes `job_runs` rows (PD-442) — which is all it takes to get a
@@ -54,5 +58,26 @@ export const RECURRING_JOBS: RecurringJob[] = [
     description: 'Consistent snapshot of dashboard.db into the backups dir (PD-33).',
     schedule: '0 3 * * *', // daily 03:00
     kind: 'backup',
+  },
+  {
+    id: 'bst-scan',
+    name: 'BST — r/modular scan',
+    description:
+      'Reads the two newest r/modular Buy/Sell/Trade threads over public RSS and matches ' +
+      'comments against the gear list (PD-471). About two minutes — the feed allows roughly ' +
+      'one request a minute.',
+    schedule: '0 9 * * 1', // BST_SCAN_SCHEDULE — weekly, Monday 09:00
+    kind: 'generic',
+    runs: { jobName: 'buy-sell-trade:scan' },
+  },
+  {
+    id: 'bst-drafts',
+    name: 'BST — monthly post drafter',
+    description:
+      'Renders the Reddit, Facebook and Discord versions of the for-sale post from the current ' +
+      'gear list and terms (PD-439). Adds a batch; never overwrites last month’s.',
+    schedule: '0 9 15 * *', // BST_DRAFTS_SCHEDULE — monthly, the 15th at 09:00
+    kind: 'generic',
+    runs: { jobName: 'buy-sell-trade:drafts' },
   },
 ];

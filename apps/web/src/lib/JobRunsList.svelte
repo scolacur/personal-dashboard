@@ -99,14 +99,10 @@
           {@const duration = runDuration(run)}
           <li
             class="job-run"
-            class:job-run-error={run.status === 'error'}
-            class:job-run-interrupted={run.status === 'interrupted'}
+            class:job-run-flagged={run.status !== 'ok' && run.status !== 'running'}
+            style="--rc: {runStatusColor(run.status)}"
           >
-            <span
-              class="job-run-status"
-              style="--rc: {runStatusColor(run.status)}"
-              title={runStatusLabel(run.status)}
-            >
+            <span class="job-run-status" title={runStatusLabel(run.status)}>
               {runStatusLabel(run.status)}
             </span>
 

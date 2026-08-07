@@ -52,6 +52,22 @@
   white-space: nowrap;
 }
 
+/* "Last scanned 3 days ago" (PD-440). Deliberately the quietest thing on the card — but it is
+   what separates "0 new matches, quiet week" from "0 new matches, the scanner stopped in July".
+   A run that did not end cleanly also names its status here and drops the muted tone, because a
+   failing scan reported in the same grey as a healthy one is how a broken job survives a month. */
+.bst-card-scanned {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  text-align: center;
+
+  &.not-clean {
+    color: var(--status-needs-human);
+    font-weight: 600;
+  }
+}
+
 /* Matches from the weekly r/modular scan (PD-438). Only tinted when there is something to
    read — a zero should not draw the eye across the dashboard grid. */
 .stat.has-matches .stat-n {

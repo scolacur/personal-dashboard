@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { BstListing } from '@dashboard/shared';
+  import type { BstListing, JobRun } from '@dashboard/shared';
+  import { BST_SCAN_JOB } from '@dashboard/shared';
   import { fetchListings, fetchOpenMatchCount } from './buy-sell-trade/api';
+  import { fetchJobRuns } from './job-runs-api';
+  import { relativeTime, runStatusLabel } from './job-runs-display';
 
   // Collapsed summary card for the Buy/Sell/Trade widget (PD-437, matches PD-438). Per D-062
   // the card header links to the widget page rather than flipping, so this face is read-only:
@@ -10,6 +13,7 @@
 
   let listings = $state<BstListing[]>([]);
   let openMatches = $state(0);
+  let lastScan = $state<JobRun | null>(null);
   let loading = $state(true);
   let failed = $state(false);
 
@@ -24,6 +28,15 @@
       failed = true;
     } finally {
       loading = false;
+    }
+
+    // Separate and non-blocking (PD-440). "0 new matches" is ambiguous between a quiet week and a
+    // scanner that stopped a month ago, and this line is what separates them — but it is a
+    // footnote, so it must never be the reason the card fails to render.
+    try {
+      lastScan = (await fetchJobRuns(BST_SCAN_JOB, 1))[0] ?? null;
+    } catch {
+      lastScan = null;
     }
   });
 
@@ -65,6 +78,13 @@
     </div>
     {#if preview.length > 0}
       <p class="bst-card-preview">{preview.join(' · ')}{listings.length > preview.length ? ' …' : ''}</p>
+    {/if}
+    {#if lastScan}
+      <p class="bst-card-scanned" class:not-clean={lastScan.status !== 'ok'}>
+        Last scanned {relativeTime(lastScan.startedAt)}{lastScan.status === 'ok'
+          ? ''
+          : ` · ${runStatusLabel(lastScan.status)}`}
+      </p>
     {/if}
   {/if}
 </div>

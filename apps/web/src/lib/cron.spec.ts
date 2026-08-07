@@ -39,6 +39,17 @@ describe('scheduleLabel', () => {
     expect(scheduleLabel('30 14 * * *')).toBe('Daily · 2:30 PM');
   });
 
+  it('labels a monthly day-of-month schedule (the BST drafter)', () => {
+    // Before PD-439 this fell through to the raw expression, so the Jobs surface would have
+    // shown a user "0 9 15 * *" as the frequency.
+    expect(scheduleLabel('0 9 15 * *')).toBe('Monthly · 15th 9:00 AM');
+    expect(scheduleLabel('30 14 1 * *')).toBe('Monthly · 1st 2:30 PM');
+    expect(scheduleLabel('0 0 2 * *')).toBe('Monthly · 2nd 12:00 AM');
+    expect(scheduleLabel('0 0 3 * *')).toBe('Monthly · 3rd 12:00 AM');
+    expect(scheduleLabel('0 0 11 * *')).toBe('Monthly · 11th 12:00 AM');
+    expect(scheduleLabel('0 0 21 * *')).toBe('Monthly · 21st 12:00 AM');
+  });
+
   it('falls back to the raw expression for shapes it does not recognise', () => {
     expect(scheduleLabel('*/15 * * * *')).toBe('*/15 * * * *');
   });
