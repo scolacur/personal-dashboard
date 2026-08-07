@@ -138,6 +138,49 @@ export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?
   return { verifyOk, prNumber, askHuman };
 }
 
+/**
+ * The Robot's tool surface (PD-486, [[D-068]]) — declared, not inherited.
+ *
+ * Before this, the session passed no tool option at all, so it ran with the SDK's full default set.
+ * That silently included **`Task`** (sub-agent spawning) at unbounded depth, which nobody chose —
+ * and sub-agent turns are invisible to the cap: assistant messages inside a sub-agent carry a
+ * non-null `parent_tool_use_id` and are excluded from `num_turns` (see the turn counter below). One
+ * main-loop turn could therefore spawn a sub-agent that burned arbitrarily many, straight through
+ * PD-432's per-ticket ceiling and the turns limb of PD-463's budget.
+ *
+ * **Use `tools`, not `allowedTools`.** This is the trap: `allowedTools` is a *permission*
+ * auto-approve list ("execute without asking"), and under `bypassPermissions` nothing asks anyway —
+ * setting it here would restrict nothing. `tools` is the one that "specifies the base set of
+ * available built-in tools". Anything absent from this list does not exist for the session.
+ *
+ * An allowlist, deliberately, rather than denying `Task`: a denylist admits every future SDK tool by
+ * default, which is exactly how `Task` arrived unnoticed. New capability should be opt-in.
+ *
+ * Each entry earns its place from what `prompt.ts` actually asks for:
+ *  - `Bash` — every Finish step: npm ci / verify, git, gh, the marker files.
+ *  - `BashOutput` / `KillShell` — managing a command already started, not new capability. `npm ci`
+ *    plus a full verify is minutes long and may be backgrounded; without these a backgrounded
+ *    command is unreachable and the run hangs rather than fails, which is far worse to diagnose.
+ *  - `Read` / `Write` / `Edit` — Step 1 orient (PROJECT.md, CLAUDE.md, DECISIONS.md) and Step 2.
+ *  - `Glob` / `Grep` — finding the code to change. The SDK notes these must be listed explicitly or
+ *    search silently degrades to `find`/`grep` through Bash.
+ *  - `TodoWrite` — bookkeeping across a long multi-step run; no side effects outside the session.
+ *
+ * Excluded on purpose: `Task` (above); `WebFetch` / `WebSearch`, which the egress allowlist would
+ * refuse anyway and whose absence is the premise of PD-310; `NotebookEdit`, no notebooks here.
+ */
+export const ROBOT_TOOLS: readonly string[] = [
+  'Bash',
+  'BashOutput',
+  'KillShell',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'TodoWrite',
+];
+
 /** Injectable SDK query (tests swap the real subprocess out). */
 export type RunQuery = typeof query;
 
@@ -180,6 +223,9 @@ export async function runRobotSession(
         model: config.model,
         cwd: worktree.dir,
         systemPrompt: robotSystemPrompt(),
+        // PD-486: the base set of tools that exist for this session. `Task` is absent, so the
+        // Robot cannot spawn sub-agents whose turns the cap can't see. See ROBOT_TOOLS.
+        tools: [...ROBOT_TOOLS],
         // PD-432: the ticket's override when it has one, else the loop-wide env default. Null is
         // the normal case, so the global stays authoritative for ~every ticket.
         maxTurns: candidate.maxTurns ?? config.robot.maxTurns,
