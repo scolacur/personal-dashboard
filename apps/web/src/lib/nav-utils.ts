@@ -1,7 +1,21 @@
 import { pages } from './pages';
 
+/** The Library page's route and nav label (PD-334, D-071).
+ *
+ *  Deliberately absent from `pages.ts` — it is a derived view, not a curated page, and keeping
+ *  it out is what stops `arrangeablePageId` ever lighting up the Arrange button there. The cost
+ *  is that title resolution needs this one explicit case.
+ *
+ *  Term and label differ on purpose: **library** is the domain word used in code and docs,
+ *  **All Widgets** is the button copy, because "Library" alone reads vaguely in a nav sitting
+ *  beside "New Page" and "Edit". */
+export const LIBRARY_ROUTE = '/library';
+export const LIBRARY_TITLE = 'All Widgets';
+
 /** Returns the title of the nav page that best matches `pathname`, or "Dashboard" if none. */
 export function resolvePageTitle(pathname: string): string {
+  if (pathname === LIBRARY_ROUTE) return LIBRARY_TITLE;
+
   // Sort longest route first so /devops/tickets/... matches /devops before /.
   const sorted = [...pages].sort((a, b) => b.route.length - a.route.length);
   const match = sorted.find((p) =>
