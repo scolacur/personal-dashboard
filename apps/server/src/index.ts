@@ -7,6 +7,8 @@ import { CronRegistry } from './cron';
 import { registerBackupJob } from './backup';
 import { bootstrapJobRunsSchema } from './lib/job-runs';
 import { registerJobRunRoutes } from './lib/job-runs-routes';
+import { bootstrapShellLayoutSchema } from './lib/shell-layout';
+import { registerShellLayoutRoutes } from './lib/shell-layout-routes';
 import type { BackendWidget } from './types';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as taskMonitorWidget } from './widgets/task-monitor/index';
@@ -38,6 +40,10 @@ const app = Fastify({
 // happen once, up front.
 bootstrapJobRunsSchema(db);
 
+// Shell page membership (PD-334, D-071). Bootstrapped alongside the job-run store: the shell is
+// not a widget, and its one-time seed must land before anything serves a page.
+bootstrapShellLayoutSchema(db);
+
 for (const widget of widgets) {
   widget.bootstrapSchema?.(db);
 }
@@ -47,6 +53,7 @@ for (const widget of widgets) {
 }
 
 registerJobRunRoutes(app, db);
+registerShellLayoutRoutes(app, db);
 
 // In-process scheduler (PROJECT.md §2). Widgets register jobs via registerCron;
 // core jobs (DB backups) register directly. Uses Fastify's pino logger.

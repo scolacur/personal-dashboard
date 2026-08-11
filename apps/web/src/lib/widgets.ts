@@ -25,82 +25,71 @@ export interface WidgetMeta {
   title: string;
   description: string;
   route: string;
-  /** Page ids (see pages.ts) this widget is surfaced on. */
-  pages?: string[];
   /** When present, the card renders a live embedded component instead of a link stub. */
   embed?: WidgetEmbed;
-  /** A dashboard-internal surface (the Dev Ops summaries) rather than one of the
-   *  user-facing widgets in the repo-root `widgets/` spec directory. Registered so it can
-   *  be arranged on its own page, but kept off the Home "all widgets" grid. */
-  system?: boolean;
 }
 
-// One entry per folder in the repo-root `widgets/` spec directory. Each widget
-// owns a route at /widgets/<id>. The home grid renders all of these; each page
-// renders the subset tagged with its id.
+// One entry per folder in the repo-root `widgets/` spec directory, plus the Dev Ops summaries.
+// Each widget owns a route at /widgets/<id>.
+//
+// **Registration says nothing about where a widget appears** (D-071). It puts the widget in the
+// widget library; placement onto pages is user state, stored server-side and read through
+// `page-widgets.svelte.ts`. There is deliberately no `pages` field and no `system` flag here —
+// the registry answers "what exists", never "what goes where".
 export const widgets: WidgetMeta[] = [
   {
     id: 'morning-routine',
     title: 'Morning Routine',
     description: 'A fresh morning checklist that resets each day.',
     route: '/widgets/morning-routine',
-    pages: ['productivity'],
   },
   {
     id: 'reminders',
     title: 'Reminders',
     description: 'One-off and recurring reminders.',
     route: '/widgets/reminders',
-    pages: ['productivity'],
   },
   {
     id: 'habit-log',
     title: 'Habit Log',
     description: 'Track daily habits.',
     route: '/widgets/habit-log',
-    pages: ['productivity', 'health-fitness'],
   },
   {
     id: 'pomodoro',
     title: 'Pomodoro Timer',
     description: 'Configurable focus timer with work, short break, and long break phases.',
     route: '/widgets/pomodoro',
-    pages: ['productivity'],
   },
   {
     id: 'diary',
     title: 'Diary',
     description: 'Daily journal entries.',
     route: '/widgets/diary',
-    pages: ['productivity'],
   },
   {
     id: 'vision-board',
     title: 'Vision Board',
     description: 'Visual board of goals and inspiration.',
     route: '/widgets/vision-board',
-    pages: ['productivity'],
   },
   {
     id: 'workout-log',
     title: 'Workout Log',
     description: 'Log workouts and track progress.',
     route: '/widgets/workout-log',
-    pages: ['health-fitness'],
   },
   {
     id: 'music-picker',
     title: 'Music Picker',
     description: 'Pick what to listen to right now.',
     route: '/widgets/music-picker',
-    pages: ['music-discovery'],
   },
   {
     id: 'music-tracker',
     title: 'Music Tracker',
     description: 'Detect new playlist additions and check whether they are in your DJ library.',
     route: '/widgets/music-tracker',
-    pages: ['music-discovery'],
     embed: {
       component: MusicTracker,
       span: { cols: 2, rows: 3 },
@@ -112,14 +101,12 @@ export const widgets: WidgetMeta[] = [
     title: 'Concert Discovery',
     description: 'Upcoming concerts worth knowing about.',
     route: '/widgets/concert-discovery',
-    pages: ['music-discovery', 'event-tracker'],
   },
   {
     id: 'acute-strategies-generator',
     title: 'Acute Strategies Generator',
     description: 'Random musical ideas and techniques from a list you maintain.',
     route: '/widgets/acute-strategies-generator',
-    pages: ['music-production'],
     embed: {
       component: AcuteStrategiesGenerator,
       span: { cols: 2, rows: 2 },
@@ -131,21 +118,18 @@ export const widgets: WidgetMeta[] = [
     title: 'Festival Follower',
     description: 'Track festival lineups and dates.',
     route: '/widgets/festival-follower',
-    pages: ['event-tracker'],
   },
   {
     id: 'concert-diary',
     title: 'Concert Diary',
     description: "Log of shows you've attended, with photos and notes.",
     route: '/widgets/concert-diary',
-    pages: ['event-tracker'],
   },
   {
     id: 'buy-sell-trade',
     title: 'Buy, Sell, Trade',
     description: 'Your buy/sell/trade gear list, sale terms, and r/modular matches.',
     route: '/widgets/buy-sell-trade',
-    pages: ['buy-sell-trade'],
     // No `flippable`: D-062 retired the card flip — the header links to the widget page,
     // which is where the list management and terms live.
     embed: {
@@ -161,16 +145,14 @@ export const widgets: WidgetMeta[] = [
   },
 
   // ── Dev Ops summaries (PD-413) ───────────────────────────────────────────────
-  // Compact views onto the Dev Ops subpages, surfaced as an Arrange-able grid on the
-  // /devops overview. `system: true` keeps them off Home; each card header links to the
-  // full subpage its summary is drawn from.
+  // Compact views onto the Dev Ops subpages; each card header links to the full subpage its
+  // summary is drawn from. Ordinary library citizens since D-071 — the `system: true` flag that
+  // used to hold them off Home is gone, because Home is now curated by hand like any other page.
   {
     id: 'devops-task-tracker',
     title: 'Task Tracker',
     description: 'Tickets in progress and recently shipped.',
     route: '/devops/task-tracker',
-    pages: ['devops'],
-    system: true,
     embed: {
       component: DevOpsTaskTrackerWidget,
       span: { cols: 2, rows: 2 },
@@ -181,8 +163,6 @@ export const widgets: WidgetMeta[] = [
     title: 'Jobs',
     description: 'Recurring jobs and their most recent runs.',
     route: '/devops/jobs',
-    pages: ['devops'],
-    system: true,
     embed: {
       component: DevOpsJobsWidget,
       span: { cols: 2, rows: 2 },
@@ -193,8 +173,6 @@ export const widgets: WidgetMeta[] = [
     title: 'Agent',
     description: 'Robot fleet, dispatch state, and worker heartbeats.',
     route: '/devops/agent-dashboard',
-    pages: ['devops'],
-    system: true,
     embed: {
       component: DevOpsAgentWidget,
       span: { cols: 2, rows: 2 },
@@ -202,14 +180,12 @@ export const widgets: WidgetMeta[] = [
   },
 ];
 
-/** Widgets surfaced on a given page. */
-export function widgetsForPage(pageId: string): WidgetMeta[] {
-  return widgets.filter((w) => w.pages?.includes(pageId));
+export function widgetById(id: string): WidgetMeta | undefined {
+  return widgets.find((w) => w.id === id);
 }
 
-/** The user-facing widget catalogue shown on Home — one per repo-root `widgets/` spec
- *  folder. Excludes `system` widgets (the Dev Ops summaries), which belong to their own
- *  page rather than to the dashboard's widget collection. */
-export function homeWidgets(): WidgetMeta[] {
-  return widgets.filter((w) => !w.system);
+/** The span a widget takes when first placed on a page. Non-embedded widgets are link stubs
+ *  and need only one cell. */
+export function defaultSpan(w: WidgetMeta): { cols: number; rows: number } {
+  return { cols: w.embed?.span.cols ?? 1, rows: w.embed?.span.rows ?? 1 };
 }
