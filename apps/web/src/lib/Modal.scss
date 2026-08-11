@@ -35,6 +35,12 @@
   }
 }
 
+/* For dialogs whose content is a multi-column form rather than prose (ListEditModal). The
+   backdrop's own padding keeps it off the viewport edges, so 100% is safe on a phone. */
+.modal-wide {
+  max-width: 60rem;
+}
+
 .modal-head {
   display: flex;
   align-items: center;
