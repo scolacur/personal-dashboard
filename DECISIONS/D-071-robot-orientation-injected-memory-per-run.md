@@ -56,6 +56,18 @@ folds those into the day file and deletes them. No new slash commands.
   not broken, so the run proceeds — but PD-496 (two months of Refine silently receiving no glossary)
   is the standing argument that it must never be silent about it.
 
+- **Every agent prompt moved to `packages/shared`, because the Agent Glossary renders them.** The
+  dashboard's glossary modal shows what each agent is responsible for *and the prompts it actually
+  receives* — produced by calling the same builders the worker calls, with placeholder inputs. A
+  transcribed prompt in the UI would be wrong within a week, and wrong in the least detectable way:
+  nothing fails when documentation drifts from behaviour. So there is one source and no sync step.
+  The builders are pure string-building (no `node:*`, no config), which is what lets the browser
+  import them; `buildOrientation` keeps the filesystem reads in the worker and calls the shared
+  `orientationBlock` / `composeOrientation` so even the *structure* has a single definition. The
+  tests assert each rendered section equals its builder's output, so pasting text into the UI fails
+  CI. (PD-500 tracks making them editable *from* the modal, which needs versioning, attribution, and
+  a hard line around the structural steps below.)
+
 **Implications:** the Finish sequence gained a documentation sub-step before the commit — ordering is
 load-bearing and pinned by a test, since a memory file written after `git add -A` never reaches the
 PR. The hand-off sequence itself (verify → marker → commit → push → `gh pr create` → manifest) is

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, ROBOT_TOOLS, type RunQuery } from './session';
 import { OUTPUT_TAIL_MAX } from './runs';
-import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
+import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from '@dashboard/shared';
 import type { RobotCandidate } from './select';
 import type { Worktree } from './workspace';
 

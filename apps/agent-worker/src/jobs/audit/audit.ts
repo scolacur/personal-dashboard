@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AuditRunCounts } from '@dashboard/shared';
+import { auditSystemPrompt, type AuditRunCounts } from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { buildContextPack } from '../../shared/context-pack';
 import { logger } from '../../shared/logger';
@@ -33,23 +33,6 @@ export interface AuditPassDeps {
   runAgent?: (config: AgentWorkerConfig, systemPrompt: string, prompt: string) => Promise<{ text: string; ok: boolean }>;
   buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
 }
-
-const AUDIT_SYSTEM_PROMPT = [
-  'You are the Ticket Audit agent for a personal-dashboard task board (D-045).',
-  'You review a project\'s active tickets and flag which are stale, done, mis-prioritized,',
-  'or need a description update — grounding every finding in evidence from the repo checkout',
-  '(MEMORY/, DECISIONS.md, PROJECT.md, and the code) rather than speculation.',
-  '',
-  'You are READ-ONLY: you never modify tickets or the repo. You only report findings; a human',
-  'decides what to apply.',
-  '',
-  'Return ONLY a JSON array (no prose) of findings, each:',
-  '  { "displayId": "PD-142", "type": "archive|complete|reprioritize|update|keep",',
-  '    "recommendation": "<short imperative>", "reason": "<why>", "evidence": "<cited source>" }',
-  'Include a finding only when you have concrete evidence. Omit tickets you cannot assess.',
-  '',
-  'Project context:',
-].join('\n');
 
 function ticketsPrompt(projectName: string, tickets: AuditableTicket[]): string {
   const lines = tickets.map(
@@ -108,7 +91,7 @@ export async function runAuditPass(
   const contextPack = buildContext(config.checkoutDir, (what) =>
     logger.warn({ what }, 'audit: context pack is missing an expected section — the agent runs degraded'),
   );
-  const systemPrompt = `${AUDIT_SYSTEM_PROMPT}\n${contextPack}`;
+  const systemPrompt = auditSystemPrompt(contextPack);
   const reply = await runAgent(config, systemPrompt, ticketsPrompt(project.name, tickets));
   if (!reply.ok) {
     // API/billing/rate error — surface it as an errored run so it's retried, don't persist junk.

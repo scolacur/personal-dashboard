@@ -19,3 +19,26 @@
   font-size: var(--font-size-lg);
   flex: 0 0 auto;
 }
+
+// Pushed to the far right of the head row (PD-306). `margin-left: auto` rather than
+// `justify-content: space-between` so the title keeps its natural width and any future control
+// added to the head sits beside this one instead of being flung to the opposite edge.
+.glossary-button {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm, 4px);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+}

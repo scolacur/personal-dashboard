@@ -1,5 +1,10 @@
+// The code under test now lives in `packages/shared/src/agent-prompts.ts` (the dashboard's Agent
+// Glossary renders the same builders, so there is one source and nothing to keep in sync). The
+// spec stays here rather than adding a third test runner for `packages/shared`; agent-worker is
+// the primary consumer and `shared/decisions.spec.ts` already sets the precedent for a spec that
+// reaches outside its own directory.
 import { describe, it, expect } from 'vitest';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, MEMORY_RUNS_DIR } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, MEMORY_RUNS_DIR } from '@dashboard/shared';
 
 const base = {
   title: 'Add a thing',

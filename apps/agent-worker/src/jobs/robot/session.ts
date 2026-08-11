@@ -6,7 +6,7 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { buildOrientation } from './orientation';
 import { makeCodingSpawn } from './privilege';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from '@dashboard/shared';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 import { OUTPUT_TAIL_MAX } from './runs';
