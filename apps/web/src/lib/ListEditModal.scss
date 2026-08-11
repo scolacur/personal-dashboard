@@ -1,13 +1,17 @@
-/* Horizontal, mimicking the table this edits (PD-475 C1). Short fields flow across the row;
-   long ones claim a row of their own. Below ~34rem the basis exceeds the width and every field
-   wraps to its own line, which is the stacked form again — the narrow-viewport fallback is the
-   layout doing its job, not a special case. */
+/* Horizontal, mimicking the table this edits (PD-475 C1). Short fields flow across the row.
+   Below ~34rem the basis exceeds the width and every field wraps to its own line, which is the
+   stacked form again — the narrow-viewport fallback is the layout doing its job, not a special
+   case.
+
+   The form no longer sets its own width. It used to ask for `min(58rem, 88vw)` inside a dialog
+   capped at 520px, so it overflowed its own container and scrolled sideways. Width is the
+   dialog's business: the caller passes `size="wide"` and the form fills it. */
 .list-edit-form {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--space-md);
-  width: min(58rem, 88vw);
+  width: 100%;
 }
 
 .field {
@@ -22,7 +26,9 @@
   margin: 0;
   padding: 0;
 
-  /* Prose. A textarea sharing a line with six short inputs is unusable at any of their widths. */
+  /* Prose. A textarea sharing a line with six short inputs is unusable at any of their widths.
+     Only `textarea` fields claim a row — a caller that wants a long text field to flow inline
+     with the rest should declare it `text`, which is what the BST notes fields now do. */
   &.wide {
     flex-basis: 100%;
   }
@@ -70,6 +76,13 @@
   height: 1px;
   margin: 0;
   pointer-events: none;
+}
+
+/* A field switched off by the draft's own values (`enabledWhen`) — e.g. price on a WTB row.
+   Dimmed as a whole rather than only the control, so the label reads as "not applicable" too;
+   the control's own :disabled state supplies the not-allowed cursor. */
+.field.disabled {
+  opacity: 0.45;
 }
 
 .field-label {

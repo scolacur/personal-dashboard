@@ -27,6 +27,19 @@ export interface FieldDef {
   hint?: string;
   /** In the form but not a list column — for long text that would wreck the table. */
   formOnly?: boolean;
+  /**
+   * Disable this field unless the predicate holds for the current draft.
+   *
+   * The rule lives with the caller, not here: ListManager knows nothing about what it edits, and
+   * "a want has no price" is a fact about gear listings, not about lists. Used by the BST list so
+   * a WTB row cannot carry a price, condition, sale status, category or location — fields that
+   * only mean something for a thing you own.
+   *
+   * A disabled field is not merely greyed: it is exempt from validation and its value is cleared
+   * on save (see `clearDisabledFields`), so switching WTS → WTB cannot leave a stale price
+   * behind where nothing displays it.
+   */
+  enabledWhen?: (draft: Draft) => boolean;
 }
 
 /** What a form control produces. `null` means "left empty". */
@@ -110,9 +123,32 @@ export function coerceValue(field: FieldDef, raw: string): FieldValue {
 /** Validation errors keyed by field key; an empty object means the draft is submittable.
  *  Only two rules — required-ness and number-parseability — because anything richer belongs
  *  to the caller's own domain, not to a generic list. */
+/** Is this field editable given the draft's current values? Fields with no rule are always on. */
+export function isFieldEnabled(field: FieldDef, draft: Draft): boolean {
+  return field.enabledWhen ? field.enabledWhen(draft) : true;
+}
+
+/**
+ * Null out every field the draft's own values have disabled.
+ *
+ * Applied on save. Without it, filling in a price as WTS and then switching to WTB would keep
+ * the price on a row where no surface shows it — invisible data that reappears the moment the
+ * row is switched back, or worse, gets drafted into a post.
+ */
+export function clearDisabledFields(fields: FieldDef[], draft: Draft): Draft {
+  const out: Draft = { ...draft };
+  for (const f of fields) {
+    if (!isFieldEnabled(f, draft)) out[f.key] = null;
+  }
+  return out;
+}
+
 export function validateDraft(fields: FieldDef[], draft: Draft): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const f of fields) {
+    // A disabled field cannot be filled in, so holding it to a `required` rule would make the
+    // form unsubmittable with no way to fix it.
+    if (!isFieldEnabled(f, draft)) continue;
     const v = draft[f.key];
     if (f.required && isEmpty(v)) {
       errors[f.key] = `${f.label} is required.`;

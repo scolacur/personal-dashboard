@@ -3,7 +3,9 @@
   import Button from './Button.svelte';
   import Modal from './Modal.svelte';
   import {
+    clearDisabledFields,
     coerceValue,
+    isFieldEnabled,
     validateDraft,
     type Draft,
     type FieldDef,
@@ -50,6 +52,11 @@
     return v === null || v === undefined ? '' : String(v);
   }
 
+  /** Disabled by the draft's own values (`enabledWhen`) or by an in-flight save. */
+  function locked(field: FieldDef): boolean {
+    return saving || !isFieldEnabled(field, draft);
+  }
+
   async function submit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
     const found = validateDraft(fields, draft);
@@ -59,7 +66,9 @@
     saving = true;
     saveError = '';
     try {
-      await onSave({ ...draft });
+      // Saved without the values of fields the draft's own state disabled — see
+      // `clearDisabledFields`. Switching WTS → WTB must not leave a price nothing displays.
+      await onSave(clearDisabledFields(fields, draft));
     } catch {
       // Surface the failure and stay open — never close on a write that did not land.
       saveError = 'Failed to save. Please try again.';
@@ -68,7 +77,9 @@
   }
 </script>
 
-<Modal open={true} {title} onClose={onCancel}>
+<!-- `wide`: this is a multi-column form, not a prose dialog. The default 520px cap is what made
+     the form overflow and scroll sideways once the fields were laid out inline (PD-475 C1). -->
+<Modal open={true} {title} size="wide" onClose={onCancel}>
   <!-- Laid out horizontally, mimicking the table it edits (PD-475 C1). It is deliberately
        old-fashioned: the form has the same shape as the row, so the mapping is obvious.
        ~10 fields will not fit on one line at usable widths, so the short fields flow and the
@@ -78,7 +89,7 @@
       {#if field.type === 'segmented'}
         <!-- A radiogroup, not a label-wrapped control: one <label> may not wrap several inputs.
              Native radios rather than buttons+aria, so arrow-key navigation is free. -->
-        <fieldset class="field segmented-field">
+        <fieldset class="field segmented-field" class:disabled={locked(field)}>
           <legend class="field-label">
             {field.label}
             {#if field.required}<span class="req" aria-hidden="true">*</span>{/if}
@@ -92,7 +103,7 @@
                   name={`seg-${field.key}`}
                   value={opt}
                   checked={display(field.key) === opt}
-                  disabled={saving}
+                  disabled={locked(field)}
                   onchange={() => set(field, opt)}
                 />
                 <span>{opt}</span>
@@ -106,7 +117,7 @@
           {/if}
         </fieldset>
       {:else}
-      <label class="field" class:wide={field.type === 'textarea'}>
+      <label class="field" class:wide={field.type === 'textarea'} class:disabled={locked(field)}>
         <span class="field-label">
           {field.label}
           {#if field.required}<span class="req" aria-hidden="true">*</span>{/if}
@@ -118,7 +129,7 @@
             class:invalid={!!errors[field.key]}
             rows="4"
             placeholder={field.placeholder}
-            disabled={saving}
+            disabled={locked(field)}
             value={display(field.key)}
             oninput={(e) => set(field, e.currentTarget.value)}
           ></textarea>
@@ -126,7 +137,7 @@
           <select
             class="control select"
             class:invalid={!!errors[field.key]}
-            disabled={saving}
+            disabled={locked(field)}
             value={display(field.key)}
             onchange={(e) => set(field, e.currentTarget.value)}
           >
@@ -141,7 +152,7 @@
             class:invalid={!!errors[field.key]}
             type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
             placeholder={field.placeholder}
-            disabled={saving}
+            disabled={locked(field)}
             value={display(field.key)}
             oninput={(e) => set(field, e.currentTarget.value)}
           />

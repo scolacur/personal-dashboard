@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   cleanDraft,
+  clearDisabledFields,
   coerceValue,
   columnFields,
+  isFieldEnabled,
   countLabel,
   searchScopeLabel,
   visibleColumns,
@@ -18,6 +20,7 @@ import {
   sortItems,
   toDraft,
   validateDraft,
+  type Draft,
   type FieldDef,
 } from './list-manager';
 
@@ -383,5 +386,60 @@ describe('searchScopeLabel', () => {
 
   it('falls back to the raw key for a search key with no matching field', () => {
     expect(searchScopeLabel(GEAR_FIELDS, ['mystery'])).toBe('Searches mystery');
+  });
+});
+
+describe('conditional fields (enabledWhen)', () => {
+  const sellingOnly = (d: Draft): boolean => d.type !== 'WTB';
+  const FIELDS: FieldDef[] = [
+    { key: 'type', label: 'Type', type: 'segmented', options: ['WTB', 'WTS'], required: true },
+    { key: 'item', label: 'Item', type: 'text', required: true },
+    { key: 'price', label: 'Price', type: 'text', enabledWhen: sellingOnly },
+    { key: 'condition', label: 'Condition', type: 'text', enabledWhen: sellingOnly },
+    { key: 'aliases', label: 'Also known as', type: 'text' },
+  ];
+
+  it('leaves a field with no rule always enabled', () => {
+    expect(isFieldEnabled(FIELDS[1], { type: 'WTB' })).toBe(true);
+    expect(isFieldEnabled(FIELDS[4], { type: 'WTB' })).toBe(true);
+  });
+
+  it('switches the sale-side fields off for a want', () => {
+    expect(isFieldEnabled(FIELDS[2], { type: 'WTB' })).toBe(false);
+    expect(isFieldEnabled(FIELDS[2], { type: 'WTS' })).toBe(true);
+  });
+
+  it('clears the values of disabled fields, and only those', () => {
+    // Switching WTS → WTB after typing a price must not leave the price on a row where nothing
+    // displays it — invisible data that reappears if the row is switched back.
+    const draft: Draft = {
+      type: 'WTB',
+      item: 'Maths',
+      price: '$250',
+      condition: 'Mint',
+      aliases: 'maffs',
+    };
+    expect(clearDisabledFields(FIELDS, draft)).toEqual({
+      type: 'WTB',
+      item: 'Maths',
+      price: null,
+      condition: null,
+      aliases: 'maffs',
+    });
+  });
+
+  it('leaves an all-enabled draft untouched', () => {
+    const draft: Draft = { type: 'WTS', item: 'Maths', price: '$250', condition: null, aliases: null };
+    expect(clearDisabledFields(FIELDS, draft)).toEqual(draft);
+  });
+
+  it('does not hold a disabled field to its required rule', () => {
+    // Otherwise the form could become unsubmittable with no control to fix it through.
+    const fields: FieldDef[] = [
+      { key: 'type', label: 'Type', type: 'segmented', options: ['WTB', 'WTS'] },
+      { key: 'price', label: 'Price', type: 'text', required: true, enabledWhen: sellingOnly },
+    ];
+    expect(validateDraft(fields, { type: 'WTB', price: null })).toEqual({});
+    expect(validateDraft(fields, { type: 'WTS', price: null })).toHaveProperty('price');
   });
 });

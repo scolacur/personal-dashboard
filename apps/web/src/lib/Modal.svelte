@@ -1,14 +1,20 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
+  // `size` controls the dialog's max width. The default suits the confirm/picker dialogs that
+  // make up most callers; `wide` exists for the multi-column edit form (ListEditModal), whose
+  // content is genuinely wider than a prose dialog. Before this the form set its own width and
+  // the dialog capped it 400px narrower, so the form overflowed and scrolled sideways.
   let {
     open,
     title,
+    size = 'default',
     onClose,
     children,
   }: {
     open: boolean;
     title?: string;
+    size?: 'default' | 'wide';
     onClose: () => void;
     children: Snippet;
   } = $props();
@@ -43,6 +49,7 @@
     <button class="modal-scrim" type="button" aria-label="Close dialog" onclick={onClose}></button>
     <div
       class="modal"
+      class:modal-wide={size === 'wide'}
       role="dialog"
       aria-modal="true"
       aria-label={title}
