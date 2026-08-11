@@ -1,4 +1,5 @@
 import {
+  isIgnoredAuthor,
   parseAliases,
   type BstCommentInput,
   type BstListing,
@@ -602,6 +603,11 @@ export function matchComments(listings: BstListing[], comments: BstCommentInput[
 
   const out: CommentMatch[] = [];
   for (const comment of comments) {
+    // Steve's own BST comments list the same gear as his listings, so every item he is selling
+    // matches his own post — noise that drowns the real offers. Filtered here rather than at
+    // ingest so it covers every path into the matcher, including a hand-pasted thread (PD-483).
+    if (isIgnoredAuthor(comment.author)) continue;
+
     const doc = normalizeComment(comment.body);
     if (!doc.text) continue;
 

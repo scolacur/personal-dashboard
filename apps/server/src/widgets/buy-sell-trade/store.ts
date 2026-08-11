@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { BST_DRAFT_FORMATS } from '@dashboard/shared';
+import { BST_DRAFT_FORMATS, BST_IGNORED_AUTHORS } from '@dashboard/shared';
 import type {
   BstCategory,
   BstCommentInput,
@@ -320,6 +320,28 @@ export function setMatchDismissed(
  * fresh `dismissed_at IS NULL`. Getting that wrong would make the dismiss button useless every
  * time the weekly job ran.
  */
+/**
+ * Delete matches whose author is on the ignore list.
+ *
+ * Run on every boot rather than as a one-shot migration: the ignore list is a constant that will
+ * grow, and a `migrate()` step records itself as done and never runs again — so adding a second
+ * account later would clean nothing. This is idempotent, costs one indexed DELETE at startup, and
+ * removes rows the matcher will never create again, so there is nothing to lose.
+ *
+ * Returns the number of rows removed, so the boot log can say what happened.
+ */
+export function purgeIgnoredAuthorMatches(db: Database.Database): number {
+  if (BST_IGNORED_AUTHORS.length === 0) return 0;
+  const placeholders = BST_IGNORED_AUTHORS.map(() => '?').join(', ');
+  const { changes } = db
+    .prepare(
+      `DELETE FROM buy_sell_trade_matches
+        WHERE REPLACE(LOWER(author), 'u/', '') IN (${placeholders})`,
+    )
+    .run(...BST_IGNORED_AUTHORS);
+  return changes;
+}
+
 export function ingestComments(
   db: Database.Database,
   input: { threadId: string; comments: BstCommentInput[] },

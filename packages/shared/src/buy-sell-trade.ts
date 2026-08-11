@@ -493,3 +493,25 @@ export interface BstDraftsRunSummary {
   formats: string;
   [key: string]: unknown;
 }
+
+/* ── Ignored authors ─────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Reddit accounts whose comments never produce a match.
+ *
+ * Steve's own account is on here: his BST posts list the same gear as his listings, so **every
+ * item he is selling matches his own comment**, which is pure noise and drowns the real offers.
+ * The rule is "not interesting", not "not a match" — the matcher is right about the text, the
+ * author is what makes it worthless.
+ *
+ * Lowercase, no `u/` prefix. Reddit usernames are case-insensitive for comparison purposes, so
+ * `isIgnoredAuthor` normalises both sides rather than trusting the feed's casing.
+ */
+export const BST_IGNORED_AUTHORS: readonly string[] = ['holographicbboy'];
+
+/** True if this comment's author should never generate matches. Tolerates `u/name` and casing. */
+export function isIgnoredAuthor(author: string | null | undefined): boolean {
+  if (!author) return false;
+  const name = author.trim().replace(/^\/?u\//i, '').toLowerCase();
+  return BST_IGNORED_AUTHORS.includes(name);
+}

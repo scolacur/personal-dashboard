@@ -74,17 +74,65 @@
     }
   }
 
-  async function copy(draft: BstDraft): Promise<void> {
+  /** Per-draft copy failure, shown AT the button. The panel-level `error` sits above three long
+   *  draft bodies, so a failure reported there is off-screen from the button that caused it —
+   *  which is what made this look like a dead button rather than a failing one. */
+  let copyFailed = $state<number | null>(null);
+
+  /**
+   * Copy without `navigator.clipboard`, which **does not exist here**.
+   *
+   * The dashboard is served over plain HTTP on the LAN (`http://192.168.68.50:8088`). The async
+   * Clipboard API is restricted to secure contexts, so `navigator.clipboard` is `undefined` on
+   * that origin and the old code threw on every click. It is not a permissions prompt anyone can
+   * grant — the API is simply absent, and it will stay absent until the box is served over HTTPS.
+   *
+   * `document.execCommand('copy')` is deprecated but has no secure-context requirement and is
+   * the only thing that works on this origin. Returns false if even that is refused.
+   */
+  function legacyCopy(text: string): boolean {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // Off-screen but focusable — `display: none` or `hidden` would make the selection fail.
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
     try {
-      await navigator.clipboard.writeText(draft.content);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
+  async function copy(draft: BstDraft): Promise<void> {
+    copyFailed = null;
+    let ok = false;
+    try {
+      // Preferred when it exists (HTTPS, or localhost during dev); absent on the LAN origin.
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(draft.content);
+        ok = true;
+      }
+    } catch {
+      ok = false; // permission-gated even where it exists — fall through to the legacy path
+    }
+
+    if (!ok) ok = legacyCopy(draft.content);
+
+    if (ok) {
       copied = draft.id;
       setTimeout(() => {
         if (copied === draft.id) copied = null;
       }, 2000);
-    } catch {
-      // Clipboard is permission-gated and can simply refuse. The text is on screen and
-      // selectable, so say so rather than pretending it worked.
-      error = 'Could not copy — select the text and copy it by hand.';
+    } else {
+      // The text is on screen and selectable, so say so rather than pretending it worked.
+      copyFailed = draft.id;
     }
   }
 
@@ -99,8 +147,14 @@
   let savingTemplate = $state(false);
 
   function edit(format: BstDraftFormat): void {
+    if (editing === format) {
+      editing = null;
+      return;
+    }
     editing = format;
-    templateDraft = templates[format];
+    // `?? ''` because a format the settings row has never carried would otherwise bind
+    // `undefined` into the textarea, which renders blank and saves as a cleared template.
+    templateDraft = templates[format] ?? '';
   }
 
   async function persistTemplate(): Promise<void> {
@@ -165,9 +219,47 @@
                   <Button variant="ghost" onclick={() => copy(draft)}>
                     {copied === draft.id ? 'Copied' : 'Copy'}
                   </Button>
-                  <Button variant="ghost" onclick={() => edit(format)}>Edit template</Button>
+                  <Button variant="ghost" onclick={() => edit(format)}>
+                    {editing === format ? 'Close template' : 'Edit template'}
+                  </Button>
                 </div>
               </header>
+
+              {#if copyFailed === draft.id}
+                <p class="draft-copy-error" role="alert">
+                  Couldn’t copy automatically — select the text below and copy it by hand.
+                </p>
+              {/if}
+
+              <!-- The editor lives INSIDE the draft it edits. It used to render after the whole
+                   section, below three long draft bodies, so the button scrolled nothing into
+                   view and read as dead. -->
+              {#if editing === format}
+                <div class="template-editor">
+                  <h4 class="template-title">{BST_DRAFT_FORMAT_LABELS[format]} template</h4>
+                  <p class="template-help">
+                    Tokens: {BST_TEMPLATE_TOKENS.join(' · ')}. Changes apply to the next draft you
+                    generate — no redeploy. Clear it back to the default by deleting everything
+                    and saving.
+                  </p>
+                  <textarea
+                    class="template-input"
+                    rows="14"
+                    aria-label="Post template"
+                    bind:value={templateDraft}
+                    disabled={savingTemplate}
+                  ></textarea>
+                  <div class="template-actions">
+                    <Button variant="ghost" onclick={() => (editing = null)} disabled={savingTemplate}>
+                      Cancel
+                    </Button>
+                    <Button variant="primary" onclick={persistTemplate} disabled={savingTemplate}>
+                      {savingTemplate ? 'Saving…' : 'Save template'}
+                    </Button>
+                  </div>
+                </div>
+              {/if}
+
               <pre class="draft-body">{draft.content}</pre>
             </article>
           {/if}
@@ -188,30 +280,5 @@
     {/if}
   </div>
 </Collapsible>
-
-{#if editing}
-  <div class="template-editor">
-    <h4 class="template-title">{BST_DRAFT_FORMAT_LABELS[editing]} template</h4>
-    <p class="template-help">
-      Tokens: {BST_TEMPLATE_TOKENS.join(' · ')}. Changes apply to the next draft you generate —
-      no redeploy. Clear it back to the default by deleting everything and saving.
-    </p>
-    <textarea
-      class="template-input"
-      rows="14"
-      aria-label="Post template"
-      bind:value={templateDraft}
-      disabled={savingTemplate}
-    ></textarea>
-    <div class="template-actions">
-      <Button variant="ghost" onclick={() => (editing = null)} disabled={savingTemplate}>
-        Cancel
-      </Button>
-      <Button variant="primary" onclick={persistTemplate} disabled={savingTemplate}>
-        {savingTemplate ? 'Saving…' : 'Save template'}
-      </Button>
-    </div>
-  </div>
-{/if}
 
 <style lang="scss" src="./DraftsPanel.scss"></style>
