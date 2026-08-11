@@ -8,6 +8,7 @@
     type BstDraftFormat,
     type BstListing,
   } from '@dashboard/shared';
+  import { onMount } from 'svelte';
   import Button from '$lib/Button.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
   import {
@@ -47,6 +48,8 @@
   const showing = $derived(viewing ?? batches[0] ?? null);
   const current = $derived(drafts.filter((d) => d.generatedAt === showing));
   const pickups = $derived(pickupList(listings));
+
+  onMount(load);
 
   async function load(): Promise<void> {
     error = '';
@@ -173,12 +176,9 @@
   }
 </script>
 
-<Collapsible title="Drafted posts" storeKey="bst-drafts" open={false}>
-  <div class="drafts">
+<div class="drafts">
     {#if !loaded}
-      <!-- Loaded on first open rather than with the page: three rendered posts are a lot of text
-           to fetch for a section that is usually closed. -->
-      <Button variant="ghost" onclick={load}>Load drafts</Button>
+      <p class="drafts-empty">Loading drafts…</p>
     {:else}
       {#if error}<p class="drafts-error" role="alert">{error}</p>{/if}
 
@@ -209,6 +209,9 @@
           No drafts yet. “Generate now” renders your current list into all three formats.
         </p>
       {:else}
+        <!-- Three across on a desktop-width modal, one per row on a phone. Each format keeps its
+             own Copy and Edit template controls inside its own box. -->
+        <div class="drafts-grid">
         {#each BST_DRAFT_FORMATS as format (format)}
           {@const draft = current.find((d) => d.format === format)}
           {#if draft}
@@ -264,6 +267,7 @@
             </article>
           {/if}
         {/each}
+        </div>
 
         {#if pickups.length > 0}
           <!-- Private, and deliberately outside the draft text: the post says what is for sale,
@@ -278,7 +282,6 @@
         {/if}
       {/if}
     {/if}
-  </div>
-</Collapsible>
+</div>
 
 <style lang="scss" src="./DraftsPanel.scss"></style>

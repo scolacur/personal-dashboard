@@ -24,6 +24,7 @@
     fetchMatches,
     fetchSettings,
     importCsv,
+    runScanNow,
     saveTerms,
     updateListing,
   } from '$lib/buy-sell-trade/api';
@@ -291,11 +292,41 @@
     WTB: listings.filter((l) => l.type === 'WTB').length,
   });
 
+  /* ── Page actions ─────────────────────────────── */
+
+  // The scan action lives here rather than in ScanStatus because its button is now a page-level
+  // action in the header, next to Generate posts. ScanStatus stayed behind as the readout and
+  // takes `busy` + a `scanRefresh` counter it re-reads its history on.
+  let scanBusy = $state(false);
+  let scanError = $state('');
+  let scanRefresh = $state(0);
+
+  async function runScan(): Promise<void> {
+    scanBusy = true;
+    scanError = '';
+    try {
+      // A failed scan still resolves — the reason is in the payload, not in an HTTP error, so
+      // this catch is for the request itself failing.
+      await runScanNow();
+      matches = await fetchMatches();
+      scanRefresh += 1;
+    } catch (e) {
+      scanError = e instanceof Error ? e.message : 'The scan request itself failed';
+    } finally {
+      scanBusy = false;
+    }
+  }
+
+  /** Drafted posts moved off the page into a modal — three rendered posts is a lot of page for
+   *  something read once a month, right before pasting it somewhere. */
+  let draftsOpen = $state(false);
+
 </script>
 
 <section class="bst-page">
   <header class="bst-head">
-    <h1 class="bst-title">Buy, Sell, Trade</h1>
+    <div class="bst-head-text">
+      <h1 class="bst-title">Buy, Sell, Trade</h1>
     <!-- Both jobs are registered as of PD-439/PD-440, so the "neither is scheduled yet" caveat
          that used to sit here is gone. The cadences are DERIVED from the job registry rather
          than retyped: the previous version claimed "every Monday" while nothing was scheduled at
@@ -306,7 +337,18 @@
       matches with items on my list. {draftCadence}, it drafts for-sale posts formatted for
       Reddit, Discord and Facebook. Run history for both is under <strong>Runs</strong> below.
     </p>
+    </div>
+
+    <!-- The page's two actions, together, top-right. Both kick off the same jobs the crons run. -->
+    <div class="bst-head-actions">
+      <Button variant="primary" onclick={runScan} disabled={scanBusy}>
+        {scanBusy ? 'Scanning…' : 'Scan r/modular now'}
+      </Button>
+      <Button variant="primary" onclick={() => (draftsOpen = true)}>Generate posts</Button>
+    </div>
   </header>
+
+  {#if scanError}<p class="bst-error" role="alert">{scanError}</p>{/if}
 
   {#if loading}
     <p class="bst-loading">Loading…</p>
@@ -321,7 +363,7 @@
       {/if}
     </div>
 
-    <ScanStatus onMatchesChanged={async () => (matches = await fetchMatches())} />
+    <ScanStatus busy={scanBusy} refresh={scanRefresh} />
 
     {#if matches.length > 0}
       <MatchesReadout
@@ -333,12 +375,6 @@
     {#if moveError}<p class="bst-error" role="alert">{moveError}</p>{/if}
 
     <GearTables listings={listings} fields={FIELDS} {onCreate} {onUpdate} {onDelete} {onMove} />
-
-    <DraftsPanel
-      {listings}
-      {templates}
-      onTemplatesSaved={(t) => (templates = t)}
-    />
 
     <RunsPanel />
 
@@ -405,6 +441,12 @@
   <!-- Out of the page flow: fixed to the bottom, collapsed, expanding upward. The page reserves
        its collapsed height (see .bst-page) so it never covers the last row of a gear table. -->
   <SaleTerms bind:terms />
+{/if}
+
+{#if draftsOpen}
+  <Modal open={true} title="Drafted posts" size="wide" onClose={() => (draftsOpen = false)}>
+    <DraftsPanel {listings} {templates} onTemplatesSaved={(t) => (templates = t)} />
+  </Modal>
 {/if}
 
 {#if dupPrompt}

@@ -174,3 +174,24 @@
   justify-content: flex-end;
   gap: var(--space-sm);
 }
+
+
+/* Three formats across on a desktop-width modal, one per row on a phone. `minmax(0, 1fr)` rather
+   than `1fr` because a grid track's default `min-width: auto` is its content's — and a draft body
+   is a <pre> of long unbroken lines, which would blow the columns past a third each and push the
+   modal sideways. */
+.drafts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-md);
+}
+
+@media (min-width: 48rem) {
+  .drafts-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+/* (No `.draft-body` override needed in the grid — it already caps at 22rem, scrolls, and wraps
+   with `overflow-wrap: anywhere`, which is exactly what a narrow column wants.) */

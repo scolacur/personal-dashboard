@@ -1,8 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { BstScan } from '@dashboard/shared';
-  import Button from '$lib/Button.svelte';
-  import { fetchScans, runScanNow } from '$lib/buy-sell-trade/api';
+  import { fetchScans } from '$lib/buy-sell-trade/api';
 
   // The r/modular scan's status (PD-471).
   //
@@ -15,10 +14,21 @@
   //   - `failed` and `partial` are alerts, with the reason, not a subtle badge;
   //   - a stale successful scan is itself a warning — a cron that silently stopped shows up as
   //     "last scanned 23 days ago" rather than as nothing at all.
-  let { onMatchesChanged }: { onMatchesChanged: () => void } = $props();
+  //
+  // The **button** lives in the page header now, not here — this is the readout, and the action
+  // sits with the page's other top-level actions. The page owns the in-flight state and bumps
+  // `refresh` when a scan finishes, which is this component's cue to re-read its history.
+  let {
+    busy = false,
+    refresh = 0,
+  }: {
+    /** A scan is running (started from the page header). */
+    busy?: boolean;
+    /** Changes when a scan completes — re-reads the scan history. */
+    refresh?: number;
+  } = $props();
 
   let scans = $state<BstScan[]>([]);
-  let busy = $state(false);
   let loadError = $state('');
 
   const latest = $derived(scans[0] ?? null);
@@ -53,33 +63,25 @@
 
   onMount(load);
 
-  async function scan(): Promise<void> {
-    busy = true;
-    loadError = '';
-    try {
-      // A failed scan resolves — the reason is in the payload, not in an HTTP error.
-      await runScanNow();
-      await load();
-      onMatchesChanged();
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : 'The scan request itself failed';
-    } finally {
-      busy = false;
+  // Re-read after the page's scan finishes. `refresh` starts at 0 and the effect runs once on
+  // mount alongside onMount's load — harmless, and cheaper than tracking "have I loaded yet".
+  let seen = 0;
+  $effect(() => {
+    if (refresh !== seen) {
+      seen = refresh;
+      load();
     }
-  }
+  });
 </script>
 
 <section class="scan" aria-label="r/modular scan status">
   <div class="scan-bar">
-    <Button variant="primary" onclick={scan} disabled={busy}>
-      {busy ? 'Scanning r/modular…' : 'Scan r/modular now'}
-    </Button>
-
     {#if busy}
       <!-- Measured at ~140s for three requests. Saying so is the difference between "working"
            and "hung" — the pacing is deliberate (see DEFAULT_REQUEST_GAP_MS), not a stall. -->
       <span class="scan-when">
-        Takes about two minutes — Reddit’s public feed allows roughly one request a minute.
+        Scanning r/modular — takes about two minutes, Reddit’s public feed allows roughly one
+        request a minute.
       </span>
     {:else if latest}
       <span class="scan-when">Last scan {when(latest.startedAt)}</span>
