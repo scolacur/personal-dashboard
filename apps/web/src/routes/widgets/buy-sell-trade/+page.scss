@@ -9,10 +9,30 @@
   margin: 0 auto;
 }
 
+/* Title block left, actions right. Wraps to stacked on a phone, where a row of two primary
+   buttons beside a heading has nowhere to go. */
 .bst-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.bst-head-text {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  /* Lets the subhead shrink instead of shoving the buttons off the row. */
+  flex: 1 1 22rem;
+  min-width: 0;
+}
+
+.bst-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  flex-shrink: 0;
 }
 
 .bst-title {
