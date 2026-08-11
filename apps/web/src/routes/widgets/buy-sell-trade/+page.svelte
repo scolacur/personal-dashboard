@@ -106,6 +106,16 @@
   let importError = $state('');
   let importResult = $state<BstImportResult | null>(null);
 
+  /**
+   * Fields that only mean something for a thing you own, so they switch off for a WTB row.
+   *
+   * `type` stays editable whatever is selected — it is how you switch back. Maker and Item are
+   * the want. **Aliases and notes stay enabled deliberately**: the scan matches WTB rows too
+   * (that is how "someone is selling what you want" is found), and aliases are what PD-475 added
+   * to make that work, so disabling them would quietly degrade want-matching.
+   */
+  const sellingOnly = (draft: Draft): boolean => draft.type !== 'WTB';
+
   const FIELDS: FieldDef[] = [
     // Segmented rather than a dropdown: two values that are the whole meaning of the row, so
     // showing both beats hiding them behind a click. Kept in the modal even though the column
@@ -114,16 +124,35 @@
     { key: 'manufacturer', label: 'Maker', type: 'text', placeholder: 'e.g. Make Noise' },
     { key: 'item', label: 'Item', type: 'text', required: true, placeholder: 'e.g. Maths' },
     // Price is free text on purpose: "$250 shipped" / "offers" / "trade only" are all real.
-    { key: 'price', label: 'Price', type: 'text', placeholder: 'e.g. $250 shipped' },
-    { key: 'condition', label: 'Condition', type: 'text', placeholder: 'e.g. Mint' },
+    {
+      key: 'price',
+      label: 'Price',
+      type: 'text',
+      placeholder: 'e.g. $250 shipped',
+      enabledWhen: sellingOnly,
+    },
+    {
+      key: 'condition',
+      label: 'Condition',
+      type: 'text',
+      placeholder: 'e.g. Mint',
+      enabledWhen: sellingOnly,
+    },
     {
       key: 'saleStatus',
       label: 'Sale status',
       type: 'select',
       options: BST_SALE_STATUSES,
       hint: 'Only “for-sale” is drafted as a firm sale',
+      enabledWhen: sellingOnly,
     },
-    { key: 'category', label: 'Category', type: 'select', options: BST_CATEGORIES },
+    {
+      key: 'category',
+      label: 'Category',
+      type: 'select',
+      options: BST_CATEGORIES,
+      enabledWhen: sellingOnly,
+    },
     {
       key: 'aliases',
       label: 'Also known as',
@@ -131,17 +160,20 @@
       placeholder: 'e.g. A-111-5, mini synth voice',
       hint: 'Comma-separated. What people call it in a thread — the scan matches these too.',
     },
+    // `text`, not `textarea`: a textarea claims a whole row (`.wide`), and these are a phrase —
+    // "og box", "bought new" — not prose. As inputs they flow inline with everything else.
     {
       key: 'notes',
       label: 'Public notes',
-      type: 'textarea',
+      type: 'text',
       formOnly: true,
-      hint: 'Goes in the post — “og box”, “purchased new”',
+      placeholder: 'e.g. og box, purchased new',
+      hint: 'Goes in the post',
     },
     {
       key: 'privateNotes',
       label: 'Private notes',
-      type: 'textarea',
+      type: 'text',
       formOnly: true,
       hint: 'Yours only — never posted',
     },
@@ -150,6 +182,7 @@
       label: 'Location',
       type: 'text',
       hint: 'Yours only — shown when drafting so you can find it',
+      enabledWhen: sellingOnly,
     },
   ];
 

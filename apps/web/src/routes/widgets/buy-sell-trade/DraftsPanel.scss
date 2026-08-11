@@ -44,6 +44,14 @@
   color: var(--status-stuck);
 }
 
+/* Copy failures belong AT the button, not in the panel-level error slot three draft bodies
+   further up — reporting it up there is what made a failing button look like a dead one. */
+.draft-copy-error {
+  margin: 0 var(--space-md) var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--status-stuck);
+}
+
 .draft {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -116,15 +124,17 @@
 
 /* ── Template editor ────────────────────────────── */
 
+/* Sits inside the draft it edits, between the header and the rendered body. Margins rather than
+   a full-bleed block so it reads as belonging to that one draft. */
 .template-editor {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  margin-top: var(--space-md);
+  margin: 0 var(--space-md) var(--space-md);
   padding: var(--space-md);
   border: 1px solid var(--accent);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--surface-2);
 }
 
 .template-title {

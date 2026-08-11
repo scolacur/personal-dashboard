@@ -70,6 +70,8 @@ export {
   parseAliases,
   BST_SCAN_JOB,
   BST_DRAFTS_JOB,
+  BST_IGNORED_AUTHORS,
+  isIgnoredAuthor,
 } from './buy-sell-trade';
 export type {
   TicketStatus,
