@@ -11,7 +11,7 @@ import {
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, removeWorktree, type Worktree } from './workspace';
 import { runRobotSession, type RobotSessionResult } from './session';
-import type { ResumeContext } from './prompt';
+import type { ResumeContext } from '@dashboard/shared';
 import {
   ensureRunsTable,
   startRun,

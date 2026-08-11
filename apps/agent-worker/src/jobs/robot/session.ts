@@ -4,8 +4,9 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
+import { buildOrientation } from './orientation';
 import { makeCodingSpawn } from './privilege';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from '@dashboard/shared';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 import { OUTPUT_TAIL_MAX } from './runs';
@@ -222,7 +223,13 @@ export async function runRobotSession(
       options: {
         model: config.model,
         cwd: worktree.dir,
-        systemPrompt: robotSystemPrompt(),
+        systemPrompt: robotSystemPrompt(
+          buildOrientation({
+            repoDir: worktree.dir,
+            onMissing: (what) =>
+              logger.warn({ what, ticketId: candidate.id }, 'robot: orientation source missing — the run is degraded'),
+          }),
+        ),
         // PD-486: the base set of tools that exist for this session. `Task` is absent, so the
         // Robot cannot spawn sub-agents whose turns the cap can't see. See ROBOT_TOOLS.
         tools: [...ROBOT_TOOLS],

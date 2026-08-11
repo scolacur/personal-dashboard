@@ -1,5 +1,10 @@
+// The code under test now lives in `packages/shared/src/agent-prompts.ts` (the dashboard's Agent
+// Glossary renders the same builders, so there is one source and nothing to keep in sync). The
+// spec stays here rather than adding a third test runner for `packages/shared`; agent-worker is
+// the primary consumer and `shared/decisions.spec.ts` already sets the precedent for a spec that
+// reaches outside its own directory.
 import { describe, it, expect } from 'vitest';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from './prompt';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, MEMORY_RUNS_DIR } from '@dashboard/shared';
 
 const base = {
   title: 'Add a thing',
@@ -16,6 +21,20 @@ describe('robotSystemPrompt', () => {
     expect(s).toMatch(/You are a Robot/);
     expect(s).toMatch(/Stay strictly within this one ticket/);
     expect(s).toMatch(/MUST ship with vitest tests/);
+  });
+
+  // PD-306: orientation rides the SYSTEM prompt (stable across tickets ⇒ prompt-cacheable), so it
+  // must actually be carried through rather than silently dropped.
+  it('appends the injected orientation after the rules, keeping both', () => {
+    const s = robotSystemPrompt('## Project orientation\n\nPROJECT.md says hello.');
+    expect(s).toMatch(/You are a Robot/);
+    expect(s).toContain('PROJECT.md says hello.');
+    expect(s.indexOf('You are a Robot')).toBeLessThan(s.indexOf('PROJECT.md says hello.'));
+  });
+
+  it('emits only the rules when there is no orientation, with no dangling separator', () => {
+    expect(robotSystemPrompt()).toBe(robotSystemPrompt(''));
+    expect(robotSystemPrompt().trimEnd()).toBe(robotSystemPrompt());
   });
 });
 
@@ -36,6 +55,38 @@ describe('buildTaskPrompt', () => {
     expect(p).toContain('git -c http.proxy=http://egress-proxy:3128 push -u origin robot/220');
     expect(p).toContain('gh pr create --repo scolacur/personal-dashboard --base main --head robot/220');
     expect(p).toContain(SCM_JSON);
+  });
+
+  it('makes the run write its own memory file, in the per-run inbox, before committing (PD-306)', () => {
+    const p = buildTaskPrompt(base);
+    expect(p).toContain(`${MEMORY_RUNS_DIR}/$(date +%F)-robot-220.md`);
+    expect(p).toMatch(/Worth remembering/);
+    // Ordering is load-bearing: written after verify, before the commit, or it misses the commit.
+    // Anchored on the sub-step headings — `git add -A` also appears in Step 1's CLAUDE.md warning.
+    expect(p.indexOf(MEMORY_RUNS_DIR)).toBeGreaterThan(p.indexOf('1. **Verify.**'));
+    expect(p.indexOf(MEMORY_RUNS_DIR)).toBeLessThan(p.indexOf('3. **Commit**'));
+  });
+
+  // The shared day file and the index are the conflict shape D-070 removed for decisions; a Robot
+  // must never reintroduce it. This is the instruction that keeps it out.
+  it('forbids the Robot from touching the curated day file or the memory index', () => {
+    const p = buildTaskPrompt(base);
+    expect(p).toMatch(/Never edit `MEMORY\/MEMORY\.md` or a `MEMORY\/YYYY-MM-DD\.md`/);
+  });
+
+  it('tells the Robot to ignore CLAUDE.md, and says why rather than just asserting it', () => {
+    const p = buildTaskPrompt(base);
+    expect(p).toMatch(/Ignore `CLAUDE\.md`/);
+    expect(p).toMatch(/you are in one/); // the worktree contradiction
+    expect(p).toMatch(/you cannot see\s+the board/); // the DB-blind contradiction (line-wrapped)
+  });
+
+  it('does not spend turns re-reading what it was already given', () => {
+    expect(buildTaskPrompt(base)).toMatch(/do NOT spend turns re-reading them/);
+  });
+
+  it('carries memory + decisions into the PR envelope, not just the branch', () => {
+    expect(buildTaskPrompt(base)).toMatch(/\*\*Memory \/ Decisions:\*\*/);
   });
 
   it('tells the Robot how to park for a human on a genuine ambiguity (C2 ask_human)', () => {

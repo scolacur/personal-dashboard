@@ -152,3 +152,27 @@ export {
   ROBOT_EVENT,
   ROBOT_RESET_EVENTS,
 } from './task-monitor';
+export type { ResumeContext, TaskPromptInput, AgentType, AgentProfile } from './agent-prompts';
+export {
+  MARKER_DIR,
+  VERIFY_OK_MARKER,
+  SCM_JSON,
+  ASK_HUMAN_MARKER,
+  MEMORY_RUNS_DIR,
+  robotSystemPrompt,
+  buildTaskPrompt,
+  orientationFraming,
+  orientationBlock,
+  composeOrientation,
+  sampleOrientation,
+  ORIENTATION_SOURCES,
+  ORIENTATION_EXCLUSIONS,
+  refineSystemPrompt,
+  auditSystemPrompt,
+  AGENT_TYPES,
+  AGENT_PROFILES,
+  SAMPLE_TASK_PROMPT_INPUT,
+  SAMPLE_RESUME_CONTEXT,
+  SAMPLE_CONTEXT_PACK,
+  sampleRobotTaskPrompt,
+} from './agent-prompts';

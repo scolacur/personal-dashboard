@@ -1,0 +1,174 @@
+// Agent Glossary modal (PD-306). The tab strip deliberately matches GlossaryModal.scss — this is
+// the second glossary on the site and they should read as the same control.
+
+.glossary-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-md);
+}
+
+.glossary-tab {
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+
+  &:hover {
+    color: var(--text);
+  }
+
+  &.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 500;
+  }
+}
+
+.agent-tagline {
+  margin: 0 0 var(--space-xs);
+  color: var(--text);
+}
+
+// Read-only vs writes-code is the first thing worth knowing about an agent, so it gets a badge
+// rather than a bullet — and the writing one is the loud colour.
+.agent-access {
+  display: inline-block;
+  margin: 0 0 var(--space-md);
+  padding: 2px var(--space-sm);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-2, rgb(255 255 255 / 6%));
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+
+  &.agent-access-write {
+    background: rgb(220 38 38 / 15%);
+    color: var(--danger, #f87171);
+  }
+}
+
+.agent-heading {
+  margin: var(--space-lg) 0 var(--space-sm);
+  font-size: var(--font-size-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.agent-responsibilities {
+  margin: 0;
+  padding-left: var(--space-lg);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+
+  li {
+    margin-bottom: var(--space-xs);
+  }
+}
+
+.agent-decisions,
+.agent-prompt-intro {
+  margin: var(--space-sm) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.prompt-section {
+  margin-top: var(--space-md);
+}
+
+.prompt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.prompt-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.prompt-copy {
+  flex: none;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm, 4px);
+  padding: 2px var(--space-sm);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+}
+
+.prompt-note {
+  margin: var(--space-xs) 0 var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+// The prompts are long and contain shell blocks whose wrapping matters. Scroll them in their own
+// box rather than letting them set the modal's width or run off the side of the page.
+.prompt-text {
+  margin: 0;
+  padding: var(--space-sm);
+  max-height: 22rem;
+  overflow: auto;
+  background: var(--surface-2, rgb(0 0 0 / 25%));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.placeholder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--font-size-xs);
+
+  li {
+    display: grid;
+    grid-template-columns: minmax(8rem, max-content) 1fr;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+    border-bottom: 1px solid var(--border);
+
+    &:last-child {
+      border-bottom: 0;
+    }
+  }
+
+  code {
+    color: var(--accent);
+    overflow-wrap: anywhere;
+  }
+
+  span {
+    color: var(--muted);
+  }
+}
+
+@media (width <= 40rem) {
+  .placeholder-list li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

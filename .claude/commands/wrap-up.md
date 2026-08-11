@@ -10,30 +10,37 @@ Read and follow the full instructions in `~/.claude/commands/wrap-up.md`, using 
 - Project path: `/Users/steve/Documents/Dev/Projects/personal-dashboard`
 - Memory target: `/Users/steve/Documents/Dev/Projects/personal-dashboard/MEMORY/`
 
-### Step 2 — Curate memory from merged Robot PRs
+### Step 2 — Curate the Robot memory inbox
 
-Robot runs never write to MEMORY/ (concurrent merges would conflict on the daily
-file). Instead, each run's durable record lives in its PR (title, `Closes #N`,
-`## Assumptions` block, and any `DECISIONS/D-NNN-*.md` file it added). This step folds the
-non-obvious parts of recently-merged Robot work into a single curated memory entry.
+A Robot never writes the day file or `MEMORY/MEMORY.md` — those stay human-curated. It writes
+**one file per run** to `MEMORY/runs/YYYY-MM-DD-<branch>.md` on its own branch, merged with its
+PR (PD-306). One file per run rather than appending to the shared day file, for the same reason
+decisions are one file each ([[D-070]]): concurrent writers never touch the same path, so nothing
+has to resolve a merge conflict.
 
-1. Determine the boundary: the date of the most recent `MEMORY/YYYY-MM-DD.md` file.
-2. List Robot PRs merged since then:
+`MEMORY/runs/` is an **inbox**. This step empties it.
+
+1. Read everything in `MEMORY/runs/` (ignore `README.md`). Each file names what shipped and a
+   **Worth remembering** line.
+2. For any run whose file is thin or says "nothing beyond the diff", check the PR itself before
+   concluding there was nothing — the `## Assumptions / Flags` and `## Memory / Decisions`
+   sections of the envelope carry more:
    ```sh
    gh pr list --repo scolacur/personal-dashboard --state merged \
-     --search "merged:>=<boundary-date>" \
-     --json number,title,mergedAt,headRefName,labels,body \
+     --search "merged:>=<date of the most recent MEMORY/YYYY-MM-DD.md>" \
+     --json number,title,mergedAt,headRefName,body \
      --jq '.[] | select(.headRefName | startswith("robot/"))'
    ```
-3. Skim each body — what shipped, the `## Assumptions`, and any decision it logged.
-4. Fold anything **non-obvious** (a surprising design choice, an assumption worth
-   revisiting, a gotcha that bit the agent) into today's `MEMORY/YYYY-MM-DD.md` under a
-   `## Robot merges` subsection — ONE entry, written by you, not per-PR. Skip routine
-   merges that the PR/commit history already explains on its own. Update `MEMORY/MEMORY.md`
-   with the usual one-line pointer.
+3. Fold anything **non-obvious** (a surprising design choice, an assumption worth revisiting, a
+   gotcha that cost the agent turns) into today's `MEMORY/YYYY-MM-DD.md` under a `## Robot merges`
+   subsection — ONE entry that you write, not one per run. Skip routine work the commit history
+   already explains. Update `MEMORY/MEMORY.md` with the usual one-line pointer.
+4. **Delete the files you curated** (`git rm MEMORY/runs/<file>.md`). Leaving them means the next
+   wrap-up re-reads work already recorded. Files piling up here means wrap-up has not run — the
+   content is uncurated, not lost.
 
-This is the only path by which agent work reaches MEMORY — agents capture in PRs, Tank
-curates here.
+This is the only path by which agent work reaches MEMORY — agents capture per-run, Tank curates
+here.
 
 ### Step 3 — Log any decision this session made
 
