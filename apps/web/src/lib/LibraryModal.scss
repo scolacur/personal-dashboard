@@ -1,0 +1,63 @@
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.library-row {
+  display: grid;
+  /* Checkbox / title / description. The description takes the slack so titles stay aligned
+     down the list, which is what makes it scannable. */
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+
+  /* The whole row is the label, so the checkbox itself never needs to be the click target. */
+  input {
+    cursor: pointer;
+  }
+}
+
+.library-row.checked {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.library-title {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.library-description {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  /* One line: the description is a hint here, not the content. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* On a phone the description competes with the title for a narrow row; drop it and let the
+   title own the width. Membership editing is explicitly available at every viewport (D-071),
+   so this list has to work here. */
+@media (max-width: 600px) {
+  .library-row {
+    grid-template-columns: auto 1fr;
+  }
+
+  .library-description {
+    display: none;
+  }
+}

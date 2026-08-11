@@ -1,6 +1,39 @@
-.page-empty {
+/* The trailing "+" card (PD-334). A dashed placeholder rather than a filled card, so it reads
+   as an affordance and never competes with a real widget for attention. */
+.ghost-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  /* One grid cell, matching a 1×1 widget — the grid's own auto-rows give it its height. */
+  grid-column: span 1;
+  grid-row: span 1;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
   color: var(--muted);
+  font-family: inherit;
   font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+}
+
+/* Sole occupant of an empty page: a normal state now that membership is user state (D-071),
+   so it should look inviting rather than like an error. Spans the full width it can get. */
+.ghost-card.empty {
+  grid-column: 1 / -1;
+  grid-row: span 2;
+}
+
+.ghost-plus {
+  font-size: 1.75rem;
+  line-height: 1;
 }
 
 .grid {

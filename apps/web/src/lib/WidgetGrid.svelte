@@ -4,7 +4,9 @@
   import { pageWidgets } from './page-widgets.svelte';
   import { resolvePlacements } from './layout';
   import { widgets as registry, defaultSpan } from './widgets';
+  import { pageById } from './pages';
   import Widget from './Widget.svelte';
+  import LibraryModal from './LibraryModal.svelte';
 
   let { pageId }: { pageId: string } = $props();
 
@@ -32,6 +34,11 @@
   }
 
   let gridEl = $state<HTMLElement | null>(null);
+
+  // The library picker. Reachable from the ghost card at every viewport and whether or not
+  // Arrange is active — adding a widget is not a spatial operation (D-071).
+  let libraryOpen = $state(false);
+  const pageTitle = $derived(pageById(pageId)?.title ?? 'this page');
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────────
   let dragId = $state<string | null>(null);
@@ -170,39 +177,50 @@
   onmouseup={resizeId ? handleResizeEnd : undefined}
 />
 
-{#if resolved.length === 0}
-  <!-- An empty page is a normal state now that membership is user state (D-071) — not the
-       "stubbed out, nothing built yet" it used to mean. PD-334's next slice replaces this with
-       the ghost "+" card, which is both the empty state and the way out of it. -->
-  <p class="page-empty">No widgets on this page yet.</p>
-{:else}
-  {#if arrangeMode.active}
-    <div class="arrange-toolbar">
-      <span class="arrange-hint">Drag to reorder · Drag corner to resize</span>
-      <button class="btn-reset" onclick={resetLayout}>Reset arrangement</button>
-      <button class="btn-done" onclick={arrangeMode.exit}>Done</button>
-    </div>
-  {/if}
-  <div class="grid" class:arranging={arrangeMode.active} bind:this={gridEl}>
-    {#each resolved as { widget, placement } (widget.id)}
-      <Widget
-        title={widget.title}
-        description={widget.description}
-        route={widget.route}
-        embed={widget.embed}
-        arranging={arrangeMode.active}
-        cols={placement.cols}
-        rows={placement.rows}
-        dragging={dragId === widget.id}
-        dropTarget={dropTargetId === widget.id}
-        onDragStart={() => startDrag(widget.id)}
-        onDragOver={(e) => handleDragOver(widget.id, e)}
-        onDrop={(e) => handleDrop(widget.id, e)}
-        onDragEnd={endDrag}
-        onResizeStart={(e) => startResize(widget.id, e)}
-      />
-    {/each}
+{#if arrangeMode.active && resolved.length > 0}
+  <div class="arrange-toolbar">
+    <span class="arrange-hint">Drag to reorder · Drag corner to resize</span>
+    <button class="btn-reset" onclick={resetLayout}>Reset arrangement</button>
+    <button class="btn-done" onclick={arrangeMode.exit}>Done</button>
   </div>
 {/if}
+
+<div class="grid" class:arranging={arrangeMode.active} bind:this={gridEl}>
+  {#each resolved as { widget, placement } (widget.id)}
+    <Widget
+      title={widget.title}
+      description={widget.description}
+      route={widget.route}
+      embed={widget.embed}
+      arranging={arrangeMode.active}
+      cols={placement.cols}
+      rows={placement.rows}
+      dragging={dragId === widget.id}
+      dropTarget={dropTargetId === widget.id}
+      onDragStart={() => startDrag(widget.id)}
+      onDragOver={(e) => handleDragOver(widget.id, e)}
+      onDrop={(e) => handleDrop(widget.id, e)}
+      onDragEnd={endDrag}
+      onResizeStart={(e) => startResize(widget.id, e)}
+    />
+  {/each}
+
+  <!-- Always last, and deliberately NOT a <Widget>: it is not draggable, not resizable and not
+       a drop target, so reorder never has to special-case it. On an empty page it is the only
+       card, which is what makes it the empty state as well as the way out of one. -->
+  <button
+    type="button"
+    class="ghost-card"
+    class:empty={resolved.length === 0}
+    onclick={() => (libraryOpen = true)}
+  >
+    <span class="ghost-plus" aria-hidden="true">+</span>
+    <span class="ghost-label"
+      >{resolved.length === 0 ? 'Add a widget' : 'Add widget'}</span
+    >
+  </button>
+</div>
+
+<LibraryModal open={libraryOpen} {pageId} {pageTitle} onClose={() => (libraryOpen = false)} />
 
 <style lang="scss" src="./WidgetGrid.scss"></style>
