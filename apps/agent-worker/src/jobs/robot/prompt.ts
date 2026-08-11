@@ -22,8 +22,28 @@ export const SCM_JSON = `${MARKER_DIR}/scm.json`;
  *  contents become the awaiting-human reason. A deliberate park, NOT a failure — it burns no budget. */
 export const ASK_HUMAN_MARKER = `${MARKER_DIR}/ask-human`;
 
-export function robotSystemPrompt(): string {
-  return [
+/**
+ * Where a Robot writes its run memory (PD-306) — ONE FILE PER RUN, committed on its branch.
+ *
+ * Not the shared `MEMORY/YYYY-MM-DD.md` day file: that is the conflict shape [[D-070]] was written
+ * to eliminate for decisions, and it is worse here because humans edit the day file concurrently
+ * too. One file per run means two Robots and a human session write three different paths, which git
+ * merges without anyone — least of all an unsupervised agent — resolving a conflict.
+ *
+ * These are an inbox, not the record: `/wrap-up` folds them into the day file and deletes them.
+ */
+export const MEMORY_RUNS_DIR = 'MEMORY/runs';
+
+/**
+ * The Robot's standing rules, plus the injected project orientation (PD-306).
+ *
+ * `orientation` goes in the SYSTEM prompt rather than the task prompt on purpose: it is identical
+ * for every ticket in a repo, so it sits in the stable, prompt-cacheable prefix instead of being
+ * re-sent as fresh tokens with each ticket. Built by `buildOrientation` — see orientation.ts for
+ * what is in it and what is deliberately left out.
+ */
+export function robotSystemPrompt(orientation = ''): string {
+  const rules = [
     'You are a Robot: an autonomous coding agent completing ONE ticket in the Personal Dashboard',
     'repo (D-055). You run unattended in a dedicated git worktree that is already checked out to',
     'your branch. Your job is to implement the ticket, verify it, and hand off a PR for human review.',
@@ -42,6 +62,7 @@ export function robotSystemPrompt(): string {
     '- Do NOT touch secrets/.env*, auth/session code, CI, Dockerfiles, package.json scripts,',
     '  dependencies, or the DB schema unless the ticket explicitly requires it.',
   ].join('\n');
+  return orientation ? `${rules}\n\n---\n\n${orientation}` : rules;
 }
 
 /** Why a run is a re-run, when it is (C5/PD-346). The coding session is DB-blind, so any context it
@@ -110,9 +131,15 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     'If NO PR exists, this is a fresh attempt — proceed normally.',
     '',
     '## Step 1 — Orient',
-    'Read `PROJECT.md`, `CLAUDE.md`, and (as needed) `DECISIONS.md`. They define the stack,',
-    'architecture, and conventions. Your working directory IS the repo worktree on your branch',
-    `(\`${branch}\`); node_modules may already be present from a prior run.`,
+    'You have already been given `PROJECT.md` and the `DECISIONS.md` index in your system prompt',
+    '(PD-306) — do NOT spend turns re-reading them. Open a specific `DECISIONS/D-NNN-*.md` file when',
+    'the index shows one bearing on your ticket. Your working directory IS the repo worktree on your',
+    `branch (\`${branch}\`); node_modules may already be present from a prior run.`,
+    '',
+    'Ignore `CLAUDE.md`. It is written for a human-driven session and parts of it are wrong for you:',
+    'it tells the reader to create a worktree (you are in one), to avoid `git add -A` (Step 3 uses it',
+    'deliberately — this worktree is yours alone), and to update tickets on the board (you cannot see',
+    'the board, and the loop owns that).',
     '',
     '## Step 2 — Implement',
     'Do the work described in the ticket. Add tests for any new/changed logic.',
@@ -142,21 +169,46 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '   If verify cannot pass within the ticket\'s scope, do NOT write the marker and do NOT open a',
     '   PR — leave the tree as-is and end your turn. Never weaken tests to force it green.',
     '',
-    '2. **Commit** with a clear conventional-commit message (this becomes your PR title):',
+    '2. **Document what a future session would otherwise have to re-derive** (PD-306). Two files,',
+    '   both committed with your work in the next sub-step — nobody else will write them for you.',
+    '',
+    '   **a. Your run memory — ALWAYS, even for a small change.** One file for this run, at',
+    `   \`${MEMORY_RUNS_DIR}/$(date +%F)-${branch.replace('/', '-')}.md\`. Write it yourself:`,
+    '   ```sh',
+    `   mkdir -p ${MEMORY_RUNS_DIR}`,
+    `   cat > ${MEMORY_RUNS_DIR}/$(date +%F)-${branch.replace('/', '-')}.md <<'EOF'`,
+    `   # ${title}`,
+    '',
+    '   **What shipped:** <1-2 lines>',
+    '',
+    '   **Worth remembering:** <the non-obvious part — a surprise in the codebase, an assumption you',
+    '   had to make, a gotcha that cost you turns, something the ticket got wrong. If the commit',
+    '   message and diff already explain everything, write "nothing beyond the diff".>',
+    '   EOF',
+    '   ```',
+    '   Write to YOUR file and only yours. Never edit `MEMORY/MEMORY.md` or a `MEMORY/YYYY-MM-DD.md`',
+    '   day file — those are curated by a human, and editing them would collide with other sessions.',
+    '',
+    '   **b. A decision file — ONLY if you made a non-obvious design choice** that a future reader',
+    '   would otherwise have to reverse-engineer. Follow the rule in your system prompt: a new',
+    '   `DECISIONS/D-NNN-slug.md`, then `npm run decisions:index`. Most tickets do not need one; do',
+    '   not invent a decision to have something to write.',
+    '',
+    '3. **Commit** with a clear conventional-commit message (this becomes your PR title):',
     '   ```sh',
     '   git add -A',
     '   git commit -m "<concise conventional-commit summary>"',
     '   ```',
     '   If there is nothing to commit, you made no changes — end your turn without a PR.',
     '',
-    `3. **Push** your branch. First wire git's auth to the token in your env (one-time,`,
+    `4. **Push** your branch. First wire git's auth to the token in your env (one-time,`,
     '   idempotent), then push (proxy passed inline where set):',
     '   ```sh',
     '   gh auth setup-git            # makes git push authenticate with $GH_TOKEN',
     `   git ${pxFlag}push -u origin ${branch}`,
     '   ```',
     '',
-    '4. **Open the PR** — SKIP this sub-step if Step 0 found an existing PR (your push already updated',
+    '5. **Open the PR** — SKIP this sub-step if Step 0 found an existing PR (your push already updated',
     '   it). Otherwise create it with a descriptive conventional-commit title (NOT "automated changes").',
     '   The body must follow this envelope — fill in every placeholder:',
     '   ```sh',
@@ -175,11 +227,14 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     '**Assumptions / Flags:**',
     '- <list yours, or "none">',
+    '',
+    '**Memory / Decisions:**',
+    `- <the "Worth remembering" line from your ${MEMORY_RUNS_DIR}/ file, plus any D-NNN you added>`,
     'BODY',
     '   )"',
     '   ```',
     '',
-    '5. **Write the hand-off manifest** so the loop can locate your PR:',
+    '6. **Write the hand-off manifest** so the loop can locate your PR:',
     '   ```sh',
     `   PR_NUMBER="$(gh pr view ${branch} --repo ${repo} --json number --jq .number)"`,
     `   mkdir -p ${MARKER_DIR}`,

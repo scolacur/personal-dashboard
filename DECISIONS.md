@@ -11,6 +11,7 @@ Newest first.
 
 ---
 
+- **[D-071](DECISIONS/D-071-robot-orientation-injected-memory-per-run.md)** — The Robot's orientation is injected, not fetched — and its memory is one file per run (PD-306)
 - **[D-070](DECISIONS/D-070-one-decision-per-file-generated-index.md)** — One decision per file, with a generated index and a duplicate-id test as the real guard (PD-490)
 - **[D-069](DECISIONS/D-069-arrange-mode-drag-reorder-uses-native.md)** — Arrange mode drag-to-reorder uses native HTML5 DnD (commit-on-drop) rather than `svelte-dnd-action` (PD-331)
 - **[D-068](DECISIONS/D-068-robot-tool-allowlist-no-sub-agents.md)** — The Robot's tools are an explicit allowlist, and it may not spawn sub-agents (PD-486)

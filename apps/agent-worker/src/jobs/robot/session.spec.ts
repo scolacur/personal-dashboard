@@ -124,6 +124,50 @@ describe('the Robot tool surface', () => {
   });
 });
 
+describe('orientation injection (PD-306)', () => {
+  /** Capture the SDK options for a worktree seeded like a real checkout. */
+  async function systemPromptFor(seed: (dir: string) => void): Promise<string> {
+    const dir = mkdtempSync(path.join(tmpdir(), 'robot-orient-'));
+    seed(dir);
+    let seen: Record<string, unknown> = {};
+    const fake: RunQuery = ((args: { options: Record<string, unknown> }) => {
+      seen = args.options;
+      return (async function* () {
+        yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 1 } as never;
+      })();
+    }) as unknown as RunQuery;
+    await runRobotSession(loadConfig({}), candidate, { dir, branch: 'robot/220' }, undefined, fake);
+    rmSync(dir, { recursive: true, force: true });
+    return String(seen.systemPrompt ?? '');
+  }
+
+  // The unit tests cover buildOrientation; this covers the WIRING — that what it builds actually
+  // reaches the SDK. Dropping the call, or passing it to the wrong option, fails here and nowhere
+  // else, which is the same gap PD-486 closed for `tools`.
+  it('reaches the SDK as part of the system prompt, alongside the standing rules', async () => {
+    const prompt = await systemPromptFor((dir) => {
+      writeFileSync(path.join(dir, 'PROJECT.md'), '# PROJECT\n\n## 9. Glossary\n**Robot**: the agent.\n');
+      writeFileSync(path.join(dir, 'DECISIONS.md'), '# Decision Log\n\n- **[D-070](DECISIONS/D-070-x.md)** — One per file\n');
+    });
+    expect(prompt).toMatch(/You are a Robot/);
+    expect(prompt).toContain('**Robot**: the agent.');
+    expect(prompt).toContain('One per file');
+  });
+
+  it('reads orientation from the worktree, so a Robot sees its own branch state', async () => {
+    const prompt = await systemPromptFor((dir) => {
+      writeFileSync(path.join(dir, 'PROJECT.md'), '# PROJECT\n\nBRANCH-LOCAL MARKER\n');
+    });
+    expect(prompt).toContain('BRANCH-LOCAL MARKER');
+  });
+
+  it('still produces a usable system prompt when the worktree has no docs at all', async () => {
+    const prompt = await systemPromptFor(() => {});
+    expect(prompt).toMatch(/You are a Robot/);
+    expect(prompt).not.toContain('## Project orientation');
+  });
+});
+
 describe('runRobotSession', () => {
   let dir: string;
   let config: AgentWorkerConfig;
