@@ -1,10 +1,25 @@
+/* Four rows have to fit one grid row: the counts, the preview, and the "last scanned" line, in
+   a 140px cell minus the card header — about 116px of usable height.
+   Sized with headroom rather than exactly, because this has already overflowed once: PD-440
+   added the "last scanned" line to a layout budgeted for two rows, and the `--space-md` gaps
+   alone were 32px of the overflow. Keep a line's worth of slack when adding anything here. */
 .bst-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
   justify-content: center;
   height: 100%;
-  padding: var(--space-sm) 0;
+  padding: var(--space-xs) 0;
+  overflow: hidden;
+}
+
+/* No row may be squashed below its own line box. Without this a flex child shrinks and its text
+   renders sliced through the middle of the glyphs — which is what the overflow looked like, and
+   is far harder to recognise as "too much content" than a cleanly missing line would be. */
+.bst-card-counts,
+.bst-card-preview,
+.bst-card-scanned {
+  flex-shrink: 0;
 }
 
 .bst-card-muted {
