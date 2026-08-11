@@ -237,3 +237,34 @@ $resize-dot-gap: 6px;
     grid-column: span 1;
   }
 }
+
+/* ── Remove affordance (PD-334) ──────────────────────────────────────────────
+   Arrange-mode only, and pinned to the corner opposite `.resize-handle` so the
+   two never overlap. The modal's toggle list is the path that also works below
+   768px, where arrange mode is unavailable; this is the in-place version. */
+
+.remove-handle {
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--space-xs);
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--status-stuck);
+    color: var(--status-stuck);
+  }
+}

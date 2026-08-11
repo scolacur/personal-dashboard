@@ -202,6 +202,7 @@
       onDrop={(e) => handleDrop(widget.id, e)}
       onDragEnd={endDrag}
       onResizeStart={(e) => startResize(widget.id, e)}
+      onRemove={() => pageWidgets.remove(pageId, widget.id)}
     />
   {/each}
 
