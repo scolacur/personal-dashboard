@@ -11,6 +11,10 @@ import {
   SESSION_LIMIT_FALLBACK_MS,
   SESSION_LIMIT_MAX_WAIT_MS,
   SESSION_LIMIT_SIGNATURE,
+  parseRateLimitReset,
+  RATE_LIMIT_FALLBACK_MS,
+  RATE_LIMIT_MAX_WAIT_MS,
+  RATE_LIMIT_SIGNATURE,
   type FailedRun,
   type FaultPolicy,
 } from './faults';
@@ -264,5 +268,119 @@ describe('parseResetAt (PD-470)', () => {
     // A wrong-timezone read could produce a wait of most of a day; the bounded fallback is safer.
     expect(SESSION_LIMIT_MAX_WAIT_MS).toBeLessThan(24 * 60 * 60_000);
     expect(parseResetAt('resets 1:30am (UTC)', NOW)).toBeNull(); // 23h45m out
+  });
+});
+
+/* ── GitHub rate limits (PD-248) ─────────────────────────────────────────────── */
+
+const RL_NOW = Date.UTC(2026, 7, 11, 12, 0, 0);
+
+describe('GitHub rate limits are a wait, not an auth fault (PD-248)', () => {
+  // The bug this closes: SYSTEM_WIDE_PATTERNS matches a bare `403`, and GitHub returns 403 for BOTH
+  // a throttle and a bad credential. Before this, the most routine condition in the system took the
+  // whole loop down and waited for a human.
+  const throttles = [
+    'HTTP 403: API rate limit exceeded for user ID 12345.',
+    'HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again.',
+    'HTTP 429: Too Many Requests',
+    'You have triggered an abuse detection mechanism — your request was submitted too quickly.',
+  ];
+
+  it.each(throttles)('classifies %s as transient, not system-wide', (err) => {
+    const cls = classifyFault({ verifyOk: false, error: err }, RL_NOW);
+    expect(cls.tier).toBe('transient');
+    expect(cls.signature).toBe(RATE_LIMIT_SIGNATURE);
+  });
+
+  it.each(throttles)('holds rather than pausing the loop for %s', (err) => {
+    const d = decideFault(classifyFault({ verifyOk: false, error: err }, RL_NOW), [], policy, null, RL_NOW);
+    expect(d.action).toBe('wait');
+    expect(d).toMatchObject({ kind: 'github-rate-limit' });
+  });
+
+  // The other half of the distinction, and the part that would be easy to break by widening the
+  // pattern to the status code: a genuine credential failure must STILL pause the loop, because no
+  // amount of waiting fixes it.
+  const authFaults = [
+    'HTTP 401: Bad credentials',
+    'HTTP 403: Resource not accessible by integration',
+    'HTTP 403: Forbidden',
+    'invalid api key',
+  ];
+
+  it.each(authFaults)('still pauses the loop for %s', (err) => {
+    const cls = classifyFault({ verifyOk: false, error: err }, RL_NOW);
+    expect(cls.tier).toBe('system-wide');
+    expect(decideFault(cls, [], policy, null, RL_NOW).action).toBe('pause');
+  });
+
+  it('never counts against the ticket, so repeated throttles cannot park it', () => {
+    // Three prior throttles is past both promoteAfter (2) and retryCap (3). A counted signature
+    // would have been promoted to a deterministic park by now — blaming a ticket for GitHub's load.
+    const prior: FailedRun[] = [1, 2, 3].map((i) => ({
+      tier: 'transient' as const,
+      signature: RATE_LIMIT_SIGNATURE,
+      finishedAt: RL_NOW - i * 1000,
+    }));
+    const d = decideFault(
+      classifyFault({ verifyOk: false, error: 'HTTP 429: Too Many Requests' }, RL_NOW),
+      prior,
+      policy,
+      null,
+      RL_NOW,
+    );
+    expect(d.action).toBe('wait');
+  });
+
+  it('does not delay an unrelated ticket through backoff', () => {
+    const prior: FailedRun[] = [{ tier: 'transient', signature: RATE_LIMIT_SIGNATURE, finishedAt: RL_NOW }];
+    expect(nextEligibleAt(prior, policy)).toBe(0);
+    expect(preflight(prior, policy, RL_NOW).action).toBe('go');
+  });
+
+  it('falls back to a bounded wait when the error states no reset time', () => {
+    const d = decideFault(
+      classifyFault({ verifyOk: false, error: 'HTTP 403: You have exceeded a secondary rate limit.' }, RL_NOW),
+      [],
+      policy,
+      null,
+      RL_NOW,
+    );
+    expect(d).toMatchObject({ action: 'wait', until: RL_NOW + RATE_LIMIT_FALLBACK_MS });
+  });
+});
+
+describe('parseRateLimitReset (PD-248)', () => {
+  it('reads Retry-After as seconds from now', () => {
+    expect(parseRateLimitReset('retry-after: 60', RL_NOW)).toBe(RL_NOW + 60_000);
+    expect(parseRateLimitReset('Retry-After 30', RL_NOW)).toBe(RL_NOW + 30_000);
+  });
+
+  it('reads x-ratelimit-reset as an absolute epoch in SECONDS', () => {
+    const resetSec = Math.floor(RL_NOW / 1000) + 900;
+    expect(parseRateLimitReset(`x-ratelimit-reset: ${resetSec}`, RL_NOW)).toBe(resetSec * 1000);
+  });
+
+  // They disagree: one is relative, the other absolute. Secondary limits send Retry-After and it is
+  // the only signal that describes the secondary backoff at all, so it wins.
+  it('prefers Retry-After when both are present', () => {
+    const resetSec = Math.floor(RL_NOW / 1000) + 3000;
+    expect(parseRateLimitReset(`retry-after: 45\nx-ratelimit-reset: ${resetSec}`, RL_NOW)).toBe(RL_NOW + 45_000);
+  });
+
+  it('treats an already-elapsed reset as "go now", not a negative wait', () => {
+    const past = Math.floor(RL_NOW / 1000) - 500;
+    expect(parseRateLimitReset(`x-ratelimit-reset: ${past}`, RL_NOW)).toBe(RL_NOW);
+  });
+
+  it('rejects an implausible wait rather than stalling the loop on a misparse', () => {
+    expect(parseRateLimitReset('retry-after: 999999', RL_NOW)).toBeNull();
+    const farFuture = Math.floor(RL_NOW / 1000) + 86_400;
+    expect(parseRateLimitReset(`x-ratelimit-reset: ${farFuture}`, RL_NOW)).toBeNull();
+    expect(RATE_LIMIT_MAX_WAIT_MS).toBeLessThan(2 * 60 * 60_000);
+  });
+
+  it('returns null when there is nothing readable', () => {
+    expect(parseRateLimitReset('HTTP 429: Too Many Requests', RL_NOW)).toBeNull();
   });
 });

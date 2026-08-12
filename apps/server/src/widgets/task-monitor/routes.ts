@@ -29,6 +29,7 @@ import {
   getDispatchPauseState,
   getRobotBudget,
   getSessionLimitHold,
+  getGithubRateLimit,
   getProjectBySlug,
   getSortieFleet,
   getTicket,
@@ -705,5 +706,6 @@ export function registerRoutes(
     dispatch: getDispatchPauseState(db),
     sessionLimit: getSessionLimitHold(db),
     budget: getRobotBudget(db),
+    githubRateLimit: getGithubRateLimit(db),
   }));
 }

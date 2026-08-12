@@ -283,7 +283,7 @@ export async function processRobotQueue(
         // quota. The HOLD is what stops the loop grinding through the rest of the queue against a
         // wall, and it expires by itself, so this needs no human. `paused` is the honest milestone:
         // from the ticket's point of view the loop stopped; the detail says until when.
-        holdForSessionLimit(db, decision.until, decision.reason, now());
+        holdForSessionLimit(db, decision.until, decision.reason, now(), decision.kind);
         setAgentState(db, candidate.id, 'queued', now());
         logMilestone(
           db,

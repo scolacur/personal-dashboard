@@ -747,7 +747,17 @@ export interface DispatchPauseState {
 /** A self-expiring hold on dispatch after the provider reported a session/usage limit (PD-470).
  *  Unlike `DispatchPauseState` this needs no human: the loop resumes itself once `until` passes,
  *  and the status API reports an expired hold as none at all. */
+/**
+ * Which condition dispatch is waiting out (PD-470, PD-248). Both expire on their own and need no
+ * human, but they have nothing else in common and the dashboard must not report the wrong one: a
+ * session limit means the Anthropic quota is spent, a GitHub rate limit means the loop is hitting
+ * the GitHub API too hard. The second is worth looking into; the first is just a wait.
+ */
+export type HoldKind = 'session-limit' | 'github-rate-limit';
+
 export interface SessionLimitHoldState {
+  /** Which condition is being waited out. Absent on rows written before PD-248 ⇒ 'session-limit'. */
+  kind: HoldKind;
   /** Unix ms dispatch resumes — the time the provider stated, or a bounded fallback when its
    *  message carried no readable time. */
   until: number;
@@ -777,6 +787,53 @@ export interface RobotBudgetStatus {
  *  loop's global running/paused state (C3/PD-344).
  *  NOTE: the `sortie` key is a stable wire-field name kept for the board's
  *  Site Status fetch; it carries the Robot loop's fleet counts. */
+/* ── GitHub rate-limit headroom (PD-248) ──────────────────────────────────────
+ * Read by a periodic `gh api rate_limit` probe in the worker. A probe rather than response headers
+ * because the loop's GitHub calls go through the `gh` CLI, and `gh pr view` surfaces no
+ * `x-ratelimit-*` headers at all — there is nothing to thread through.
+ */
+
+/** One GitHub rate-limit bucket. `resetAt` is epoch ms (GitHub reports seconds; the worker converts). */
+export interface RateLimitBucket {
+  remaining: number;
+  limit: number;
+  resetAt: number;
+}
+
+export interface GithubRateLimitStatus {
+  /** The REST bucket — what `gh pr view` and `gh api` spend. */
+  core: RateLimitBucket;
+  /** The GraphQL bucket, when the probe reported one. Separate quota, separate reset. */
+  graphql: RateLimitBucket | null;
+  /** Epoch ms of the probe. Staleness matters: an old reading is not a healthy one. */
+  checkedAt: number;
+}
+
+/** Headroom below which the UI calls it low. GitHub's REST core limit is 5,000/hr for a PAT, so
+ *  10% is 500 calls — enough warning to act, not so tight that it fires on ordinary use. */
+export const RATE_LIMIT_LOW_FRACTION = 0.1;
+
+/** A probe older than this is reported as stale rather than current (the worker probes far more
+ *  often than this; exceeding it means the probe itself is failing). */
+export const RATE_LIMIT_STALE_MS = 30 * 60_000;
+
+export type RateLimitHealth = 'ok' | 'low' | 'exhausted' | 'stale';
+
+/**
+ * Classify headroom for display. `stale` outranks the numbers on purpose: if the probe stopped
+ * running, the last reading says nothing about now, and showing a comfortable "4,900 remaining"
+ * from an hour ago is worse than showing nothing.
+ */
+export function rateLimitHealth(status: GithubRateLimitStatus | null, now: number): RateLimitHealth {
+  if (!status) return 'stale';
+  if (now - status.checkedAt > RATE_LIMIT_STALE_MS) return 'stale';
+  const buckets = status.graphql ? [status.core, status.graphql] : [status.core];
+  // Worst bucket wins — headroom in one quota is no comfort when the other is spent.
+  if (buckets.some((b) => b.remaining <= 0)) return 'exhausted';
+  if (buckets.some((b) => b.limit > 0 && b.remaining / b.limit < RATE_LIMIT_LOW_FRACTION)) return 'low';
+  return 'ok';
+}
+
 export interface SystemStatus {
   sortie: Partial<Record<AgentState, number>>;
   workers: WorkerHeartbeat[];
@@ -785,6 +842,8 @@ export interface SystemStatus {
   sessionLimit: SessionLimitHoldState | null;
   /** PD-463: the loop-wide budget ceiling and spend against it; null until a worker publishes one. */
   budget: RobotBudgetStatus | null;
+  /** PD-248: GitHub API headroom from the worker's periodic probe; null until one has run. */
+  githubRateLimit: GithubRateLimitStatus | null;
 }
 
 // ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────

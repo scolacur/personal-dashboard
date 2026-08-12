@@ -110,6 +110,10 @@ export type {
   SystemStatus,
   DispatchPauseState,
   SessionLimitHoldState,
+  HoldKind,
+  RateLimitBucket,
+  GithubRateLimitStatus,
+  RateLimitHealth,
   RobotBudgetStatus,
   AgentRun,
   RobotRunStatus,
@@ -150,6 +154,9 @@ export {
   REFINE_STATE_LABELS,
   REFINE_STATE_DESCRIPTIONS,
   ROBOT_EVENT,
+  RATE_LIMIT_LOW_FRACTION,
+  RATE_LIMIT_STALE_MS,
+  rateLimitHealth,
   ROBOT_RESET_EVENTS,
 } from './task-monitor';
 export type { ResumeContext, TaskPromptInput, AgentType, AgentProfile } from './agent-prompts';

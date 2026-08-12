@@ -1,3 +1,5 @@
+import type { HoldKind } from '@dashboard/shared';
+
 /**
  * The fault-aware retry guardrail (D-055, PD-343 / C2) — the policy engine that decides what
  * happens after a Robot run fails. It replaces C1's blind `SIMPLE_RETRY_CAP` count with a
@@ -98,6 +100,71 @@ export function parseResetAt(error: string, now: number): number | null {
   return target;
 }
 
+/* ── GitHub rate limits (PD-248) ───────────────────────────────────────────────
+ * A GitHub throttle and a bad GitHub credential are BOTH `HTTP 403`, and `SYSTEM_WIDE_PATTERNS`
+ * below matches bare `403`. So before this, a transient throttle took the entire loop down and
+ * waited for a human — the loudest possible response to the most routine possible condition.
+ *
+ * A rate limit is a wait with a stated end, exactly like a provider session limit (PD-470), so it
+ * gets that treatment: hold dispatch, keep the ticket queued, burn nothing, resume unattended.
+ */
+
+/** The stable signature for a GitHub rate limit. Explicit (not normalized) for the same reason as
+ *  the session limit: the raw text carries a reset time and would differ run to run. */
+export const RATE_LIMIT_SIGNATURE = 'github-rate-limit';
+
+/**
+ * GitHub's throttle phrasings, across both limits it enforces:
+ *   - primary:   `HTTP 403: API rate limit exceeded for user ID 12345.`
+ *   - secondary: `HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes…`
+ *   - abuse:     `…was submitted too quickly…`
+ *   - REST 429:  `HTTP 429: Too Many Requests`
+ *
+ * Deliberately phrase-matched, never on the status code alone. `HTTP 403: Bad credentials` and
+ * `HTTP 403: Resource not accessible by integration` are permission faults that a wait will never
+ * fix, and they must keep falling through to the system-wide tier below.
+ */
+const RATE_LIMIT_PATTERN =
+  /\brate limit exceeded\b|\bsecondary rate limit\b|\btoo many requests\b|\bwas submitted too quickly\b|\bretry-after\b/i;
+
+/** GitHub's own guidance for a secondary limit with no `Retry-After` is "wait at least a minute". */
+export const RATE_LIMIT_FALLBACK_MS = 60_000;
+
+/** Longest wait a parsed reset may produce. The primary limit resets hourly, so anything past this
+ *  means the parse went wrong — fall back to the bounded delay rather than stalling the loop. */
+export const RATE_LIMIT_MAX_WAIT_MS = 65 * 60_000;
+
+/**
+ * Read when a throttle lifts, as epoch ms — `null` when the text says nothing readable.
+ *
+ * Two forms, in priority order, because they disagree and the more specific one wins:
+ *   - `retry-after: 60` — seconds from now. What a SECONDARY limit sends, and the only one that
+ *     describes the secondary limit's backoff at all.
+ *   - `x-ratelimit-reset: 1786470000` — absolute epoch SECONDS. What a PRIMARY limit sends.
+ *
+ * Everything unrecognised returns null so the caller uses the bounded fallback (same posture as
+ * `parseResetAt`): the provider's phrasing is not a contract.
+ */
+export function parseRateLimitReset(error: string, now: number): number | null {
+  const retryAfter = /retry-after:?\s*(\d{1,6})\b/i.exec(error);
+  if (retryAfter) {
+    const ms = Number(retryAfter[1]) * 1000;
+    // 0 is a legitimate "retry immediately"; anything past the cap is a misparse.
+    if (ms >= 0 && ms <= RATE_LIMIT_MAX_WAIT_MS) return now + ms;
+    return null;
+  }
+
+  const reset = /x-ratelimit-reset:?\s*(\d{9,11})\b/i.exec(error);
+  if (reset) {
+    const at = Number(reset[1]) * 1000;
+    // A reset already in the past means the window turned over while we were reading it — that is
+    // "go now", not a negative wait.
+    if (at <= now) return now;
+    if (at - now <= RATE_LIMIT_MAX_WAIT_MS) return at;
+  }
+  return null;
+}
+
 /** "Reached maximum number of turns (N)" — the Agent SDK's per-run turn-ceiling error. */
 const MAX_TURNS_PATTERN = /maximum number of turns|max_turns|reached the turn limit/i;
 
@@ -167,6 +234,17 @@ export function classifyFault(
       resetAt,
     };
   }
+  // PD-248: also BEFORE the auth/credit patterns, and for the same reason. A GitHub throttle is
+  // `HTTP 403` — indistinguishable from a bad credential by status code alone — but it is a wait,
+  // not a broken secret. Matched on phrasing so `403: Bad credentials` still falls through below.
+  if (err && RATE_LIMIT_PATTERN.test(err)) {
+    return {
+      tier: 'transient',
+      signature: RATE_LIMIT_SIGNATURE,
+      reason: `GitHub rate limit: ${firstLine(err)}`,
+      resetAt: parseRateLimitReset(err, now),
+    };
+  }
   if (err && SYSTEM_WIDE_PATTERNS.some((re) => re.test(err))) {
     return { tier: 'system-wide', signature: normalizeSignature(err), reason: `auth/credit fault (loop-wide): ${firstLine(err)}` };
   }
@@ -199,8 +277,13 @@ export function backoffMs(attempt: number, policy: FaultPolicy): number {
  *  promotion that stranded PD-420 for ~12h — two identical session-limit signatures are one
  *  transient cause seen twice, and neither one is ever counted. */
 function countable(failures: FailedRun[]): FailedRun[] {
-  return failures.filter((f) => f.tier !== 'system-wide' && f.signature !== SESSION_LIMIT_SIGNATURE);
+  return failures.filter((f) => f.tier !== 'system-wide' && !HOLD_SIGNATURES.has(f.signature));
 }
+
+/** Signatures that mean "wait", not "this ticket failed". Never counted, never promoted — two
+ *  identical throttles are one transient cause seen twice, and parking a ticket for the account
+ *  running out of quota (PD-470) or GitHub throttling the poller (PD-248) blames the wrong thing. */
+const HOLD_SIGNATURES: ReadonlySet<string> = new Set([SESSION_LIMIT_SIGNATURE, RATE_LIMIT_SIGNATURE]);
 
 /** Earliest time the ticket may be retried, from its most recent countable failure + backoff.
  *  0 (immediately) when there are no countable failures. */
@@ -218,7 +301,7 @@ export type FaultDecision =
   /** PD-470: hold the WHOLE loop until `until`, then resume unattended. The ticket stays queued —
    *  a session limit is an account-wide condition, so parking this one ticket would be both wrong
    *  (it did nothing) and useless (the next ticket hits the same wall). */
-  | { action: 'wait'; tier: FaultTier; signature: string; reason: string; until: number };
+  | { action: 'wait'; tier: FaultTier; signature: string; reason: string; until: number; kind: HoldKind };
 
 /** True when the ticket body CHANGED since its most recent countable failure (PD-406). A genuinely
  *  re-scoped ticket deserves a fresh transient attempt; an untouched one does not. No prior failure
@@ -253,19 +336,22 @@ export function decideFault(
   if (cls.tier === 'system-wide') return { action: 'pause', ...cls };
   if (cls.tier === 'deterministic') return { action: 'park', ...cls };
 
-  // PD-470: a session limit is a wait, not a failure. Decided before every counting rule below so
-  // no repeat count, cap or promotion can reach it — the ticket keeps its budget and its place.
-  if (cls.signature === SESSION_LIMIT_SIGNATURE) {
+  // A session limit (PD-470) or a GitHub throttle (PD-248) is a WAIT, not a failure. Decided before
+  // every counting rule below so no repeat count, cap or promotion can reach it — the ticket keeps
+  // its budget and its place in the queue.
+  if (HOLD_SIGNATURES.has(cls.signature)) {
+    const isRateLimit = cls.signature === RATE_LIMIT_SIGNATURE;
+    const fallbackMs = isRateLimit ? RATE_LIMIT_FALLBACK_MS : SESSION_LIMIT_FALLBACK_MS;
     const parsed = cls.resetAt ?? null;
-    const until = parsed ?? now + SESSION_LIMIT_FALLBACK_MS;
     return {
       action: 'wait',
       tier: cls.tier,
       signature: cls.signature,
+      kind: isRateLimit ? 'github-rate-limit' : 'session-limit',
       reason: parsed
         ? `${cls.reason} — holding dispatch until the stated reset`
-        : `${cls.reason} — reset time unreadable, holding dispatch for ${Math.round(SESSION_LIMIT_FALLBACK_MS / 60_000)}m`,
-      until,
+        : `${cls.reason} — reset time unreadable, holding dispatch for ${Math.round(fallbackMs / 60_000)}m`,
+      until: parsed ?? now + fallbackMs,
     };
   }
 

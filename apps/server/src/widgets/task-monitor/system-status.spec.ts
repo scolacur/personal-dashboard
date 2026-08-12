@@ -7,6 +7,7 @@ import {
   getProjectBySlug,
   getRobotBudget,
   getSessionLimitHold,
+  getGithubRateLimit,
   getSortieFleet,
   listWorkerHeartbeats,
 } from './store';
@@ -120,11 +121,17 @@ describe('getDispatchPauseState', () => {
 });
 
 describe('getSessionLimitHold (PD-470)', () => {
-  function withHold(db: Database.Database, until: number, reason = 'provider session limit'): void {
+  function withHold(
+    db: Database.Database,
+    until: number,
+    reason = 'provider session limit',
+    kind?: 'session-limit' | 'github-rate-limit',
+  ): void {
     db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
     db.prepare('INSERT OR REPLACE INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run(
       'session_limit_until',
-      JSON.stringify({ until, reason }),
+      // `kind` omitted reproduces a row written before PD-248 — the backward-compat case below.
+      JSON.stringify(kind === undefined ? { until, reason } : { until, reason, kind }),
       1000,
     );
   }
@@ -133,10 +140,34 @@ describe('getSessionLimitHold (PD-470)', () => {
     expect(getSessionLimitHold(freshDb())).toBeNull();
   });
 
-  it('reports an in-force hold with its end time', () => {
+  // A row written before PD-248 carries no `kind`, and every one of them WAS a session limit —
+  // so the default is not a guess, it is what those rows meant.
+  it('reads a pre-PD-248 row with no kind as a session limit', () => {
     const db = freshDb();
     withHold(db, 9000);
-    expect(getSessionLimitHold(db, 5000)).toEqual({ until: 9000, reason: 'provider session limit', since: 1000 });
+    expect(getSessionLimitHold(db, 5000)).toEqual({
+      kind: 'session-limit',
+      until: 9000,
+      reason: 'provider session limit',
+      since: 1000,
+    });
+  });
+
+  it('reports a GitHub rate-limit hold as its own kind, not as a session limit', () => {
+    const db = freshDb();
+    withHold(db, 9000, 'GitHub rate limit: HTTP 429', 'github-rate-limit');
+    expect(getSessionLimitHold(db, 5000)).toMatchObject({ kind: 'github-rate-limit', until: 9000 });
+  });
+
+  it('falls back to session-limit for an unrecognised kind rather than passing it through', () => {
+    const db = freshDb();
+    db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    db.prepare('INSERT OR REPLACE INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'session_limit_until',
+      JSON.stringify({ until: 9000, reason: 'x', kind: 'something-new' }),
+      1000,
+    );
+    expect(getSessionLimitHold(db, 5000)?.kind).toBe('session-limit');
   });
 
   // The row survives until the worker's next cycle clears it, so the READ has to expire it too —
@@ -215,5 +246,51 @@ describe('getRobotBudget (PD-463)', () => {
 
     withPolicy(db, { windowMs: 1000, turns: 500, tokens: 0 }); // valid policy, no runs table yet
     expect(getRobotBudget(db, 10_000)).toMatchObject({ turnsUsed: 0, tokensUsed: 0 });
+  });
+});
+
+describe('getGithubRateLimit (PD-248)', () => {
+  function withProbe(db: Database.Database, value: string): void {
+    db.exec('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)');
+    db.prepare('INSERT OR REPLACE INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)').run(
+      'github_rate_limit',
+      value,
+      1000,
+    );
+  }
+
+  const reading = {
+    core: { remaining: 4900, limit: 5000, resetAt: 9_000_000 },
+    graphql: null,
+    checkedAt: 1000,
+  };
+
+  it('reads null when the worker has never probed', () => {
+    expect(getGithubRateLimit(freshDb())).toBeNull();
+  });
+
+  it('returns the stored reading', () => {
+    const db = freshDb();
+    withProbe(db, JSON.stringify(reading));
+    expect(getGithubRateLimit(db)).toEqual(reading);
+  });
+
+  // Deliberately NOT expired here, unlike the hold above. Staleness is the reader's call
+  // (`rateLimitHealth`) — dropping an old reading here would make a FAILING probe look identical
+  // to one that has never run, and those want different responses.
+  it('returns an old reading rather than hiding it, so staleness stays visible', () => {
+    const db = freshDb();
+    withProbe(db, JSON.stringify({ ...reading, checkedAt: 1 }));
+    expect(getGithubRateLimit(db)?.checkedAt).toBe(1);
+  });
+
+  it.each([
+    ['corrupt JSON', '{oops'],
+    ['a payload with no core bucket', JSON.stringify({ checkedAt: 1000 })],
+    ['a payload with no checkedAt', JSON.stringify({ core: { remaining: 1, limit: 2, resetAt: 3 } })],
+  ])('survives %s rather than breaking the status endpoint', (_label, raw) => {
+    const db = freshDb();
+    withProbe(db, raw);
+    expect(getGithubRateLimit(db)).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { HoldKind } from '@dashboard/shared';
 
 /**
  * `robot_state` — a tiny key/value store for the Robot loop's own durable flags (D-055, PD-343).
@@ -73,6 +74,9 @@ export function resumeDispatch(db: Database.Database, now: number = Date.now()):
 const SESSION_LIMIT_HOLD = 'session_limit_until';
 
 export interface SessionLimitHold {
+  /** Which condition is being waited out (PD-248). Rows written before it carried no kind and are
+   *  read as 'session-limit', which is what they were. */
+  kind: HoldKind;
   /** Epoch ms the loop may dispatch again. */
   until: number;
   /** The fault text that caused the hold, for the UI and the log. */
@@ -89,9 +93,14 @@ export function sessionLimitHold(db: Database.Database): SessionLimitHold | null
     | undefined;
   if (!row || row.value === null) return null;
   try {
-    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown };
+    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown; kind?: unknown };
     if (typeof parsed.until !== 'number') return null;
-    return { until: parsed.until, reason: typeof parsed.reason === 'string' ? parsed.reason : '', since: row.updated_at };
+    return {
+      kind: parsed.kind === 'github-rate-limit' ? 'github-rate-limit' : 'session-limit',
+      until: parsed.until,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      since: row.updated_at,
+    };
   } catch {
     return null; // a hand-edited / corrupt row must not wedge the loop shut
   }
@@ -105,8 +114,9 @@ export function holdForSessionLimit(
   until: number,
   reason: string,
   now: number = Date.now(),
+  kind: HoldKind = 'session-limit',
 ): void {
-  writeState(db, SESSION_LIMIT_HOLD, JSON.stringify({ until, reason }), now);
+  writeState(db, SESSION_LIMIT_HOLD, JSON.stringify({ until, reason, kind }), now);
 }
 
 /** Clear the hold. */

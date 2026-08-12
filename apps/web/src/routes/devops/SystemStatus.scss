@@ -192,6 +192,38 @@
   }
 }
 
+// PD-248: GitHub API headroom. Mirrors .ss-budget's colour ladder — the two answer the same shape
+// of question ("how much of a ceiling is left?") and should not look like different kinds of thing.
+// `stale` is muted rather than coloured: an unknown reading must not read as either good or bad.
+.ss-rate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--status-done);
+
+  &.low {
+    color: var(--status-warn);
+  }
+
+  &.over {
+    color: var(--status-stuck);
+  }
+
+  &.stale {
+    color: var(--muted);
+  }
+
+  .name {
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  &.stale .name {
+    color: var(--muted);
+    font-weight: 400;
+  }
+}
+
 .ss-window {
   color: var(--muted);
   font-size: 0.85em;
