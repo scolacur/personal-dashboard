@@ -48,9 +48,16 @@ A worktree makes every one of these impossible. It is one command.
   edits — into your branch.
 - **Never check out, rebase, reset, or delete a branch another session is using.** If you find
   your commit on someone else's branch, cherry-pick it onto yours and leave theirs alone.
-- **A squash merge is not a promise your commits are included.** Memory and docs committed on a
-  feature branch have been dropped by a squash here before. After a merge, verify what you care
-  about actually reached `main`: `git show origin/main:<path>`.
+- **Once your PR merges, the branch is dead — stop committing to it.** Steve merges fast (69
+  seconds after the last push, in one measured case). A commit you push to a branch whose PR has
+  already merged goes nowhere: GitHub does not add commits to a closed PR. Before pushing more
+  work to a branch you already opened a PR for, check the PR is still open; if it merged, branch
+  fresh from `origin/main`.
+  **This is not a squash defect.** Earlier notes here blamed "a squash merge dropping commits";
+  that was a misdiagnosis, verified false by timestamps on 2026-08-12 (the "dropped" commit was
+  authored four days *after* its PR merged). Squash takes everything on the branch at merge time.
+  The habit is still worth keeping — after a merge, verify what you care about actually reached
+  `main` with `git show origin/main:<path>` — but for this reason, not that one.
 - **Check the highest `D-NNN` on `origin/main`, not on your branch, immediately before
   committing a decision** (`npm run decisions:index` prints the next free id). Parallel sessions
   reserve the same number. This avoids a collision; it is no longer what *catches* one — a test
