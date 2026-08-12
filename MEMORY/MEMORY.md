@@ -13,4 +13,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-07](2026-08-07.md) — Board hygiene: PD-382 closed, PD-365 split into PD-493/494/495. Earlier, [in the 08-06 file](2026-08-06.md): coverage ~71% (PD-484), BST inbound over RSS (PD-471).
 
+- [2026-08-12](2026-08-12.md) — BST epic to 6/7 (PD-442/439/440, D-074); scan cron was never registered; crons run UTC; third squash-drop; page tabbed.
+
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
