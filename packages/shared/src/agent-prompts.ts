@@ -109,6 +109,18 @@ export interface ResumeContext {
   askHumanQuestion?: string | null;
   /** The human's answer to that question — surfaced to the session so it doesn't ask again. */
   askHumanAnswer?: string;
+  /**
+   * The Evaluator's rework brief (PD-487, [[D-076]]) — injected the same way for the same reason:
+   * the session is DB-blind, and this is context it cannot read off the branch.
+   *
+   * Injected rather than posted as a PR comment deliberately. The Robot's Step 0 does read PR
+   * comments, so a comment would have worked — but a bot comment cannot trigger the rework poll
+   * without carrying the human-reply marker (`isTrusted` in `pr-state.ts` excludes unmarked
+   * COLLABORATOR comments precisely so the loop cannot re-trigger itself), and making the Evaluator
+   * carry that marker would be impersonating a human on the record a human later reads. Keeping the
+   * brief in the DB also means the Evaluator needs no GitHub write token at all.
+   */
+  evaluatorBrief?: string;
 }
 
 export interface TaskPromptInput {
@@ -146,6 +158,13 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
       ]
     : [];
 
+  // Evaluator rework brief (PD-487). Placed AFTER the human's answer and before Step 0: a human's
+  // words outrank an automated reviewer's when both are present, and the brief must be read before
+  // Step 0 sends the Robot off to read the PR's own comments.
+  const evaluatorBlock = resume?.evaluatorBrief
+    ? ['## An automated Evaluator reviewed your PR', '', resume.evaluatorBrief, '', '---', '']
+    : [];
+
   return [
     `# Ticket: ${title}`,
     '',
@@ -154,6 +173,7 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '---',
     '',
     ...answerBlock,
+    ...evaluatorBlock,
     '## Step 0 — Resuming an earlier attempt?',
     `Your branch (\`${branch}\`) may already have an open PR from a previous run — this happens when a`,
     'human requested changes, left review comments, or the branch fell into conflict with main. Check:',
@@ -437,13 +457,164 @@ export function auditSystemPrompt(contextPack: string): string {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * The Evaluator (PD-487, [[D-076]])
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** The Evaluator's three verdicts, deliberately Oracle's ([[D-076]]). `revise` is the only one that
+ *  moves a ticket; `escalate` stops for a human without asserting the work is wrong. */
+export const EVALUATOR_VERDICTS = ['ship', 'revise', 'escalate'] as const;
+export type EvaluatorVerdict = (typeof EVALUATOR_VERDICTS)[number];
+
+/** One thing the Evaluator found. `blocking` is what separates a REVISE from an advisory note on a
+ *  SHIP — an evaluator that cannot say "worth knowing, not worth a rework cycle" will either nag or
+ *  stay silent, and both make it ignorable. */
+export interface EvaluatorFinding {
+  kind: 'ac-unmet' | 'out-of-scope' | 'redundancy' | 'test-gap' | 'correctness' | 'convention';
+  blocking: boolean;
+  /** Where it is, `path:line` when known. */
+  where: string;
+  /** The defect in one sentence. */
+  what: string;
+  /** For `redundancy`: the existing thing that should have been used instead. */
+  insteadUse?: string;
+}
+
+export interface EvaluatorReport {
+  verdict: EvaluatorVerdict;
+  findings: EvaluatorFinding[];
+  /** One paragraph a human reads on the ticket timeline without opening the PR. */
+  summary: string;
+}
+
+/**
+ * The Evaluator's system prompt (PD-487, [[D-076]]).
+ *
+ * The rubric is adapted from Core's Oracle (`Agents/QA Reviewer/SOUL_QA_REVIEWER.md`) rather than
+ * invented, because Oracle's structure maps onto a Robot ticket almost exactly: it evaluates
+ * "the original task spec: Task, Done When, Constraints" against a producing agent's output, and a
+ * Robot ticket is Ready-shaped by construction (`## Context` / `## Task` / `## Done When` /
+ * `## Out of scope`, PD-177). `## Done When` *is* the AC list and `## Out of scope` *is* the
+ * constraint list. What does NOT transfer is Oracle itself — see [[D-076]].
+ *
+ * The redundancy check is C-88, folded in here: it is the highest-value check on this codebase
+ * specifically, because the widget conventions mean a new helper very often duplicates a shared one.
+ */
+export function evaluatorSystemPrompt(contextPack: string): string {
+  return [
+    'You are the Evaluator for the Personal Dashboard repo (D-076). A Robot agent has finished a',
+    'ticket and opened a PR. You review what it produced BEFORE a human does.',
+    '',
+    'You are READ-ONLY. You do not fix what you find, you do not edit files, and you do not touch',
+    'the board. You name problems precisely enough that the Robot can fix them on a rework pass.',
+    '',
+    'You are NOT a merge gate. A human still reviews and merges. Your job is to catch what a green',
+    '`npm run verify` cannot: verify is a floor (it compiles, tests pass), not a quality bar.',
+    '',
+    '## What you are given',
+    '',
+    "- The ticket: ## Context / ## Task / ## Done When / ## Out of scope. `## Done When` is the",
+    '  acceptance criteria list; `## Out of scope` is the constraint list.',
+    '- The PR diff.',
+    '- A read-only checkout you can Read/Grep/Glob to ground any claim.',
+    '',
+    '## Rubric',
+    '',
+    '**1. Acceptance.** Evaluate each `## Done When` item independently. An item passes only on',
+    'observable evidence in the diff. "Looks like it" is not evidence. If an item names a file,',
+    'behaviour, or artifact, that thing must actually be present.',
+    '',
+    '**2. Scope.** Anything in `## Out of scope` that was done anyway is blocking, however good it is.',
+    'Unrelated refactoring is out of scope even when the ticket does not name it.',
+    '',
+    '**3. Redundancy (C-88).** For every new component, helper, or utility the diff introduces,',
+    'SEARCH THE CODEBASE for something that already does it. This repo has strong conventions and a',
+    '`packages/shared` — a bespoke helper beside an existing shared one is the most common defect here.',
+    'Report it as `redundancy` with `insteadUse` naming the existing thing. If two isolated',
+    'implementations now do the same job and neither is shared, say that the logic warrants being',
+    'lifted into a shared place. Ground this in real Grep results, never in an impression.',
+    '',
+    '**4. Tests.** New or changed business logic must ship with vitest tests that would actually fail',
+    'if the logic broke. A test asserting a constant it also defines is not a test. Existing tests',
+    'must not have been weakened, skipped, or deleted to reach green.',
+    '',
+    '**5. Correctness and convention.** Real defects the tests miss, and departures from the',
+    "surrounding code's established patterns.",
+    '',
+    '## Verdicts',
+    '',
+    '- **ship** — every `## Done When` item met, no scope violation, no blocking finding. Advisory',
+    '  findings are fine and do not block.',
+    '- **revise** — at least one blocking finding. This sends the ticket back to the Robot for',
+    '  another pass, so the cost of a wrong `revise` is a whole rework cycle: only use it for',
+    '  something the Robot can actually act on from your description alone.',
+    '- **escalate** — the ticket itself looks wrong, the work went far outside it, or you found',
+    'something security-relevant. Do NOT use this merely because you are unsure; use it when a human',
+    '  needs to decide before any more work happens.',
+    '',
+    'A finding you cannot ground is not a finding. Prefer a `ship` with honest advisory notes over a',
+    '`revise` you cannot substantiate — an evaluator that cries wolf gets ignored, and this one is',
+    'bypassable by design.',
+    '',
+    '## Output',
+    '',
+    'Return ONLY a JSON object (no prose outside it):',
+    '  { "verdict": "ship|revise|escalate",',
+    '    "summary": "<one paragraph a human reads without opening the PR>",',
+    '    "findings": [ { "kind": "ac-unmet|out-of-scope|redundancy|test-gap|correctness|convention",',
+    '                    "blocking": true|false, "where": "<path:line>", "what": "<one sentence>",',
+    '                    "insteadUse": "<existing thing to use instead — redundancy only>" } ] }',
+    'A `revise` verdict MUST carry at least one finding with "blocking": true.',
+    '',
+    'Project context:',
+    contextPack,
+  ].join('\n');
+}
+
+export interface EvaluatorPromptInput {
+  title: string;
+  body: string | null;
+  prNumber: number;
+  /** The unified diff. Truncated by the caller when very large. */
+  diff: string;
+  /** True when the diff was cut short, so the Evaluator knows not to infer from absence. */
+  diffTruncated: boolean;
+}
+
+/** The per-PR user turn. Kept separate from the rubric so the rubric stays cacheable across PRs. */
+export function buildEvaluatorPrompt(input: EvaluatorPromptInput): string {
+  return [
+    `Evaluate PR #${input.prNumber} against its ticket.`,
+    '',
+    '## Ticket',
+    '',
+    `Title: ${input.title}`,
+    '',
+    input.body ?? '(no body — treat every claim as ungrounded and escalate)',
+    '',
+    '## Diff',
+    '',
+    input.diffTruncated
+      ? 'NOTE: this diff was TRUNCATED. Do not report anything as missing on the strength of its absence here — Read the file in the checkout to confirm first.'
+      : '',
+    '```diff',
+    input.diff,
+    '```',
+    '',
+    'Apply the rubric and return the JSON object. Ground every finding — use Grep/Read on the',
+    'checkout, especially for the redundancy check.',
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Agent Glossary metadata (PD-306)
  *
  * One entry per agent type that actually runs in `apps/agent-worker/src/jobs/`. Adding a fourth
  * agent means adding it here; the glossary iterates this list rather than hard-coding tabs.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-export const AGENT_TYPES = ['robot', 'refine', 'audit'] as const;
+export const AGENT_TYPES = ['robot', 'refine', 'audit', 'evaluator'] as const;
 export type AgentType = (typeof AGENT_TYPES)[number];
 
 export interface AgentProfile {
@@ -506,6 +677,22 @@ export const AGENT_PROFILES: Record<AgentType, AgentProfile> = {
     ],
     decisions: ['D-045'],
   },
+  evaluator: {
+    id: 'evaluator',
+    label: 'Evaluator',
+    tagline: "Reviews a Robot's PR against its ticket before a human does — a reviewer, never a gate.",
+    access: 'read-only',
+    responsibilities: [
+      'Runs AFTER hand-off, as its own process against the open PR — so its turns cannot inflate the run it is judging (the reason it is not a sub-agent, D-068/PD-486).',
+      'Checks each `## Done When` item for observable evidence in the diff, and `## Out of scope` for work that was done anyway.',
+      'Searches the codebase for existing helpers a new one duplicates (C-88) — the most common defect in a repo with strong widget conventions and a `packages/shared`.',
+      'Checks that new logic ships with tests that would fail if it broke, and that no existing test was weakened to reach green.',
+      'Returns one of three verdicts: ship, revise, or escalate. A `revise` routes the ticket back to the Robot through the existing rework path.',
+      'Spends from its OWN budget, tracked separately from `agent_runs` so the Robot loop\'s ceiling (PD-463) and the Evaluator\'s cannot be confused for one another.',
+      'Is NOT a merge gate (a human still reviews and merges) and is NOT Core\'s Oracle — same principle, different subject and runtime (D-076).',
+    ],
+    decisions: ['D-076', 'D-046', 'D-045'],
+  },
 };
 
 /**
@@ -532,6 +719,15 @@ export function sampleRobotTaskPrompt(resume?: ResumeContext): string {
 export const SAMPLE_RESUME_CONTEXT: ResumeContext = {
   askHumanQuestion: "<THE ROBOT'S EARLIER QUESTION>",
   askHumanAnswer: '<YOUR ANSWER>',
+};
+
+/** Placeholder inputs for rendering the Evaluator's per-PR prompt in the glossary. */
+export const SAMPLE_EVALUATOR_PROMPT_INPUT: EvaluatorPromptInput = {
+  title: '<TICKET TITLE>',
+  body: '<TICKET BODY — the ## Context / ## Task / ## Done When / ## Out of scope sections>',
+  prNumber: 0,
+  diff: '<THE PR DIFF, as `gh pr diff` returns it>',
+  diffTruncated: false,
 };
 
 /** Stand-in for the cached project-context prefix Refine and Audit receive (`buildContextPack`). */

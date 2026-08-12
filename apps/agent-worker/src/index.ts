@@ -6,6 +6,7 @@ import { logger } from './shared/logger';
 import { startRefineJob } from './jobs/refine';
 import { startAuditJob } from './jobs/audit';
 import { startRobotJob } from './jobs/robot';
+import { startEvaluatorJob } from './jobs/evaluate';
 import { startHeartbeat } from './heartbeat';
 
 /**
@@ -16,7 +17,8 @@ import { startHeartbeat } from './heartbeat';
  * checkout, proxy, config, and DB set up here.
  *
  * Jobs: `refine` (interactive, D-044), `audit` (autonomous, weekly, D-045/PD-283), and
- * `robot` (the in-house dispatcher, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED).
+ * `robot` (the in-house dispatcher, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED), and
+ * `evaluator` (post-hand-off PR review, PD-487/D-076 — inert unless EVALUATOR_ENABLED).
  */
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
   startRefineJob(db, config);
   startAuditJob(db, config);
   startRobotJob(db, config);
+  startEvaluatorJob(db, config);
 
   logger.info('agent-worker ready');
 }

@@ -160,7 +160,16 @@ export {
   rateLimitHealth,
   ROBOT_RESET_EVENTS,
 } from './task-monitor';
-export type { ResumeContext, TaskPromptInput, AgentType, AgentProfile } from './agent-prompts';
+export type {
+  ResumeContext,
+  TaskPromptInput,
+  AgentType,
+  AgentProfile,
+  EvaluatorVerdict,
+  EvaluatorFinding,
+  EvaluatorReport,
+  EvaluatorPromptInput,
+} from './agent-prompts';
 export {
   MARKER_DIR,
   VERIFY_OK_MARKER,
@@ -184,6 +193,10 @@ export {
   SAMPLE_CONTEXT_PACK,
   sampleRobotTaskPrompt,
   DOCS_FETCH_RULE,
+  EVALUATOR_VERDICTS,
+  evaluatorSystemPrompt,
+  buildEvaluatorPrompt,
+  SAMPLE_EVALUATOR_PROMPT_INPUT,
 } from './agent-prompts';
 export type { DocDomain, DocFetchRefusal, DocUrlCheck } from './doc-allowlist';
 export {

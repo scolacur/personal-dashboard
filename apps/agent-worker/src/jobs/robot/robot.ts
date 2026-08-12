@@ -34,6 +34,7 @@ import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
 import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
+import { pendingEvaluatorBrief } from '../evaluate/brief';
 import { pollInReviewPrs } from './pr-state';
 
 // Re-exported for existing importers (robot.spec.ts) now that these leaf helpers live in board.ts.
@@ -223,9 +224,17 @@ export async function processRobotQueue(
     // coding uid is DB-blind), and a stale answer from a resolved episode is not. PR-feedback rework
     // needs no injection — the resume-aware prompt (Step 0) has the agent read the PR itself.
     const resume = askHumanResume(db, candidate.id);
-    const resumeCtx: ResumeContext | undefined = resume
-      ? { askHumanQuestion: resume.question, askHumanAnswer: resume.answer }
-      : undefined;
+    // PD-487: an Evaluator `revise` is the other kind of context this DB-blind session cannot read
+    // off the branch. Both may be present — a human answered AND the Evaluator asked for changes —
+    // so they compose rather than override.
+    const brief = pendingEvaluatorBrief(db, candidate.id);
+    const resumeCtx: ResumeContext | undefined =
+      resume || brief
+        ? {
+            ...(resume ? { askHumanQuestion: resume.question, askHumanAnswer: resume.answer } : {}),
+            ...(brief ? { evaluatorBrief: brief } : {}),
+          }
+        : undefined;
 
     const branch = branchFor(candidate);
     // PD-406: snapshot the body this run runs against so a later max-turns fault can tell a futile

@@ -5,6 +5,9 @@ import {
   SAMPLE_CONTEXT_PACK,
   SAMPLE_RESUME_CONTEXT,
   auditSystemPrompt,
+  evaluatorSystemPrompt,
+  buildEvaluatorPrompt,
+  SAMPLE_EVALUATOR_PROMPT_INPUT,
   refineSystemPrompt,
   robotSystemPrompt,
   sampleOrientation,
@@ -109,13 +112,30 @@ export function agentGlossaryView(id: AgentType): AgentGlossaryView {
       ],
     };
   }
+  if (id === 'audit') {
+    return {
+      profile,
+      sections: [
+        {
+          title: 'System prompt',
+          note: 'Sent on every scheduled audit pass. The ticket list itself is appended as the user turn.',
+          text: auditSystemPrompt(SAMPLE_CONTEXT_PACK),
+        },
+      ],
+    };
+  }
   return {
     profile,
     sections: [
       {
         title: 'System prompt',
-        note: 'Sent on every scheduled audit pass. The ticket list itself is appended as the user turn.',
-        text: auditSystemPrompt(SAMPLE_CONTEXT_PACK),
+        note: "Sent on every evaluation pass, after a Robot hands off its PR. The rubric is adapted from Core's Oracle — a Robot ticket is Ready-shaped, so `## Done When` is the acceptance list and `## Out of scope` is the constraint list (D-076).",
+        text: evaluatorSystemPrompt(SAMPLE_CONTEXT_PACK),
+      },
+      {
+        title: 'Per-PR prompt',
+        note: 'The user turn, one per PR. The diff is fetched by the worker with the read-only token; the Evaluator never touches GitHub itself.',
+        text: buildEvaluatorPrompt(SAMPLE_EVALUATOR_PROMPT_INPUT),
       },
     ],
   };

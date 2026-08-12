@@ -11,6 +11,7 @@ Newest first.
 
 ---
 
+- **[D-076](DECISIONS/D-076-evaluator-is-not-oracle-post-pr-own-ledger.md)** — The Evaluator is not Core's Oracle — it runs post-PR, on its own ledger, and reaches the Robot through the DB (PD-487)
 - **[D-075](DECISIONS/D-075-worker-fetches-docs-not-the-agent.md)** — The worker fetches documentation, not the agent — and the URL is the channel that needed closing (PD-310)
 - **[D-074](DECISIONS/D-074-job-run-outcome-belongs-in-the-schema.md)** — A job run's outcome belongs in the schema, not in its message
 - **[D-073](DECISIONS/D-073-page-membership-user-state-not-registry.md)** — Page membership is user state in the DB, not a registry field; the widget registry declares no placement at all (PD-334)

@@ -1,6 +1,9 @@
 // Types for the Task Monitor "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
+// Type-only, and one-directional: `agent-prompts.ts` imports nothing, so this cannot cycle.
+import type { EvaluatorVerdict } from './agent-prompts';
+
 // Who the ticket is assigned to. 'steve' = human owner; 'robot' = the Robot loop.
 // null = unassigned.
 export type TicketAssignee = 'steve' | 'robot';
@@ -919,6 +922,10 @@ export const ROBOT_EVENT = {
   // and its lingering agent session is torn down (agent_state cleared, needs/awaiting-human
   // notifications resolved). Not written by the loop — by the server's terminal-transition path.
   sessionEnded: 'robot_session_ended',
+  // The Evaluator's verdict on a handed-off PR (PD-487, D-076). Written by the worker once per
+  // evaluation round, whatever the verdict — a `ship` must be as visible as a `revise`, or the
+  // timeline only ever shows the Evaluator complaining and reads as noise.
+  evaluated: 'robot_evaluated',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -952,6 +959,13 @@ export interface RobotEventDetail {
   /** PD-432: the effective turn ceiling a dispatched run was given (`robot_dispatched`) — the
    *  ticket's override, or the loop's env default. */
   maxTurns?: number;
+  /** PD-487: the Evaluator's verdict (`robot_evaluated`). */
+  verdict?: EvaluatorVerdict;
+  /** PD-487: how many findings the verdict carried, and how many of those were blocking. */
+  findings?: number;
+  blockingFindings?: number;
+  /** PD-487: which evaluation round this was for the ticket — the loop caps them (D-076). */
+  round?: number;
   /** PD-470: on a `robot_paused` raised by a provider session limit — the flag distinguishes it
    *  from an auth/credit pause (which needs a human), and `until` is when dispatch resumes. */
   sessionLimit?: boolean;
