@@ -95,32 +95,8 @@
   color: var(--text);
 }
 
-.pickup-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  font-size: var(--font-size-sm);
-
-  li {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-md);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: var(--space-xs);
-  }
-}
-
-.pickup-item {
-  color: var(--text);
-}
-
-.pickup-where {
-  color: var(--muted);
-  text-align: right;
-}
+/* (`.pickup-list` and friends moved to PickupList.scss — "Where they are" now lives on the
+   Lists tab beside the gear it describes, not inside the drafts modal.) */
 
 /* ── Template editor ────────────────────────────── */
 

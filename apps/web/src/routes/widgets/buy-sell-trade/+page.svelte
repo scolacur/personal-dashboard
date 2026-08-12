@@ -14,6 +14,7 @@
   } from '@dashboard/shared';
   import Button from '$lib/Button.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
+  import Tabs, { type TabDef } from '$lib/Tabs.svelte';
   import Modal from '$lib/Modal.svelte';
   import type { Draft, FieldDef } from '$lib/list-manager';
   import {
@@ -33,6 +34,7 @@
   import DraftsPanel from './DraftsPanel.svelte';
   import GearTables from './GearTables.svelte';
   import MatchesReadout from './MatchesReadout.svelte';
+  import PickupList from './PickupList.svelte';
   import RunsPanel from './RunsPanel.svelte';
   import ScanStatus from './ScanStatus.svelte';
   import SaleTerms from './SaleTerms.svelte';
@@ -317,6 +319,19 @@
     }
   }
 
+  /* ── Tabs ─────────────────────────────────────── */
+
+  // Top placement: the only one that keeps a single shape at every width. Left and right have to
+  // collapse into something else on a phone, and bottom would have collided with the sale-terms
+  // tab that used to be fixed there.
+  let activeTab = $state('matches');
+
+  const TABS: TabDef[] = $derived([
+    { id: 'matches', label: 'Matches', count: matches.length },
+    { id: 'lists', label: 'Lists' },
+    { id: 'more', label: 'More' },
+  ]);
+
   /** Drafted posts moved off the page into a modal — three rendered posts is a lot of page for
    *  something read once a month, right before pasting it somewhere. */
   let draftsOpen = $state(false);
@@ -335,7 +350,7 @@
     <p class="bst-sub">
       {scanCadence}, a job scans the r/modular monthly Buy/Sell/Trade thread and looks for
       matches with items on my list. {draftCadence}, it drafts for-sale posts formatted for
-      Reddit, Discord and Facebook. Run history for both is under <strong>Runs</strong> below.
+      Reddit, Discord and Facebook. Run history for both is under <strong>More</strong>.
     </p>
     </div>
 
@@ -363,22 +378,38 @@
       {/if}
     </div>
 
-    <ScanStatus busy={scanBusy} refresh={scanRefresh} />
+    <Tabs tabs={TABS} bind:active={activeTab} storeKey="bst" label="Buy, Sell, Trade sections">
+      {#snippet panel(id)}
+        {#if id === 'matches'}
+          <!-- The scan's status leads, before any count: "found nothing" and "could not look"
+               must never render alike. -->
+          <ScanStatus busy={scanBusy} refresh={scanRefresh} />
 
-    {#if matches.length > 0}
-      <MatchesReadout
-        {matches}
-        onDismissed={(id) => (matches = matches.filter((m) => m.id !== id))}
-      />
-    {/if}
+          {#if matches.length > 0}
+            <MatchesReadout
+              {matches}
+              onDismissed={(id) => (matches = matches.filter((m) => m.id !== id))}
+            />
+          {:else}
+            <p class="bst-empty">
+              No open matches. The scan runs weekly — check <strong>More</strong> for when it last
+              ran.
+            </p>
+          {/if}
+        {:else if id === 'lists'}
+          <!-- Terms first: they are what the list is offered under, and they are the shortest
+               thing here. -->
+          <SaleTerms bind:terms />
 
-    {#if moveError}<p class="bst-error" role="alert">{moveError}</p>{/if}
+          {#if moveError}<p class="bst-error" role="alert">{moveError}</p>{/if}
 
-    <GearTables listings={listings} fields={FIELDS} {onCreate} {onUpdate} {onDelete} {onMove} />
+          <GearTables listings={listings} fields={FIELDS} {onCreate} {onUpdate} {onDelete} {onMove} />
 
-    <RunsPanel />
+          <PickupList {listings} />
+        {:else}
+          <RunsPanel />
 
-    <Collapsible title="Import from CSV" storeKey="bst-import">
+          <Collapsible title="Import from CSV" storeKey="bst-import">
       <div class="bst-import">
         <p class="bst-import-help">
           Export the sheet as CSV and paste it here. Matching is on
@@ -432,20 +463,16 @@
           </Button>
         </div>
       </div>
-    </Collapsible>
-
+          </Collapsible>
+        {/if}
+      {/snippet}
+    </Tabs>
   {/if}
 </section>
 
-{#if !loading && !loadError}
-  <!-- Out of the page flow: fixed to the bottom, collapsed, expanding upward. The page reserves
-       its collapsed height (see .bst-page) so it never covers the last row of a gear table. -->
-  <SaleTerms bind:terms />
-{/if}
-
 {#if draftsOpen}
   <Modal open={true} title="Drafted posts" size="wide" onClose={() => (draftsOpen = false)}>
-    <DraftsPanel {listings} {templates} onTemplatesSaved={(t) => (templates = t)} />
+    <DraftsPanel {templates} onTemplatesSaved={(t) => (templates = t)} />
   </Modal>
 {/if}
 

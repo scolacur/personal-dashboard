@@ -3,14 +3,11 @@
     BST_DRAFT_FORMATS,
     BST_DRAFT_FORMAT_LABELS,
     BST_TEMPLATE_TOKENS,
-    pickupList,
     type BstDraft,
     type BstDraftFormat,
-    type BstListing,
   } from '@dashboard/shared';
   import { onMount } from 'svelte';
   import Button from '$lib/Button.svelte';
-  import Collapsible from '$lib/Collapsible.svelte';
   import {
     fetchDrafts,
     generateDrafts,
@@ -25,11 +22,9 @@
   // effect without waiting two weeks. Generating is deterministic template expansion, so doing
   // it on demand costs nothing — and since PD-440 it records a run row exactly like the cron.
   let {
-    listings,
     templates,
     onTemplatesSaved,
   }: {
-    listings: BstListing[];
     templates: Record<BstDraftFormat, string>;
     onTemplatesSaved: (templates: Record<BstDraftFormat, string>) => void;
   } = $props();
@@ -47,7 +42,6 @@
   const batches = $derived([...new Set(drafts.map((d) => d.generatedAt))].sort((a, b) => b - a));
   const showing = $derived(viewing ?? batches[0] ?? null);
   const current = $derived(drafts.filter((d) => d.generatedAt === showing));
-  const pickups = $derived(pickupList(listings));
 
   onMount(load);
 
@@ -268,18 +262,6 @@
           {/if}
         {/each}
         </div>
-
-        {#if pickups.length > 0}
-          <!-- Private, and deliberately outside the draft text: the post says what is for sale,
-               this says where to go and find it. -->
-          <Collapsible title="Where they are" count={pickups.length} open={false} storeKey="bst-pickup">
-            <ul class="pickup-list">
-              {#each pickups as p (p.item + p.location)}
-                <li><span class="pickup-item">{p.item}</span><span class="pickup-where">{p.location}</span></li>
-              {/each}
-            </ul>
-          </Collapsible>
-        {/if}
       {/if}
     {/if}
 </div>
