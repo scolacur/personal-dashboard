@@ -11,6 +11,7 @@ Newest first.
 
 ---
 
+- **[D-075](DECISIONS/D-075-worker-fetches-docs-not-the-agent.md)** — The worker fetches documentation, not the agent — and the URL is the channel that needed closing (PD-310)
 - **[D-074](DECISIONS/D-074-job-run-outcome-belongs-in-the-schema.md)** — A job run's outcome belongs in the schema, not in its message
 - **[D-073](DECISIONS/D-073-page-membership-user-state-not-registry.md)** — Page membership is user state in the DB, not a registry field; the widget registry declares no placement at all (PD-334)
 - **[D-072](DECISIONS/D-072-github-rate-limit-is-a-hold-not-a-pause.md)** — A GitHub rate limit holds dispatch; only a broken credential pauses it (PD-248)

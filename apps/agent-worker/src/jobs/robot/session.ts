@@ -7,6 +7,7 @@ import { logger } from '../../shared/logger';
 import { buildOrientation } from './orientation';
 import { makeCodingSpawn } from './privilege';
 import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from '@dashboard/shared';
+import { buildDocsToolServer } from './docs-tool';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 import { OUTPUT_TAIL_MAX } from './runs';
@@ -233,6 +234,11 @@ export async function runRobotSession(
         // PD-486: the base set of tools that exist for this session. `Task` is absent, so the
         // Robot cannot spawn sub-agents whose turns the cap can't see. See ROBOT_TOOLS.
         tools: [...ROBOT_TOOLS],
+        // PD-310/D-075: the documentation read path. `tools` above governs BUILT-IN tools only, so
+        // registering an in-process MCP server here adds `mcp__docs__fetch` without reopening
+        // D-068's allowlist — `WebFetch` remains absent and the agent still cannot reach the
+        // network itself. The worker makes the request on its behalf.
+        mcpServers: { docs: buildDocsToolServer(config, candidate.id) },
         // PD-432: the ticket's override when it has one, else the loop-wide env default. Null is
         // the normal case, so the global stays authoritative for ~every ticket.
         maxTurns: candidate.maxTurns ?? config.robot.maxTurns,
