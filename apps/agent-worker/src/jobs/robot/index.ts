@@ -5,6 +5,7 @@ import { logger } from '../../shared/logger';
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureRunsTable } from './runs';
 import { ensureRobotStateTable, dispatchPauseState } from './state';
+import { startRateLimitProbe } from './rate-limit';
 import { processRobotQueue } from './robot';
 
 /**
@@ -17,6 +18,13 @@ import { processRobotQueue } from './robot';
  * serialized so a Robot never has two runs of the same ticket in flight.
  */
 export function startRobotJob(db: Database.Database, config: AgentWorkerConfig): void {
+  // PD-248: the GitHub rate-limit probe is OBSERVABILITY, so it starts before every dispatch gate
+  // below and runs even with the loop disarmed. That is precisely when headroom matters — you are
+  // deciding whether it is safe to turn dispatch on, and a dashboard that only reports API health
+  // once the loop is already running cannot inform that decision.
+  ensureRobotStateTable(db);
+  startRateLimitProbe(db, config);
+
   if (!config.robot.dispatchEnabled) {
     logger.info('robot loop DISABLED (ROBOT_DISPATCH_ENABLED unset) — no tickets will dispatch');
     return;
@@ -33,7 +41,6 @@ export function startRobotJob(db: Database.Database, config: AgentWorkerConfig):
   }
 
   ensureRunsTable(db);
-  ensureRobotStateTable(db);
 
   // Surface a carried-over system-wide pause (C2): the loop arms but dispatches nothing until a
   // human resumes. Durable across restarts on purpose — auto-resuming would re-burn the board.

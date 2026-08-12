@@ -1,4 +1,4 @@
-import type { SystemStatus } from '@dashboard/shared';
+import type { HoldKind, SystemStatus } from '@dashboard/shared';
 
 /**
  * Nav killswitch state (PD-410) — pure so it can be unit-tested without the Svelte plugin
@@ -13,8 +13,10 @@ import type { SystemStatus } from '@dashboard/shared';
  *
  *  - `running`  — dispatching. Offer Pause.
  *  - `paused`   — a human or a system-wide fault stopped it. **Waits for a human.** Offer Resume.
- *  - `holding`  — waiting out a provider session limit. **Ends by itself** at a known time, so
- *                 there is deliberately no button: there is nothing for a human to do.
+ *  - `holding`  — waiting out a provider session limit or a GitHub rate limit (PD-248).
+ *                 **Ends by itself** at a known time, so there is deliberately no button: there is
+ *                 nothing for a human to do. The label names WHICH — the remedies differ (a quota
+ *                 reset is just a wait; GitHub throttling the loop is worth looking into).
  */
 export type DispatchMode = 'running' | 'paused' | 'holding';
 
@@ -26,6 +28,8 @@ export interface DispatchView {
   detail: string | null;
   /** What the button does, or null when no button should be offered at all. */
   action: 'pause' | 'resume' | null;
+  /** Which condition is being waited out, or null when not holding (PD-248). */
+  holdKind: HoldKind | null;
   /**
    * True when the loop is BOTH paused and holding. Resuming is still correct — it clears the
    * pause — but it will not re-arm dispatch until the hold expires, and the UI has to say so
@@ -33,6 +37,13 @@ export interface DispatchView {
    */
   resumeBlockedByHold: boolean;
 }
+
+/** What each hold is called in the UI. Deliberately concrete — "holding" alone tells you nothing
+ *  about whether anyone needs to act. */
+export const HOLD_LABELS: Record<HoldKind, string> = {
+  'session-limit': 'Session limit',
+  'github-rate-limit': 'GitHub rate limit',
+};
 
 /** Wall-clock "5:30 AM". A relative "in 3h" reads as an estimate, and the whole point is that the
  *  provider named a specific time (mirrors SystemStatus.svelte). */
@@ -59,17 +70,20 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       detail: status.dispatch.reason ?? 'paused by human',
       action: 'resume',
       resumeBlockedByHold: holding,
+      holdKind: holding ? status.sessionLimit!.kind : null,
     };
   }
 
   if (holding) {
+    // Non-null asserted throughout: `holding` is only true when sessionLimit is non-null.
+    const kind = status.sessionLimit!.kind;
     return {
       mode: 'holding',
-      label: 'Dispatch holding',
-      // Non-null asserted: `holding` is only true when sessionLimit is non-null.
+      label: HOLD_LABELS[kind],
       detail: `resumes ${formatClockTime(status.sessionLimit!.until)}`,
       action: null,
       resumeBlockedByHold: false,
+      holdKind: kind,
     };
   }
 
@@ -79,5 +93,6 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
     detail: null,
     action: 'pause',
     resumeBlockedByHold: false,
+    holdKind: null,
   };
 }

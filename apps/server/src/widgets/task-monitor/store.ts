@@ -24,6 +24,7 @@ import type {
   WorkerHeartbeat,
   DispatchPauseState,
   SessionLimitHoldState,
+  GithubRateLimitStatus,
   RobotBudgetStatus,
 } from '@dashboard/shared';
 import {
@@ -1574,6 +1575,35 @@ export function getRobotBudget(db: Database.Database, now: number = Date.now()):
  *  tolerant of an absent table, a null row, or corrupt JSON — none of those should break the
  *  status endpoint. An EXPIRED hold reads as none: the row lingers until the worker's next cycle
  *  clears it, and showing a wait that has already ended would be a lie. */
+/**
+ * The worker's last GitHub rate-limit probe (PD-248), read from `robot_state`.
+ *
+ * Returned as stored, INCLUDING an old `checkedAt` — staleness is the reader's call
+ * (`rateLimitHealth`), not this function's. Silently dropping an old reading here would make a
+ * failing probe indistinguishable from one that has never run, and those need different responses.
+ * Tolerant of an absent table, a null row, or corrupt JSON: none of those should break the status
+ * endpoint.
+ */
+export function getGithubRateLimit(db: Database.Database): GithubRateLimitStatus | null {
+  const row = (() => {
+    try {
+      return db.prepare("SELECT value FROM robot_state WHERE key = 'github_rate_limit'").get() as
+        | { value: string | null }
+        | undefined;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (!row || row.value === null) return null;
+  try {
+    const parsed = JSON.parse(row.value) as GithubRateLimitStatus;
+    if (typeof parsed?.core?.remaining !== 'number' || typeof parsed?.checkedAt !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function getSessionLimitHold(db: Database.Database, now: number = Date.now()): SessionLimitHoldState | null {
   const row = (() => {
     try {
@@ -1586,9 +1616,12 @@ export function getSessionLimitHold(db: Database.Database, now: number = Date.no
   })();
   if (!row || row.value === null) return null;
   try {
-    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown };
+    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown; kind?: unknown };
     if (typeof parsed.until !== 'number' || parsed.until <= now) return null;
     return {
+      // PD-248: rows written before the GitHub-rate-limit hold existed carry no kind, and every one
+      // of them was a session limit — so an absent kind reads as exactly what it was.
+      kind: parsed.kind === 'github-rate-limit' ? 'github-rate-limit' : 'session-limit',
       until: parsed.until,
       reason: typeof parsed.reason === 'string' ? parsed.reason : '',
       since: row.updated_at,

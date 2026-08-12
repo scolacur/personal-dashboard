@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AgentState, SystemStatus, WorkerHeartbeat } from '@dashboard/shared';
-  import { AGENT_STATE_LABELS } from '@dashboard/shared';
+  import { AGENT_STATE_LABELS, rateLimitHealth } from '@dashboard/shared';
   import { formatRelativeTime } from '../deploy-status-utils';
   import { pauseDispatch, resumeDispatch } from './api';
 
@@ -61,6 +61,12 @@
   // PD-463: spend against the loop-wide ceiling. Null until a worker publishes a policy — better a
   // missing row than a ceiling shown to a user that nothing is actually enforcing.
   let budget = $derived(status?.budget ?? null);
+
+  // PD-248: GitHub API headroom. `stale` is its own state, not a flavour of healthy — a probe that
+  // stopped running tells you nothing about now, and a comfortable number from an hour ago is worse
+  // than no number at all. Nothing is rendered when there has never been a probe.
+  let rateLimit = $derived(status?.githubRateLimit ?? null);
+  let rateHealth = $derived(rateLimitHealth(rateLimit, now));
   const WARN_FRACTION = 0.8;
 
   /** One limb of the ceiling, or null when that limb is disabled. */
@@ -142,12 +148,43 @@
            so outright. The API reports an expired hold as none, so this can't linger. -->
       {#if sessionLimit}
         <div class="ss-holding" role="status">
-          <strong>⏳ Waiting out the session limit</strong>
+          <!-- PD-248: name WHICH hold. Both end by themselves, but a spent Anthropic quota is
+               purely a wait, while GitHub throttling the loop is worth looking into — so the copy
+               must not say "session limit" when it is the other one. -->
+          {#if sessionLimit.kind === 'github-rate-limit'}
+            <strong>⏳ Waiting out a GitHub rate limit</strong>
+          {:else}
+            <strong>⏳ Waiting out the session limit</strong>
+          {/if}
           <span class="until">resumes {formatClockTime(sessionLimit.until)}</span>
           {#if sessionLimit.reason}<span class="reason">{sessionLimit.reason}</span>{/if}
           <span class="note">No action needed — dispatch resumes on its own.</span>
         </div>
       {/if}
+    {/if}
+
+    <!-- PD-248: GitHub API headroom, so throttling is visible BEFORE it stops a run rather than
+         being inferred from server logs afterwards. Distinct from an auth fault above: a throttle
+         holds dispatch and clears itself, a bad credential pauses it until a human acts. -->
+    {#if rateLimit}
+      <div class="ss-line">
+        <span class="ss-label">GitHub API</span>
+        <span class="ss-rate" class:low={rateHealth === 'low'} class:over={rateHealth === 'exhausted'} class:stale={rateHealth === 'stale'}>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="name">
+            {#if rateHealth === 'stale'}
+              headroom unknown
+            {:else}
+              {rateLimit.core.remaining.toLocaleString()} / {rateLimit.core.limit.toLocaleString()} left
+            {/if}
+          </span>
+        </span>
+        {#if rateHealth === 'stale'}
+          <span class="ss-window">probe last ran {formatRelativeTime(rateLimit.checkedAt, now)}</span>
+        {:else}
+          <span class="ss-window">resets {formatClockTime(rateLimit.core.resetAt)}</span>
+        {/if}
+      </div>
     {/if}
 
     <!-- PD-463: consumption against the ceiling, so "why did the loop pause?" is answerable without
