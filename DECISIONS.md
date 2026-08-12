@@ -11,6 +11,7 @@ Newest first.
 
 ---
 
+- **[D-073](DECISIONS/D-073-page-membership-user-state-not-registry.md)** — Page membership is user state in the DB, not a registry field; the widget registry declares no placement at all (PD-334)
 - **[D-072](DECISIONS/D-072-github-rate-limit-is-a-hold-not-a-pause.md)** — A GitHub rate limit holds dispatch; only a broken credential pauses it (PD-248)
 - **[D-071](DECISIONS/D-071-robot-orientation-injected-memory-per-run.md)** — The Robot's orientation is injected, not fetched — and its memory is one file per run (PD-306)
 - **[D-070](DECISIONS/D-070-one-decision-per-file-generated-index.md)** — One decision per file, with a generated index and a duplicate-id test as the real guard (PD-490)

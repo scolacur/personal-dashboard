@@ -171,3 +171,38 @@
     background: var(--surface-2);
   }
 }
+
+/* ── Bottom bar (PD-334) ─────────────────────────────────────────────────────
+   Pinned under the sliding panels. A flex row rather than a single element so
+   PD-497's New Page and Edit buttons drop in beside All Widgets without a
+   rewrite; `flex: 1` on the children makes them share the width evenly. */
+
+.side-bottom {
+  display: flex;
+  gap: var(--space-xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.side-bottom-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+
+  &:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  &.active {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+}

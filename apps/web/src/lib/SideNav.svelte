@@ -1,8 +1,9 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { fly } from 'svelte/transition';
-  import { ChevronLeft, ChevronRight } from 'lucide-svelte';
+  import { ChevronLeft, ChevronRight, LayoutGrid } from 'lucide-svelte';
   import { pages } from '$lib/pages';
+  import { LIBRARY_ROUTE, LIBRARY_TITLE } from '$lib/nav-utils';
   import YinYang from '$lib/icons/YinYang.svelte';
 
   // Called after a nav link is chosen — the layout uses it to close the
@@ -127,6 +128,22 @@
         </ul>
       </div>
     {/if}
+  </div>
+
+  <!-- Bottom bar (PD-334). Pinned below the sliding panels, so it stays put whichever nav level
+       is showing. PD-497 adds **New Page** and **Edit** either side of this button; it is built
+       as a row of one rather than a lone button so that addition is a sibling, not a rewrite. -->
+  <div class="side-bottom">
+    <a
+      href={LIBRARY_ROUTE}
+      class="side-bottom-btn"
+      class:active={page.url.pathname === LIBRARY_ROUTE}
+      aria-current={page.url.pathname === LIBRARY_ROUTE ? 'page' : undefined}
+      onclick={onNavigate}
+    >
+      <LayoutGrid size={16} aria-hidden="true" />
+      <span>{LIBRARY_TITLE}</span>
+    </a>
   </div>
 </nav>
 

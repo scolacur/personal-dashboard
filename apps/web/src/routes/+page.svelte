@@ -1,10 +1,10 @@
 <script lang="ts">
-  // The Home grid is the user-facing widget catalogue — `homeWidgets()` rather than the raw
-  // registry, so the Dev Ops summary widgets (system: true) stay on /devops.
-  import { homeWidgets } from '$lib/widgets';
+  // Home is an ordinary curated page since D-073 — no longer the auto-catalogue of every
+  // widget. That job belongs to the Library page ("All Widgets"), which is the one surface
+  // guaranteed to show everything.
   import WidgetGrid from '$lib/WidgetGrid.svelte';
 </script>
 
-<WidgetGrid pageId="home" widgetList={homeWidgets()} />
+<WidgetGrid pageId="home" />
 
 <style lang="scss" src="./+page.scss"></style>

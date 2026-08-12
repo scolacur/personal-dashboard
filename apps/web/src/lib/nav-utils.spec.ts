@@ -79,3 +79,15 @@ describe('isDevOpsRoute', () => {
     expect(arrangeablePageId('/devops/task-tracker')).toBeUndefined();
   });
 });
+
+describe('the Library page (PD-334)', () => {
+  it('resolves its title without being in pages.ts', () => {
+    expect(resolvePageTitle('/library')).toBe('All Widgets');
+  });
+
+  it('is not Arrange-able', () => {
+    // It is a derived view, not a curated page — no membership to arrange. This holds because
+    // the route is absent from `pages.ts`, not because of a special case.
+    expect(arrangeablePageId('/library')).toBeUndefined();
+  });
+});

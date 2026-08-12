@@ -1,0 +1,22 @@
+.library-intro {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  margin: 0 0 var(--space-md);
+}
+
+/* Same track sizing as WidgetGrid's, so a card looks identical here and on a page — which is
+   the point of rendering the catalogue live rather than as previews. Deliberately a separate
+   rule rather than a shared class: this grid has no arrange state, and coupling the two would
+   invite arrange-only styling to leak in here. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-auto-rows: 140px;
+  gap: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

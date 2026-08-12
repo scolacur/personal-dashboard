@@ -636,5 +636,35 @@ current page become draggable (reorder) and resizable (change grid span) (D-053)
 to `localStorage` (`dashboard:layout:<pageId>`); the widget registry supplies the defaults. Available
 only on widget-bearing pages at viewport ≥768px; below that the grid is a read-only single-column
 reflow. "Reset to default" clears the page's override.
-_Avoid_: conflating with adding/removing widgets from a page (that is the V2 **widget library**,
-PD-334), or with the Task Monitor board's Kanban drag-and-drop (D-026), which is a different surface.
+_Avoid_: conflating with the Task Monitor board's Kanban drag-and-drop (D-026), which is a different
+surface. Arrange edits *how* a page's widgets sit; **page membership** decides *which* ones are
+there at all — a separate axis, and adding is deliberately available outside Arrange.
+
+**Widget library**:
+The catalogue of **all registered widgets**, independent of any page — the answer to "what widgets
+exist?", never "what's on this page?". One concept, two surfaces:
+
+- the **Library page**, reached by the **All Widgets** button at the bottom of the side nav, which
+  mounts every widget **live** — you see what you would actually be adding, not a static preview.
+  A **derived view, not a page**: no membership, no Arrange, no Add control, and no entry in
+  `pages.ts`. "The library shows everything" is therefore true by construction rather than by
+  convention — there is no surface that can remove a widget from it.
+- the **Library modal**, a **toggle list** of widget *names* opened from a page's Add control.
+  A checked row means the widget is on the current page; checking adds, unchecking removes. It is
+  the only membership control that works below 768px, where Arrange is unavailable.
+
+_Avoid_: treating the library as page-scoped, or as a second name for Home — Home is an ordinary
+curated page like any other (PD-334), and no longer an auto-catalogue of everything. Note the
+deliberate split between term and label: **library** is the domain term used in code and docs
+(`LibraryModal.svelte`, the Library page), **All Widgets** is only the nav button's copy, because
+"Library" alone reads vaguely beside "New Page" and "Edit". Don't rename the code to match the
+button, or the button to match the code.
+
+**Page membership**:
+Which widgets are on a given page. **Entirely user state** — a widget's registration says nothing
+about where it appears; registering it only puts it in the **widget library**, from which it is
+placed by hand. Persisted server-side (PD-334) so a page's contents are the same on every device
+and survive a cache clear, unlike the per-device *layout* override D-053 established.
+_Avoid_: the retired registry field `WidgetMeta.pages` and its `widgetsForPage()` reader — the
+registry no longer declares placement. Also avoid conflating membership with **layout**: membership
+is *which* widgets, layout is *where and how big*.

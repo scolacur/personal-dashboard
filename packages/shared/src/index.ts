@@ -10,6 +10,7 @@ export { IDEA_TYPES } from './acute-strategies-generator';
 export type { TrackStatus, Track, CreateManualTrackInput } from './music-tracker';
 export { TRACK_STATUSES } from './music-tracker';
 export type { SpotifyTrack } from './inspirations-list';
+export type { PageWidget, PageWidgetMap } from './shell';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
 export {
   JOB_RUN_STATUSES,
