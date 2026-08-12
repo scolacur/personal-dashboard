@@ -130,6 +130,11 @@ export async function evaluateOnePr(
     { ticketId: target.ticketId, prNumber: target.prNumber, round, model: config.evaluator.model },
     now,
   );
+  // Written BEFORE the pass, so an evaluation that dies or hangs is legible on the timeline as
+  // "reviewing…" with no verdict after it. A failure writes no verdict on purpose (it must never
+  // read as approval), which without this marker would make it invisible rather than merely
+  // inconclusive.
+  logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round, prNumber: target.prNumber }, now);
 
   const rawDiff = await fetchDiff(target.repo, target.prNumber);
   if (rawDiff === null) {

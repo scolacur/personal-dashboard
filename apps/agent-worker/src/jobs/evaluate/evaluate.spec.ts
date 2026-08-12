@@ -217,3 +217,20 @@ describe('pendingEvaluatorBrief — how a revise reaches the DB-blind Robot', ()
     expect(pendingEvaluatorBrief(db, 1)).toBeNull();
   });
 });
+
+describe('timeline visibility', () => {
+  it('writes a start marker before the pass, so a FAILED evaluation is still legible', async () => {
+    // The failure path writes no verdict on purpose. Without the start event, a crashed or hung
+    // evaluation would leave the timeline showing nothing at all — indistinguishable from one that
+    // never ran.
+    await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent('garbage'), fetchDiff: async () => 'd' }, 200);
+    expect(eventsOfType('robot_evaluating')).toHaveLength(1);
+    expect(eventsOfType('robot_evaluated')).toHaveLength(0);
+  });
+
+  it('carries the counts the timeline renders', async () => {
+    await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(reviseReply), fetchDiff: async () => 'd' }, 200);
+    const detail = JSON.parse(eventsOfType('robot_evaluated')[0].detail);
+    expect(detail).toMatchObject({ verdict: 'revise', findings: 1, blockingFindings: 1, round: 1 });
+  });
+});

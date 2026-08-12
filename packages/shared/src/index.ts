@@ -159,6 +159,7 @@ export {
   RATE_LIMIT_STALE_MS,
   rateLimitHealth,
   ROBOT_RESET_EVENTS,
+  evaluatorVerdictLine,
 } from './task-monitor';
 export type {
   ResumeContext,
