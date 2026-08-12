@@ -1,4 +1,4 @@
-# D-073: A job run's outcome belongs in the schema, not in its message
+# D-074: A job run's outcome belongs in the schema, not in its message
 
 **Date:** 2026-08-12 · **Tickets:** PD-442, PD-439, PD-440
 
