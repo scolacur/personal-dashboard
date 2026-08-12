@@ -1,118 +1,127 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { loadPageLayout, savePageLayout, clearPageLayout, defaultLayout } from './layout';
+import { describe, it, expect, beforeEach } from 'vitest';
+import type { PageWidget } from '@dashboard/shared';
+import { resolvePlacements, clearLegacyLayoutKeys } from './layout';
 import type { WidgetMeta } from './widgets';
 
-// Minimal fixtures
-const stub = (id: string): WidgetMeta => ({ id, title: id, description: '', route: `/${id}` });
-const withEmbed = (id: string, cols: number, rows: number): WidgetMeta => ({
-  id,
-  title: id,
-  description: '',
-  route: `/${id}`,
-  embed: { component: {} as never, span: { cols, rows } },
+// A local fixture rather than the real registry: importing a *value* from `widgets.ts` pulls in
+// `.svelte` components, and the web vitest config runs without the Svelte plugin (see the note
+// on `resolvePlacements` and the same constraint in `nav-utils.ts`).
+const registry: WidgetMeta[] = [
+  { id: 'pomodoro', title: 'Pomodoro Timer', description: 'Focus timer.', route: '/widgets/pomodoro' },
+  { id: 'diary', title: 'Diary', description: 'Daily journal entries.', route: '/widgets/diary' },
+  { id: 'habit-log', title: 'Habit Log', description: 'Track daily habits.', route: '/widgets/habit-log' },
+  { id: 'devops-agent', title: 'Agent', description: 'Robot fleet.', route: '/devops/agent-dashboard' },
+];
+
+function placement(widgetId: string, order = 0): PageWidget {
+  return { widgetId, order, cols: 1, rows: 1 };
+}
+
+describe('resolvePlacements', () => {
+  it('pairs a placement with its registered widget', () => {
+    const [resolved] = resolvePlacements([placement('diary')], registry);
+    expect(resolved.widget.id).toBe('diary');
+    expect(resolved.widget.title).toBe('Diary');
+  });
+
+  it('preserves the given order', () => {
+    const resolved = resolvePlacements(
+      [placement('pomodoro', 0), placement('diary', 1), placement('habit-log', 2)],
+      registry,
+    );
+    expect(resolved.map((r) => r.widget.id)).toEqual(['pomodoro', 'diary', 'habit-log']);
+  });
+
+  it('drops a placement naming a widget the registry no longer has', () => {
+    // A row outlives the code that made it — deleting a widget from the registry must not
+    // break every page it was ever placed on.
+    const resolved = resolvePlacements([placement('diary'), placement('deleted-widget')], registry);
+    expect(resolved.map((r) => r.widget.id)).toEqual(['diary']);
+  });
+
+  it('resolves a Dev Ops summary like any other widget', () => {
+    // D-073 deleted `system: true`; these are ordinary library citizens now.
+    expect(resolvePlacements([placement('devops-agent')], registry)).toHaveLength(1);
+  });
+
+  it('returns nothing for an empty page', () => {
+    expect(resolvePlacements([], registry)).toEqual([]);
+  });
 });
 
-// Lightweight localStorage mock for the Node/vitest environment (no DOM)
-const store: Record<string, string> = {};
-beforeEach(() => {
-  Object.keys(store).forEach((k) => delete store[k]);
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: {
-      getItem: (k: string) => store[k] ?? null,
-      setItem: (k: string, v: string) => {
-        store[k] = v;
+describe('clearLegacyLayoutKeys', () => {
+  // Lightweight localStorage mock for the Node/vitest environment (no DOM), matching the one
+  // this file carried before PD-334 — plus `length`/`key`, which the Storage API exposes and
+  // the sweep relies on.
+  const store: Record<string, string> = {};
+
+  function installStorage() {
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: {
+        get length() {
+          return Object.keys(store).length;
+        },
+        key: (i: number) => Object.keys(store)[i] ?? null,
+        getItem: (k: string) => store[k] ?? null,
+        setItem: (k: string, v: string) => {
+          store[k] = v;
+        },
+        removeItem: (k: string) => {
+          delete store[k];
+        },
       },
-      removeItem: (k: string) => {
-        delete store[k];
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  beforeEach(() => {
+    Object.keys(store).forEach((k) => delete store[k]);
+    installStorage();
+  });
+
+  it('removes every dashboard:layout: key', () => {
+    localStorage.setItem('dashboard:layout:home', '[]');
+    localStorage.setItem('dashboard:layout:productivity', '[]');
+
+    clearLegacyLayoutKeys();
+
+    expect(localStorage.getItem('dashboard:layout:home')).toBeNull();
+    expect(localStorage.getItem('dashboard:layout:productivity')).toBeNull();
+  });
+
+  it('removes every key even though removal reindexes the store', () => {
+    // The bug a naive `for (i = 0; i < length; i++) removeItem(key(i))` walks straight into.
+    for (const id of ['home', 'productivity', 'devops', 'event-tracker']) {
+      localStorage.setItem(`dashboard:layout:${id}`, '[]');
+    }
+
+    clearLegacyLayoutKeys();
+
+    expect(localStorage.length).toBe(0);
+  });
+
+  it('leaves unrelated keys alone', () => {
+    localStorage.setItem('theme', 'dark');
+    localStorage.setItem('task-monitor:hidden-lanes', '[]');
+    localStorage.setItem('dashboard:layout:home', '[]');
+
+    clearLegacyLayoutKeys();
+
+    expect(localStorage.getItem('theme')).toBe('dark');
+    expect(localStorage.getItem('task-monitor:hidden-lanes')).toBe('[]');
+    expect(localStorage.getItem('dashboard:layout:home')).toBeNull();
+  });
+
+  it('does not throw when localStorage is unavailable', () => {
+    // Private mode / storage disabled: reaching for `localStorage` at all throws, which is the
+    // realistic failure — not a storage object that reports zero keys.
+    Object.defineProperty(globalThis, 'localStorage', {
+      get() {
+        throw new Error('denied');
       },
-    },
-    configurable: true,
-    writable: true,
-  });
-});
-
-describe('defaultLayout', () => {
-  it('preserves registry order', () => {
-    const result = defaultLayout([stub('a'), stub('b'), stub('c')]);
-    expect(result.map((r) => r.id)).toEqual(['a', 'b', 'c']);
-  });
-
-  it('uses embed span for cols/rows', () => {
-    const result = defaultLayout([withEmbed('x', 2, 3)]);
-    expect(result[0]).toMatchObject({ id: 'x', cols: 2, rows: 3 });
-  });
-
-  it('defaults to 1x1 for stub widgets', () => {
-    const result = defaultLayout([stub('y')]);
-    expect(result[0]).toMatchObject({ cols: 1, rows: 1 });
-  });
-
-  it('assigns sequential order values', () => {
-    const result = defaultLayout([stub('a'), stub('b')]);
-    expect(result[0].order).toBe(0);
-    expect(result[1].order).toBe(1);
-  });
-});
-
-describe('loadPageLayout', () => {
-  it('returns defaults when no saved data exists', () => {
-    const result = loadPageLayout('test', [stub('a'), stub('b')]);
-    expect(result.map((r) => r.id)).toEqual(['a', 'b']);
-  });
-
-  it('returns saved order when data exists', () => {
-    savePageLayout('test', [
-      { id: 'b', order: 0, cols: 1, rows: 1 },
-      { id: 'a', order: 1, cols: 1, rows: 1 },
-    ]);
-    const result = loadPageLayout('test', [stub('a'), stub('b')]);
-    expect(result.map((r) => r.id)).toEqual(['b', 'a']);
-  });
-
-  it('ignores stale ids that are no longer in the registry', () => {
-    savePageLayout('test', [
-      { id: 'stale', order: 0, cols: 1, rows: 1 },
-      { id: 'a', order: 1, cols: 1, rows: 1 },
-    ]);
-    const result = loadPageLayout('test', [stub('a'), stub('b')]);
-    expect(result.map((r) => r.id)).not.toContain('stale');
-  });
-
-  it('appends registry widgets absent from saved data at the end', () => {
-    savePageLayout('test', [{ id: 'a', order: 0, cols: 1, rows: 1 }]);
-    const result = loadPageLayout('test', [stub('a'), stub('b'), stub('c')]);
-    expect(result.map((r) => r.id)).toEqual(['a', 'b', 'c']);
-  });
-
-  it('preserves saved cols/rows overrides', () => {
-    savePageLayout('test', [{ id: 'a', order: 0, cols: 3, rows: 4 }]);
-    const result = loadPageLayout('test', [stub('a')]);
-    expect(result[0]).toMatchObject({ cols: 3, rows: 4 });
-  });
-
-  it('falls back to registry span for newly appended widgets', () => {
-    savePageLayout('test', [{ id: 'a', order: 0, cols: 1, rows: 1 }]);
-    const result = loadPageLayout('test', [stub('a'), withEmbed('b', 2, 3)]);
-    const b = result.find((r) => r.id === 'b');
-    expect(b).toMatchObject({ cols: 2, rows: 3 });
-  });
-});
-
-describe('savePageLayout + clearPageLayout round-trip', () => {
-  it('persists and reloads layout correctly', () => {
-    const data = [{ id: 'a', order: 0, cols: 2, rows: 1 }];
-    savePageLayout('pg', data);
-    const back = loadPageLayout('pg', [stub('a')]);
-    expect(back[0]).toMatchObject({ cols: 2, rows: 1 });
-  });
-
-  it('clearPageLayout reverts to registry defaults', () => {
-    savePageLayout('pg', [
-      { id: 'b', order: 0, cols: 1, rows: 1 },
-      { id: 'a', order: 1, cols: 1, rows: 1 },
-    ]);
-    clearPageLayout('pg');
-    const result = loadPageLayout('pg', [stub('a'), stub('b')]);
-    expect(result.map((r) => r.id)).toEqual(['a', 'b']);
+      configurable: true,
+    });
+    expect(() => clearLegacyLayoutKeys()).not.toThrow();
   });
 });

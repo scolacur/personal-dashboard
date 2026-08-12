@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from '$lib/toast-store.svelte';
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
@@ -485,17 +486,9 @@
   // Where the dragged card would land: `beforeId === null` means append to the end.
   let dropTarget = $state<{ status: TicketStatus; beforeId: number | null } | null>(null);
 
-  // Auto-dismissing toast message.
-  let toast = $state<string | null>(null);
-  let toastTimer: ReturnType<typeof setTimeout> | null = null;
-  function showToast(message: string) {
-    toast = message;
-    if (toastTimer !== null) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toast = null;
-      toastTimer = null;
-    }, 3000);
-  }
+  // Toast promoted to `$lib/toast.svelte` + `$lib/Toast.svelte` (PD-334) once the shell's
+  // membership writes became a second caller. `<Toast />` is mounted in the root layout.
+  const showToast = (message: string) => toast.show(message);
 
   // Queue-bypass confirm (D-058, PD-399): queueing a not-Ready robot ticket pops this modal —
   // confirm sets `readyBypassed` (honest override, never fakes `ready`) and completes the move;
@@ -1139,8 +1132,5 @@
   {/if}
 </Modal>
 
-{#if toast}
-  <div class="toast" role="status">{toast}</div>
-{/if}
 
 <style lang="scss" src="./+page.scss"></style>

@@ -9,7 +9,9 @@
   import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from '$lib/nav-utils';
   import DeployStatus from './DeployStatus.svelte';
   import DispatchKillswitch from './DispatchKillswitch.svelte';
-  import { homeWidgets, widgetsForPage } from '$lib/widgets';
+  import { pageWidgets } from '$lib/page-widgets.svelte';
+  import { clearLegacyLayoutKeys } from '$lib/layout';
+  import Toast from '$lib/Toast.svelte';
   import { arrangeMode } from '$lib/arrange.svelte';
   import FloatingPomodoro from './widgets/pomodoro/FloatingPomodoro.svelte';
 
@@ -36,12 +38,15 @@
   const showDevOpsNav = $derived(isDevOpsRoute(page.url.pathname));
 
   // Arrange button: shown only on widget-bearing pages at >=768px (enforced in CSS).
-  // The route half of the rule lives in nav-utils so it's unit-tested (nav-utils.spec.ts);
-  // Home draws from the user-facing catalogue, every other page from its `pages` tag.
+  // The route half of the rule lives in nav-utils so it's unit-tested (nav-utils.spec.ts).
+  //
+  // Still a synchronous derivation even though membership now lives server-side — that is the
+  // whole reason the store boot-loads every page at once rather than fetching per navigation
+  // (D-073). Home has no special case any more; it is an ordinary page.
   const canArrange = $derived.by(() => {
     const pageId = arrangeablePageId(page.url.pathname);
     if (pageId === undefined) return false;
-    return pageId === 'home' ? homeWidgets().length > 0 : widgetsForPage(pageId).length > 0;
+    return pageWidgets.forPage(pageId).length > 0;
   });
 
   // Exit arrange mode whenever the page changes.
@@ -52,6 +57,11 @@
   });
 
   onMount(() => {
+    // One fetch for every page's membership (D-073), plus a one-time sweep of the per-device
+    // layout keys D-053 wrote — nothing reads those any more.
+    void pageWidgets.load();
+    clearLegacyLayoutKeys();
+
     const t = document.documentElement.getAttribute('data-theme');
     theme = t === 'light' ? 'light' : 'dark';
   });
@@ -119,5 +129,9 @@
 {#if showPomodoro}
   <FloatingPomodoro />
 {/if}
+
+<!-- Mounted once for the whole app: anything, including non-component modules like the
+     page-membership store, can raise a toast (PD-334). -->
+<Toast />
 
 <style lang="scss" src="./+layout.scss"></style>

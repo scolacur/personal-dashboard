@@ -1,34 +1,44 @@
 <script lang="ts">
-  import type { WidgetMeta } from './widgets';
+  import type { PageWidget } from '@dashboard/shared';
   import { arrangeMode } from './arrange.svelte';
-  import { loadPageLayout, savePageLayout, clearPageLayout, defaultLayout } from './layout';
-  import type { WidgetLayout } from './layout';
+  import { pageWidgets } from './page-widgets.svelte';
+  import { resolvePlacements } from './layout';
+  import { widgets as registry, defaultSpan } from './widgets';
+  import { pageById } from './pages';
   import Widget from './Widget.svelte';
+  import LibraryModal from './LibraryModal.svelte';
 
-  let { pageId, widgetList }: { pageId: string; widgetList: WidgetMeta[] } = $props();
+  let { pageId }: { pageId: string } = $props();
 
-  // Writable-derived pattern: user mutations tracked separately; derived re-loads
-  // from localStorage whenever the page changes (pageId or widgetList dependency).
-  let _pageKey = $state('');
-  let _userLayouts = $state<WidgetLayout[]>([]);
+  // Membership comes from the store, which is loaded once at boot — so this stays a plain
+  // synchronous derivation, exactly as it was when it read the registry (D-073). The widget
+  // list is no longer a prop: which widgets are on a page is the store's answer, not a caller's.
+  const saved = $derived(pageWidgets.forPage(pageId));
 
-  const layouts = $derived.by(() => {
-    if (_pageKey === pageId) return _userLayouts;
-    return loadPageLayout(pageId, widgetList);
-  });
+  // A resize streams many intermediate values and only the last is worth a request. `pending`
+  // holds the in-flight shape so the grid renders it without a round-trip per mousemove; it is
+  // cleared once the real value is committed.
+  let pending = $state<PageWidget[] | null>(null);
+  const layouts = $derived(pending ?? saved);
+  const resolved = $derived(resolvePlacements(layouts, registry));
 
-  function applyLayouts(next: WidgetLayout[], save = false) {
-    _pageKey = pageId;
-    _userLayouts = next;
-    if (save) savePageLayout(pageId, next);
+  /** Show `next` immediately; when `save`, persist it too (optimistic — the store reverts on
+   *  failure and raises a toast). */
+  function applyLayouts(next: PageWidget[], save = false) {
+    if (save) {
+      pending = null;
+      void pageWidgets.set(pageId, next);
+    } else {
+      pending = next;
+    }
   }
 
   let gridEl = $state<HTMLElement | null>(null);
 
-  const metaById = $derived(new Map(widgetList.map((w) => [w.id, w])));
-  const orderedWidgets = $derived(
-    layouts.map((l) => metaById.get(l.id)).filter((w): w is WidgetMeta => w !== undefined),
-  );
+  // The library picker. Reachable from the ghost card at every viewport and whether or not
+  // Arrange is active — adding a widget is not a spatial operation (D-073).
+  let libraryOpen = $state(false);
+  const pageTitle = $derived(pageById(pageId)?.title ?? 'this page');
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────────
   let dragId = $state<string | null>(null);
@@ -50,8 +60,8 @@
       endDrag();
       return;
     }
-    const fromIdx = layouts.findIndex((l) => l.id === dragId);
-    const toIdx = layouts.findIndex((l) => l.id === id);
+    const fromIdx = layouts.findIndex((l) => l.widgetId === dragId);
+    const toIdx = layouts.findIndex((l) => l.widgetId === id);
     if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
       const next = [...layouts];
       const [item] = next.splice(fromIdx, 1);
@@ -104,7 +114,7 @@
   function startResize(id: string, e: MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    const layout = layouts.find((l) => l.id === id);
+    const layout = layouts.find((l) => l.widgetId === id);
     if (!layout) return; // nothing to anchor to — don't arm a resize
     resizeId = id;
     resizeAnchor = {
@@ -130,19 +140,35 @@
       Math.min(6, resizeAnchor.rows + Math.round(dy / (rowHeight + rowGap))),
     );
     applyLayouts(
-      layouts.map((l) => (l.id === resizeId ? { ...l, cols: newCols, rows: newRows } : l)),
+      layouts.map((l) => (l.widgetId === resizeId ? { ...l, cols: newCols, rows: newRows } : l)),
     );
   }
 
   function handleResizeEnd() {
-    if (resizeId) savePageLayout(pageId, layouts);
+    // Commit whatever the drag left on screen, in one write.
+    if (resizeId) applyLayouts([...layouts], true);
     resizeId = null;
     resizeAnchor = null;
   }
 
+  /**
+   * Restore this page's *arrangement* — registry order and each widget's default span.
+   *
+   * Membership is untouched: with no registry `pages` field left there is no default set of
+   * widgets to reset to, and silently re-adding widgets the user removed is the exact failure
+   * the seed guard exists to prevent (D-073). This resets where things sit, not what is there.
+   */
   function resetLayout() {
-    clearPageLayout(pageId);
-    applyLayouts(defaultLayout(widgetList));
+    const registryOrder = new Map(registry.map((w, i) => [w.id, i]));
+    const next = resolvePlacements(layouts, registry)
+      .slice()
+      .sort(
+        (a, b) =>
+          (registryOrder.get(a.widget.id) ?? Number.MAX_SAFE_INTEGER) -
+          (registryOrder.get(b.widget.id) ?? Number.MAX_SAFE_INTEGER),
+      )
+      .map(({ widget }, i) => ({ widgetId: widget.id, order: i, ...defaultSpan(widget) }));
+    applyLayouts(next, true);
   }
 </script>
 
@@ -151,37 +177,51 @@
   onmouseup={resizeId ? handleResizeEnd : undefined}
 />
 
-{#if widgetList.length === 0}
-  <p class="page-empty">No widgets here yet — this page is stubbed out.</p>
-{:else}
-  {#if arrangeMode.active}
-    <div class="arrange-toolbar">
-      <span class="arrange-hint">Drag to reorder · Drag corner to resize</span>
-      <button class="btn-reset" onclick={resetLayout}>Reset to default</button>
-      <button class="btn-done" onclick={arrangeMode.exit}>Done</button>
-    </div>
-  {/if}
-  <div class="grid" class:arranging={arrangeMode.active} bind:this={gridEl}>
-    {#each orderedWidgets as w (w.id)}
-      {@const layout = layouts.find((l) => l.id === w.id)}
-      <Widget
-        title={w.title}
-        description={w.description}
-        route={w.route}
-        embed={w.embed}
-        arranging={arrangeMode.active}
-        cols={layout?.cols}
-        rows={layout?.rows}
-        dragging={dragId === w.id}
-        dropTarget={dropTargetId === w.id}
-        onDragStart={() => startDrag(w.id)}
-        onDragOver={(e) => handleDragOver(w.id, e)}
-        onDrop={(e) => handleDrop(w.id, e)}
-        onDragEnd={endDrag}
-        onResizeStart={(e) => startResize(w.id, e)}
-      />
-    {/each}
+{#if arrangeMode.active && resolved.length > 0}
+  <div class="arrange-toolbar">
+    <span class="arrange-hint">Drag to reorder · Drag corner to resize</span>
+    <button class="btn-reset" onclick={resetLayout}>Reset arrangement</button>
+    <button class="btn-done" onclick={arrangeMode.exit}>Done</button>
   </div>
 {/if}
+
+<div class="grid" class:arranging={arrangeMode.active} bind:this={gridEl}>
+  {#each resolved as { widget, placement } (widget.id)}
+    <Widget
+      title={widget.title}
+      description={widget.description}
+      route={widget.route}
+      embed={widget.embed}
+      arranging={arrangeMode.active}
+      cols={placement.cols}
+      rows={placement.rows}
+      dragging={dragId === widget.id}
+      dropTarget={dropTargetId === widget.id}
+      onDragStart={() => startDrag(widget.id)}
+      onDragOver={(e) => handleDragOver(widget.id, e)}
+      onDrop={(e) => handleDrop(widget.id, e)}
+      onDragEnd={endDrag}
+      onResizeStart={(e) => startResize(widget.id, e)}
+      onRemove={() => pageWidgets.remove(pageId, widget.id)}
+    />
+  {/each}
+
+  <!-- Always last, and deliberately NOT a <Widget>: it is not draggable, not resizable and not
+       a drop target, so reorder never has to special-case it. On an empty page it is the only
+       card, which is what makes it the empty state as well as the way out of one. -->
+  <button
+    type="button"
+    class="ghost-card"
+    class:empty={resolved.length === 0}
+    onclick={() => (libraryOpen = true)}
+  >
+    <span class="ghost-plus" aria-hidden="true">+</span>
+    <span class="ghost-label"
+      >{resolved.length === 0 ? 'Add a widget' : 'Add widget'}</span
+    >
+  </button>
+</div>
+
+<LibraryModal open={libraryOpen} {pageId} {pageTitle} onClose={() => (libraryOpen = false)} />
 
 <style lang="scss" src="./WidgetGrid.scss"></style>

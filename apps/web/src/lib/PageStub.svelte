@@ -1,12 +1,10 @@
 <script lang="ts">
   import WidgetGrid from '$lib/WidgetGrid.svelte';
-  import { widgetsForPage } from '$lib/widgets';
 
+  // Membership is the grid's own concern now (D-073) — this just names the page.
   let { pageId }: { pageId: string } = $props();
-
-  const pageWidgets = $derived(widgetsForPage(pageId));
 </script>
 
-<WidgetGrid {pageId} widgetList={pageWidgets} />
+<WidgetGrid {pageId} />
 
 <style lang="scss" src="./PageStub.scss"></style>
