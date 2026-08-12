@@ -3,8 +3,6 @@
   flex-direction: column;
   gap: var(--space-lg);
   padding: var(--space-lg);
-  /* Scroll clear of the fixed tab, which overlaps content rather than displacing it. */
-  padding-bottom: calc(var(--space-lg) + var(--bst-terms-tab-height));
   max-width: 72rem;
   margin: 0 auto;
 }
@@ -238,4 +236,17 @@
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-sm);
+}
+
+
+/* Shown on the Matches tab when nothing is open — "no matches" and "the scan is broken" must not
+   look alike, so this points at where the answer actually is. */
+.bst-empty {
+  margin: 0;
+  padding: var(--space-lg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  text-align: center;
 }

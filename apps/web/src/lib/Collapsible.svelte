@@ -12,6 +12,7 @@
     open: openDefault = true,
     storeKey,
     children,
+    onToggle,
     actions,
   }: {
     title: string;
@@ -19,6 +20,10 @@
     open?: boolean;
     storeKey?: string;
     children: Snippet;
+    /** Called with the new state on every toggle. For sections that need to do something when
+     *  they open — seed a draft from the saved value, fetch on first open — rather than merely
+     *  render. The component still owns the state; this is a notification, not control. */
+    onToggle?: (open: boolean) => void;
     /** Optional controls pinned to the right of the header, shown only while open. Rendered
      *  as a sibling of the header button — nesting them inside it would be invalid HTML and
      *  would swallow their clicks into the collapse toggle. */
@@ -33,6 +38,7 @@
   function toggle(): void {
     open = !open;
     writeOpen(storeKey, open);
+    onToggle?.(open);
   }
 </script>
 

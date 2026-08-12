@@ -47,11 +47,6 @@
   /* Shape */
   --radius: 0.5rem;
 
-  /* Height of the Buy/Sell/Trade sale-terms tab, fixed to the bottom of the viewport (PD-475).
-     A token rather than a local value because two files must agree on it and they are not in
-     the same subtree: the tab (SaleTerms.scss) draws it, and the page (+page.scss) reserves the
-     same height as bottom padding so the tab never covers the last row of a gear table. */
-  --bst-terms-tab-height: 2.25rem;
 }
 
 :global([data-theme='dark']) {
