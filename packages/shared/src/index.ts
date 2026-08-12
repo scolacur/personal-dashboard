@@ -183,4 +183,16 @@ export {
   SAMPLE_RESUME_CONTEXT,
   SAMPLE_CONTEXT_PACK,
   sampleRobotTaskPrompt,
+  DOCS_FETCH_RULE,
 } from './agent-prompts';
+export type { DocDomain, DocFetchRefusal, DocUrlCheck } from './doc-allowlist';
+export {
+  BASELINE_DOC_DOMAINS,
+  MAX_DOC_URL_LENGTH,
+  CREDENTIAL_PREFIXES,
+  hostMatches,
+  findDocDomain,
+  scanUrlForSecrets,
+  validateDocUrl,
+  fenceFetchedContent,
+} from './doc-allowlist';
