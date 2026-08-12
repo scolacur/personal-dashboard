@@ -32,7 +32,7 @@ export interface WidgetMeta {
 // One entry per folder in the repo-root `widgets/` spec directory, plus the Dev Ops summaries.
 // Each widget owns a route at /widgets/<id>.
 //
-// **Registration says nothing about where a widget appears** (D-071). It puts the widget in the
+// **Registration says nothing about where a widget appears** (D-073). It puts the widget in the
 // widget library; placement onto pages is user state, stored server-side and read through
 // `page-widgets.svelte.ts`. There is deliberately no `pages` field and no `system` flag here —
 // the registry answers "what exists", never "what goes where".
@@ -146,7 +146,7 @@ export const widgets: WidgetMeta[] = [
 
   // ── Dev Ops summaries (PD-413) ───────────────────────────────────────────────
   // Compact views onto the Dev Ops subpages; each card header links to the full subpage its
-  // summary is drawn from. Ordinary library citizens since D-071 — the `system: true` flag that
+  // summary is drawn from. Ordinary library citizens since D-073 — the `system: true` flag that
   // used to hold them off Home is gone, because Home is now curated by hand like any other page.
   {
     id: 'devops-task-tracker',

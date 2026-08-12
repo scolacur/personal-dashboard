@@ -2,13 +2,13 @@ import type { PageWidget } from '@dashboard/shared';
 import type { WidgetMeta } from './widgets';
 
 /**
- * Grid layout helpers (PD-331, reworked by PD-334/D-071).
+ * Grid layout helpers (PD-331, reworked by PD-334/D-073).
  *
  * What used to live here — `loadPageLayout` / `savePageLayout` / `clearPageLayout` and the
  * registry-merge that backed them — is gone. That merge dropped saved ids absent from a page's
  * registry defaults and appended registry ids absent from the saved array, which made adding or
  * removing a widget structurally impossible; it existed so a widget registered later would show
- * up on pages already arranged. With placement now user state (D-071) there are no registry
+ * up on pages already arranged. With placement now user state (D-073) there are no registry
  * defaults to merge against, and the server is the only store.
  *
  * `dashboard:layout:<pageId>` keys are cleared once, on first load, by `clearLegacyLayoutKeys`.
@@ -52,7 +52,7 @@ export function resolvePlacements(
  * Deliberately a delete and not a migration: the server seeds from the registry at boot, before
  * any browser connects, so importing a local layout would have to overwrite seeded rows — and
  * with two devices holding different local layouts, whichever loaded first would silently win
- * everywhere. Dropping them costs one re-arrange (D-071).
+ * everywhere. Dropping them costs one re-arrange (D-073).
  */
 export function clearLegacyLayoutKeys(): void {
   try {

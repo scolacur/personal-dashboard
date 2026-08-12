@@ -40,7 +40,7 @@ describe('resolvePlacements', () => {
   });
 
   it('resolves a Dev Ops summary like any other widget', () => {
-    // D-071 deleted `system: true`; these are ordinary library citizens now.
+    // D-073 deleted `system: true`; these are ordinary library citizens now.
     expect(resolvePlacements([placement('devops-agent')], registry)).toHaveLength(1);
   });
 

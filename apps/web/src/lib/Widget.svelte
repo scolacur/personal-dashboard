@@ -119,7 +119,7 @@
     <!-- Opposite corner from the resize handle, so the two arrange affordances never compete
          for the same pixels. `stopPropagation` because the whole card is draggable in arrange
          mode and a mousedown here must not begin a drag. No confirmation: nothing is destroyed
-         — the widget keeps its own data and is two clicks away in the library (D-071). -->
+         — the widget keeps its own data and is two clicks away in the library (D-073). -->
     <button
       type="button"
       class="remove-handle"

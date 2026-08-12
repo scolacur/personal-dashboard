@@ -4,7 +4,7 @@ import type { PageWidget } from '@dashboard/shared';
 import { getAllPageWidgets, getPageWidgets, setPageWidgets } from './shell-layout';
 
 /**
- * Page-membership endpoints for the dashboard shell (PD-334, D-071).
+ * Page-membership endpoints for the dashboard shell (PD-334, D-073).
  *
  * Core routes rather than widget routes — the shell is not a widget — so these mount at
  * `/api/shell/...` and are registered from index.ts alongside `/api/jobs/...` (PD-442).
@@ -37,7 +37,7 @@ function parsePageWidget(raw: unknown): PageWidget | null {
 
 export function registerShellLayoutRoutes(app: FastifyInstance, db: Database.Database): void {
   // Every page in one response. The client loads this once at boot so `canArrange` and the grid
-  // stay synchronous derivations (D-071); the payload is tens of rows.
+  // stay synchronous derivations (D-073); the payload is tens of rows.
   app.get('/api/shell/pages/widgets', async () => getAllPageWidgets(db));
 
   app.get<{ Params: { pageId: string } }>(

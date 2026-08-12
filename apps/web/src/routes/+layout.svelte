@@ -42,7 +42,7 @@
   //
   // Still a synchronous derivation even though membership now lives server-side — that is the
   // whole reason the store boot-loads every page at once rather than fetching per navigation
-  // (D-071). Home has no special case any more; it is an ordinary page.
+  // (D-073). Home has no special case any more; it is an ordinary page.
   const canArrange = $derived.by(() => {
     const pageId = arrangeablePageId(page.url.pathname);
     if (pageId === undefined) return false;
@@ -57,7 +57,7 @@
   });
 
   onMount(() => {
-    // One fetch for every page's membership (D-071), plus a one-time sweep of the per-device
+    // One fetch for every page's membership (D-073), plus a one-time sweep of the per-device
     // layout keys D-053 wrote — nothing reads those any more.
     void pageWidgets.load();
     clearLegacyLayoutKeys();

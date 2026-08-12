@@ -2,7 +2,7 @@
  * App-wide auto-dismissing toast (PD-334).
  *
  * Promoted from the Kanban board's page-local copy once a second caller appeared — the shell's
- * page-membership writes, which need to report a failed save (D-071). PROJECT.md §5 puts
+ * page-membership writes, which need to report a failed save (D-073). PROJECT.md §5 puts
  * cross-route components in `lib/`.
  *
  * A module rather than component state so that non-component code can raise one: the membership

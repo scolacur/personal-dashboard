@@ -2,7 +2,7 @@ import type { PageWidget, PageWidgetMap } from '@dashboard/shared';
 import { toast } from './toast-store.svelte';
 
 /**
- * Page-membership store for the dashboard shell (PD-334, D-071).
+ * Page-membership store for the dashboard shell (PD-334, D-073).
  *
  * **Loaded once at boot, not per navigation.** The whole map is tens of rows, and loading it up
  * front is what keeps `canArrange` in the top nav and the grid itself *synchronous derivations* —

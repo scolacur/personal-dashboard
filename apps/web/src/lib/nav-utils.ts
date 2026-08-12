@@ -1,6 +1,6 @@
 import { pages } from './pages';
 
-/** The Library page's route and nav label (PD-334, D-071).
+/** The Library page's route and nav label (PD-334, D-073).
  *
  *  Deliberately absent from `pages.ts` — it is a derived view, not a curated page, and keeping
  *  it out is what stops `arrangeablePageId` ever lighting up the Arrange button there. The cost

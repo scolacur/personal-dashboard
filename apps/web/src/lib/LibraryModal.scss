@@ -50,7 +50,7 @@
 }
 
 /* On a phone the description competes with the title for a narrow row; drop it and let the
-   title own the width. Membership editing is explicitly available at every viewport (D-071),
+   title own the width. Membership editing is explicitly available at every viewport (D-073),
    so this list has to work here. */
 @media (max-width: 600px) {
   .library-row {

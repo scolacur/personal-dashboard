@@ -2,14 +2,14 @@ import type Database from 'better-sqlite3';
 import type { PageWidget, PageWidgetMap } from '@dashboard/shared';
 
 /**
- * Shell page-membership store (PD-334, D-071).
+ * Shell page-membership store (PD-334, D-073).
  *
  * Cross-cutting shell infrastructure rather than any one widget's concern, so it lives in
  * `apps/server/src/lib/` alongside the shared job-run store (PD-442) — the slot PROJECT.md §5
  * reserved for exactly this.
  *
  * Holds **membership and layout in one row**: which widgets are on a page, in what order, at what
- * span. Before D-071 membership was a registry field (`WidgetMeta.pages`) and layout was per-device
+ * span. Before D-073 membership was a registry field (`WidgetMeta.pages`) and layout was per-device
  * `localStorage`; both are retired here. The registry now declares only that a widget *exists*.
  *
  * `page_id` is plain TEXT matching `pages.ts`, not a foreign key — user-managed pages are PD-497,
@@ -31,7 +31,7 @@ function rowToPageWidget(r: PageWidgetRow): PageWidget {
 }
 
 /**
- * A frozen snapshot of the `WidgetMeta.pages` values as they stood the day D-071 landed, used
+ * A frozen snapshot of the `WidgetMeta.pages` values as they stood the day D-073 landed, used
  * once to seed the table before that field was deleted.
  *
  * Deliberately a literal, not a read of the registry: the registry lives in `apps/web` and the
@@ -41,7 +41,7 @@ function rowToPageWidget(r: PageWidgetRow): PageWidget {
  */
 const SEED_PAGES: Record<string, string[]> = {
   // Home was the auto-catalogue of every non-system widget (`homeWidgets()`). Seeded as it was
-  // rather than empty, so the migration is a pure no-visible-change step (D-071); Home is meant
+  // rather than empty, so the migration is a pure no-visible-change step (D-073); Home is meant
   // to end up hand-curated, but that is a choice made in the UI, not by the seed.
   home: [
     'morning-routine',
@@ -137,7 +137,7 @@ function seedOnce(db: Database.Database): void {
   })();
 }
 
-/** Every page's membership in one read — the client loads this once at boot (D-071). */
+/** Every page's membership in one read — the client loads this once at boot (D-073). */
 export function getAllPageWidgets(db: Database.Database): PageWidgetMap {
   const rows = db
     .prepare('SELECT page_id, widget_id, sort_order, cols, rows FROM shell_page_widgets ORDER BY page_id, sort_order')

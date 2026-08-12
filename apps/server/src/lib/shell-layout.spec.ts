@@ -35,7 +35,7 @@ describe('bootstrapShellLayoutSchema', () => {
   });
 
   it('seeds Home with its previous contents rather than empty', () => {
-    // D-071: the seed is a pure no-visible-change migration. Home is meant to end up
+    // D-073: the seed is a pure no-visible-change migration. Home is meant to end up
     // hand-curated, but that is a choice made in the UI — seeding it empty would leave Home
     // blank and unfillable until the library ships.
     expect(getPageWidgets(db, 'home').length).toBeGreaterThan(0);

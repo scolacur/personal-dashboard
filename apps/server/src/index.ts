@@ -40,7 +40,7 @@ const app = Fastify({
 // happen once, up front.
 bootstrapJobRunsSchema(db);
 
-// Shell page membership (PD-334, D-071). Bootstrapped alongside the job-run store: the shell is
+// Shell page membership (PD-334, D-073). Bootstrapped alongside the job-run store: the shell is
 // not a widget, and its one-time seed must land before anything serves a page.
 bootstrapShellLayoutSchema(db);
 

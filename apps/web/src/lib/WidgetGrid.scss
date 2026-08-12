@@ -24,7 +24,7 @@
   }
 }
 
-/* Sole occupant of an empty page: a normal state now that membership is user state (D-071),
+/* Sole occupant of an empty page: a normal state now that membership is user state (D-073),
    so it should look inviting rather than like an error. Spans the full width it can get. */
 .ghost-card.empty {
   grid-column: 1 / -1;

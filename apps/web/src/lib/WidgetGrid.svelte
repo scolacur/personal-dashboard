@@ -11,7 +11,7 @@
   let { pageId }: { pageId: string } = $props();
 
   // Membership comes from the store, which is loaded once at boot — so this stays a plain
-  // synchronous derivation, exactly as it was when it read the registry (D-071). The widget
+  // synchronous derivation, exactly as it was when it read the registry (D-073). The widget
   // list is no longer a prop: which widgets are on a page is the store's answer, not a caller's.
   const saved = $derived(pageWidgets.forPage(pageId));
 
@@ -36,7 +36,7 @@
   let gridEl = $state<HTMLElement | null>(null);
 
   // The library picker. Reachable from the ghost card at every viewport and whether or not
-  // Arrange is active — adding a widget is not a spatial operation (D-071).
+  // Arrange is active — adding a widget is not a spatial operation (D-073).
   let libraryOpen = $state(false);
   const pageTitle = $derived(pageById(pageId)?.title ?? 'this page');
 
@@ -156,7 +156,7 @@
    *
    * Membership is untouched: with no registry `pages` field left there is no default set of
    * widgets to reset to, and silently re-adding widgets the user removed is the exact failure
-   * the seed guard exists to prevent (D-071). This resets where things sit, not what is there.
+   * the seed guard exists to prevent (D-073). This resets where things sit, not what is there.
    */
   function resetLayout() {
     const registryOrder = new Map(registry.map((w, i) => [w.id, i]));

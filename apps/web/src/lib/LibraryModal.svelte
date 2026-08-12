@@ -4,7 +4,7 @@
   import { pageWidgets } from './page-widgets.svelte';
 
   /**
-   * The widget library's picker surface (PD-334, D-071).
+   * The widget library's picker surface (PD-334, D-073).
    *
    * A **toggle list**, not an add-only list: a checked row means the widget is on this page,
    * so one surface both answers "what's on this page?" and edits it in either direction. That
