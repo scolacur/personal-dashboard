@@ -6,6 +6,9 @@ import {
   SAMPLE_CONTEXT_PACK,
   SAMPLE_RESUME_CONTEXT,
   auditSystemPrompt,
+  evaluatorSystemPrompt,
+  buildEvaluatorPrompt,
+  SAMPLE_EVALUATOR_PROMPT_INPUT,
   refineSystemPrompt,
   robotSystemPrompt,
   sampleRobotTaskPrompt,
@@ -16,7 +19,16 @@ describe('the Agent Glossary', () => {
   it('has a tab for every agent that actually runs, driven by AGENT_TYPES', () => {
     // A fourth agent added in packages/shared gets a tab with no change here or in the component.
     expect(AGENT_GLOSSARY_VIEWS.map((v) => v.profile.id)).toEqual([...AGENT_TYPES]);
-    expect(AGENT_TYPES).toEqual(['robot', 'refine', 'audit']);
+    expect(AGENT_TYPES).toEqual(['robot', 'refine', 'audit', 'evaluator']);
+  });
+
+  it('gives each agent its OWN prompt, not a neighbour’s', () => {
+    // `agentGlossaryView` dispatches on id with a fallthrough. When `evaluator` was added, the
+    // fallthrough silently rendered the AUDIT prompt under the Evaluator tab — every other
+    // assertion here passed, because "has a prompt" was true and only the content was wrong.
+    // Comparing tabs pairwise is what catches a mis-routed branch.
+    const texts = AGENT_GLOSSARY_VIEWS.map((v) => v.sections.map((s) => s.text).join('\n'));
+    expect(new Set(texts).size).toBe(texts.length);
   });
 
   it('gives every agent a tagline, responsibilities, and at least one prompt', () => {
@@ -115,5 +127,24 @@ describe('agent profiles', () => {
     expect(AGENT_PROFILES.robot.decisions).toContain('D-055');
     expect(AGENT_PROFILES.refine.decisions).toContain('D-044');
     expect(AGENT_PROFILES.audit.decisions).toContain('D-045');
+  });
+});
+
+describe("the Evaluator's tab", () => {
+  const view = agentGlossaryView('evaluator');
+
+  it('renders the real system prompt, not a transcription', () => {
+    const section = view.sections.find((s) => s.title === 'System prompt');
+    expect(section?.text).toBe(evaluatorSystemPrompt(SAMPLE_CONTEXT_PACK));
+  });
+
+  it('renders the real per-PR prompt', () => {
+    const section = view.sections.find((s) => s.title === 'Per-PR prompt');
+    expect(section?.text).toBe(buildEvaluatorPrompt(SAMPLE_EVALUATOR_PROMPT_INPUT));
+  });
+
+  it('is not the Audit prompt', () => {
+    // The exact bug the fallthrough produced.
+    for (const s of view.sections) expect(s.text).not.toBe(auditSystemPrompt(SAMPLE_CONTEXT_PACK));
   });
 });

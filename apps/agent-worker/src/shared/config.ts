@@ -29,6 +29,39 @@ export interface AgentWorkerConfig {
   httpsProxy: string;
   /** The Robot loop (D-055, PD-342) — the in-house dispatcher. Off by default. */
   robot: RobotConfig;
+  /** The Evaluator (PD-487, D-076) — post-hand-off PR review. Off by default. */
+  evaluator: EvaluatorConfig;
+}
+
+/**
+ * Config for the **Evaluator** (PD-487, [[D-076]]): reviews a handed-off Robot PR against its
+ * ticket. Off by default, like the Robot loop — it is a new autonomous spender, and the deploy
+ * that turns it on should be a deliberate act rather than a side effect of shipping the code.
+ *
+ * Its budget knobs are **separate from the Robot's on purpose**, not merely for tuning: the whole
+ * premise of the ticket is that evaluation spend must not be confused with the spend it is judging.
+ */
+export interface EvaluatorConfig {
+  /** Master switch — no evaluation happens unless true (default off). */
+  enabled: boolean;
+  /**
+   * The Evaluator's model, deliberately its OWN setting rather than inheriting `model`.
+   *
+   * Steve's call (2026-08-12): Opus always. Redundancy detection is whole-codebase judgement, which
+   * is exactly where a weaker model produces confident misses — and a false `revise` costs a full
+   * rework cycle on both sides. Decoupled from `AGENT_WORKER_MODEL` so lowering the worker default
+   * for cost cannot silently downgrade the reviewer.
+   */
+  model: string;
+  /** How often to look for handed-off PRs needing evaluation (ms). */
+  intervalMs: number;
+  /** Rolling window for the Evaluator's own ceiling (ms, default 24h). */
+  budgetWindowMs: number;
+  /** Turn ceiling per window; 0 disables. Lower than the Robot's — an evaluation is one read-only
+   *  pass over a diff, so a high number here means something is wrong, not something is busy. */
+  budgetTurns: number;
+  /** Token ceiling per window; 0 disables (the default), same reasoning as the Robot's. */
+  budgetTokens: number;
 }
 
 /**
@@ -156,6 +189,18 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
   };
 }
 
+export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
+  return {
+    enabled: env.EVALUATOR_ENABLED === '1' || env.EVALUATOR_ENABLED === 'true',
+    // Not `env.AGENT_WORKER_MODEL` — see EvaluatorConfig.model.
+    model: env.EVALUATOR_MODEL ?? 'claude-opus-4-8',
+    intervalMs: Number(env.EVALUATOR_INTERVAL_MS ?? 60_000),
+    budgetWindowMs: Number(env.EVALUATOR_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
+    budgetTurns: Number(env.EVALUATOR_BUDGET_TURNS ?? 200),
+    budgetTokens: Number(env.EVALUATOR_BUDGET_TOKENS ?? 0),
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerConfig {
   return {
     model: env.AGENT_WORKER_MODEL ?? 'claude-opus-4-8',
@@ -168,6 +213,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     auditIntervalMs: Number(env.AGENT_WORKER_AUDIT_INTERVAL_MS ?? 30_000),
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
     robot: loadRobotConfig(env),
+    evaluator: loadEvaluatorConfig(env),
   };
 }
 

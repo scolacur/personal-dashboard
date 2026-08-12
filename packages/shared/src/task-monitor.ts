@@ -1,6 +1,9 @@
 // Types for the Task Monitor "Tasks" Kanban — the project's Ticket backlog.
 // Shared between the server (DB + API) and the web (Kanban UI).
 
+// Type-only, and one-directional: `agent-prompts.ts` imports nothing, so this cannot cycle.
+import type { EvaluatorVerdict } from './agent-prompts';
+
 // Who the ticket is assigned to. 'steve' = human owner; 'robot' = the Robot loop.
 // null = unassigned.
 export type TicketAssignee = 'steve' | 'robot';
@@ -919,6 +922,15 @@ export const ROBOT_EVENT = {
   // and its lingering agent session is torn down (agent_state cleared, needs/awaiting-human
   // notifications resolved). Not written by the loop — by the server's terminal-transition path.
   sessionEnded: 'robot_session_ended',
+  // The Evaluator (PD-487, D-076). `evaluating` is written when a pass STARTS and `evaluated` when
+  // it produces a verdict — the pair, not just the verdict, because a failed evaluation deliberately
+  // writes no verdict (so it can never be mistaken for approval). Without a start marker that
+  // failure would be invisible on the timeline; with it, "reviewing…" and no verdict is legible as
+  // exactly what happened. `evaluated` is written on EVERY verdict, since a timeline that only shows
+  // the Evaluator complaining reads as noise, and "it reviewed this and was satisfied" is what a
+  // human most wants to know before merging.
+  evaluating: 'robot_evaluating',
+  evaluated: 'robot_evaluated',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -926,6 +938,30 @@ export const ROBOT_EVENT = {
 export const ROBOT_RESET_EVENTS: readonly string[] = [ROBOT_EVENT.reset, ROBOT_EVENT.unstick];
 
 export type RobotEventType = (typeof ROBOT_EVENT)[keyof typeof ROBOT_EVENT];
+
+/**
+ * The human-readable line for a `robot_evaluated` event (PD-487, [[D-076]]).
+ *
+ * Here rather than inside `ActivityTimeline.svelte` so the ticket-detail timeline and the Activity
+ * Feed (PD-162) render the same words from one source — a `.svelte` `describe()` is also not
+ * directly testable, and the counts are the part worth asserting.
+ *
+ * The counts carry the meaning. "revise" alone says a machine disagreed; "revise — 2 blocking
+ * findings" says how much work it thinks is left. A `ship` that carried advisory notes is
+ * distinguished from a clean one, because those notes are the reason to open the PR and look.
+ */
+export function evaluatorVerdictLine(detail: RobotEventDetail): string {
+  const verdict = detail.verdict ?? 'unknown';
+  const total = detail.findings ?? 0;
+  const blocking = detail.blockingFindings ?? 0;
+  const advisory = Math.max(0, total - blocking);
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+  if (verdict === 'revise') return `revise — ${plural(blocking, 'blocking finding')} to fix`;
+  if (verdict === 'escalate') return 'escalate — needs a human decision before more work';
+  if (verdict === 'ship') return advisory > 0 ? `ship, with ${plural(advisory, 'advisory note')}` : 'ship — no findings';
+  return verdict;
+}
 
 /** JSON stored in a `robot_*` event's `detail` (all fields optional — depends on type). */
 export interface RobotEventDetail {
@@ -952,6 +988,13 @@ export interface RobotEventDetail {
   /** PD-432: the effective turn ceiling a dispatched run was given (`robot_dispatched`) — the
    *  ticket's override, or the loop's env default. */
   maxTurns?: number;
+  /** PD-487: the Evaluator's verdict (`robot_evaluated`). */
+  verdict?: EvaluatorVerdict;
+  /** PD-487: how many findings the verdict carried, and how many of those were blocking. */
+  findings?: number;
+  blockingFindings?: number;
+  /** PD-487: which evaluation round this was for the ticket — the loop caps them (D-076). */
+  round?: number;
   /** PD-470: on a `robot_paused` raised by a provider session limit — the flag distinguishes it
    *  from an auth/credit pause (which needs a human), and `until` is when dispatch resumes. */
   sessionLimit?: boolean;

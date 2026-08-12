@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TicketEvent, RobotEventDetail } from '@dashboard/shared';
-  import { ROBOT_EVENT } from '@dashboard/shared';
+  import { ROBOT_EVENT, evaluatorVerdictLine } from '@dashboard/shared';
   import { fetchTicketEvents } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
@@ -63,6 +63,10 @@
         return '🚫';
       case ROBOT_EVENT.sessionEnded:
         return '🧹';
+      case ROBOT_EVENT.evaluating:
+        return '🔍';
+      case ROBOT_EVENT.evaluated:
+        return '📋';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -105,6 +109,10 @@
         return 'PR closed without merging — needs human';
       case ROBOT_EVENT.sessionEnded:
         return `Agent session ended${d.to ? ` (moved to ${d.to})` : ''}`;
+      case ROBOT_EVENT.evaluating:
+        return `Evaluator reviewing the PR${d.round && d.round > 1 ? ` (round ${d.round})` : ''}`;
+      case ROBOT_EVENT.evaluated:
+        return `Evaluator verdict: ${evaluatorVerdictLine(d)}`;
       case 'created':
         return 'Ticket created';
       case 'status_changed':
