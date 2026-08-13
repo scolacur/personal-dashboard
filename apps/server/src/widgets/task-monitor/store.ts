@@ -817,12 +817,15 @@ export function listEpicMembers(db: Database.Database, epicId: number): AgentTic
   return rows.map(rowToTicket);
 }
 
-/** Derive an Epic's board lane from its members (D-054). With no members, fall back to the Epic's
- *  own hand-set status (an Epic can never be `queue`, so a queue status → in_progress). */
+/** An Epic's board lane (D-054, as amended by D-076).
+ *
+ *  **D-076 splits this by direction.** The Epic's *own* status is now authoritative for the pending
+ *  lanes — a human queues the Epic and its members follow — so a hand-set `queue` is honoured
+ *  rather than treated as impossible. Progress stays derived: an Epic reads `completed`/`closed`
+ *  only when its members actually got there, because that is an observation of what the loop did
+ *  and no top-down push may overwrite it. */
 function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus): EpicDerivedLane {
   if (memberStatuses.length === 0) {
-    // D-058: an Epic can never be `queue`, so a hand-set `queue` should never reach here; map it
-    // defensively to in_progress (it never gets past the queue guard anyway).
     switch (ownStatus) {
       case 'queue':
         return 'in_progress';
@@ -830,17 +833,17 @@ function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus)
         return 'completed';
       case 'closed':
         return 'closed';
-      case 'prioritized':
-        return 'prioritized';
       default:
         return 'backlog';
     }
   }
-  if (memberStatuses.some((s) => s === 'queue')) return 'in_progress';
   const allDone = memberStatuses.every((s) => s === 'completed' || s === 'closed');
   if (allDone) return memberStatuses.some((s) => s === 'completed') ? 'completed' : 'closed';
-  // Nobody in a queue, not all done → least-advanced pending lane.
-  return memberStatuses.some((s) => s === 'backlog') ? 'backlog' : 'prioritized';
+  // D-076: not all done, so the Epic is pending. A member still in `queue` means work is live;
+  // otherwise the Epic's own lane decides, which is what makes queueing an Epic with nothing yet
+  // dispatchable (every member blocked, say) still read as active rather than snapping back.
+  if (memberStatuses.some((s) => s === 'queue')) return 'in_progress';
+  return ownStatus === 'queue' ? 'in_progress' : 'backlog';
 }
 
 /** Roll-up + derived lane for a single Epic (D-054). */
@@ -1280,9 +1283,11 @@ export function approveRefine(
       }
     }
 
-    // D-057/D-058: plain approve parks a proposed `queue` in `prioritized`; only `queue: true`
-    // dispatches. `ready` is recomputed from the body on write (never enforced here).
-    const status = wantQueue ? 'queue' : proposed === 'queue' ? 'prioritized' : proposed;
+    // D-057/D-058: plain approve parks a proposed `queue`; only `queue: true` dispatches. `ready`
+    // is recomputed from the body on write (never enforced here). D-076 retired the `prioritized`
+    // parking lane, so the park is now `backlog`; PD-510 removes the lane write altogether
+    // ("approval never moves a Ticket"), which is the stronger form of D-057.
+    const status = wantQueue ? 'queue' : proposed === 'queue' ? 'backlog' : proposed;
     const queued = status === 'queue';
 
     const run = db.transaction(() => {
@@ -1324,8 +1329,11 @@ export function approveRefine(
       // legacy `robot_queue`/`steve_queue` first (→ `queue` → parked) so a stale proposal never
       // creates an orphaned lane; an unrecognized status falls back to `backlog`.
       const coercedChild = coerceTicketStatus(c.status);
+      // D-076: the `prioritized` parking lane is retired, so a proposed-`queue` child parks in
+      // `backlog`. Under D-076 a Ticket is not queued by hand at all — its Epic is — so PD-510
+      // drops the lane write here entirely.
       const childStatus =
-        coercedChild === null ? 'backlog' : coercedChild === 'queue' ? 'prioritized' : coercedChild;
+        coercedChild === null ? 'backlog' : coercedChild === 'queue' ? 'backlog' : coercedChild;
       const child = createTicket(db, {
         title: c.title,
         body: c.body,
