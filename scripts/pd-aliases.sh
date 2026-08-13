@@ -1,6 +1,11 @@
-#!/usr/bin/env sh
+#!/usr/bin/env bash
 # pd-aliases.sh — canonical source of truth for Personal Dashboard shell commands.
-# Compatible with bash and zsh.
+#
+# bash and zsh ONLY — NOT POSIX sh. Every helper here is hyphenated (`pd-runs`, `robot-logs`), and
+# POSIX forbids a hyphen in a function name, so dash rejects this file with "Bad function name".
+# (The shebang said `sh` until PD-391; it was decorative — the file is sourced, not executed — but
+# it advertised a compatibility the file never had. On macOS `/bin/sh` is bash, so `sh -n` passes
+# there and fails on a Debian/Ubuntu host, which is exactly how this stayed unnoticed.)
 #
 # NAS setup: replace inline definitions in ~/.profile with:
 #   source "$PD_REPO_ROOT/scripts/pd-aliases.sh"

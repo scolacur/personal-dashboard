@@ -182,14 +182,22 @@ describe('the script is portable to the shells it claims', () => {
     }
   }
 
-  it('parses under every shell available here, and at least sh + bash', () => {
+  // bash and zsh ONLY — deliberately not POSIX `sh`. Every helper in this file is hyphenated
+  // (`pd-runs`, `robot-logs`), and POSIX forbids a hyphen in a function name, so dash rejects the
+  // file outright with "Bad function name". That has been true since `pd-runs` was written; it is
+  // the file's stated contract ("Compatible with bash and zsh"), not a regression.
+  //
+  // Worth knowing WHY this was invisible locally: on macOS `/bin/sh` IS bash, so `sh -n` passes on
+  // a dev machine and fails on Ubuntu CI, where `/bin/sh` is dash. Asserting `sh` here tested the
+  // developer's platform, not the contract.
+  it('parses under bash and zsh, the shells it claims', () => {
     const checked: string[] = [];
-    for (const shell of ['sh', 'bash', 'zsh']) {
+    for (const shell of ['bash', 'zsh']) {
       if (!has(shell)) continue;
       expect(() => execFileSync(shell, ['-n', path.join(ROOT, 'scripts/pd-aliases.sh')])).not.toThrow();
       checked.push(shell);
     }
     // Guard against the skip logic quietly reducing this to a no-op test.
-    expect(checked).toEqual(expect.arrayContaining(['sh', 'bash']));
+    expect(checked).toContain('bash');
   });
 });
