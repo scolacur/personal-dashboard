@@ -50,10 +50,10 @@ describe('POST /api/widgets/task-monitor/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, status: 'prioritized' },
+      payload: { title: 'test', projectId: pid, status: 'backlog' },
     });
     expect(res.statusCode).toBe(201);
-    expect(res.json().status).toBe('prioritized');
+    expect(res.json().status).toBe('backlog');
   });
 
   it('accepts closed status on create', async () => {
@@ -596,7 +596,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
   const base = '/api/widgets/task-monitor';
   const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
-  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, status = 'prioritized') {
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, status = 'backlog') {
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets`,
@@ -644,7 +644,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
   it('POST /refine-approve { queue: true } dispatches a refine_in_place into queue (201)', async () => {
     const { app, db } = freshSetup();
     const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
-    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
+    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' });
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-approve`,
@@ -661,10 +661,10 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
     const res0 = await app.inject({
       method: 'POST',
       url: `${base}/tickets`,
-      payload: { title: 'epic', body: 'b', projectId: projectId(db, 'personal-dashboard'), status: 'prioritized', isEpic: true },
+      payload: { title: 'epic', body: 'b', projectId: projectId(db, 'personal-dashboard'), status: 'backlog', isEpic: true },
     });
     const id = res0.json().id as number;
-    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
+    seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' });
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-approve`,

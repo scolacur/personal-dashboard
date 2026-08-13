@@ -174,7 +174,7 @@ describe('priority migration (legacy low/medium/high → P-levels)', () => {
 });
 
 describe('D-040 + D-058 lane migration (legacy statuses → single queue model)', () => {
-  it('remaps ready→prioritized and the agent lanes→queue (assignee robot), seeding agent_state for linked rows', () => {
+  it('remaps ready→backlog and the agent lanes→queue (assignee robot), seeding agent_state for linked rows', () => {
     const db = freshDb();
     const pd = projectId(db, 'personal-dashboard');
     const now = Date.now();
@@ -192,10 +192,12 @@ describe('D-040 + D-058 lane migration (legacy statuses → single queue model)'
     // D-040 collapses to robot_queue; D-058 then collapses robot_queue → queue + assignee robot.
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_lanes_d040'").run();
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_queue_model_d058'").run();
+    // D-076 folds the `prioritized` lane D-040 produces; it also already ran on the empty DB.
+    db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_retire_prioritized_lane_d076'").run();
     bootstrapSchema(db);
 
     const byTitle = Object.fromEntries(listTickets(db).map((t) => [t.title, t]));
-    expect(byTitle['r'].status).toBe('prioritized');
+    expect(byTitle['r'].status).toBe('backlog');
     expect(byTitle['q'].status).toBe('queue');
     expect(byTitle['q'].assignee).toBe('robot');
     expect(byTitle['q'].agentState).toBe('queued');
@@ -311,20 +313,20 @@ describe('assignee is independent of the lane (D-058)', () => {
     expect(createTicket(db, { title: 'a', projectId: pd, assignee: 'robot' }).assignee).toBe('robot');
     expect(createTicket(db, { title: 'b', projectId: pd }).assignee).toBeNull();
     expect(
-      createTicket(db, { title: 'c', projectId: pd, status: 'prioritized', assignee: 'steve' })
+      createTicket(db, { title: 'c', projectId: pd, status: 'backlog', assignee: 'steve' })
         .assignee,
     ).toBe('steve');
   });
 
   it('does NOT change the assignee when a ticket is moved into queue (status only)', () => {
-    const t = createTicket(db, { title: 'x', projectId: pd, status: 'prioritized' });
+    const t = createTicket(db, { title: 'x', projectId: pd, status: 'backlog' });
     expect(t.assignee).toBeNull();
     const moved = updateTicket(db, t.id, { status: 'queue' });
     expect(moved?.assignee).toBeNull();
   });
 
   it('honors an explicit assignee sent alongside a queue transition', () => {
-    const t = createTicket(db, { title: 'x', projectId: pd, status: 'prioritized' });
+    const t = createTicket(db, { title: 'x', projectId: pd, status: 'backlog' });
     const moved = updateTicket(db, t.id, { status: 'queue', assignee: 'steve' });
     expect(moved?.assignee).toBe('steve');
   });
@@ -332,7 +334,7 @@ describe('assignee is independent of the lane (D-058)', () => {
   it('keeps the assignee when moving OUT of queue', () => {
     const t = createTicket(db, { title: 'x', projectId: pd, status: 'queue', assignee: 'robot' });
     expect(t.assignee).toBe('robot');
-    const back = updateTicket(db, t.id, { status: 'prioritized' });
+    const back = updateTicket(db, t.id, { status: 'queue' });
     expect(back?.assignee).toBe('robot');
   });
 });
@@ -414,14 +416,14 @@ describe('activity log', () => {
     const db = freshDb();
     const pd = projectId(db, 'personal-dashboard');
     const t = createTicket(db, { title: 'x', projectId: pd });
-    updateTicket(db, t.id, { status: 'prioritized' });
+    updateTicket(db, t.id, { status: 'queue' });
     updateTicket(db, t.id, { priority: 'P1' }); // no status change → no event
 
     const events = db
       .prepare('SELECT type, detail FROM agent_ticket_events WHERE ticket_id = ? ORDER BY id')
       .all(t.id) as { type: string; detail: string | null }[];
     expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
-    expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'prioritized' });
+    expect(JSON.parse(events[1].detail!)).toEqual({ from: 'backlog', to: 'queue' });
   });
 });
 
@@ -525,10 +527,10 @@ describe('ticket events + Refine thread (D-044, PD-267)', () => {
 
   it('listTicketEvents returns the activity log oldest-first with parsed JSON detail', () => {
     const t = createTicket(db, { title: 'x', projectId: pd });
-    updateTicket(db, t.id, { status: 'prioritized' }); // logs status_changed
+    updateTicket(db, t.id, { status: 'queue' }); // logs status_changed
     const events = listTicketEvents(db, t.id);
     expect(events.map((e) => e.type)).toEqual(['created', 'status_changed']);
-    expect(events[1].detail).toEqual({ from: 'backlog', to: 'prioritized' });
+    expect(events[1].detail).toEqual({ from: 'backlog', to: 'queue' });
     expect(events[0].createdAt).toBeLessThanOrEqual(events[1].createdAt);
   });
 
@@ -636,23 +638,23 @@ describe('legacy/invalid status guard (D-058, PD-417)', () => {
     expect(() => updateTicket(db, t.id, { status: 'nope' as TicketStatus })).toThrow(ValidationError);
   });
 
-  it('approveRefine parks a decompose child proposed as robot_queue in prioritized (the PD-412 bug)', () => {
-    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+  it('approveRefine parks a decompose child proposed as robot_queue in backlog (the PD-412 bug)', () => {
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [{ title: 'foundation', body: ROBOT_BODY, status: 'robot_queue', assignee: 'robot' }],
     });
     expect(approveRefine(db, parent.id).ok).toBe(true);
     const child = listTickets(db).find((t) => t.title === 'foundation')!;
-    expect(child.status).toBe('prioritized'); // NOT the orphaned robot_queue
+    expect(child.status).toBe('backlog'); // NOT the orphaned robot_queue
     expect(child.assignee).toBe('robot');
   });
 
-  it('approveRefine refine_in_place coerces a legacy robot_queue proposal (parks in prioritized, D-057)', () => {
-    const t = createTicket(db, { title: 'x', status: 'prioritized', projectId: pd });
+  it('approveRefine refine_in_place coerces a legacy robot_queue proposal (parks in backlog, D-057)', () => {
+    const t = createTicket(db, { title: 'x', status: 'backlog', projectId: pd });
     seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'robot_queue' });
     expect(approveRefine(db, t.id).ok).toBe(true);
-    expect(getTicket(db, t.id)!.status).toBe('prioritized');
+    expect(getTicket(db, t.id)!.status).toBe('backlog');
   });
 });
 
@@ -706,7 +708,7 @@ describe('terminal-transition cleanup (PD-400)', () => {
   });
 
   it('is idempotent: closing an already-clean ticket logs no session_ended', () => {
-    const t = createTicket(db, { title: 'x', status: 'prioritized', projectId: pd });
+    const t = createTicket(db, { title: 'x', status: 'backlog', projectId: pd });
     updateTicket(db, t.id, { status: 'closed' });
     expect(listTicketEvents(db, t.id).some((e) => e.type === 'robot_session_ended')).toBe(false);
     expect(getTicket(db, t.id)!.agentState).toBeNull();
@@ -1002,30 +1004,30 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine refine_in_place rewrites, routes (assignee from proposal), and marks refined', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'new body', status: 'prioritized', assignee: 'steve' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'new body', status: 'backlog', assignee: 'steve' });
     const res = approveRefine(db, t.id);
     expect(res.ok).toBe(true);
     const after = getTicket(db, t.id)!;
     expect(after.body).toBe('new body');
-    expect(after.status).toBe('prioritized');
+    expect(after.status).toBe('backlog');
     expect(after.assignee).toBe('steve'); // D-058: assignee is free, honored from the proposal
     expect(after.refined).toBe(true);
     expect(listTicketEvents(db, t.id).some((e) => e.type === 'refine_committed')).toBe(true);
   });
 
-  it('approveRefine refine_in_place parks a proposed queue in prioritized (D-057: no dispatch)', () => {
+  it('approveRefine refine_in_place parks a proposed queue in backlog (D-057: no dispatch)', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
     seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'queue' });
     const res = approveRefine(db, t.id);
     expect(res).toMatchObject({ ok: true, queued: false });
     const after = getTicket(db, t.id)!;
-    expect(after.status).toBe('prioritized'); // parked, not dispatched
+    expect(after.status).toBe('backlog'); // parked, not dispatched
     expect(after.refined).toBe(true);
   });
 
   it('approveRefine { queue: true } dispatches a non-Epic refine_in_place into queue', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized', assignee: 'robot' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' });
     const res = approveRefine(db, t.id, { queue: true });
     expect(res).toMatchObject({ ok: true, queued: true });
     const after = getTicket(db, t.id)!;
@@ -1037,7 +1039,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
 
   it('approveRefine { queue: true } queues even an unshaped body (ready is not a hard gate here, D-057)', () => {
     const t = createTicket(db, { title: 'x', body: 'old', projectId: pd });
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'not shaped', status: 'prioritized' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'not shaped', status: 'backlog' });
     const res = approveRefine(db, t.id, { queue: true });
     expect(res).toMatchObject({ ok: true, queued: true });
     const after = getTicket(db, t.id)!;
@@ -1046,29 +1048,29 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
   });
 
   it('approveRefine { queue: true } on an Epic is refused cleanly (EPIC_NOT_QUEUEABLE, no 500, no write)', () => {
-    const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
-    seedProposal(db, epic.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
+    const epic = createTicket(db, { title: 'umbrella', status: 'backlog', projectId: pd, isEpic: true });
+    seedProposal(db, epic.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' });
     const res = approveRefine(db, epic.id, { queue: true });
     expect(res).toMatchObject({ ok: false, reason: 'epic_not_queueable' });
-    expect(getTicket(db, epic.id)!.status).toBe('prioritized'); // unchanged
+    expect(getTicket(db, epic.id)!.status).toBe('backlog'); // unchanged
   });
 
   it('approveRefine plain-approve on an Epic proposing queue never queues it (bug PD-377)', () => {
-    const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
+    const epic = createTicket(db, { title: 'umbrella', status: 'backlog', projectId: pd, isEpic: true });
     seedProposal(db, epic.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'queue' });
     const res = approveRefine(db, epic.id);
     expect(res).toMatchObject({ ok: true, queued: false });
     const after = getTicket(db, epic.id)!;
-    expect(after.status).toBe('prioritized'); // parked, never queue
+    expect(after.status).toBe('backlog'); // parked, never queue
     expect(after.isEpic).toBe(true);
     expect(after.refined).toBe(true);
   });
 
   it('approveRefine { queue: true } queues even a blocked ticket (D-051 amended, PD-408)', () => {
-    const t = createTicket(db, { title: 'x', body: ROBOT_BODY, status: 'prioritized', projectId: pd });
-    const blocker = createTicket(db, { title: 'blk', status: 'prioritized', projectId: pd });
+    const t = createTicket(db, { title: 'x', body: ROBOT_BODY, status: 'backlog', projectId: pd });
+    const blocker = createTicket(db, { title: 'blk', status: 'backlog', projectId: pd });
     addRelation(db, blocker.id, t.id, 'blocks');
-    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' });
     // Queue entry is no longer refused for a blocked ticket — the loop skips it at selection.
     const res = approveRefine(db, t.id, { queue: true });
     expect(res).toMatchObject({ ok: true, queued: true });
@@ -1076,8 +1078,8 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(unresolvedBlockers(db, t.id).map((b) => b.ticketId)).toEqual([blocker.id]);
   });
 
-  it('approveRefine decompose parks queue-bound children in prioritized (Decompose-A), closes+links the parent', () => {
-    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+  it('approveRefine decompose parks queue-bound children in backlog (Decompose-A), closes+links the parent', () => {
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [
@@ -1092,10 +1094,10 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(getTicket(db, parent.id)!.status).toBe('closed'); // D-036
     const lineage = getLineage(db, parent.id);
     expect(lineage.splitInto.map((r) => r.title).sort()).toEqual(['robot part', 'steve part']);
-    // D-057/D-058: the proposed `queue` child is parked in prioritized — never auto-dispatched.
+    // D-057/D-058: the proposed `queue` child is parked in backlog — never auto-dispatched.
     // Its assignee hint is preserved (D-058: assignee is free).
     const robotChild = listTickets(db).find((t) => t.title === 'robot part')!;
-    expect(robotChild.status).toBe('prioritized');
+    expect(robotChild.status).toBe('backlog');
     expect(robotChild.assignee).toBe('robot');
     // A non-queue lane (backlog) is honored as proposed.
     const steveChild = listTickets(db).find((t) => t.title === 'steve part')!;
@@ -1104,7 +1106,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
   });
 
   it('approveRefine decompose carries each child priority (unset → null)', () => {
-    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [
@@ -1121,19 +1123,19 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
   });
 
   it('approveRefine refine_in_place applies proposed priority; omitted leaves it unchanged', () => {
-    const a = createTicket(db, { title: 'a', status: 'prioritized', priority: 'P4', projectId: pd });
+    const a = createTicket(db, { title: 'a', status: 'backlog', priority: 'P4', projectId: pd });
     seedProposal(db, a.id, { mode: 'refine_in_place', body: ROBOT_BODY, priority: 'P0' });
     expect(approveRefine(db, a.id).ok).toBe(true);
     expect(getTicket(db, a.id)!.priority).toBe('P0');
 
-    const b = createTicket(db, { title: 'b', status: 'prioritized', priority: 'P4', projectId: pd });
+    const b = createTicket(db, { title: 'b', status: 'backlog', priority: 'P4', projectId: pd });
     seedProposal(db, b.id, { mode: 'refine_in_place', body: ROBOT_BODY });
     expect(approveRefine(db, b.id).ok).toBe(true);
     expect(getTicket(db, b.id)!.priority).toBe('P4'); // unchanged
   });
 
-  it('approveRefine decompose parks an unshaped robot child in prioritized (soft gate, D-057)', () => {
-    const parent = createTicket(db, { title: 'big', status: 'prioritized', projectId: pd });
+  it('approveRefine decompose parks an unshaped robot child in backlog (soft gate, D-057)', () => {
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [{ title: 'bad robot', body: 'no sections', status: 'queue', assignee: 'robot' }],
@@ -1143,11 +1145,11 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(getTicket(db, parent.id)!.status).toBe('closed');
     expect(getLineage(db, parent.id).splitInto).toHaveLength(1);
     const child = listTickets(db).find((t) => t.title === 'bad robot')!;
-    expect(child.status).toBe('prioritized'); // parked despite the unshaped body
+    expect(child.status).toBe('backlog'); // parked despite the unshaped body
   });
 
   it('approveRefine reinterprets a decompose on an Epic as Populate (D-058): members via epic_id, Epic stays open, no split', () => {
-    const epic = createTicket(db, { title: 'umbrella', status: 'prioritized', projectId: pd, isEpic: true });
+    const epic = createTicket(db, { title: 'umbrella', status: 'backlog', projectId: pd, isEpic: true });
     seedProposal(db, epic.id, {
       mode: 'decompose',
       children: [
@@ -1160,23 +1162,23 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     if (!res.ok) return;
     expect(res.childIds).toHaveLength(2);
     // Epic is LEFT OPEN (not closed) and its members point back at it via epic_id.
-    expect(getTicket(db, epic.id)!.status).toBe('prioritized');
+    expect(getTicket(db, epic.id)!.status).toBe('backlog');
     expect(getTicket(db, epic.id)!.isEpic).toBe(true);
     for (const id of res.childIds!) {
       expect(getTicket(db, id)!.epicId).toBe(epic.id);
     }
     // Populate links by membership only — no `split` lineage is written.
     expect(getLineage(db, epic.id).splitInto).toHaveLength(0);
-    // Decompose-A still applies: a proposed `queue` member is parked in prioritized.
+    // Decompose-A still applies: a proposed `queue` member is parked in backlog.
     const robotMember = listTickets(db).find((t) => t.title === 'member robot')!;
-    expect(robotMember.status).toBe('prioritized');
+    expect(robotMember.status).toBe('backlog');
     expect(robotMember.assignee).toBe('robot');
     const steveMember = listTickets(db).find((t) => t.title === 'member steve')!;
     expect(steveMember.status).toBe('backlog');
   });
 
   it('approveRefine Populate leaves a non-Epic decompose behaviour unchanged (closes + splits, no populated flag)', () => {
-    const parent = createTicket(db, { title: 'plain big', status: 'prioritized', projectId: pd });
+    const parent = createTicket(db, { title: 'plain big', status: 'backlog', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [{ title: 'slice', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' }],
@@ -1267,7 +1269,7 @@ describe('recurring tickets', () => {
       projectId: pd,
       recurInterval: 'weekly',
     });
-    updateTicket(db, t.id, { status: 'prioritized' });
+    updateTicket(db, t.id, { status: 'queue' });
     expect(listTickets(db)).toHaveLength(1);
   });
 
@@ -1354,16 +1356,45 @@ describe('epics (D-054, PD-336)', () => {
     }
   });
 
-  it('an Epic can never enter queue (create or update), regardless of assignee', () => {
-    expect(() => createTicket(db, { title: 'e', projectId: pd, isEpic: true, status: 'queue' })).toThrow(
-      EpicGuardError,
-    );
-    expect(() =>
-      createTicket(db, { title: 'e2', projectId: pd, isEpic: true, status: 'queue', assignee: 'steve' }),
-    ).toThrow(EpicGuardError);
+  // D-076 REVERSES the old "an Epic can never enter queue" guard: queueing the Epic is now how
+  // work is dispatched. What replaced the guard is the member cascade, tested here.
+  it('D-076: queueing an Epic queues its unstarted members and leaves finished ones alone', () => {
     const e = epic();
-    expect(() => updateTicket(db, e, { status: 'queue' })).toThrow(EpicGuardError);
-    expect(() => updateTicket(db, e, { status: 'queue', assignee: 'steve' })).toThrow(EpicGuardError);
+    const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
+    const done = createTicket(db, { title: 'done', projectId: pd, epicId: e, status: 'completed' });
+    updateTicket(db, e, { status: 'queue' });
+    expect(getTicket(db, e)!.status).toBe('queue');
+    expect(getTicket(db, fresh.id)!.status).toBe('queue');
+    expect(getTicket(db, done.id)!.status).toBe('completed');
+  });
+
+  it('D-076: rolling an Epic back un-queues only members that never started', () => {
+    const e = epic();
+    const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
+    const live = createTicket(db, { title: 'live', projectId: pd, epicId: e });
+    updateTicket(db, e, { status: 'queue' });
+    db.prepare("UPDATE agent_tickets SET agent_state = 'working' WHERE id = ?").run(live.id);
+    updateTicket(db, e, { status: 'backlog' });
+    expect(getTicket(db, fresh.id)!.status).toBe('backlog');
+    // A live run is never killed by a drag — losing a Robot mid-hand-off destroys the work (D-046).
+    expect(getTicket(db, live.id)!.status).toBe('queue');
+  });
+
+  it('D-076: a Ticket created into a queued Epic lands in backlog, keeping D-039 structural', () => {
+    const e = epic();
+    updateTicket(db, e, { status: 'queue' });
+    const t = createTicket(db, { title: 'late', projectId: pd, epicId: e, status: 'queue' });
+    expect(t.status).toBe('backlog');
+  });
+
+  it('D-076: an Epic priority change cascades to every member', () => {
+    const e = epic();
+    const m = createTicket(db, { title: 'm', projectId: pd, epicId: e, priority: 'P4' });
+    updateTicket(db, e, { priority: 'P1' });
+    expect(getTicket(db, m.id)!.priority).toBe('P1');
+    // A member's own priority is not independently settable — it is whatever the Epic carries.
+    updateTicket(db, m.id, { priority: 'P5' });
+    expect(getTicket(db, m.id)!.priority).toBe('P1');
   });
 
   it('refuses un-flagging an Epic that still has members', () => {
@@ -1382,8 +1413,8 @@ describe('epics (D-054, PD-336)', () => {
     // empty → backlog
     expect(computeEpicSummary(db, e)).toMatchObject({ done: 0, total: 0, derivedLane: 'backlog' });
     const m1 = createTicket(db, { title: 'm1', projectId: pd, epicId: e, status: 'backlog' }).id;
-    const m2 = createTicket(db, { title: 'm2', projectId: pd, epicId: e, status: 'prioritized' }).id;
-    // mixed backlog + prioritized → least-advanced pending = backlog
+    const m2 = createTicket(db, { title: 'm2', projectId: pd, epicId: e, status: 'backlog' }).id;
+    // mixed backlog + backlog → least-advanced pending = backlog
     expect(computeEpicSummary(db, e).derivedLane).toBe('backlog');
     // a member in the queue → in_progress
     updateTicket(db, m2, { status: 'queue' });

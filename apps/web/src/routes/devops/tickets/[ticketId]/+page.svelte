@@ -68,7 +68,6 @@
 
   const STATUS_LABELS: Record<TicketStatus, string> = {
     backlog: 'Backlog',
-    prioritized: 'Prioritized',
     queue: 'Queue',
     completed: 'Completed',
     closed: 'Closed',

@@ -32,7 +32,6 @@
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
-    { status: 'prioritized', label: 'Prioritized' },
     { status: 'queue', label: 'Queue' },
     { status: 'completed', label: 'Completed' },
     { status: 'closed', label: 'Closed', defaultHidden: true },
@@ -971,7 +970,7 @@
               type="button"
               title="Add Epic to {cell.label}"
               aria-label="Add Epic to {cell.label}"
-              onclick={() => openAddEpic(cell.lane === 'backlog' ? 'backlog' : 'prioritized')}
+              onclick={() => openAddEpic('backlog')}
               disabled={projects.length === 0}
             >+ Epic</button>
           {/if}

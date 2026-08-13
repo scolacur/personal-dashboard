@@ -18,7 +18,7 @@ describe('validateProposalShape', () => {
   it('accepts a decompose with children routed to a pre-queue lane', () => {
     const p: RefineProposal = {
       mode: 'decompose',
-      children: [{ title: 'c', body: ROBOT_BODY, status: 'prioritized', assignee: 'robot' }],
+      children: [{ title: 'c', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' }],
     };
     expect(validateProposalShape(p)).toBeNull();
   });
@@ -50,14 +50,14 @@ describe('validateProposalShape', () => {
   });
 
   it('rejects a refine_in_place with no body', () => {
-    const p: RefineProposal = { mode: 'refine_in_place', status: 'prioritized' };
+    const p: RefineProposal = { mode: 'refine_in_place', status: 'backlog' };
     expect(validateProposalShape(p)).toMatch(/refine_in_place requires the rewritten `body`/);
   });
 
   it('accepts a refine_in_place with a body (pre-queue lane or unset)', () => {
     expect(validateProposalShape({ mode: 'refine_in_place', body: ROBOT_BODY })).toBeNull();
     expect(
-      validateProposalShape({ mode: 'refine_in_place', body: ROBOT_BODY, status: 'prioritized' }),
+      validateProposalShape({ mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' }),
     ).toBeNull();
   });
 

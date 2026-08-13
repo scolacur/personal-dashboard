@@ -21,7 +21,7 @@ describe('isResolvedStatus (D-051 "done or gone")', () => {
     expect(isResolvedStatus(undefined)).toBe(true);
   });
   it('treats the three active lanes as unresolved', () => {
-    for (const s of ['backlog', 'prioritized', 'queue'] as TicketStatus[]) {
+    for (const s of ['backlog', 'backlog', 'queue'] as TicketStatus[]) {
       expect(isResolvedStatus(s)).toBe(false);
     }
   });
@@ -34,7 +34,7 @@ describe('computeBadges', () => {
       [1, 'backlog'],
       [2, 'completed'],
       [3, 'backlog'],
-      [4, 'prioritized'],
+      [4, 'backlog'],
     ]);
     const relations = [
       rel({ id: 10, fromTicketId: 1, toTicketId: 3, type: 'blocks' }),
