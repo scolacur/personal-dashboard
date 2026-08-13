@@ -9,25 +9,23 @@ export interface EpicBandCell {
   /** 1-based grid column start + span among the *visible* columns. */
   colStart: number;
   colSpan: number;
-  /** Epic `+` button shows only in Backlog / Prioritized (new Epics start there). */
+  /** Epic `+` button shows only in Backlog (D-076: new Epics start there). */
   canAdd: boolean;
   epics: AgentTicket[];
 }
 
 const LANE_LABEL: Record<EpicDerivedLane, string> = {
   backlog: 'Backlog',
-  prioritized: 'Prioritized',
   in_progress: 'In Progress',
   completed: 'Completed',
   closed: 'Closed',
 };
 
-/** Ticket-lane statuses each derived Epic lane sits over (in board order). `in_progress` sits over
- *  the single `queue` column (D-058, collapsing the old two-queue span) — an Epic is never *in* the
- *  queue, only over it. */
+/** Ticket-lane statuses each Epic lane sits over (in board order). `in_progress` sits over the
+ *  single `queue` column (D-058). D-076: an Epic now genuinely *is* in that lane rather than only
+ *  spanning it — queueing the Epic is what dispatches its members. */
 const LANE_COLUMNS: Record<EpicDerivedLane, TicketStatus[]> = {
   backlog: ['backlog'],
-  prioritized: ['prioritized'],
   in_progress: ['queue'],
   completed: ['completed'],
   closed: ['closed'],
@@ -35,7 +33,6 @@ const LANE_COLUMNS: Record<EpicDerivedLane, TicketStatus[]> = {
 
 const EPIC_LANES: EpicDerivedLane[] = [
   'backlog',
-  'prioritized',
   'in_progress',
   'completed',
   'closed',
@@ -43,7 +40,7 @@ const EPIC_LANES: EpicDerivedLane[] = [
 
 /** Build the Epic band's cells over the given visible columns. A lane whose columns are all hidden
  *  is dropped (its Epics hide with the lane); `in_progress` narrows to whichever queue columns are
- *  visible. Backlog/Prioritized always render (even empty) so their `+` button is reachable. */
+ *  visible. Backlog always renders (even empty) so its `+` button is reachable. */
 export function buildEpicBand(
   epics: AgentTicket[],
   summaryById: Map<number, EpicSummary>,
@@ -71,7 +68,7 @@ export function buildEpicBand(
       label: LANE_LABEL[lane],
       colStart: Math.min(...cols),
       colSpan: cols.length, // contiguous by construction
-      canAdd: lane === 'backlog' || lane === 'prioritized',
+      canAdd: lane === 'backlog',
       epics: byLane.get(lane) ?? [],
     });
   }

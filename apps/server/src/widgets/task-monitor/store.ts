@@ -328,10 +328,11 @@ function validMaxTurns(value: number | null): number | null {
 export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
   const insert = db.transaction((): number => {
     const now = Date.now();
-    // New tickets default to unset priority (the user assigns it deliberately).
-    const priority = toDbPriority(input.priority ?? null);
+    // New tickets default to unset priority (the user assigns it deliberately). D-076 may override
+    // both of these below, once the target Epic is known.
+    let priority = toDbPriority(input.priority ?? null);
     // D-058/PD-417: normalize legacy queue statuses + reject anything invalid at the write boundary.
-    const status: TicketStatus = input.status === undefined ? 'backlog' : coerceStatusOrThrow(input.status);
+    let status: TicketStatus = input.status === undefined ? 'backlog' : coerceStatusOrThrow(input.status);
     const source = input.source ?? 'manual';
     // Seed restores can force an id; otherwise allocate the next per-project id.
     // When forced, advance the project's seq past it so future auto-ids don't collide.
@@ -355,14 +356,27 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     // D-058: `ready` is computed from the body on every write and persisted (server-authoritative,
     // never client-set). A create always writes a body (possibly null), so always recompute.
     const readyFlag = isReady(input.body ?? null) ? 1 : 0;
-    // D-054/D-058: an Epic never nests (its own epic_id stays null) and can never be created into
-    // `queue` (regardless of assignee); a member's epic_id is validated against the target Epic.
+    // D-054/D-058/D-076: an Epic never nests (its own epic_id stays null); a member's epic_id is
+    // validated against the target Epic. D-076 drops the "an Epic cannot be created into `queue`"
+    // guard along with its update-path twin — an Epic in `queue` now means *active*.
     const isEpic = input.isEpic === true;
     const epicId = isEpic ? null : (input.epicId ?? null);
-    if (isEpic && status === 'queue') {
-      throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter the queue');
-    }
     validateEpicMembership(db, { epicId, projectId: input.projectId });
+
+    // D-076: a Ticket created into a queued Epic lands in `backlog`, never the active set. Without
+    // this, anything able to add a member to a live Epic could create a dispatch — which would
+    // reduce D-039 ("an autonomous agent may create into backlog only") from a structural guarantee
+    // to a convention, recursively. Joining an in-flight Epic's work stays an explicit act.
+    if (!isEpic && epicId !== null && status === 'queue') {
+      status = 'backlog';
+    }
+
+    // D-076: a member's priority is its Epic's. An unclassified Epic leaves the supplied value
+    // alone, matching the back-fill migration and the update path.
+    if (!isEpic && epicId !== null) {
+      const inherited = epicPriorityOf(db, epicId);
+      if (inherited !== null) priority = toDbPriority(inherited);
+    }
     // PD-432: per-ticket run ceiling, validated at the write boundary (see `validMaxTurns`).
     const maxTurns = validMaxTurns(input.maxTurns ?? null);
     const result = db
@@ -437,12 +451,15 @@ export function updateTicket(
     next.ready = isReady(next.body);
   }
 
-  // D-054/D-058 epic invariants. An Epic never nests (its own epic_id is forced null) and can never
-  // enter `queue` (regardless of assignee); a member's epic_id is validated against the target Epic.
+  // D-054/D-058/D-076 epic invariants. An Epic never nests (its own epic_id is forced null); a
+  // member's epic_id is validated against the target Epic.
+  //
+  // **D-076 removes the "an Epic can never enter `queue`" guard.** Queueing the Epic *is* how work
+  // is now dispatched — the Epic is the unit a human moves, and its members follow via the cascade
+  // in the transaction below. The guard existed because only member Tickets are ever dispatched,
+  // which is still true: an Epic in `queue` means *active*, not *dispatchable*, and the loop's
+  // candidate query never selects an Epic row.
   if (next.isEpic) next.epicId = null;
-  if (next.isEpic && next.status === 'queue') {
-    throw new EpicGuardError('EPIC_NOT_QUEUEABLE', 'an Epic cannot enter the queue');
-  }
   // Un-flagging an Epic that still owns members would orphan their epic_id — refuse it.
   if (existing.isEpic && !next.isEpic && epicMemberCount(db, id) > 0) {
     throw new EpicGuardError('HAS_MEMBERS', 'unlink or archive the Epic members before un-flagging it');
@@ -453,6 +470,16 @@ export function updateTicket(
 
   // D-058: assignee is a free axis — the lane no longer forces it (reverses D-044/D-055).
   // `next.assignee` is whatever the caller set (or the existing value); left untouched here.
+
+  // D-076: priority is an Epic property. A member's priority is not independently settable, so a
+  // client-supplied value is silently overridden rather than rejected — the board sends whole-ticket
+  // patches, and 400-ing them would break every edit that merely echoes the current priority back.
+  // An unclassified Epic (`null`) leaves the member's value alone, matching the back-fill migration:
+  // nothing is destroyed just because nobody has classified the Epic yet.
+  if (!next.isEpic && next.epicId !== null) {
+    const inherited = epicPriorityOf(db, next.epicId);
+    if (inherited !== null) next.priority = inherited;
+  }
 
   // Blocker gate (D-051, amended by PD-408): a blocked ticket MAY sit in `queue` — queue entry is no
   // longer refused. The single authoritative "never dispatch a blocked ticket" guard is the loop's
@@ -517,6 +544,39 @@ export function updateTicket(
     );
     if (next.status !== existing.status) {
       logEvent(db, id, 'status_changed', { from: existing.status, to: next.status });
+    }
+
+    // ── D-076: the Epic cascades to its members ──────────────────────────────
+    // Both cascades run inside this transaction so a member can never be seen half-updated.
+    if (next.isEpic) {
+      // Priority. This is the whole point of Epic-owned priority: re-prioritise one Epic, not its
+      // twelve members. A value copied at create time and never re-pushed would go stale on the
+      // first re-prioritisation — i.e. the first time the model is used as intended.
+      if (next.priority !== existing.priority && next.priority !== null) {
+        db.prepare(
+          'UPDATE agent_tickets SET priority = ?, updated_at = ? WHERE epic_id = ? AND archived_at IS NULL',
+        ).run(toDbPriority(next.priority), next.updatedAt, id);
+      }
+
+      // Dispatch. Queueing the Epic arms every member that has not started; `completed`/`closed`
+      // members are untouched, because a half-done Epic is the normal state of an in-flight Epic.
+      if (next.status === 'queue' && existing.status !== 'queue') {
+        db.prepare(
+          `UPDATE agent_tickets SET status = 'queue', updated_at = ?
+            WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL`,
+        ).run(next.updatedAt, id);
+      }
+
+      // Rollback. Un-queues only members that never started. A member with a live run is left in
+      // the queue deliberately: killing a Robot mid-hand-off loses the work outright (D-046), so
+      // ending a run is a separate, explicit act (the slice-B modal), never a side effect of a drag.
+      if (existing.status === 'queue' && next.status === 'backlog') {
+        db.prepare(
+          `UPDATE agent_tickets SET status = 'backlog', updated_at = ?
+            WHERE epic_id = ? AND status = 'queue' AND archived_at IS NULL
+              AND (agent_state IS NULL OR agent_state = 'queued')`,
+        ).run(next.updatedAt, id);
+      }
     }
     // PD-400: tear down a lingering agent session on the terminal transition. Idempotent — a
     // ticket that's already clean (no agent_state, no open notification, no active refine) logs
@@ -803,6 +863,17 @@ export function epicMemberCount(db: Database.Database, epicId: number): number {
     .prepare('SELECT COUNT(*) AS n FROM agent_tickets WHERE epic_id = ? AND archived_at IS NULL')
     .get(epicId) as { n: number };
   return r.n;
+}
+
+/** An Epic's priority, or `null` when the Epic is unclassified or the id is not an Epic (D-076).
+ *  Members inherit this; `null` deliberately leaves a member's own priority alone rather than
+ *  wiping it, which is the same rule the back-fill migration follows. */
+function epicPriorityOf(db: Database.Database, epicId: number): TicketPriority | null {
+  const row = db
+    .prepare('SELECT priority FROM agent_tickets WHERE id = ? AND is_epic = 1')
+    .get(epicId) as { priority: string } | undefined;
+  if (!row) return null;
+  return fromDbPriority(row.priority);
 }
 
 /** An Epic's live member Tickets (D-054), ordered like the board. */

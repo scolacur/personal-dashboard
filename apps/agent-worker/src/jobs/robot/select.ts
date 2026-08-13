@@ -52,11 +52,20 @@ const PRIORITY_UNSET = 'none';
  *  ticket (NULL or `queued`) is dispatchable; the loop sets `working` on dispatch and `in-review`
  *  on hand-off, both of which drop it out of this set.
  *
- *  Ordered by **priority, then id** (PD-294). 'P0'…'P5' compare correctly under plain lexical ASC,
- *  so no mapping table is needed. Unset priority sorts *last* via the CASE — absent priority means
- *  "unclassified", not "most urgent" — and id ASC breaks ties so the order is deterministic and
- *  oldest-first within a priority. Previously this was `ORDER BY t.id ASC`, which dispatched purely
- *  oldest-first: a P0 queued today waited behind a P5 queued last month.
+ *  Ordered by **priority, then the Epic's rank, then the member's drag order, then id** (PD-294;
+ *  D-076). 'P0'…'P5' compare correctly under plain lexical ASC, so no mapping table is needed.
+ *  Unset priority sorts *last* via the CASE — absent priority means "unclassified", not "most
+ *  urgent". Previously this was `ORDER BY t.id ASC`, which dispatched purely oldest-first: a P0
+ *  queued today waited behind a P5 queued last month.
+ *
+ *  **D-076 adds the two middle keys, and they are load-bearing.** Priority is now an Epic property
+ *  cascaded to its members, so `t.priority` already *is* the Epic's priority — no join is needed to
+ *  rank Epics against each other. But that also means every member of an Epic ties on priority, and
+ *  without a further key the only discriminator left would be `t.id`, i.e. the order the tickets
+ *  happened to be created in. `e.sort_order` breaks ties *between* equal-priority Epics (their drag
+ *  order on the board is what says which is next); `t.sort_order` is the member's drag order *within*
+ *  its Epic, which is how order-of-operations is expressed now that `blocks` is reserved for true
+ *  dependencies. A ticket with no Epic sorts as if its Epic ranked 0.
  *
  *  NOTE the storage representation: `agent_tickets.priority` is `TEXT NOT NULL DEFAULT 'none'`, so
  *  **unset is the sentinel string `'none'`, never SQL NULL** (schema.ts). The server store maps
@@ -71,6 +80,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
               t.priority AS priority, t.max_turns AS max_turns, p.github_repo AS repo
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
+         LEFT JOIN agent_tickets e ON e.id = t.epic_id
         WHERE t.archived_at IS NULL
           AND t.status = 'queue'
           AND t.assignee = 'robot'
@@ -89,6 +99,8 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
           )
         ORDER BY CASE WHEN t.priority IS NULL OR t.priority = ? THEN 1 ELSE 0 END,
                  t.priority ASC,
+                 COALESCE(e.sort_order, 0) ASC,
+                 t.sort_order ASC,
                  t.id ASC`,
     )
     .all(PRIORITY_UNSET) as CandidateRow[];

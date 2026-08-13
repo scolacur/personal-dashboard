@@ -57,7 +57,6 @@ export function formatTs(ts: number | null): string {
 // Lane labels for the per-finding ticket-status pill (mirrors the board's COLUMNS labels).
 const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
   backlog: 'Backlog',
-  prioritized: 'Prioritized',
   queue: 'Queue',
   completed: 'Completed',
   closed: 'Closed',
