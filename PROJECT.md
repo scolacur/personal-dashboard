@@ -558,6 +558,52 @@ The GitHub label a write+ collaborator applies to consciously ack a PR that touc
 trust boundary the Robot loop relies on for issue labels); a stranger cannot apply it. Since
 D-067 it is only ever *needed* on a gated PR — Steve's own PRs go green without one.
 
+### Decisions
+
+Definitions for how a decision is authored and identified (D-070, D-078). The decision *record*
+is one file per decision; this covers how it gets its number.
+
+> ⚠️ **STATUS:** D-070 is live — `DECISIONS/D-NNN-slug.md` plus a generated index. **D-078 is
+> designed, not built** (PD-498): there is no `DECISIONS/incoming/` and no numbering cycle yet, so
+> today an author still claims the next free `D-NNN` directly. The definitions below describe the
+> agreed target; don't cite them as current behaviour until PD-498 ships.
+
+**Provisional id** (`D-TMP-<ticket><letter>`, e.g. `D-TMP-PD513a`):
+The identifier a decision carries from authoring until the next **numbering cycle** assigns its
+`D-NNN`. Cited exactly like a real id — in the file's heading, in code comments, in PROJECT.md —
+because at authoring time it is the only id there is. Namespaced so it can never match `D-\d{3}`,
+which is what makes the later rewrite a safe blind `grep`. The trailing letter distinguishes two
+decisions from one ticket.
+_Avoid_: **"draft decision"** and **"pending decision"** — the decision is settled and binding the
+moment it merges; only the *identifier* is provisional. Also avoid citing the bare ticket id
+(`PD-513`) as the decision's id: genuine ticket citations look identical and no rewrite can tell
+them apart.
+
+**Decision inbox** (`DECISIONS/incoming/`):
+Where every decision is authored, without exception — including by a solo human session. A dual
+path ("hand-number when you know you're alone") reintroduces the collision the inbox removes and
+makes the CI duplicate-id test load-bearing again. Invisible to `loadDecisions`, which skips any
+entry not ending in `.md`, so the parser is unchanged and an authoring PR never touches the
+generated index. Same shape as the **memory inbox** (D-077) — an inbox with a named owner and a
+curation step, not a second store.
+
+**Numbering cycle**:
+The daily, deterministic `agent-worker` **Job** that turns provisional decisions into numbered ones:
+take a **maintenance hold** → drain in-flight runs → assign `D-NNN` in merge order → rewrite every
+`D-TMP-` citation → regenerate `DECISIONS.md` → open a PR → wait for CI → admin-merge → release the
+hold. No LLM anywhere in it. It admin-merges to skip the *approval* requirement, never a red
+`verify`; on red it leaves the PR open, notifies, and releases the hold.
+_Avoid_: describing it as "resolving conflicts" — there is no conflict to resolve. Two provisional
+decisions never collide, because neither carries a number.
+
+**Maintenance hold**:
+The **hold** kind the numbering cycle takes on dispatch (alongside `session-limit` and
+`github-rate-limit`, D-063/D-072): tickets stay queued, budget untouched, resumes unattended.
+Bounded by the drain, which is itself bounded by `stallThresholdMs` (~2h) since a hung run is
+parked rather than blocking forever.
+_Avoid_: calling it a **pause** — a pause is sticky and waits for a human (D-072), which is wrong
+for an unattended daily window.
+
 ### Ticket relations
 
 Definitions for the first-class ticket-relation model (D-051). A relation is a directed,
