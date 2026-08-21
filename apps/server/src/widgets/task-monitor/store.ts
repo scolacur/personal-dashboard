@@ -1478,7 +1478,10 @@ interface WorkerHeartbeatRow {
   started_at: number;
   last_seen: number;
   pid: number | null;
+  /** The grounding checkout's HEAD — what the agent reads. */
   sha: string | null;
+  /** The commit the running image was built from (PD-528); null on a pre-build-arg image. */
+  build_sha: string | null;
   model: string | null;
 }
 
@@ -1687,7 +1690,8 @@ export function listWorkerHeartbeats(db: Database.Database): WorkerHeartbeat[] {
     startedAt: r.started_at,
     lastSeen: r.last_seen,
     pid: r.pid,
-    sha: r.sha,
+    checkoutSha: r.sha,
+    buildSha: r.build_sha ?? null,
     model: r.model,
   }));
 }

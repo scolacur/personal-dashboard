@@ -63,11 +63,11 @@ describe('listWorkerHeartbeats', () => {
   it('maps rows to camelCase, freshest first', () => {
     const db = freshDb();
     const ins = db.prepare(
-      `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, model)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, build_sha, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
-    ins.run('agent-worker', 1000, 5000, 42, 'abc123', 'claude-opus-4-8');
-    ins.run('other-worker', 1000, 9000, 7, null, null);
+    ins.run('agent-worker', 1000, 5000, 42, 'abc123', 'def456', 'claude-opus-4-8');
+    ins.run('other-worker', 1000, 9000, 7, null, null, null);
 
     const hbs = listWorkerHeartbeats(db);
     expect(hbs.map((h) => h.worker)).toEqual(['other-worker', 'agent-worker']);
@@ -76,9 +76,27 @@ describe('listWorkerHeartbeats', () => {
       startedAt: 1000,
       lastSeen: 5000,
       pid: 42,
-      sha: 'abc123',
+      // PD-528: `sha` is the GROUNDING CHECKOUT's head; `build_sha` is the code actually running.
+      // The names are distinct in the API because conflating them is what let a week-old container
+      // advertise a fresh version.
+      checkoutSha: 'abc123',
+      buildSha: 'def456',
       model: 'claude-opus-4-8',
     });
+  });
+
+  it('reports a pre-PD-528 image as buildSha null rather than borrowing the checkout sha', () => {
+    // An image built before the build-arg existed has no version to report. Falling back to the
+    // checkout sha would recreate the exact bug: a number that looks like a version and is not.
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, model)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('agent-worker', 1000, 5000, 42, 'abc123', 'claude-opus-4-8');
+
+    const hb = listWorkerHeartbeats(db)[0];
+    expect(hb.checkoutSha).toBe('abc123');
+    expect(hb.buildSha).toBeNull();
   });
 
   it('is empty before any worker has beaten', () => {

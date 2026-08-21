@@ -166,7 +166,11 @@ export function bootstrapSchema(db: Database.Database): void {
       started_at  INTEGER NOT NULL,
       last_seen   INTEGER NOT NULL,
       pid         INTEGER,
+      -- The GROUNDING CHECKOUT's HEAD — what the agent READS, re-pulled continuously.
       sha         TEXT,
+      -- The commit the running image was BUILT from — what the worker RUNS (PD-528).
+      -- Null on an image built before the build-arg existed; the UI says so rather than guessing.
+      build_sha   TEXT,
       model       TEXT
     );
   `);
@@ -182,6 +186,12 @@ export function bootstrapSchema(db: Database.Database): void {
     if (columnExists(d, 'agent_projects', 'sortie_enabled') && !columnExists(d, 'agent_projects', 'robot_enabled')) {
       d.exec('ALTER TABLE agent_projects RENAME COLUMN sortie_enabled TO robot_enabled');
     }
+  });
+  // PD-528: the running image's build commit, distinct from the grounding checkout's HEAD. The two
+  // diverge the moment anything merges without a redeploy, which is precisely the state worth
+  // seeing.
+  migrate(db, 'worker_heartbeat_add_build_sha', (d) => {
+    addColumn(d, 'worker_heartbeat', 'build_sha', 'TEXT');
   });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');

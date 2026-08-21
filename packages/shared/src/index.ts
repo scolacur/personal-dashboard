@@ -108,6 +108,7 @@ export type {
   AuditRun,
   AuditFinding,
   WorkerHeartbeat,
+  WorkerVersionState,
   SystemStatus,
   DispatchPauseState,
   SessionLimitHoldState,
@@ -160,6 +161,7 @@ export {
   rateLimitHealth,
   ROBOT_RESET_EVENTS,
   evaluatorVerdictLine,
+  workerVersionState,
 } from './task-monitor';
 export type {
   ResumeContext,

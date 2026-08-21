@@ -253,4 +253,18 @@
     font-size: 0.8em;
     color: var(--muted);
   }
+
+  // PD-528: a worker running older code than main is the state that silently breaks a deploy —
+  // an env flag flipped on for code the image does not contain. Warn-coloured so it reads as
+  // "act on this", not as decoration.
+  .sha.stale-build {
+    color: var(--warn, #b26b00);
+    font-weight: 600;
+  }
+
+  // Distinct from stale on purpose: "we cannot tell" must not look like "you are up to date".
+  .sha.unknown-build {
+    color: var(--muted);
+    font-style: italic;
+  }
 }

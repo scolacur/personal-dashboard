@@ -14,7 +14,21 @@ import { logger } from './shared/logger';
 const WORKER_NAME = 'agent-worker';
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
-/** Short HEAD sha of the grounding checkout; null if git isn't available yet. */
+/**
+ * The commit the RUNNING IMAGE was built from (PD-528) — baked in at `docker build` time by
+ * `robot-refresh` via `--build-arg BUILD_SHA=...`.
+ *
+ * This is the worker's actual version, and it is the one a human needs: the checkout sha below
+ * tracks `main` continuously, so it looks current even when the process has been running week-old
+ * code. Null on an image built before the build-arg existed — reported as unknown, never silently
+ * substituted with the checkout sha.
+ */
+function buildSha(): string | null {
+  const v = process.env.AGENT_WORKER_BUILD_SHA;
+  return v && v.trim() ? v.trim() : null;
+}
+
+/** Short HEAD sha of the GROUNDING CHECKOUT — the code the agent reads, not the code we run. */
 function currentSha(config: AgentWorkerConfig): string | null {
   try {
     const out = execFileSync('git', ['-C', config.checkoutDir, 'rev-parse', '--short', 'HEAD'], {
@@ -37,19 +51,21 @@ export function startHeartbeat(db: Database.Database, config: AgentWorkerConfig)
       last_seen   INTEGER NOT NULL,
       pid         INTEGER,
       sha         TEXT,
+      build_sha   TEXT,
       model       TEXT
     );
   `);
 
   const startedAt = Date.now();
   const upsert = db.prepare(
-    `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, model)
-     VALUES (@worker, @startedAt, @lastSeen, @pid, @sha, @model)
+    `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, build_sha, model)
+     VALUES (@worker, @startedAt, @lastSeen, @pid, @sha, @buildSha, @model)
      ON CONFLICT(worker) DO UPDATE SET
        started_at = excluded.started_at,
        last_seen  = excluded.last_seen,
        pid        = excluded.pid,
        sha        = excluded.sha,
+       build_sha  = excluded.build_sha,
        model      = excluded.model`,
   );
 
@@ -61,6 +77,7 @@ export function startHeartbeat(db: Database.Database, config: AgentWorkerConfig)
         lastSeen: Date.now(),
         pid: process.pid,
         sha: currentSha(config),
+        buildSha: buildSha(),
         model: config.model,
       });
     } catch (err) {
