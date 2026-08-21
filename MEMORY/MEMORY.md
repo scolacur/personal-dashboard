@@ -15,6 +15,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-12](2026-08-12.md) — BST epic to 6/7 (D-074) and the widget library (PD-334, D-073); crons run UTC; commits lost to a fast merge, not a squash; two D-id collisions.
 
-- [2026-08-21](2026-08-21.md) — PD-468 hardening gate done (D-070→D-076) and the loop + Evaluator turned on; D-079 build-sha (PD-528); D-078 id collision.
+- [2026-08-21](2026-08-21.md) — PD-468 gate done + loop/Evaluator on; D-079 build-sha; D-078 id collision; **ID Tracker widget shipped** (#331/#333) and the NAS compose-file incident.
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
