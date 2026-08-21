@@ -192,8 +192,8 @@ describe('D-040 + D-058 lane migration (legacy statuses → single queue model)'
     // D-040 collapses to robot_queue; D-058 then collapses robot_queue → queue + assignee robot.
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_lanes_d040'").run();
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_queue_model_d058'").run();
-    // D-076 folds the `prioritized` lane D-040 produces; it also already ran on the empty DB.
-    db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_retire_prioritized_lane_d076'").run();
+    // D-TMP-PD383a folds the `prioritized` lane D-040 produces; it also already ran on the empty DB.
+    db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_retire_prioritized_lane'").run();
     bootstrapSchema(db);
 
     const byTitle = Object.fromEntries(listTickets(db).map((t) => [t.title, t]));
@@ -1356,9 +1356,9 @@ describe('epics (D-054, PD-336)', () => {
     }
   });
 
-  // D-076 REVERSES the old "an Epic can never enter queue" guard: queueing the Epic is now how
+  // D-TMP-PD383a REVERSES the old "an Epic can never enter queue" guard: queueing the Epic is now how
   // work is dispatched. What replaced the guard is the member cascade, tested here.
-  it('D-076: queueing an Epic queues its unstarted members and leaves finished ones alone', () => {
+  it('D-TMP-PD383a: queueing an Epic queues its unstarted members and leaves finished ones alone', () => {
     const e = epic();
     const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
     const done = createTicket(db, { title: 'done', projectId: pd, epicId: e, status: 'completed' });
@@ -1368,7 +1368,7 @@ describe('epics (D-054, PD-336)', () => {
     expect(getTicket(db, done.id)!.status).toBe('completed');
   });
 
-  it('D-076: rolling an Epic back un-queues only members that never started', () => {
+  it('D-TMP-PD383a: rolling an Epic back un-queues only members that never started', () => {
     const e = epic();
     const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
     const live = createTicket(db, { title: 'live', projectId: pd, epicId: e });
@@ -1380,14 +1380,14 @@ describe('epics (D-054, PD-336)', () => {
     expect(getTicket(db, live.id)!.status).toBe('queue');
   });
 
-  it('D-076: a Ticket created into a queued Epic lands in backlog, keeping D-039 structural', () => {
+  it('D-TMP-PD383a: a Ticket created into a queued Epic lands in backlog, keeping D-039 structural', () => {
     const e = epic();
     updateTicket(db, e, { status: 'queue' });
     const t = createTicket(db, { title: 'late', projectId: pd, epicId: e, status: 'queue' });
     expect(t.status).toBe('backlog');
   });
 
-  it('D-076: an Epic priority change cascades to every member', () => {
+  it('D-TMP-PD383a: an Epic priority change cascades to every member', () => {
     const e = epic();
     const m = createTicket(db, { title: 'm', projectId: pd, epicId: e, priority: 'P4' });
     updateTicket(db, e, { priority: 'P1' });

@@ -293,15 +293,15 @@ export function bootstrapSchema(db: Database.Database): void {
     }
   });
 
-  // D-076 part 1: the `prioritized` lane is retired and folds into `backlog`. The lane was never
-  // carrying priority — it was carrying *commitment*, which D-076 re-expresses by queueing the
+  // D-TMP-PD383a part 1: the `prioritized` lane is retired and folds into `backlog`. The lane was never
+  // carrying priority — it was carrying *commitment*, which D-TMP-PD383a re-expresses by queueing the
   // Epic. Naturally idempotent; runs after the D-040 collapse above, which is what created
   // `prioritized` rows in the first place.
-  migrate(db, 'agent_tickets_retire_prioritized_lane_d076', (d) => {
+  migrate(db, 'agent_tickets_retire_prioritized_lane', (d) => {
     d.prepare("UPDATE agent_tickets SET status = 'backlog' WHERE status = 'prioritized'").run();
   });
 
-  // D-076 part 2: priority becomes an Epic property, cascaded to its members. Back-fills every
+  // D-TMP-PD383a part 2: priority becomes an Epic property, cascaded to its members. Back-fills every
   // member's priority from its Epic so the column stops carrying two different meanings — a global
   // rank on some rows, an in-Epic rank on others (62 of 211 active members outranked their own
   // Epic when this was written).
@@ -314,7 +314,7 @@ export function bootstrapSchema(db: Database.Database): void {
   // wiping a member's real priority because nobody has classified its Epic yet would destroy
   // information to no purpose. Those rows keep what they have until the Epic is classified, at
   // which point the store's cascade-on-write picks them up.
-  migrate(db, 'agent_tickets_priority_from_epic_d076', (d) => {
+  migrate(db, 'agent_tickets_priority_from_epic', (d) => {
     d.prepare(
       `UPDATE agent_tickets
           SET priority = (SELECT e.priority FROM agent_tickets e WHERE e.id = agent_tickets.epic_id)

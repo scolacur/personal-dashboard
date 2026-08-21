@@ -14,7 +14,7 @@ import type { RefineProposal } from '@dashboard/shared';
  * ## Out of scope, PD-177) so they are Ready the moment they're queued (D-058).
  */
 
-// D-076 retired `prioritized`. Kept in the *input* enum on purpose: an un-redeployed worker or a
+// D-TMP-PD383a retired `prioritized`. Kept in the *input* enum on purpose: an un-redeployed worker or a
 // stale in-flight proposal can still emit it, and `coerceTicketStatus` folds it into `backlog` at
 // the write boundary. Rejecting it here would fail the whole proposal over a lane name.
 const STATUS = z.enum([
@@ -125,7 +125,7 @@ export function buildProposeToolServer(onProposal: (proposal: RefineProposal) =>
       const proposal: RefineProposal = {
         mode: args.mode,
         ...(args.body !== undefined ? { body: args.body } : {}),
-        // D-076: fold a retired/legacy lane (`prioritized`, and the pre-D-058 queue lanes) to a
+        // D-TMP-PD383a: fold a retired/legacy lane (`prioritized`, and the pre-D-058 queue lanes) to a
         // live one here rather than carrying it into the proposal. `null` cannot occur — the zod
         // enum already rejects anything outside the known set — but the fallback keeps the type
         // honest without inventing a lane.
@@ -141,7 +141,7 @@ export function buildProposeToolServer(onProposal: (proposal: RefineProposal) =>
                 ...c,
                 assignee: c.assignee ?? null,
                 priority: c.priority ?? null,
-                // Same D-076 lane fold as the parent status above, applied per child.
+                // Same D-TMP-PD383a lane fold as the parent status above, applied per child.
                 status: coerceTicketStatus(c.status) ?? 'backlog',
               })),
             }

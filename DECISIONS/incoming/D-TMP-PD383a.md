@@ -1,4 +1,4 @@
-# D-076: The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
+# D-TMP-PD383a: The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
 
 **Decision:** Priority and queueing move from the Ticket to the **Epic**. The board keeps three
 visible lanes — **Backlog / Queue / Completed** (plus the hidden `closed`); `prioritized` is
@@ -93,6 +93,18 @@ main way Epic-level intent turns into Ticket-level work.
 slices ship. A glossary that documents unbuilt behaviour as current is the exact failure that
 produced the PR #268 path-guard incident, where an agent trusted PROJECT.md's description of a
 control that did not exist.
+
+**The two migrations deliberately do not name this decision.** They were originally keyed
+`agent_tickets_retire_prioritized_lane_d076` and `agent_tickets_priority_from_epic_d076`, written
+when this decision was mis-numbered D-076 (a number [[D-076]] already held on `main` — the exact
+collision [[D-078]] exists to prevent). Renaming them to drop the id is not cosmetic: a migration
+key is a **persisted ledger row**, not prose, and [[D-078]]'s numbering cycle rewrites every
+`D-TMP-` citation with a blind `grep -rl`. Had the provisional id stayed in these keys, the cycle
+would have silently renamed them *after* they had run in production — and a renamed key runs
+again. `agent_tickets_priority_from_epic` re-cascades each Epic's priority over its members, so a
+re-run would wipe every member priority set in the interim. **Never put a decision id — provisional
+or final — in a migration key, a column name, or any other persisted identifier.** The citation
+belongs in the comment above it, where a rewrite is free.
 
 **Revisit if:** the Epic count passes ~100, where hand-ranking stops being credible and the ordinal
 argument above stops holding; or if Tickets ever need to be dispatched outside an Epic, which would

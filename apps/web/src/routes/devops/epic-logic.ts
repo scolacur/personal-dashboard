@@ -9,7 +9,7 @@ export interface EpicBandCell {
   /** 1-based grid column start + span among the *visible* columns. */
   colStart: number;
   colSpan: number;
-  /** Epic `+` button shows only in Backlog (D-076: new Epics start there). */
+  /** Epic `+` button shows only in Backlog (D-TMP-PD383a: new Epics start there). */
   canAdd: boolean;
   epics: AgentTicket[];
 }
@@ -22,7 +22,7 @@ const LANE_LABEL: Record<EpicDerivedLane, string> = {
 };
 
 /** Ticket-lane statuses each Epic lane sits over (in board order). `in_progress` sits over the
- *  single `queue` column (D-058). D-076: an Epic now genuinely *is* in that lane rather than only
+ *  single `queue` column (D-058). D-TMP-PD383a: an Epic now genuinely *is* in that lane rather than only
  *  spanning it — queueing the Epic is what dispatches its members. */
 const LANE_COLUMNS: Record<EpicDerivedLane, TicketStatus[]> = {
   backlog: ['backlog'],
