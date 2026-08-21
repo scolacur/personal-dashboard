@@ -94,4 +94,11 @@ ENV NODE_ENV=production
 # Make Node's global fetch honor HTTP(S)_PROXY (Node 24+); the compose sets the proxy.
 ENV NODE_USE_ENV_PROXY=1
 
+# PD-528: the commit this image was built from — the worker's real version, reported on the
+# heartbeat. Without it the dashboard showed the GROUNDING CHECKOUT's sha, which the worker
+# re-pulls continuously, so a container running week-old code advertised a fresh sha. Passed by
+# `robot-refresh`; unset builds report "build unknown" rather than a misleading number.
+ARG BUILD_SHA=""
+ENV AGENT_WORKER_BUILD_SHA=$BUILD_SHA
+
 CMD ["node", "apps/agent-worker/dist/index.js"]

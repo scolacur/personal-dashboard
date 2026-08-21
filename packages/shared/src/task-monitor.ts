@@ -730,8 +730,20 @@ export interface WorkerHeartbeat {
   lastSeen: number;
   /** OS pid of the worker process; null if unknown. */
   pid: number | null;
-  /** Short SHA of the worker's grounding checkout HEAD; null if unavailable. */
-  sha: string | null;
+  /**
+   * Short SHA of the worker's GROUNDING CHECKOUT HEAD — the code the agent READS. The worker
+   * re-pulls it continuously, so this tracks `main` and changes without the worker restarting.
+   *
+   * This is NOT the worker's version. It was rendered as one until PD-528, which meant the Site
+   * Status header showed a fresh-looking sha for a process running week-old code.
+   */
+  checkoutSha: string | null;
+  /**
+   * Short SHA the running image was BUILT from — the code the worker RUNS (PD-528). Baked in at
+   * `docker build` time via `AGENT_WORKER_BUILD_SHA`. Null on an image built before that existed,
+   * which the UI reports as unknown rather than falling back to a number that means something else.
+   */
+  buildSha: string | null;
   /** Model the worker's jobs run on; null if unknown. */
   model: string | null;
 }
@@ -857,6 +869,24 @@ export interface SystemStatus {
 /** How a Robot run ended. Mirrors the worker's `RunStatus` (agent-worker owns the
  *  write side; this is the read-side shape the server + web share). */
 export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'error';
+
+/**
+ * Is the running worker current with the code it is grounding against? (PD-528)
+ *
+ * `buildSha` is what the worker RUNS; `checkoutSha` is `main` as of the worker's last pull. When
+ * they differ, the deploy is behind — the state Steve hit on 2026-08-13, where a container up 7
+ * days would have silently ignored `EVALUATOR_ENABLED` because the Evaluator was not in its image.
+ *
+ * `unknown` is deliberately distinct from `stale`: an image predating the build-arg reports no
+ * build sha at all, and "we cannot tell" must not render as "you are up to date".
+ */
+export type WorkerVersionState = 'current' | 'stale' | 'unknown';
+
+export function workerVersionState(w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'>): WorkerVersionState {
+  if (!w.buildSha) return 'unknown';
+  if (!w.checkoutSha) return 'unknown';
+  return w.buildSha === w.checkoutSha ? 'current' : 'stale';
+}
 
 /** The fault taxonomy a failed run is classified into (C2/PD-343). */
 export type RobotFaultTier = 'transient' | 'deterministic' | 'system-wide';

@@ -49,12 +49,11 @@ describe('pd-help stays in step with the functions that exist', () => {
     }
   });
 
-  it('names each retired sortie helper with its replacement, rather than dropping it silently', () => {
-    // Someone with the old commands in muscle memory needs to be told where they went.
-    const help = helpBody();
-    for (const retired of ['sortie-healthcheck', 'sortie-watchdog', 'sortie-sessions']) {
-      expect(help).toContain(retired);
-    }
+  it('mentions the retired Sortie runtime nowhere at all', () => {
+    // Steve's call (2026-08-13): drop it. The mapping existed so someone with the old commands in
+    // muscle memory could find their replacement; the runtime is long retired, and the note had
+    // become the only thing keeping the name alive in the file.
+    expect(ALIASES.toLowerCase()).not.toContain('sortie');
   });
 });
 
@@ -66,13 +65,16 @@ describe('the helpers point at the real deployment', () => {
     expect(ALIASES).toContain('ops/agent-worker/docker-compose.egress.yml');
   });
 
+  it('stamps the build sha into the image, so the dashboard reports a real version', () => {
+    // PD-528: without --build-arg the image reports no version and Site Status says "build
+    // unknown" — honest, but only robot-refresh can make it stop saying that.
+    expect(ALIASES).toMatch(/--build-arg\s+"?BUILD_SHA=/);
+    expect(ALIASES).toContain('git rev-parse --short HEAD');
+  });
+
   it('hits the task-monitor API base, not the renamed one that 404s', () => {
     expect(ALIASES).toContain('/api/widgets/task-monitor');
     expect(ALIASES).not.toContain('/api/widgets/agent-dashboard');
-  });
-
-  it('never targets the retired sortie container', () => {
-    expect(ALIASES).not.toMatch(/docker (logs|ps|exec|restart)[^\n]*\bsortie\b/);
   });
 });
 

@@ -23,19 +23,13 @@ PD_IMAGE="${PD_IMAGE:-agent-worker-dashboard}"
 
 # ── Robot loop / agent-worker operator helpers (PD-391) ──────────────────────
 #
-# The legacy `sortie-*` helpers were removed with the third-party Sortie runtime. These are their
-# new-world replacements, and three of the old ones deliberately have NO successor:
-#
-#   sortie-healthcheck (/readyz)  → `robot-status`. The agent-worker serves no HTTP at all; its
-#                                   liveness is a heartbeat row in the DB, which system-status reads.
-#   sortie-watchdog (GH Action)   → nothing to run. Stall detection is an in-process sweep in the
-#                                   loop itself (C5/PD-346).
-#   sortie-sessions / -reset      → the board's per-ticket Reset / Unstick buttons (C4/PD-345).
-#                                   Deliberately not wrapped: they are per-ticket remediation with
-#                                   a retry-budget boundary, not a global lever.
-#
 # NOTE: the agent-worker is NOT on the Watchtower/GHCR auto-update path (only the web app is), so
 # `robot-refresh` — build the image, recreate the container — IS the deploy.
+#
+# Liveness is a heartbeat row in the DB (the worker serves no HTTP), which `robot-status` reads.
+# Stall detection is an in-process sweep in the loop, so there is nothing to run for it. Per-ticket
+# remediation is the board's Reset / Unstick buttons (C4/PD-345) — deliberately not wrapped here:
+# they carry a retry-budget boundary and are not a global lever.
 
 robot-uptime() {
   # Is the loop's container up? Shows the squid sidecar too, on purpose: when the proxy is down the
@@ -98,7 +92,10 @@ robot-refresh() {
   # Runs from the repo root because the Dockerfile's build context is the whole repo.
   ( cd "$PD_REPO_ROOT" || return 1
     git pull --ff-only || return 1
-    sudo docker build -f ops/agent-worker/Dockerfile -t "$PD_IMAGE" . || return 1
+    # PD-528: stamp the commit into the image so the dashboard reports the worker's REAL version,
+    # not the grounding checkout's HEAD (which tracks main and looks fresh regardless).
+    sudo docker build --build-arg "BUILD_SHA=$(git rev-parse --short HEAD)" \
+      -f ops/agent-worker/Dockerfile -t "$PD_IMAGE" . || return 1
     sudo docker-compose -f "$PD_COMPOSE" up -d || return 1
     sudo docker ps --filter "name=$PD_WORKER" --format 'table {{.Names}}\t{{.Status}}'
   )
@@ -143,11 +140,6 @@ pd-help() {
   printf '%-28s %-40s %s\n' 'robot-pause [reason]'    'Stop the NEXT dispatch (not in-flight)'  'POST /robot/pause'
   printf '%-28s %-40s %s\n' 'robot-resume'            'Re-arm dispatch (clears fault pause too)' 'POST /robot/resume'
   printf '%-28s %-40s %s\n' 'robot-refresh'           'THE DEPLOY: pull, build image, recreate' 'git pull && docker build && up -d'
-  printf '\n'
-  printf 'Retired, with no command needed:\n'
-  printf '  sortie-healthcheck  -> robot-status (the worker serves no HTTP; liveness is a heartbeat row)\n'
-  printf '  sortie-watchdog     -> nothing: stall detection is an in-process sweep in the loop\n'
-  printf '  sortie-sessions/-reset -> the board Reset / Unstick buttons (per-ticket, not a global lever)\n'
   printf '\n'
   printf 'Source: %s\n' "$PD_REPO_ROOT/scripts/pd-aliases.sh"
 }

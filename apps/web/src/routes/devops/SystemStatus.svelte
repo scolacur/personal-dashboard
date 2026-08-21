@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AgentState, SystemStatus, WorkerHeartbeat } from '@dashboard/shared';
-  import { AGENT_STATE_LABELS, rateLimitHealth } from '@dashboard/shared';
+  import { AGENT_STATE_LABELS, rateLimitHealth, workerVersionState } from '@dashboard/shared';
   import { formatRelativeTime } from '../deploy-status-utils';
   import { pauseDispatch, resumeDispatch } from './api';
 
@@ -87,6 +87,11 @@
         )
       : [],
   );
+
+  /** PD-528: 'current' | 'stale' | 'unknown' — see workerVersionState. */
+  function versionState(w: WorkerHeartbeat) {
+    return workerVersionState(w);
+  }
 
   function isStale(w: WorkerHeartbeat): boolean {
     return now - w.lastSeen > STALE_MS;
@@ -214,7 +219,19 @@
             <span class="meta">
               {isStale(w) ? 'stale' : 'alive'} · {formatRelativeTime(w.lastSeen, now)}
             </span>
-            {#if w.sha}<span class="sha">{w.sha}</span>{/if}
+            <!-- PD-528: the BUILD sha is the worker's real version. `checkoutSha` tracks main and
+                 would read as fresh on a container running week-old code. -->
+            {#if versionState(w) === 'stale'}
+              <span class="sha stale-build" title="Running {w.buildSha}; main is {w.checkoutSha}. Run robot-refresh to deploy.">
+                {w.buildSha} · behind main
+              </span>
+            {:else if versionState(w) === 'current'}
+              <span class="sha">{w.buildSha}</span>
+            {:else}
+              <span class="sha unknown-build" title="This image predates build-sha stamping. Run robot-refresh to report a version.">
+                build unknown
+              </span>
+            {/if}
           </span>
         {/each}
       {/if}
