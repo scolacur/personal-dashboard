@@ -10,6 +10,30 @@ export { IDEA_TYPES } from './acute-strategies-generator';
 export type { TrackStatus, Track, CreateManualTrackInput } from './music-tracker';
 export { TRACK_STATUSES } from './music-tracker';
 export type { SpotifyTrack } from './inspirations-list';
+export type {
+  MixSource,
+  Mix,
+  Cue,
+  CreateMixInput,
+  CreateCueInput,
+  UpdateCueInput,
+  SyncSummary,
+  YouTubeRef,
+  ParseResult,
+} from './id-tracker';
+export {
+  ID_TRACKER_SYNC_JOB,
+  SENTINEL_TITLES,
+  mixUrlKey,
+  slugify,
+  parseYouTubeUrl,
+  parsePosition,
+  formatPosition,
+  cueLink,
+  isIdentified,
+  isSentinelTitle,
+  pendingRename,
+} from './id-tracker';
 export type { PageWidget, PageWidgetMap } from './shell';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
 export {

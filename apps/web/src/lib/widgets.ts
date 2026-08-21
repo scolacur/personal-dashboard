@@ -1,6 +1,7 @@
 import type { Component } from 'svelte';
 import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
 import BuySellTrade from './BuySellTrade.svelte';
+import IdTracker from './IdTracker.svelte';
 import MusicTracker from './MusicTracker.svelte';
 import DevOpsAgentWidget from '../routes/devops/AgentWidget.svelte';
 import DevOpsJobsWidget from '../routes/devops/JobsWidget.svelte';
@@ -94,6 +95,17 @@ export const widgets: WidgetMeta[] = [
       component: MusicTracker,
       span: { cols: 2, rows: 3 },
       flippable: true,
+    },
+  },
+  {
+    id: 'id-tracker',
+    title: 'ID Tracker',
+    description: 'Log the unidentified tracks in your mixes and work them out.',
+    route: '/widgets/id-tracker',
+    embed: {
+      component: IdTracker,
+      span: { cols: 2, rows: 2 },
+      // No `flippable` (D-062): the card is a summary, the page is where mixes are managed.
     },
   },
   {
