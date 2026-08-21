@@ -11,6 +11,7 @@ Newest first.
 
 ---
 
+- **[D-078](DECISIONS/D-078-decisions-authored-provisionally-numbered-in-cycles.md)** — Decisions are authored with a provisional id and numbered in a daily cycle behind a maintenance hold (PD-498)
 - **[D-077](DECISIONS/D-077-session-memory-inbox-wrap-up-owns-index.md)** — A human session writes to the memory inbox too, and `MEMORY.md` becomes a wrap-up-only write (PD-513)
 - **[D-076](DECISIONS/D-076-evaluator-is-not-oracle-post-pr-own-ledger.md)** — The Evaluator is not Core's Oracle — it runs post-PR, on its own ledger, and reaches the Robot through the DB (PD-487)
 - **[D-075](DECISIONS/D-075-worker-fetches-docs-not-the-agent.md)** — The worker fetches documentation, not the agent — and the URL is the channel that needed closing (PD-310)
