@@ -1,4 +1,4 @@
-# D-078: A worker reports the commit it was BUILT from, not the one it reads (PD-528)
+# D-079: A worker reports the commit it was BUILT from, not the one it reads (PD-528)
 
 **Decision:** The agent-worker's version is the commit its **image was built from**, stamped in at
 `docker build` time (`ARG BUILD_SHA` → `ENV AGENT_WORKER_BUILD_SHA`) and reported on the heartbeat as
