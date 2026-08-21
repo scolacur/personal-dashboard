@@ -21,7 +21,9 @@ function boardDb(): Database.Database {
       -- SQL-NULL ordering case is testable. addTicket defaults to 'none' like a real insert.
       priority TEXT,
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
-      project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER
+      project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
+      -- D-TMP-PD383a: the dispatch order joins the Epic and reads both drag orders.
+      epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_relations (
       id INTEGER PRIMARY KEY, from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL, type TEXT NOT NULL
@@ -93,7 +95,7 @@ describe('robotQueueCandidates', () => {
 
   it('returns only queue tickets assigned to robot in a robot-enabled repo project', () => {
     addTicket(db, { id: 1, status: 'queue', issue: 220 });
-    addTicket(db, { id: 2, status: 'prioritized' }); // wrong lane
+    addTicket(db, { id: 2, status: 'backlog' }); // wrong lane
     addTicket(db, { id: 3, status: 'queue', projectId: 2 }); // robot-disabled project
     const c = robotQueueCandidates(db);
     expect(c.map((x) => x.id)).toEqual([1]);
@@ -133,7 +135,7 @@ describe('robotQueueCandidates', () => {
   });
 
   it('excludes a ticket blocked by an unresolved blocks relation (D-051)', () => {
-    addTicket(db, { id: 10, status: 'prioritized' }); // the blocker, not yet done
+    addTicket(db, { id: 10, status: 'backlog' }); // the blocker, not yet done
     addTicket(db, { id: 11, status: 'queue' }); // blocked by 10
     addBlocks(db, 10, 11);
     expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([]);
@@ -212,7 +214,7 @@ describe('robotQueueCandidates', () => {
   it('does NOT exclude the blocker itself (direction matters)', () => {
     // 20 blocks 21; 20 is the from/blocker. 20 being in queue is fine — it is not blocked.
     addTicket(db, { id: 20, status: 'queue' });
-    addTicket(db, { id: 21, status: 'prioritized' });
+    addTicket(db, { id: 21, status: 'backlog' });
     addBlocks(db, 20, 21);
     expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([20]);
   });
@@ -271,7 +273,7 @@ describe('queuedBlockedByAgentState', () => {
   });
 
   it('stays quiet for a parked ticket that is also blocked — the blocker is the real reason', () => {
-    addTicket(db, { id: 10, status: 'prioritized' });
+    addTicket(db, { id: 10, status: 'backlog' });
     addTicket(db, { id: 11, status: 'queue', agentState: 'stuck' });
     addBlocks(db, 10, 11);
     expect(queuedBlockedByAgentState(db)).toEqual([]);

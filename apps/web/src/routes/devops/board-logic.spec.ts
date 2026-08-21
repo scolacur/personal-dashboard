@@ -41,7 +41,7 @@ describe('isStatusLocked', () => {
 
   it('does not lock a robot-owned ticket outside an agent-controlled lane', () => {
     expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'backlog' }))).toBe(false);
-    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'prioritized' }))).toBe(false);
+    expect(isStatusLocked(makeTicket({ assignee: 'robot', status: 'backlog' }))).toBe(false);
   });
 
   it('does not lock a ticket in an agent-controlled lane unless robot owns it', () => {

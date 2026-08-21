@@ -69,7 +69,7 @@ describe('compareTicketsInColumn', () => {
       const p0 = makeTicket({ priority: 'P0', sortOrder: 100 });
       const p1 = makeTicket({ priority: 'P1', sortOrder: 0 });
       expect(compareTicketsInColumn('backlog', p0, p1)).toBeLessThan(0);
-      expect(compareTicketsInColumn('prioritized', p1, p0)).toBeGreaterThan(0);
+      expect(compareTicketsInColumn('backlog', p1, p0)).toBeGreaterThan(0);
     });
 
     it('sorts by sortOrder within the same priority band', () => {

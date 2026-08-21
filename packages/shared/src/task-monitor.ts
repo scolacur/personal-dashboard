@@ -31,18 +31,20 @@ export function laneForcedAssignee(_status: TicketStatus): TicketAssignee | null
   return null;
 }
 
-// The Kanban lanes (DECISIONS D-040 board redesign, PD-245; D-058 collapse). Five statuses.
-//  - backlog / prioritized: set by hand (prioritized = pre-refine triage, "do this next").
+// The Kanban lanes (DECISIONS D-040 board redesign, PD-245; D-058 collapse; D-TMP-PD383a drops
+// `prioritized`). Four statuses.
+//  - backlog: the default lane. The `prioritized` lane it absorbed was never carrying priority —
+//    it was carrying *commitment*, which D-TMP-PD383a re-expresses by queueing the Epic.
 //  - queue: ONE queue lane (D-058, collapses the old robot_queue + steve_queue). Who does the
 //    work is the independent `assignee` axis: `robot` + queued + Ready = fair game for the loop;
 //    `steve` + queued = the personal to-do lane; `null` + queued = queued-but-unassigned. Every
 //    non-terminal agent state lives here; the fine state (queued/in-progress/in-review/…) is
-//    carried by `agentState` and shown as a status pill.
-//  - completed: agent-set terminal (the Robot loop's PR merged). closed: manual/wontfix
-//    terminal (D-036), hidden by default.
+//    carried by `agentState` and shown as a status pill. Under D-TMP-PD383a a Ticket does not enter it
+//    by hand — its **Epic** is queued and its members follow.
+//  - completed: agent-set terminal (the Robot loop's PR merged), or hand-set for work assigned to
+//    a human. closed: manual/wontfix terminal (D-036), hidden by default.
 export type TicketStatus =
   | 'backlog'
-  | 'prioritized'
   | 'queue'
   | 'completed'
   | 'closed';
@@ -70,7 +72,6 @@ export type AgentState =
 
 export const TICKET_STATUSES: readonly TicketStatus[] = [
   'backlog',
-  'prioritized',
   'queue',
   'completed',
   'closed',
@@ -87,6 +88,10 @@ export const TICKET_STATUSES: readonly TicketStatus[] = [
 export function coerceTicketStatus(status: string): TicketStatus | null {
   if ((TICKET_STATUSES as readonly string[]).includes(status)) return status as TicketStatus;
   if (status === 'robot_queue' || status === 'steve_queue') return 'queue';
+  // D-TMP-PD383a: the retired `prioritized` lane folds into `backlog`, for the same reason the pre-D-058
+  // queue lanes fold into `queue` — a stale Refine proposal or an un-redeployed agent can still
+  // carry it, and writing it verbatim would produce a row in no board column.
+  if (status === 'prioritized') return 'backlog';
   return null;
 }
 
@@ -378,9 +383,13 @@ export interface UpdateTicketInput {
   maxTurns?: number | null;
 }
 
-/** An Epic's derived board lane (D-054, PD-336). `in_progress` is the synthetic cell over the
- *  single `queue` column in the Epic band (D-058) — an Epic is never *in* `queue` itself. */
-export type EpicDerivedLane = 'backlog' | 'prioritized' | 'in_progress' | 'completed' | 'closed';
+/** An Epic's board lane (D-054, PD-336; D-TMP-PD383a drops `prioritized`).
+ *
+ *  **D-TMP-PD383a reverses the direction of travel for the pending lanes.** An Epic no longer *derives*
+ *  its way into the queue: `backlog` ↔ `in_progress` is now a hand-set move on the Epic, and its
+ *  members follow. Progress remains derived — `completed`/`closed` are observations of what the
+ *  members actually did, which no top-down push may overwrite. */
+export type EpicDerivedLane = 'backlog' | 'in_progress' | 'completed' | 'closed';
 
 /** Per-Epic roll-up the board reads to place the Epic card + show `done/total` (D-054, PD-336).
  *  Fetched in bulk alongside tickets, like relations. */
