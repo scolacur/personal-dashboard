@@ -1,0 +1,41 @@
+@use './column-add-btn';
+
+.ticket-cell {
+  grid-row: 4;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  min-height: 120px;
+  transition: border-color 0.12s;
+
+  // Highlight the lane a dragged card is hovering over.
+  &.drag-over {
+    border-color: var(--accent);
+  }
+}
+
+.column-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+}
+
+.empty {
+  color: var(--muted);
+  text-align: center;
+  margin: var(--space-sm) 0;
+}
+
+// Insertion line at the end of a lane (append target).
+.drop-end {
+  height: 0;
+  box-shadow: 0 -2px 0 0 var(--accent);
+}
+
+@media (max-width: 640px) {
+  .ticket-cell {
+    scroll-snap-align: start;
+  }
+}
