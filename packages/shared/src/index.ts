@@ -25,6 +25,7 @@ export {
   ID_TRACKER_SYNC_JOB,
   SENTINEL_TITLES,
   mixUrlKey,
+  mixMatchesQuery,
   slugify,
   parseYouTubeUrl,
   parsePosition,

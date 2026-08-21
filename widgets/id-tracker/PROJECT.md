@@ -194,6 +194,14 @@ navigations.
 
 Default filter hides **archived** mixes; a toggle reveals them for restore.
 
+**Adding a mix searches the ones already tracked.** Typing a name live-filters existing Mixes by
+**token containment** (so "dekmantel 25" still finds "Nina Kraviz | Dekmantel Festival 2025" — the
+near-miss spelling is the whole case a duplicate check exists to catch, and a plain substring match
+misses it) and offers them as one-click targets. The create confirm then reports what the search
+actually found: the near-matches when there are any, a plain "add as a new mix?" when there are
+none. The confirm must never claim a search result it did not compute — the first version said
+"nothing tracked matches" unconditionally, without a search existing at all.
+
 **Card** (embed, `cols: 2, rows: 2`): open-ID count as the headline, the most recent mixes with
 open IDs, and **Sync now**. Nothing else — management lives on the page.
 

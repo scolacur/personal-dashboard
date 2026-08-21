@@ -107,6 +107,22 @@ export function mixUrlKey(input: { url?: string | null; title: string }): string
   }
 }
 
+/**
+ * Does a tracked mix's title match what is being typed into the add-mix field?
+ *
+ * **Token containment, not substring.** The duplicate this check exists to catch is the near-miss
+ * spelling — "Dekmantel 25" against a stored "Nina Kraviz | Dekmantel Festival 2025" — and a
+ * substring match misses exactly that case, which is the only one that matters.
+ *
+ * A query shorter than two characters matches nothing; every mix matching is not a search result.
+ */
+export function mixMatchesQuery(title: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return false;
+  const t = title.toLowerCase();
+  return q.split(/\s+/).every((token) => t.includes(token));
+}
+
 export function slugify(s: string): string {
   return s
     .normalize('NFKD')
