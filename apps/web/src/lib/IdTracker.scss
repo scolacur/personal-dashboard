@@ -113,6 +113,45 @@
   }
 }
 
+// Live near-match list under the add-mix field. The point is to make an existing mix easier to
+// reach than creating a second one, so the entries are the affordance, not decoration.
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.suggestion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+
+  &.modal-list {
+    flex-direction: column;
+    margin: var(--space-sm) 0;
+  }
+}
+
+.suggestion {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text);
+  text-align: left;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+}
+
+// The timestamp field needs room for its longer placeholder.
+.add-cue .text-input.stamp-input {
+  flex: 2 1 14rem;
+}
+
 .show-archived {
   font-size: var(--font-size-xs);
   color: var(--muted);

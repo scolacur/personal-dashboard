@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { cueLink, formatPosition, type Cue, type Mix } from '@dashboard/shared';
+  import { cueLink, formatPosition, mixMatchesQuery, type Cue, type Mix } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import {
     createCue,
@@ -52,6 +52,17 @@
 
   const openIdCount = $derived(
     mixes.reduce((n, m) => n + m.cues.filter((c) => !c.identified).length, 0),
+  );
+
+  /**
+   * Mixes already tracked under a name like the one being typed.
+   *
+   * Token containment rather than a plain substring, so "dekmantel 25" still finds
+   * "Nina Kraviz | Dekmantel Festival 2025" — the near-miss spelling is exactly the case a
+   * duplicate check has to catch, and a substring match misses it.
+   */
+  const similarMixes = $derived(
+    mixes.filter((m) => mixMatchesQuery(m.title, newMixTitle)).slice(0, 5),
   );
   const visibleMixes = $derived(variant === 'widget' ? mixes.filter((m) => m.cues.length > 0).slice(0, 4) : mixes);
 
@@ -225,6 +236,26 @@
       </form>
       {#if mixError}<p class="status-msg error">{mixError}</p>{/if}
 
+      {#if similarMixes.length > 0}
+        <div class="suggestions">
+          <span class="status-msg subtle">Already tracked — pick one to add an ID to it:</span>
+          <ul class="suggestion-list">
+            {#each similarMixes as m (m.id)}
+              <li>
+                <button
+                  class="link-btn suggestion"
+                  onclick={() => {
+                    newMixTitle = '';
+                    newMixUrl = '';
+                    startAdd(m.id);
+                  }}>{m.title}</button
+                >
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+
       <label class="show-archived">
         <input type="checkbox" bind:checked={showArchived} onchange={load} />
         Show archived
@@ -308,7 +339,12 @@
 
                 {#if addingTo === mix.id}
                   <form class="add-cue" onsubmit={(e) => { e.preventDefault(); void submitCue(mix); }}>
-                    <input class="text-input" placeholder="42:15" bind:value={position} />
+                    <input
+                      class="text-input stamp-input"
+                      placeholder="42:15 — or paste a YouTube link"
+                      title="A timestamp (42:15, 1:23:45, or plain seconds), or a YouTube URL carrying a t= parameter — the time is read out of it."
+                      bind:value={position}
+                    />
                     <input class="text-input" placeholder="Artist" bind:value={artist} />
                     <input class="text-input" placeholder="Title" bind:value={title} />
                     <input class="text-input" placeholder="Remixer" bind:value={remixer} />
@@ -332,11 +368,37 @@
 </div>
 
 <Modal open={confirmCreate} title="Add a new mix?" onClose={() => (confirmCreate = false)}>
-  <p class="rename-line">
-    Nothing tracked matches <strong>{newMixTitle}</strong>. Create it as a new mix?
-  </p>
+  {#if similarMixes.length > 0}
+    <p class="rename-line">
+      These are already tracked under a similar name — is it one of them?
+    </p>
+    <ul class="suggestion-list modal-list">
+      {#each similarMixes as m (m.id)}
+        <li>
+          <button
+            class="link-btn suggestion"
+            onclick={() => {
+              confirmCreate = false;
+              newMixTitle = '';
+              newMixUrl = '';
+              startAdd(m.id);
+            }}>{m.title}</button
+          >
+        </li>
+      {/each}
+    </ul>
+    <p class="rename-line">
+      Otherwise, add <strong>{newMixTitle}</strong> as a separate mix.
+    </p>
+  {:else}
+    <p class="rename-line">
+      Add <strong>{newMixTitle}</strong> as a new mix?
+    </p>
+  {/if}
   <div class="rename-actions">
-    <button class="btn" onclick={() => void submitMix(true)}>Create it</button>
+    <button class="btn" onclick={() => void submitMix(true)}>
+      {similarMixes.length > 0 ? 'Add as separate mix' : 'Add it'}
+    </button>
     <button class="btn subtle-btn" onclick={() => (confirmCreate = false)}>Cancel</button>
   </div>
 </Modal>

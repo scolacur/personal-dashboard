@@ -3,6 +3,7 @@ import {
   formatPosition,
   isIdentified,
   isSentinelTitle,
+  mixMatchesQuery,
   mixUrlKey,
   parsePosition,
   parseYouTubeUrl,
@@ -152,6 +153,35 @@ describe('mixUrlKey — identity, never the title', () => {
 
   it('treats unparseable junk as a name rather than losing the mix', () => {
     expect(mixUrlKey({ url: ':::', title: 'Some Mix' })).toBe('manual:some-mix');
+  });
+});
+
+describe('mixMatchesQuery — finding the mix you already have', () => {
+  const REAL = 'Nina Kraviz | Dekmantel Festival 2025 | Full Set HD';
+
+  it('catches the near-miss spelling a substring match would miss', () => {
+    // The whole reason this is token containment: "25" is not a substring of the title in
+    // sequence with "dekmantel", but both tokens are present.
+    expect(mixMatchesQuery(REAL, 'dekmantel 25')).toBe(true);
+    expect(REAL.toLowerCase().includes('dekmantel 25')).toBe(false);
+  });
+
+  it('is case-insensitive and tolerates surrounding whitespace', () => {
+    expect(mixMatchesQuery(REAL, '  NINA kraviz  ')).toBe(true);
+  });
+
+  it('requires every token, so an unrelated word rules a mix out', () => {
+    expect(mixMatchesQuery(REAL, 'dekmantel moodymann')).toBe(false);
+  });
+
+  it('matches nothing on a query too short to be a search', () => {
+    expect(mixMatchesQuery(REAL, 'n')).toBe(false);
+    expect(mixMatchesQuery(REAL, ' ')).toBe(false);
+    expect(mixMatchesQuery(REAL, '')).toBe(false);
+  });
+
+  it('does not match an unrelated mix', () => {
+    expect(mixMatchesQuery('Moodymann - Moodymann Collection', 'dekmantel')).toBe(false);
   });
 });
 
