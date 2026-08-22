@@ -19,7 +19,7 @@
   import QueueBypassModal from './QueueBypassModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
   import SpinOffModal from './SpinOffModal.svelte';
-  import { emptyTicketForm, ticketToForm, type TicketFormState } from './ticket-form';
+  import { emptyTicketForm, epicRequired, ticketToForm, type TicketFormState } from './ticket-form';
   import { planSpinOff, type SpinOffPlan } from '../epic-spinoff';
   import { computeBadges, type RelationAction, type RelationBadges } from '../relation-logic';
   import { buildEpicBand, type EpicBandCell } from '../epic-logic';
@@ -209,6 +209,14 @@
 
   // D-054: a non-empty Epic's lane is *derived* from its members, so its own status is inert —
   // setting it in the form silently no-ops. Lock the Status field for that case and explain why.
+  // D-TMP-PD383a slice C: a Ticket may be moved between Epics, never out of one.
+  const editingHadEpic = $derived(
+    editingId !== null && (ticketsById.get(editingId)?.epicId ?? null) !== null,
+  );
+  const formRequiresEpic = $derived(
+    epicRequired({ creating: editingId === null, hadEpic: editingHadEpic, status: form.status }),
+  );
+
   const editingEpicWithMembers = $derived(
     editingId !== null && form.isEpic && (epicSummaryById.get(editingId)?.total ?? 0) > 0,
   );
@@ -802,6 +810,13 @@
   const archiveEpicMemberCount = $derived(
     archiveEpicTarget ? (epicSummaryById.get(archiveEpicTarget.id)?.total ?? 0) : 0,
   );
+  const archiveEpicActiveCount = $derived(
+    archiveEpicTarget
+      ? tickets.filter(
+          (t) => t.epicId === archiveEpicTarget!.id && (t.status === 'backlog' || t.status === 'queue'),
+        ).length
+      : 0,
+  );
 
   async function archiveEpic(cascadeMembers: boolean) {
     const target = archiveEpicTarget;
@@ -904,6 +919,7 @@
   {projects}
   {epicOptions}
   columns={COLUMNS}
+  requireEpic={formRequiresEpic}
   onClose={closeForm}
   onSubmit={submitForm}
 />
@@ -1000,7 +1016,6 @@
               badges={badgesById.get(ticket.id) ?? NO_BADGES}
               onRelationAction={(action) => openRelationPicker(ticket, action)}
               onAddToEpic={() => openEpicPicker(ticket)}
-              onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
               onSpinOff={() => openSpinOff(ticket)}
               onDragStart={(e) => onDragStart(e, ticket)}
               {onDragEnd}
@@ -1048,6 +1063,7 @@
 <ArchiveEpicModal
   epic={archiveEpicTarget}
   memberCount={archiveEpicMemberCount}
+  activeMemberCount={archiveEpicActiveCount}
   onCancel={() => (archiveEpicTarget = null)}
   onArchive={archiveEpic}
 />
