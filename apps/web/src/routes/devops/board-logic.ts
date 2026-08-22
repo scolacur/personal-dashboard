@@ -14,6 +14,23 @@ export function isStatusLocked(t: AgentTicket): boolean {
   return t.assignee === 'robot' && AGENT_CONTROLLED.includes(t.status);
 }
 
+/** Terminal lanes: the work is over (D-036). */
+export function isTerminal(t: { status: TicketStatus }): boolean {
+  return t.status === 'completed' || t.status === 'closed';
+}
+
+/**
+ * A ticket that no board surface may change (D-TMP-PD539a).
+ *
+ * Two independent reasons, deliberately combined here so every surface asks one question:
+ *  - **terminal** — the work is over, and `completed` should be a record rather than a lane you can
+ *    drag out of. Leaving requires the detail page's explicit Reopen.
+ *  - **agent-controlled** — the robot owns it right now (D-058), which is the older `isStatusLocked`.
+ */
+export function isReadOnly(t: AgentTicket): boolean {
+  return isTerminal(t) || isStatusLocked(t);
+}
+
 /**
  * Compute the fractional `sortOrder` for a card dropped within its priority band.
  *

@@ -36,6 +36,8 @@
   import RelationPicker from '../../RelationPicker.svelte';
   import SpinOffModal from '../../task-tracker/SpinOffModal.svelte';
   import { planSpinOff } from '../../epic-spinoff';
+  import { isTerminal } from '../../board-logic';
+  import EpicPicker from '../../EpicPicker.svelte';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
   import { ticketMatchesQuery } from '../../filter-logic';
 
@@ -125,6 +127,10 @@
   // status editing is disabled for Epics.
   const statusLocked = $derived(ticket?.isEpic ?? false);
 
+  // D-TMP-PD539a: a terminal Ticket is read-only everywhere. An Epic is exempt — its terminal lane
+  // is derived from its members, so there is nothing here to freeze.
+  const frozen = $derived(ticket !== null && !ticket.isEpic && isTerminal(ticket));
+
   // D-TMP-PD383a: priority belongs to the Epic and cascades to its members, and `updateTicket`
   // silently overrides a member's own value. An editable control here would accept an edit that
   // never lands, so a member reads its inherited priority instead. An unclassified Epic (`null`)
@@ -135,6 +141,40 @@
       : undefined,
   );
   const priorityInherited = $derived(parentEpic !== undefined && parentEpic.priority !== null);
+
+  /* ── Reopen (D-TMP-PD539a) ──────────────────────────────────────────
+     The single exception to "terminal is final". Deliberately a considered click on this page
+     rather than a drag on the board, because a drag is what makes accidental completion cheap.
+
+     It carries two obligations, not just a status write: the Ticket must land inside an Epic
+     (an Epic-less active Ticket is unpriced and undispatchable — D-TMP-PD383a), and the server
+     clears its stale `agent_state` so a robot-completed ticket does not come back wearing a
+     green "done" pill that also hides it from the loop's candidate query. */
+  let reopening = $state(false);
+  let reopenPickerOpen = $state(false);
+
+  async function reopen(epicId?: number) {
+    if (!ticket || !ticketId) return;
+    // No Epic to go back to → pick one first; the ticket is otherwise reopened into a dead end.
+    if (!ticket.isEpic && ticket.epicId === null && epicId === undefined) {
+      reopenPickerOpen = true;
+      return;
+    }
+    error = null;
+    reopening = true;
+    try {
+      await api.updateTicket(ticket.id, {
+        status: 'backlog',
+        ...(epicId !== undefined ? { epicId } : {}),
+      });
+      await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      reopening = false;
+      reopenPickerOpen = false;
+    }
+  }
 
   // D-TMP-PD383a slice C: give this Ticket its own Epic, inheriting the source Epic's priority and
   // lane. Same action as the board card's kebab — the detail page is where you land after opening
@@ -507,6 +547,16 @@
         {/if}
       </Collapsible>
 
+      {#if frozen}
+        <p class="frozen-banner">
+          <strong>{ticket.status === 'completed' ? 'Completed' : 'Closed'}</strong> — this ticket is a
+          record of work that finished, so it is read-only.
+          <button type="button" class="reopen-btn" disabled={reopening} onclick={() => reopen()}>
+            {reopening ? 'Reopening…' : 'Reopen'}
+          </button>
+        </p>
+      {/if}
+
       {#if !ticket.isEpic}
         <p class="belongs-to-epic">
           {#if parentEpic}
@@ -515,9 +565,11 @@
           {:else}
             <span class="no-epic">Not part of any epic.</span>
           {/if}
-          <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
-            Spin off into new Epic…
-          </button>
+          {#if !frozen}
+            <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
+              Spin off into new Epic…
+            </button>
+          {/if}
         </p>
       {/if}
 
@@ -637,8 +689,12 @@
               <select
                 class="field-select"
                 value={ticket.status}
-                disabled={statusLocked}
-                title={statusLocked ? "An Epic's lane is derived from its members" : 'Set status'}
+                disabled={statusLocked || frozen}
+                title={frozen
+                  ? 'Completed work is read-only — use Reopen'
+                  : statusLocked
+                    ? "An Epic's lane is derived from its members"
+                    : 'Set status'}
                 onchange={(e) => updateField({ status: e.currentTarget.value as TicketStatus })}
               >
                 {#each TICKET_STATUSES as s (s)}
@@ -665,7 +721,8 @@
                 <select
                   class="field-select"
                   value={ticket.priority ?? ''}
-                  title={ticket.isEpic ? 'Set priority — cascades to every member' : 'Set priority'}
+                  disabled={frozen}
+                  title={frozen ? 'Completed work is read-only' : ticket.isEpic ? 'Set priority — cascades to every member' : 'Set priority'}
                   onchange={(e) => updateField({ priority: (e.currentTarget.value || null) as TicketPriority | null })}
                 >
                   <option value="">—</option>
@@ -682,7 +739,8 @@
               <select
                 class="field-select"
                 value={ticket.assignee ?? ''}
-                title="Set assignee"
+                disabled={frozen}
+                title={frozen ? 'Completed work is read-only' : 'Set assignee'}
                 onchange={(e) => updateField({ assignee: (e.currentTarget.value || null) as TicketAssignee | null })}
               >
                 <option value="">Unassigned</option>
@@ -697,6 +755,7 @@
             <dd>
               <select
                 class="field-select"
+                disabled={frozen}
                 value={ticket.projectId ?? ''}
                 title="Set project"
                 onchange={(e) => e.currentTarget.value && updateField({ projectId: Number(e.currentTarget.value) })}
@@ -792,7 +851,15 @@
 
     <GlossaryModal open={glossaryOpen} tab="refinement" onClose={() => (glossaryOpen = false)} />
 
-    <SpinOffModal
+    <EpicPicker
+  open={reopenPickerOpen}
+  source={ticket}
+  tickets={allTickets}
+  onClose={() => (reopenPickerOpen = false)}
+  onPicked={(epicId) => reopen(epicId)}
+/>
+
+<SpinOffModal
   ticket={spinOffOpen ? ticket : null}
   plan={spinOffPlan}
   sourceEpic={parentEpic}
