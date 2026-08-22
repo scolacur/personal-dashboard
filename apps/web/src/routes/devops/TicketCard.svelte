@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { AgentProject, AgentState, AgentTicket, RefineState, TicketAssignee, TicketPriority } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority } from '@dashboard/shared';
   import {
     TICKET_ASSIGNEES,
     ASSIGNEE_LABELS,
     AGENT_STATE_LABELS,
+    REFINE_STATE_LABELS,
     showsTurnProgress,
     turnProgress,
   } from '@dashboard/shared';
@@ -106,11 +107,6 @@
     if (assignee === 'robot') return '🤖';
     return '—';
   }
-
-  const REFINE_STATE_LABELS: Record<RefineState, string> = {
-    refining: 'Refining…',
-    'awaiting-human': 'Needs you',
-  };
 
   // D-TMP-PD383a: the Epic is the unit of priority, so a member's value is not independently
   // settable — the server overrides any client-supplied one. Say where it came from instead of
