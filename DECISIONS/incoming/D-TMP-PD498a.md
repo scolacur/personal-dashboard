@@ -51,7 +51,7 @@
   here would add token cost plus a non-deterministic failure mode attached to the decision record.
   It lives in `jobs/` for the shared host — checkout, proxy, DB, hold — not because it is an agent.
 
-**Implications:** `NUMBERING_CYCLE_ENABLED` ships **off**, like `ROBOT_DISPATCH_ENABLED` and
+**Implications:** `DECISION_CONSOLIDATION_JOB_ENABLED` ships **off**, like `ROBOT_DISPATCH_ENABLED` and
 `EVALUATOR_ENABLED` — a job that rewrites citations repo-wide and admin-merges its own PR should not
 start doing so merely by arriving in an image. The rewrite sweep must skip `.claude/worktrees`,
 because this repo nests worktrees inside the checkout and every concurrent session's branch lives

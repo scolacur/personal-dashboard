@@ -21,7 +21,7 @@ import { startHeartbeat } from './heartbeat';
  * `robot` (the in-house dispatcher, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED), and
  * `evaluator` (post-hand-off PR review, PD-487/D-076 — inert unless EVALUATOR_ENABLED), and
  * `numbering` (the decision-numbering cycle, PD-498/D-078 — deterministic, no LLM; inert unless
- * NUMBERING_CYCLE_ENABLED).
+ * DECISION_CONSOLIDATION_JOB_ENABLED).
  */
 async function main(): Promise<void> {
   const config = loadConfig();
