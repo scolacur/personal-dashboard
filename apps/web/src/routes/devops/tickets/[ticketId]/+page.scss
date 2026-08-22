@@ -326,6 +326,25 @@
   }
 }
 
+// The "Spin off into new Epic…" action beside the epic breadcrumb (slice C).
+.spin-off-btn {
+  margin-left: var(--space-sm);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.no-epic {
+  color: var(--muted);
+}
+
 // A field the Epic owns (D-TMP-PD383a): shown in place of the select, with a link to the Epic that
 // sets it. Deliberately not a disabled <select> — this is not a control you lack permission for,
 // it is a value that lives somewhere else.

@@ -18,7 +18,9 @@
   import ArchiveEpicModal from './ArchiveEpicModal.svelte';
   import QueueBypassModal from './QueueBypassModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
+  import SpinOffModal from './SpinOffModal.svelte';
   import { emptyTicketForm, ticketToForm, type TicketFormState } from './ticket-form';
+  import { planSpinOff, type SpinOffPlan } from '../epic-spinoff';
   import { computeBadges, type RelationAction, type RelationBadges } from '../relation-logic';
   import { buildEpicBand, type EpicBandCell } from '../epic-logic';
   import {
@@ -357,9 +359,26 @@
     const title = form.title.trim();
     if (!title || form.projectId === null) return;
     error = null;
+    let minted: AgentTicket | null = null;
     try {
       // An Epic never belongs to another Epic (no nesting, D-054).
-      const epicId = form.isEpic ? null : form.epicId;
+      // Slice C: a drafted Epic is minted first, so the Ticket can be created already belonging to
+      // it. Created first rather than after-and-patched because the server sets a member's priority
+      // from its Epic on write — attaching afterwards would write the Ticket's own priority once,
+      // then overwrite it, which reads as a flicker and logs a change that never meant anything.
+      let epicId = form.isEpic ? null : form.epicId;
+      if (!form.isEpic && form.newEpic !== null && form.newEpic.title.trim()) {
+        const mintedEpic = await api.createTicket({
+          title: form.newEpic.title.trim(),
+          projectId: form.projectId,
+          priority: form.newEpic.priority,
+          status: 'backlog',
+          isEpic: true,
+          body: null,
+        });
+        epicId = mintedEpic.id;
+        minted = mintedEpic;
+      }
       // Blank = clear the override (inherit the loop default). NaN can't reach here: the input is
       // type=number and the Save button gates on the modal's `maxTurnsInvalid`.
       const maxTurns = form.maxTurns.trim() === '' ? null : Number(form.maxTurns);
@@ -395,8 +414,14 @@
       }
       formOpen = false;
       await load(true);
+      if (minted) showToast(`Created Epic ${minted.displayId} — ${title} is its first member.`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+      // The Epic may have been minted before the Ticket failed. Say so rather than leaving an
+      // empty Epic on the board with no explanation for where it came from.
+      if (minted) {
+        error += ` (Epic ${minted.displayId} was created before this failed — it is now empty.)`;
+      }
     }
   }
 
@@ -791,6 +816,50 @@
     }
   }
 
+  /* ── Spin off into a new Epic (D-TMP-PD383a slice C) ──────────────────
+     The Epic is the unit of priority and dispatch, so a Ticket that must be scheduled apart from
+     its siblings needs its own Epic rather than a different rank inside the current one. */
+  let spinOffTarget = $state<AgentTicket | null>(null);
+  let spinOffBusy = $state(false);
+  const spinOffSourceEpic = $derived(
+    spinOffTarget?.epicId != null ? ticketsById.get(spinOffTarget.epicId) : undefined,
+  );
+  const spinOffPlan = $derived<SpinOffPlan>(
+    spinOffTarget
+      ? planSpinOff(spinOffTarget, spinOffSourceEpic)
+      : { title: '', priority: null, status: 'backlog', inheritedFrom: 'ticket' },
+  );
+
+  function openSpinOff(ticket: AgentTicket) {
+    spinOffTarget = ticket;
+  }
+
+  async function confirmSpinOff(title: string) {
+    const ticket = spinOffTarget;
+    const plan = spinOffPlan;
+    if (!ticket || ticket.projectId === null) return;
+    error = null;
+    spinOffBusy = true;
+    try {
+      const epic = await api.createTicket({
+        title: title.trim(),
+        projectId: ticket.projectId,
+        priority: plan.priority,
+        status: plan.status,
+        isEpic: true,
+        body: `*Spun off from ${ticket.displayId ?? ticket.title}.*`,
+      });
+      await api.updateTicket(ticket.id, { epicId: epic.id });
+      spinOffTarget = null;
+      await load(true);
+      showToast(`${ticket.displayId ?? ticket.title} now leads Epic ${epic.displayId}.`);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      spinOffBusy = false;
+    }
+  }
+
   async function copyIssue(ticket: AgentTicket, project: AgentProject | undefined) {
     const text = buildCopyText(ticket, project);
     try {
@@ -932,6 +1001,7 @@
               onRelationAction={(action) => openRelationPicker(ticket, action)}
               onAddToEpic={() => openEpicPicker(ticket)}
               onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
+              onSpinOff={() => openSpinOff(ticket)}
               onDragStart={(e) => onDragStart(e, ticket)}
               {onDragEnd}
               onEdit={() => openEdit(ticket)}
@@ -986,6 +1056,15 @@
   label={queueConfirm?.label ?? null}
   onCancel={cancelQueueConfirm}
   onConfirm={acceptQueueConfirm}
+/>
+
+<SpinOffModal
+  ticket={spinOffTarget}
+  plan={spinOffPlan}
+  sourceEpic={spinOffSourceEpic}
+  busy={spinOffBusy}
+  onCancel={() => (spinOffTarget = null)}
+  onConfirm={confirmSpinOff}
 />
 
 <EpicRollbackModal
