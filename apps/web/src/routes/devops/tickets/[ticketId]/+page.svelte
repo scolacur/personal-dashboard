@@ -122,6 +122,17 @@
   // the same updateTicket call. A non-empty Epic's lane is derived from its members (D-054), so
   // status editing is disabled for Epics.
   const statusLocked = $derived(ticket?.isEpic ?? false);
+
+  // D-TMP-PD383a: priority belongs to the Epic and cascades to its members, and `updateTicket`
+  // silently overrides a member's own value. An editable control here would accept an edit that
+  // never lands, so a member reads its inherited priority instead. An unclassified Epic (`null`)
+  // leaves the member's value alone — matching the server — so it stays editable in that case.
+  const parentEpic = $derived(
+    ticket && !ticket.isEpic && ticket.epicId !== null
+      ? allTickets.find((t) => t.id === ticket!.epicId)
+      : undefined,
+  );
+  const priorityInherited = $derived(parentEpic !== undefined && parentEpic.priority !== null);
   async function updateField(patch: UpdateTicketInput) {
     if (!ticket || !ticketId) return;
     error = null;
@@ -601,17 +612,30 @@
           <div>
             <dt>Priority</dt>
             <dd>
-              <select
-                class="field-select"
-                value={ticket.priority ?? ''}
-                title="Set priority"
-                onchange={(e) => updateField({ priority: (e.currentTarget.value || null) as TicketPriority | null })}
-              >
-                <option value="">—</option>
-                {#each TICKET_PRIORITIES as p (p)}
-                  <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-                {/each}
-              </select>
+              {#if priorityInherited}
+                <span
+                  class="field-inherited"
+                  title="Set on {parentEpic?.displayId ?? 'the Epic'} — every member follows"
+                >
+                  {ticket.priority ?? '—'}
+                  {#if ticket.priority}· {PRIORITY_LABELS[ticket.priority]}{/if}
+                  <a class="inherited-from" href="/devops/tickets/{parentEpic?.displayId}"
+                    >from {parentEpic?.displayId}</a
+                  >
+                </span>
+              {:else}
+                <select
+                  class="field-select"
+                  value={ticket.priority ?? ''}
+                  title={ticket.isEpic ? 'Set priority — cascades to every member' : 'Set priority'}
+                  onchange={(e) => updateField({ priority: (e.currentTarget.value || null) as TicketPriority | null })}
+                >
+                  <option value="">—</option>
+                  {#each TICKET_PRIORITIES as p (p)}
+                    <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+                  {/each}
+                </select>
+              {/if}
             </dd>
           </div>
           <div>

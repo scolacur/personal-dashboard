@@ -17,9 +17,18 @@
   import EpicLane from './EpicLane.svelte';
   import ArchiveEpicModal from './ArchiveEpicModal.svelte';
   import QueueBypassModal from './QueueBypassModal.svelte';
+  import EpicRollbackModal from './EpicRollbackModal.svelte';
   import { emptyTicketForm, ticketToForm, type TicketFormState } from './ticket-form';
   import { computeBadges, type RelationAction, type RelationBadges } from '../relation-logic';
   import { buildEpicBand, type EpicBandCell } from '../epic-logic';
+  import {
+    isDraggableEpicLane,
+    membersOf,
+    planEpicQueue,
+    planEpicRollback,
+    rollbackNeedsConfirm,
+    type EpicRollbackPlan,
+  } from '../epic-drag';
   import * as api from '../api';
   import { ticketMatchesQuery, ticketMatchesRefineFilter, ticketMatchesAssigneeFilter } from '../filter-logic';
   import type { RefineFilter, AssigneeFilter } from '../filter-logic';
@@ -178,6 +187,7 @@
   );
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
+  const ticketsById = $derived(new Map(tickets.map((t) => [t.id, t])));
 
   // Relations (PD-322): fetched once for the whole board; card badges derive from these plus a
   // status lookup, so an unresolved-blocker count never costs a per-card request.
@@ -521,14 +531,40 @@
     await applyTicketMove(id, { status, sortOrder });
   }
 
-  /* ── Epic reorder (D-054 amended) ──────────────────────────────────────
-     Epics reorder WITHIN their derived lane only — lane placement stays derived
-     (never dragged across lanes / into a queue); this just sets `sortOrder` among
-     the cell's epics. Separate drag state from tickets so the two bands don't cross-react. */
+  /* ── Epic drag (D-TMP-PD383a) ──────────────────────────────────────────
+     Two moves share one gesture. Dropping an Epic in its OWN lane reorders it there (D-054 as
+     amended by PD-337) — that ordering is what ranks equal-priority Epics for dispatch. Dropping
+     it in the OTHER pending lane moves the Epic itself, and the server cascades to its members:
+     queueing arms everything unstarted, rolling back un-queues everything that never started.
+
+     `completed`/`closed` are not drop targets. Those lanes are derived from what the members
+     actually reached, so dropping a card into one would assert work the loop never did.
+
+     Separate drag state from tickets so the two bands don't cross-react. */
   let epicDraggingId = $state<number | null>(null);
   let epicDropTarget = $state<{ lane: EpicDerivedLane; beforeId: number | null } | null>(null);
 
+  // Rollback confirm — populated only when the cascade would leave members behind.
+  let rollbackTarget = $state<AgentTicket | null>(null);
+  let rollbackPlan = $state<EpicRollbackPlan>({ unqueued: [], running: [], parked: [] });
+
+  const laneOfEpic = (id: number): EpicDerivedLane | undefined =>
+    epicSummaryById.get(id)?.derivedLane;
+
   function onEpicDragStart(e: DragEvent, epic: AgentTicket) {
+    // An Epic in a terminal lane is there because its members finished. Dropping it back would
+    // write a status the derived lane immediately overrules, so the card would snap back with no
+    // explanation — refuse the drag and say why instead.
+    const lane = laneOfEpic(epic.id);
+    if (lane !== undefined && !isDraggableEpicLane(lane)) {
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
+      e.preventDefault();
+      showToast(
+        `${epic.displayId ?? epic.title} is ${lane === 'completed' ? 'Completed' : 'Closed'} ` +
+          'because its members are — reopen a member to bring the Epic back.',
+      );
+      return;
+    }
     epicDraggingId = epic.id;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -542,8 +578,10 @@
   }
 
   function onEpicCellDragOver(e: DragEvent, cell: EpicBandCell) {
-    // Only allow reordering within the epic's own lane (lane is derived, not draggable).
-    if (epicDraggingId === null || !cell.epics.some((ep) => ep.id === epicDraggingId)) return;
+    if (epicDraggingId === null) return;
+    // Backlog and In Progress accept a drop (reorder within, move across). The terminal lanes
+    // never do — an Epic gets there by its members finishing, not by being dragged.
+    if (!isDraggableEpicLane(cell.lane)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const cards = [
@@ -566,14 +604,71 @@
     const target = epicDropTarget;
     epicDraggingId = null;
     epicDropTarget = null;
-    if (id === null || !cell.epics.some((ep) => ep.id === id)) return; // same-lane only
+    if (id === null || !isDraggableEpicLane(cell.lane)) return;
     const epic = tickets.find((t) => t.id === id);
     if (!epic) return;
-    const sortOrder = computeOrderWithin(cell.epics, target?.beforeId ?? null, id);
-    if (epic.sortOrder === sortOrder) return;
+
+    // Same lane → reorder among that cell's Epics.
+    if (laneOfEpic(id) === cell.lane) {
+      const sortOrder = computeOrderWithin(cell.epics, target?.beforeId ?? null, id);
+      if (epic.sortOrder === sortOrder) return;
+      await applyEpicPatch(id, { sortOrder });
+      return;
+    }
+
+    // Across lanes → move the Epic; the server cascades to its members.
+    const members = membersOf(id, tickets);
+    if (cell.lane === 'in_progress') {
+      const plan = planEpicQueue(members);
+      await applyEpicPatch(id, { status: 'queue' });
+      // Not a blocker — the loop simply never picks these up, so say so rather than leaving a
+      // queued card that looks fine and silently never runs.
+      if (plan.notReady.length > 0) {
+        const names = plan.notReady.map((m) => m.displayId ?? m.title).join(', ');
+        showToast(
+          `Queued, but ${plan.notReady.length} member${plan.notReady.length === 1 ? '' : 's'} ` +
+            `won't dispatch until shaped or bypassed: ${names}`,
+        );
+      }
+      return;
+    }
+
+    // → Backlog. Ask only if the cascade would leave members behind.
+    const plan = planEpicRollback(members);
+    if (rollbackNeedsConfirm(plan)) {
+      rollbackPlan = plan;
+      rollbackTarget = epic;
+      return;
+    }
+    await applyEpicPatch(id, { status: 'backlog' });
+  }
+
+  async function applyEpicPatch(id: number, patch: UpdateTicketInput) {
     error = null;
     try {
-      await api.updateTicket(id, { sortOrder });
+      await api.updateTicket(id, patch);
+      await load(true);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /** Complete a confirmed rollback. `pullBackParked` also returns the parked members to Backlog —
+   *  the server's cascade deliberately leaves those alone, since only a human knows whether the
+   *  Epic is being shelved or merely nudged. A running member is never touched (D-046). */
+  async function confirmRollback(pullBackParked: boolean) {
+    const epic = rollbackTarget;
+    const parked = rollbackPlan.parked;
+    rollbackTarget = null;
+    if (!epic) return;
+    error = null;
+    try {
+      await api.updateTicket(epic.id, { status: 'backlog' });
+      if (pullBackParked) {
+        for (const m of parked) {
+          await api.updateTicket(m.id, { status: 'backlog' });
+        }
+      }
       await load(true);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -685,8 +780,9 @@
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
-  <!-- Two-band board (D-054): a derived, non-draggable Epic band on top; the normal Ticket band
-       below. Only the Ticket band is a drop target, so an Epic can never enter Robot's Queue. -->
+  <!-- Two-band board (D-054, amended by D-TMP-PD383a): the Epic band on top, the Ticket band below.
+       Both are drop targets now — dragging the Epic between Backlog and Queue is what dispatches
+       and recalls its members. The Epic band's terminal lanes stay derived and refuse a drop. -->
   <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}; --epic-area-height: {epicAreaHeight}px">
     <!-- Row 1: lane headers -->
     {#each visibleColumns as col, i (col.status)}
@@ -759,6 +855,7 @@
             <TicketCard
               {ticket}
               {project}
+              epic={ticket.epicId !== null ? ticketsById.get(ticket.epicId) : undefined}
               dragging={draggingId === ticket.id}
               dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               isLocked={isStatusLocked(ticket)}
@@ -820,6 +917,13 @@
   label={queueConfirm?.label ?? null}
   onCancel={cancelQueueConfirm}
   onConfirm={acceptQueueConfirm}
+/>
+
+<EpicRollbackModal
+  epic={rollbackTarget}
+  plan={rollbackPlan}
+  onCancel={() => (rollbackTarget = null)}
+  onRollback={confirmRollback}
 />
 
 <style lang="scss" src="./+page.scss"></style>

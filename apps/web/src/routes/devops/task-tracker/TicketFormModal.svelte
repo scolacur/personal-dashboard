@@ -41,6 +41,18 @@
     onSubmit: () => void;
   } = $props();
 
+  // D-TMP-PD383a: a member's priority comes from its Epic. An unclassified Epic (`null`) leaves the
+  // member's own value alone — matching the server — so there is still something to set in that case.
+  const parentEpic = $derived(
+    form.isEpic || form.epicId === null
+      ? undefined
+      : epicOptions.find((e) => e.id === form.epicId),
+  );
+  const inheritsPriority = $derived(parentEpic !== undefined && parentEpic.priority !== null);
+  const priorityDisplay = $derived(
+    parentEpic?.priority ? `${parentEpic.priority} · ${PRIORITY_LABELS[parentEpic.priority]}` : '— None',
+  );
+
   // Caught here as well as server-side so Save is blocked with an explanation, rather than the
   // write failing after the fact — the bound is a rule worth learning, not an error to hit.
   const maxTurnsInvalid = $derived.by(() => {
@@ -105,12 +117,25 @@
     </label>
     <label>
       <span>Priority</span>
-      <select bind:value={form.priority}>
-        <option value={null}>— None</option>
-        {#each TICKET_PRIORITIES as p (p)}
-          <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-        {/each}
-      </select>
+      {#if inheritsPriority}
+        <!-- D-TMP-PD383a: priority is an Epic property. The server overrides whatever a member's
+             patch carries, so an editable control here would silently not take. -->
+        <input type="text" value={priorityDisplay} readonly />
+        <small class="field-note">
+          Inherited from {parentEpic?.displayId ?? 'its Epic'} — set the priority there and every
+          member follows.
+        </small>
+      {:else}
+        <select bind:value={form.priority}>
+          <option value={null}>— None</option>
+          {#each TICKET_PRIORITIES as p (p)}
+            <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+          {/each}
+        </select>
+        {#if form.isEpic}
+          <small class="field-note">Cascades to every member of this Epic.</small>
+        {/if}
+      {/if}
     </label>
     <label>
       <span>Assignee</span>
