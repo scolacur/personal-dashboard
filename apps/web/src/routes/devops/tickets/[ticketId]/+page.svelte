@@ -34,6 +34,8 @@
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
+  import SpinOffModal from '../../task-tracker/SpinOffModal.svelte';
+  import { planSpinOff } from '../../epic-spinoff';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
   import { ticketMatchesQuery } from '../../filter-logic';
 
@@ -133,6 +135,38 @@
       : undefined,
   );
   const priorityInherited = $derived(parentEpic !== undefined && parentEpic.priority !== null);
+
+  // D-TMP-PD383a slice C: give this Ticket its own Epic, inheriting the source Epic's priority and
+  // lane. Same action as the board card's kebab — the detail page is where you land after opening
+  // a ticket to decide exactly this.
+  let spinOffOpen = $state(false);
+  let spinOffBusy = $state(false);
+  const spinOffPlan = $derived(
+    ticket ? planSpinOff(ticket, parentEpic) : { title: '', priority: null, status: 'backlog' as const, inheritedFrom: 'ticket' as const },
+  );
+
+  async function confirmSpinOff(title: string) {
+    if (!ticket || ticket.projectId === null || !ticketId) return;
+    error = null;
+    spinOffBusy = true;
+    try {
+      const epic = await api.createTicket({
+        title: title.trim(),
+        projectId: ticket.projectId,
+        priority: spinOffPlan.priority,
+        status: spinOffPlan.status,
+        isEpic: true,
+        body: `*Spun off from ${ticket.displayId ?? ticket.title}.*`,
+      });
+      await api.updateTicket(ticket.id, { epicId: epic.id });
+      spinOffOpen = false;
+      await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      spinOffBusy = false;
+    }
+  }
   async function updateField(patch: UpdateTicketInput) {
     if (!ticket || !ticketId) return;
     error = null;
@@ -473,14 +507,18 @@
         {/if}
       </Collapsible>
 
-      {#if !ticket.isEpic && ticket.epicId}
-        {@const parent = allTickets.find((t) => t.id === ticket!.epicId)}
-        {#if parent}
-          <p class="belongs-to-epic">
+      {#if !ticket.isEpic}
+        <p class="belongs-to-epic">
+          {#if parentEpic}
             Part of epic
-            <a href="/devops/tickets/{parent.displayId}">{parent.displayId} — {parent.title}</a>
-          </p>
-        {/if}
+            <a href="/devops/tickets/{parentEpic.displayId}">{parentEpic.displayId} — {parentEpic.title}</a>
+          {:else}
+            <span class="no-epic">Not part of any epic.</span>
+          {/if}
+          <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
+            Spin off into new Epic…
+          </button>
+        </p>
       {/if}
 
       {#if ticket.isEpic}
@@ -754,7 +792,16 @@
 
     <GlossaryModal open={glossaryOpen} tab="refinement" onClose={() => (glossaryOpen = false)} />
 
-    <RelationPicker
+    <SpinOffModal
+  ticket={spinOffOpen ? ticket : null}
+  plan={spinOffPlan}
+  sourceEpic={parentEpic}
+  busy={spinOffBusy}
+  onCancel={() => (spinOffOpen = false)}
+  onConfirm={confirmSpinOff}
+/>
+
+<RelationPicker
       open={pickerOpen}
       action={pickerAction}
       source={ticket}

@@ -10,7 +10,8 @@
   } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import Button from '$lib/Button.svelte';
-  import type { TicketFormState } from './ticket-form';
+  import EpicField from './EpicField.svelte';
+  import { maxTurnsInvalid, ticketFormError, type TicketFormState } from './ticket-form';
 
   /** The add / edit ticket modal. `form` is the page's `$state` object, mutated in place. */
   let {
@@ -48,19 +49,22 @@
       ? undefined
       : epicOptions.find((e) => e.id === form.epicId),
   );
-  const inheritsPriority = $derived(parentEpic !== undefined && parentEpic.priority !== null);
+  // A drafted Epic drives the read-out too, so the priority field doesn't flip back to an editable
+  // control the moment you choose "New Epic" — the value is decided, just not saved yet.
+  const inheritedPriority = $derived(
+    form.newEpic !== null ? form.newEpic.priority : (parentEpic?.priority ?? null),
+  );
+  const inheritsPriority = $derived(
+    !form.isEpic && (form.newEpic !== null || parentEpic !== undefined) && inheritedPriority !== null,
+  );
   const priorityDisplay = $derived(
-    parentEpic?.priority ? `${parentEpic.priority} · ${PRIORITY_LABELS[parentEpic.priority]}` : '— None',
+    inheritedPriority ? `${inheritedPriority} · ${PRIORITY_LABELS[inheritedPriority]}` : '— None',
+  );
+  const priorityFrom = $derived(
+    form.newEpic !== null ? 'the new Epic' : (parentEpic?.displayId ?? 'its Epic'),
   );
 
-  // Caught here as well as server-side so Save is blocked with an explanation, rather than the
-  // write failing after the fact — the bound is a rule worth learning, not an error to hit.
-  const maxTurnsInvalid = $derived.by(() => {
-    const raw = form.maxTurns.trim();
-    if (raw === '') return false;
-    const n = Number(raw);
-    return !Number.isInteger(n) || n < 1 || n > ROBOT_MAX_TURNS_LIMIT;
-  });
+  const saveError = $derived(ticketFormError(form, { requireEpic: !editing }));
 </script>
 
 <Modal {open} title={editing ? 'Edit Ticket' : 'New Ticket'} {onClose}>
@@ -70,21 +74,7 @@
       This is an Epic (an umbrella for other tickets)
     </label>
     {#if !form.isEpic}
-      <label>
-        <span>Belongs to epic</span>
-        <select
-          value={form.epicId === null ? '' : String(form.epicId)}
-          onchange={(e) => {
-            const v = e.currentTarget.value;
-            form.epicId = v === '' ? null : Number(v);
-          }}
-        >
-          <option value="">— None</option>
-          {#each epicOptions as ep (ep.id)}
-            <option value={String(ep.id)}>{ep.displayId} — {ep.title}</option>
-          {/each}
-        </select>
-      </label>
+      <EpicField {form} {epicOptions} required={!editing} />
     {/if}
     <label>
       <span>Project</span>
@@ -122,8 +112,7 @@
              patch carries, so an editable control here would silently not take. -->
         <input type="text" value={priorityDisplay} readonly />
         <small class="field-note">
-          Inherited from {parentEpic?.displayId ?? 'its Epic'} — set the priority there and every
-          member follows.
+          Inherited from {priorityFrom} — set the priority there and every member follows.
         </small>
       {:else}
         <select bind:value={form.priority}>
@@ -159,7 +148,7 @@
         bind:value={form.maxTurns}
       />
       <small class="field-note">
-        {#if maxTurnsInvalid}
+        {#if maxTurnsInvalid(form.maxTurns)}
           Must be a whole number between 1 and {ROBOT_MAX_TURNS_LIMIT}.
         {:else}
           Leave blank for the default. Raise it only for work that cannot be split further.
@@ -167,12 +156,11 @@
       </small>
     </label>
     <div class="form-actions">
+      {#if saveError}
+        <span class="save-blocker">{saveError}</span>
+      {/if}
       <Button variant="ghost" onclick={onClose}>Cancel</Button>
-      <Button
-        variant="primary"
-        onclick={onSubmit}
-        disabled={!form.title.trim() || form.projectId === null || maxTurnsInvalid}
-      >
+      <Button variant="primary" onclick={onSubmit} disabled={saveError !== null}>
         {editing ? 'Save' : 'Add'}
       </Button>
     </div>

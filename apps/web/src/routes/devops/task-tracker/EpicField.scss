@@ -1,0 +1,177 @@
+/* The create/edit modal's Epic picker (D-TMP-PD383a slice C). */
+.epic-field {
+  margin-bottom: var(--space-md);
+}
+
+.epic-field-label {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  margin-bottom: var(--space-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+
+  abbr {
+    color: var(--accent);
+    text-decoration: none;
+    cursor: help;
+  }
+}
+
+// A text button that reads as a link — "change" / "pick an existing one instead".
+.linkish {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.epic-selected {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.epic-selected-id {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.epic-selected-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epic-selected-prio {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+.epic-list {
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.epic-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--surface-2);
+    outline: none;
+  }
+}
+
+.epic-row-id {
+  flex: 0 0 auto;
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.epic-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epic-row-prio {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+// Pinned last so it is always reachable, and tinted so it doesn't read as another Epic.
+.epic-row-new {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+}
+
+.epic-empty {
+  padding: var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.new-epic {
+  padding: var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+
+  input[type='text'] {
+    width: 100%;
+    margin-bottom: var(--space-sm);
+  }
+}
+
+.new-epic-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.new-epic-tag {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.new-epic-priority {
+  display: block;
+
+  span {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    margin-bottom: var(--space-xs);
+  }
+}
+
+.field-note {
+  display: block;
+  margin-top: var(--space-xs);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}

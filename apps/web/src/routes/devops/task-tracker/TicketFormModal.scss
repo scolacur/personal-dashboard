@@ -60,8 +60,18 @@
 
 .form-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--space-sm);
+}
+
+// Why Save is disabled, next to the disabled button — a greyed-out button with no reason is the
+// worst version of a required field.
+.save-blocker {
+  margin-right: auto;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 /* Shrink the details textarea so the modal form fits on small screens */
