@@ -55,11 +55,11 @@ export interface NumberingConfig {
 
 export function loadNumberingConfig(env: NodeJS.ProcessEnv): NumberingConfig {
   return {
-    enabled: env.NUMBERING_CYCLE_ENABLED === '1' || env.NUMBERING_CYCLE_ENABLED === 'true',
-    intervalMs: Number(env.NUMBERING_CYCLE_INTERVAL_MS ?? 24 * 60 * 60_000),
-    drainPollMs: Number(env.NUMBERING_DRAIN_POLL_MS ?? 60_000),
-    ciTimeoutMs: Number(env.NUMBERING_CI_TIMEOUT_MS ?? 20 * 60_000),
-    ciPollMs: Number(env.NUMBERING_CI_POLL_MS ?? 30_000),
+    enabled: env.DECISION_CONSOLIDATION_JOB_ENABLED === '1' || env.DECISION_CONSOLIDATION_JOB_ENABLED === 'true',
+    intervalMs: Number(env.DECISION_CONSOLIDATION_INTERVAL_MS ?? 24 * 60 * 60_000),
+    drainPollMs: Number(env.DECISION_CONSOLIDATION_DRAIN_POLL_MS ?? 60_000),
+    ciTimeoutMs: Number(env.DECISION_CONSOLIDATION_CI_TIMEOUT_MS ?? 20 * 60_000),
+    ciPollMs: Number(env.DECISION_CONSOLIDATION_CI_POLL_MS ?? 30_000),
   };
 }
 

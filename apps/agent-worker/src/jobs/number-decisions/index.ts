@@ -72,13 +72,13 @@ export function defaultRunner(config: AgentWorkerConfig): CommandRunner {
 }
 
 /**
- * Start the numbering cycle. Inert unless `NUMBERING_CYCLE_ENABLED=1`, matching how the Robot loop
+ * Start the numbering cycle. Inert unless `DECISION_CONSOLIDATION_JOB_ENABLED=1`, matching how the Robot loop
  * and the Evaluator ship (D-076): a job that rewrites the decision log repo-wide and admin-merges
  * its own PR does not turn itself on by arriving in an image.
  */
 export function startNumberingCycleJob(db: Database.Database, config: AgentWorkerConfig): void {
   if (!config.numbering.enabled) {
-    logger.info('numbering cycle: disabled (NUMBERING_CYCLE_ENABLED is not set) — not scheduling');
+    logger.info('numbering cycle: disabled (DECISION_CONSOLIDATION_JOB_ENABLED is not set) — not scheduling');
     return;
   }
 
