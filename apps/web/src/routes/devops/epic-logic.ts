@@ -14,9 +14,13 @@ export interface EpicBandCell {
   epics: AgentTicket[];
 }
 
+// PD-536: the `in_progress` cell is drawn directly over the `queue` column, so it carries that
+// column's name. It used to read "In Progress", which both disagreed with the header above it and
+// collided with the `working` pill's own "in progress". The lane KEY stays `in_progress` — it is a
+// derived-lane identifier, not a label.
 const LANE_LABEL: Record<EpicDerivedLane, string> = {
   backlog: 'Backlog',
-  in_progress: 'In Progress',
+  in_progress: 'Queue',
   completed: 'Completed',
   closed: 'Closed',
 };

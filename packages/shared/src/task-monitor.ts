@@ -115,8 +115,12 @@ export const PRIORITY_LABELS: Record<TicketPriority, string> = {
 };
 
 /** Short labels for each agent state (displayed in pills and the status-legend modal). */
+// Display names for the pill (and the glossary). PD-536: `queued` reads as "waiting", not
+// "queued" — the card already sits in a lane called Queue, so "queued" restated the column while
+// the thing worth knowing is that the loop has not started it yet. That freed "in progress" to
+// mean one thing (a live session) rather than also naming the Epic band's lane.
 export const AGENT_STATE_LABELS: Record<AgentState, string> = {
-  queued: 'queued',
+  queued: 'waiting',
   working: 'in progress',
   'in-review': 'in review',
   stuck: 'stuck',
@@ -204,7 +208,9 @@ export function showsTurnProgress(
 // (PD-262). See also #145 (Karpathy memory model).
 /** One-sentence descriptions for each agent state, shown in the status-legend modal. */
 export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
-  queued: 'Picked up by the Robot loop and waiting to start.',
+  // Not "picked up by the loop" — it is precisely the state of NOT having been picked up yet
+  // (`robotQueueCandidates` selects on `agent_state IS NULL OR 'queued'`).
+  queued: "In the Queue and eligible for dispatch — the loop hasn't started it yet.",
   working: 'A Robot run is actively working the ticket right now.',
   'in-review': 'The run succeeded and a PR is open, awaiting human review.',
   stuck:
