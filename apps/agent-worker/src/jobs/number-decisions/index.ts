@@ -15,9 +15,30 @@ const execFileAsync = promisify(execFile);
  * says `number-decisions` rather than anything agent-flavoured for that reason.
  */
 
-/** Robot runs currently in flight — what the drain waits on. */
+/**
+ * Robot runs currently in flight — what the drain waits on.
+ *
+ * A run counts only if its TICKET is also still `working`, which is the same definition
+ * `orphanedRunningRuns` uses to decide what a live run is. `status = 'running'` alone is not enough:
+ * the runs table accumulates rows that never got a terminal status, and nothing ever clears them.
+ *
+ * Found in production, not in a test: on 2026-08-22 the NAS DB held one `running` row from
+ * 2026-07-16 whose ticket (PD-380) had been `completed` for five weeks with `agent_state` NULL. The
+ * stall reconciler cannot close it — it only looks at runs whose ticket is `working` — so the row is
+ * permanent. Counting it would have made the drain never reach zero: every cycle would burn the full
+ * ~2h timeout, skip, and leave decisions provisional forever. The unit tests inject this count, so
+ * no amount of testing around the cycle would have shown it.
+ */
 export function inFlightRunCount(db: Database.Database): number {
-  const row = db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE status = 'running'").get() as { n: number };
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM agent_runs r
+         JOIN agent_tickets t ON t.id = r.ticket_id
+        WHERE r.status = 'running'
+          AND t.agent_state = 'working'`,
+    )
+    .get() as { n: number };
   return row.n;
 }
 
