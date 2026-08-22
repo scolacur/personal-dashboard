@@ -48,6 +48,18 @@ export interface CycleConfig {
   /** How long to wait for CI on the cycle's own PR before giving up and leaving it open. */
   ciTimeoutMs: number;
   ciPollMs: number;
+  /**
+   * Commit identity. Passed per-command as `git -c user.name=…`, never written into the checkout's
+   * config: the grounding checkout is shared infrastructure this job only borrows.
+   *
+   * Not optional, and not defaulted. The container runs as root with no git identity, so an absent
+   * value is not "use a sensible default", it is a commit that fails after the rename has already
+   * been applied — which is exactly what happened on the first live run (2026-08-22).
+   */
+  botName: string;
+  botEmail: string;
+  /** The branch the checkout must be returned to. */
+  baseBranch: string;
 }
 
 export type CycleOutcome =
@@ -85,11 +97,53 @@ export async function inMergeOrder(
       }
     }),
   );
+  // The grounding checkout is a `--depth 1` clone, so in production `git log` usually reaches none
+  // of these commits and every file is undatable. That is not a failure — the id tie-break below
+  // still gives a deterministic order — but it does mean the result is alphabetical rather than
+  // chronological, so say so out loud rather than quietly claiming merge order.
+  if (dated.every((x) => x.ts === Number.MAX_SAFE_INTEGER) && dated.length > 1) {
+    logger.warn(
+      { count: dated.length },
+      'numbering: no inbox file could be dated from git history (shallow clone?) — falling back to id order',
+    );
+  }
   // Tie-break on id so two decisions in one commit — which happens, a grill can settle two things —
   // get a stable order rather than whatever Promise.all happened to produce.
   return dated.sort((a, b) => a.ts - b.ts || a.d.id.localeCompare(b.d.id)).map((x) => x.d);
 }
 
+
+/**
+ * Put the grounding checkout back the way we found it: clean, on the base branch, with the cycle's
+ * branch gone.
+ *
+ * **This is not tidiness, it is the difference between one failed cycle and a wedged worker.** The
+ * checkout is shared infrastructure — `pullLatest` refreshes it every few minutes and every agent
+ * job grounds against it. A failure part-way through leaves it dirty AND on a `numbering/` branch,
+ * so the next `git pull` fails and every later run reads a tree that is neither `main` nor anything
+ * anyone intended. That is the PD-340 failure mode (a dirty WIP tree poisoning the next run),
+ * arrived at from a different direction.
+ *
+ * Observed for real on the first live run (2026-08-22): the commit failed for want of a git
+ * identity, and the checkout was left with 36 staged changes on `numbering/2026-08-22-d-080`.
+ *
+ * Best-effort by design — every step swallows its own error. Restoration runs on the failure path,
+ * and a throw here would replace the real error with a confusing one.
+ */
+async function restoreCheckout(config: CycleConfig, deps: CycleDeps, branch: string | null): Promise<void> {
+  const cwd = config.repoRoot;
+  const quietly = async (args: string[]) => {
+    try {
+      await deps.run('git', args, { cwd });
+    } catch (err) {
+      logger.warn({ err, args }, 'numbering: checkout restore step failed');
+    }
+  };
+  await quietly(['reset', '--hard']);
+  await quietly(['clean', '-fd']);
+  await quietly(['checkout', config.baseBranch]);
+  if (branch !== null) await quietly(['branch', '-D', branch]);
+}
 
 /** `verify`'s conclusion on the cycle's own PR: `pass`, `fail`, or `pending`. */
 async function ciState(deps: CycleDeps, config: CycleConfig, prNumber: number): Promise<'pass' | 'fail' | 'pending'> {
@@ -140,7 +194,10 @@ export async function runNumberingCycle(
     }
   }
 
-  {
+  // From here on the tree gets mutated, so every exit path must restore it. `branch` is tracked so
+  // the restore can delete it — it is null until the checkout actually succeeds.
+  let branch: string | null = null;
+  try {
     const ordered = await inMergeOrder(provisional, deps, config.repoRoot);
     const assignments = assignNumbers(loadDecisions(config.repoRoot), ordered);
     const result = applyAssignments(config.repoRoot, assignments);
@@ -165,7 +222,7 @@ export async function runNumberingCycle(
       );
     }
 
-    const branch = `numbering/${new Date(deps.now()).toISOString().slice(0, 10)}-${assignments[0].id.toLowerCase()}`;
+    const branchName = `numbering/${new Date(deps.now()).toISOString().slice(0, 10)}-${assignments[0].id.toLowerCase()}`;
     const title = `chore(decisions): number ${assignments.map((a) => a.id).join(', ')}`;
     const body = [
       'Mechanical renumbering by the decision-numbering cycle (PD-498, D-078). No LLM involved.',
@@ -177,13 +234,21 @@ export async function runNumberingCycle(
     ].join('\n');
 
     const cwd = config.repoRoot;
-    await deps.run('git', ['checkout', '-b', branch], { cwd });
+    await deps.run('git', ['checkout', '-b', branchName], { cwd });
+    branch = branchName;
     await deps.run('git', ['add', '--', 'DECISIONS', DECISIONS_INDEX, ...result.rewritten], { cwd });
-    await deps.run('git', ['commit', '-m', title], { cwd });
-    await deps.run('git', ['push', '-u', 'origin', branch], { cwd });
+    // Identity passed per-command rather than written into the checkout's config: this job is a
+    // borrower of shared infrastructure and should leave no trace in it. The container runs as root
+    // with no identity of its own, so without these the commit fails — after the rename has landed.
+    await deps.run(
+      'git',
+      ['-c', `user.name=${config.botName}`, '-c', `user.email=${config.botEmail}`, 'commit', '-m', title],
+      { cwd },
+    );
+    await deps.run('git', ['push', '-u', 'origin', branchName], { cwd });
     const { stdout: prOut } = await deps.run(
       'gh',
-      ['pr', 'create', '--repo', config.githubRepo, '--title', title, '--body', body, '--head', branch],
+      ['pr', 'create', '--repo', config.githubRepo, '--title', title, '--body', body, '--head', branchName],
       { cwd },
     );
     const prNumber = Number(/\/pull\/(\d+)/.exec(prOut.trim())?.[1]);
@@ -222,5 +287,10 @@ export async function runNumberingCycle(
     await deps.run('gh', ['pr', 'merge', String(prNumber), '--repo', config.githubRepo, '--squash', '--admin'], { cwd });
     logger.info({ prNumber, assigned: assignments.map((a) => a.id) }, 'numbering: cycle complete');
     return { status: 'merged', prNumber, assignments };
+  } finally {
+    // Always restore the shared checkout. On success the work is merged and the local branch is
+    // spent; on any other path the tree is half-rewritten and MUST NOT be left for the next job to
+    // ground against. Either way the checkout goes back to a clean base branch.
+    await restoreCheckout(config, deps, branch);
   }
 }

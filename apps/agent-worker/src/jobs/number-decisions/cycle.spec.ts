@@ -10,6 +10,9 @@ const CONFIG_BASE = {
   githubRepo: 'scolacur/personal-dashboard',
   ciTimeoutMs: 60_000,
   ciPollMs: 1_000,
+  botName: 'sortie-bot-55',
+  botEmail: 'bot@example.invalid',
+  baseBranch: 'main',
 };
 
 function makeDb(): Database.Database {
@@ -220,5 +223,105 @@ describe('runNumberingCycle', () => {
     expect(readFileSync(path.join(root, 'PROJECT.md'), 'utf8')).toContain('D-TMP-PD999z');
     const titles = (db.prepare('SELECT title FROM agent_notifications').all() as { title: string }[]).map((r) => r.title);
     expect(titles.some((t) => t.includes('no decision behind them'))).toBe(true);
+  });
+});
+
+describe('the shared checkout', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  const config = (repoRoot: string, over: Partial<CycleConfig> = {}): CycleConfig => ({
+    ...CONFIG_BASE,
+    repoRoot,
+    ...over,
+  });
+
+  it('commits with an explicit identity — the container has none of its own', async () => {
+    // The first live run (2026-08-22) failed exactly here: `git commit` with no user.email, AFTER
+    // the renames had been applied. Identity is passed per-command so the shared checkout's own
+    // config is never written to.
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    await runNumberingCycle(db, config(root), h.deps);
+
+    const commit = h.calls.find((c) => c.cmd === 'git' && c.args.includes('commit'));
+    expect(commit?.args.slice(0, 4)).toEqual([
+      '-c',
+      'user.name=sortie-bot-55',
+      '-c',
+      'user.email=bot@example.invalid',
+    ]);
+    // Never `git config` — that would leave a trace in infrastructure this job only borrows.
+    expect(h.calls.some((c) => c.cmd === 'git' && c.args[0] === 'config')).toBe(false);
+  });
+
+  it('restores the checkout after a successful cycle', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    await runNumberingCycle(db, config(root), h.deps);
+    const tail = h.calls.filter((c) => c.cmd === 'git').map((c) => c.args.join(' '));
+    expect(tail.some((a) => a.startsWith('reset --hard'))).toBe(true);
+    expect(tail.some((a) => a.startsWith('clean -fd'))).toBe(true);
+    expect(tail.some((a) => a === 'checkout main')).toBe(true);
+  });
+
+  it('restores the checkout when the cycle fails part-way through', async () => {
+    // The real damage from the live failure was not the failed commit — it was 36 staged changes
+    // left on a `numbering/` branch, which poisons `pullLatest` and every later job that grounds
+    // against this checkout (the PD-340 failure mode).
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    const boom: CycleDeps = {
+      ...h.deps,
+      run: async (cmd, args) => {
+        if (cmd === 'git' && args.includes('commit')) throw new Error('Author identity unknown');
+        return h.deps.run(cmd, args);
+      },
+    };
+
+    await expect(runNumberingCycle(db, config(root), boom)).rejects.toThrow('Author identity unknown');
+
+    const gitCalls = h.calls.filter((c) => c.cmd === 'git').map((c) => c.args.join(' '));
+    expect(gitCalls.some((a) => a.startsWith('reset --hard'))).toBe(true);
+    expect(gitCalls.some((a) => a.startsWith('clean -fd'))).toBe(true);
+    expect(gitCalls.some((a) => a === 'checkout main')).toBe(true);
+    expect(gitCalls.some((a) => a.startsWith('branch -D numbering/'))).toBe(true);
+  });
+
+  it('does not try to delete a branch it never created', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    const boom: CycleDeps = {
+      ...h.deps,
+      run: async (cmd, args) => {
+        if (cmd === 'git' && args[0] === 'checkout') throw new Error('cannot branch');
+        return h.deps.run(cmd, args);
+      },
+    };
+    await expect(runNumberingCycle(db, config(root), boom)).rejects.toThrow('cannot branch');
+    expect(h.calls.some((c) => c.cmd === 'git' && c.args[0] === 'branch')).toBe(false);
+  });
+
+  it('a restore step that itself fails does not mask the real error', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    const boom: CycleDeps = {
+      ...h.deps,
+      run: async (cmd, args) => {
+        if (cmd === 'git' && args.includes('commit')) throw new Error('the real failure');
+        if (cmd === 'git' && args[0] === 'clean') throw new Error('restore also broke');
+        return h.deps.run(cmd, args);
+      },
+    };
+    await expect(runNumberingCycle(db, config(root), boom)).rejects.toThrow('the real failure');
+  });
+
+  it('returns to a configured non-default base branch', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    await runNumberingCycle(db, config(root, { baseBranch: 'trunk' }), h.deps);
+    expect(h.calls.some((c) => c.cmd === 'git' && c.args.join(' ') === 'checkout trunk')).toBe(true);
   });
 });

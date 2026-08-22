@@ -50,6 +50,8 @@ export interface NumberingConfig {
   /** How long to wait for CI on the cycle's own PR before leaving it open for a human. */
   ciTimeoutMs: number;
   ciPollMs: number;
+  /** The branch the grounding checkout must be returned to after a cycle. */
+  baseBranch: string;
 }
 
 export function loadNumberingConfig(env: NodeJS.ProcessEnv): NumberingConfig {
@@ -58,6 +60,7 @@ export function loadNumberingConfig(env: NodeJS.ProcessEnv): NumberingConfig {
     pollMs: Number(env.DECISION_CONSOLIDATION_POLL_MS ?? 60_000),
     ciTimeoutMs: Number(env.DECISION_CONSOLIDATION_CI_TIMEOUT_MS ?? 20 * 60_000),
     ciPollMs: Number(env.DECISION_CONSOLIDATION_CI_POLL_MS ?? 30_000),
+    baseBranch: env.DECISION_CONSOLIDATION_BASE_BRANCH ?? 'main',
   };
 }
 
