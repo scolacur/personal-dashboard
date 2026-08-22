@@ -7,7 +7,8 @@ import { CronRegistry } from './cron';
 import { registerBackupJob } from './backup';
 import { bootstrapJobRunsSchema } from './lib/job-runs';
 import { registerJobRunRoutes } from './lib/job-runs-routes';
-import { bootstrapMaintenanceHoldsSchema } from './lib/maintenance-holds';
+import { HOLD_WINDOW_MS } from '@dashboard/shared';
+import { bootstrapMaintenanceHoldsSchema, closeStaleHolds } from './lib/maintenance-holds';
 import { bootstrapMaintenanceJobRequestsSchema } from './lib/maintenance-job-requests';
 import { registerMaintenanceRoutes } from './lib/maintenance-routes';
 import { bootstrapShellLayoutSchema } from './lib/shell-layout';
@@ -46,6 +47,9 @@ const app = Fastify({
 bootstrapJobRunsSchema(db);
 bootstrapMaintenanceHoldsSchema(db);
 bootstrapMaintenanceJobRequestsSchema(db);
+// A hold left `active` by a worker that died is not holding anything — the worker's own hold state
+// lapses on its own deadline — but it would keep the Dev Ops nav claiming one is open forever.
+closeStaleHolds(db, HOLD_WINDOW_MS);
 
 // Shell page membership (PD-334, D-073). Bootstrapped alongside the job-run store: the shell is
 // not a widget, and its one-time seed must land before anything serves a page.

@@ -87,6 +87,11 @@ export function consolidationJobRunner(config: AgentWorkerConfig): MaintenanceJo
     githubRepo: config.githubRepo,
     ciTimeoutMs: config.numbering.ciTimeoutMs,
     ciPollMs: config.numbering.ciPollMs,
+    // The Robot's bot identity, reused: this job's commits are the same automation's, and giving it
+    // a second identity would mean a second thing to keep in step with branch protection.
+    botName: config.robot.botName,
+    botEmail: config.robot.botEmail,
+    baseBranch: config.numbering.baseBranch,
   };
 
   return async (db) => {
