@@ -32,7 +32,6 @@
     onRefine,
     onRelationAction,
     onAddToEpic,
-    onRemoveFromEpic,
     onSpinOff,
     onOpenStatusLegend,
     onUpdate,
@@ -54,7 +53,6 @@
     onRefine: () => void;
     onRelationAction: (action: RelationAction) => void;
     onAddToEpic: () => void;
-    onRemoveFromEpic: () => void;
     /** D-TMP-PD383a slice C: give this ticket its own Epic, inheriting priority + lane. */
     onSpinOff: () => void;
     onOpenStatusLegend: (state: AgentState) => void;
@@ -286,9 +284,6 @@
             <div class="kebab-divider"></div>
             <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onAddToEpic)}>{ticket.epicId ? 'Move to Epic…' : 'Add to Epic…'}</button>
             <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onSpinOff)}>Spin off into new Epic…</button>
-            {#if ticket.epicId}
-              <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onRemoveFromEpic)}>Remove from Epic</button>
-            {/if}
           {/if}
         </div>
       {/if}
