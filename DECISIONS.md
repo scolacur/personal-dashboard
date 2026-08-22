@@ -3,11 +3,21 @@
 Captures the _why_ behind key choices made during planning. Useful when revisiting a decision later — if a choice no longer fits, the original reasoning makes it easier to see what changed and whether to revisit.
 
 **This file is generated — do not edit it by hand.** Each decision is its own file in `DECISIONS/`;
-this is the index over them. To add one, write a new `DECISIONS/D-NNN-slug.md` and run
-`npm run decisions:index`. Writing a file instead of appending here is what lets two agents log
-two decisions without touching the same lines (D-070).
+this is the index over them. To add one, write `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` — never a
+`D-NNN` file by hand — and run `npm run decisions:index`. Writing a file instead of appending here
+is what lets two agents log two decisions without touching the same lines (D-070), and leaving the
+number to the cycle is what stops them claiming the same one (D-078).
 
 Newest first.
+
+---
+
+## Awaiting a number
+
+Merged, settled, and binding — cite them as they are. Only the *identifier* is provisional:
+the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-078).
+
+- **[D-TMP-PD383a](DECISIONS/incoming/D-TMP-PD383a.md)** — The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
 
 ---
 

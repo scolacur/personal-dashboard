@@ -44,12 +44,19 @@ here.
 
 ### Step 3 — Log any decision this session made
 
-A durable architectural decision goes in its own file, **`DECISIONS/D-NNN-slug.md`**, first line
-`# D-NNN: Title` (D-070). Take the next free number — `npm run decisions:index` prints it — then run
-that script to regenerate `DECISIONS.md`. Never hand-edit `DECISIONS.md`; it is generated.
+A durable architectural decision goes in its own file in the **decision inbox** —
+**`DECISIONS/incoming/D-TMP-<TICKET><letter>.md`**, first line `# D-TMP-<TICKET><letter>: Title`
+(D-070, D-078). For a session on PD-513 that is `DECISIONS/incoming/D-TMP-PD513a.md`; use `b`, `c`, …
+for a second decision from the same ticket. Then run `npm run decisions:index` to regenerate
+`DECISIONS.md`. Never hand-edit `DECISIONS.md`; it is generated.
 
-Then the day-file entry for it is SHORT and links to the `D-NNN` (per the global wrap-up Step 3) —
-the decision file is canonical, MEMORY does not re-narrate it.
+**Do not pick a `D-NNN`, even when you are certain no other session is running.** That certainty is
+the hand-check D-078 removes, and it has been wrong here twice. A daily numbering cycle assigns the
+number in merge order and rewrites your `D-TMP-` citations.
+
+Then the day-file entry for it is SHORT and links to the decision by its **provisional** id (per the
+global wrap-up Step 3) — the decision file is canonical, MEMORY does not re-narrate it. The cycle
+rewrites that citation along with the others.
 
 ### Step 4 — Project-specific steps
 

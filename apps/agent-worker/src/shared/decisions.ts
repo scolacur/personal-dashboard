@@ -26,6 +26,16 @@ import path from 'node:path';
  * asserted by a test that runs over the real `DECISIONS/` on every CI run. The merge itself is
  * allowed to succeed; the merge *result* is what fails. That is the only check that sees both
  * branches at once.
+ *
+ * ## Nobody claims a number at authoring time any more (D-078)
+ *
+ * That guard is detection, not prevention, and `strict: false` branch protection lets two PRs go
+ * green against merge bases that exclude each other and both land. So authors no longer pick a
+ * number at all: a decision is written into {@link INCOMING_DIR} under a **provisional id**
+ * (`D-TMP-PD513a`) and a later numbering cycle assigns its `D-NNN` in merge order. Two provisional
+ * decisions cannot collide, because neither carries a number.
+ *
+ * The duplicate-id throw below stays as belt-and-braces over the numbered log.
  */
 export interface Decision {
   /** Canonical citation form, zero-padded: `D-046`. This is what the other ~1,000 references say. */
@@ -40,8 +50,37 @@ export interface Decision {
   file: string;
 }
 
+/**
+ * A decision that has merged but has not been numbered yet (D-078).
+ *
+ * Settled and binding — "provisional" attaches to the *identifier*, not the authority. It is cited
+ * as `D-TMP-PD513a` everywhere until the numbering cycle rewrites those citations to a `D-NNN`.
+ */
+export interface ProvisionalDecision {
+  /** Citation form: `D-TMP-PD513a`. Namespaced so it can never match `D-\d{3}`. */
+  id: string;
+  /** The authoring ticket, digits only for ordering: `513`. */
+  ticketNum: number;
+  /** Ticket prefix, e.g. `PD` — one repo today, but the id does not assume it. */
+  ticketPrefix: string;
+  /** Disambiguates one ticket producing two decisions: `a`, `b`, … */
+  letter: string;
+  /** First-line heading text, minus the `# D-TMP-…: ` prefix. */
+  title: string;
+  /** Path relative to the repo root, e.g. `DECISIONS/incoming/D-TMP-PD383a.md`. */
+  file: string;
+}
+
 export const DECISIONS_DIR = 'DECISIONS';
 export const DECISIONS_INDEX = 'DECISIONS.md';
+/**
+ * The decision inbox (D-078). Every decision is authored here, including by a solo human session.
+ *
+ * It sits *inside* `DECISIONS/` on purpose and costs {@link loadDecisions} nothing: that function
+ * skips any entry not ending in `.md`, so a directory is invisible to it. A provisional file placed
+ * directly in `DECISIONS/` would instead throw and break `npm run decisions:index` for everyone.
+ */
+export const INCOMING_DIR = `${DECISIONS_DIR}/incoming`;
 
 /**
  * Walk up from `start` to the repo root — the directory that holds both `DECISIONS/` and
@@ -75,6 +114,37 @@ export function parseDecisionHeading(contents: string): { num: number; title: st
   const m = /^# D-(\d{3}):\s*(\S.*?)\s*$/.exec(first);
   if (!m) return null;
   return { num: Number(m[1]), title: m[2] };
+}
+
+/**
+ * `D-TMP-PD383a.md` → `{ id: 'D-TMP-PD383a', ticketPrefix: 'PD', ticketNum: 383, letter: 'a' }`.
+ * Returns null for anything else.
+ *
+ * No slug, unlike a numbered decision: the id is already unique and the file is short-lived, so a
+ * slug would only be one more thing for the rename to carry. The trailing letter is what covers one
+ * ticket producing two decisions.
+ */
+export function parseProvisionalId(text: string): Omit<ProvisionalDecision, 'title' | 'file'> | null {
+  const m = /^D-TMP-([A-Z]{1,6})(\d{1,5})([a-z])$/.exec(text);
+  if (!m) return null;
+  return { id: text, ticketPrefix: m[1], ticketNum: Number(m[2]), letter: m[3] };
+}
+
+/** `D-TMP-PD383a.md` → the parsed id. Returns null for anything else. */
+export function parseProvisionalFilename(filename: string): Omit<ProvisionalDecision, 'title' | 'file'> | null {
+  if (!filename.endsWith('.md')) return null;
+  return parseProvisionalId(filename.slice(0, -'.md'.length));
+}
+
+/** `# D-TMP-PD383a: Title here` → `{ id, title }`. Returns null for anything else. */
+export function parseProvisionalHeading(
+  contents: string,
+): (Omit<ProvisionalDecision, 'title' | 'file'> & { title: string }) | null {
+  const first = contents.split('\n', 1)[0] ?? '';
+  const m = /^# (D-TMP-[A-Za-z0-9]+):\s*(\S.*?)\s*$/.exec(first);
+  if (!m) return null;
+  const parsed = parseProvisionalId(m[1]);
+  return parsed && { ...parsed, title: m[2] };
 }
 
 /**
@@ -122,7 +192,54 @@ export function loadDecisions(repoRoot: string): Decision[] {
   return decisions.sort((a, b) => b.num - a.num);
 }
 
-/** The lowest `D-NNN` no file has claimed yet — what a new decision should be numbered. */
+/**
+ * Read every provisional decision in `DECISIONS/incoming/`, oldest ticket first — the order the
+ * numbering cycle will assign `D-NNN`s in, absent better merge-order information.
+ *
+ * A missing directory is not an error: the inbox is empty for as long as it takes the next author
+ * to write into it, and git cannot track an empty directory in the first place (hence `.gitkeep`).
+ *
+ * Throws on a `.md` file that is not a well-formed provisional decision, for the same reason
+ * {@link loadDecisions} does: a file nobody can parse is a decision nobody will ever number, and it
+ * would sit in the inbox indefinitely with no signal.
+ */
+export function loadProvisionalDecisions(repoRoot: string): ProvisionalDecision[] {
+  const dir = path.join(repoRoot, INCOMING_DIR);
+  if (!existsSync(dir)) return [];
+  const decisions: ProvisionalDecision[] = [];
+
+  for (const filename of readdirSync(dir).sort()) {
+    if (!filename.endsWith('.md')) continue;
+    const file = `${INCOMING_DIR}/${filename}`;
+    const parsed = parseProvisionalFilename(filename);
+    if (!parsed) {
+      throw new Error(
+        `${file}: filename must be D-TMP-<TICKET><letter>.md, e.g. D-TMP-PD513a.md ` +
+          `(uppercase ticket prefix, no slug, a single lowercase letter). Numbered decisions go in ${DECISIONS_DIR}/, not here.`,
+      );
+    }
+    const heading = parseProvisionalHeading(readFileSync(path.join(dir, filename), 'utf8'));
+    if (!heading) {
+      throw new Error(`${file}: first line must be a "# ${parsed.id}: Title" heading`);
+    }
+    if (heading.id !== parsed.id) {
+      throw new Error(`${file}: heading says ${heading.id} but the filename says ${parsed.id}`);
+    }
+    decisions.push({ ...parsed, title: heading.title, file });
+  }
+
+  return decisions.sort((a, b) => a.ticketPrefix.localeCompare(b.ticketPrefix) || a.ticketNum - b.ticketNum || a.letter.localeCompare(b.letter));
+}
+
+/**
+ * One past the highest `D-NNN` any file has claimed.
+ *
+ * Not "the lowest free id" — gaps are left alone. The numbering cycle (D-078) assigns from the
+ * highest so that number order stays merge order; back-filling a gap would put a newer decision
+ * before an older one and quietly break that.
+ *
+ * This is now the *cycle's* allocator, not an author's: nobody claims a number at authoring time.
+ */
 export function nextDecisionId(decisions: readonly Decision[]): string {
   const highest = decisions.reduce((max, d) => Math.max(max, d.num), 0);
   return `D-${String(highest + 1).padStart(3, '0')}`;
@@ -135,24 +252,47 @@ export function nextDecisionId(decisions: readonly Decision[]): string {
  * from the file it describes, and the titles in this log are already written as full sentences,
  * so the title *is* the one-line summary. There is no date column for the same reason — the
  * numbering is chronological, and `git log --diff-filter=A` has the real answer.
+ *
+ * `provisional` is a required parameter, not an optional one, because a caller that forgets it
+ * renders an index in which a merged decision is *invisible* — and this index is what gets injected
+ * into every agent's orientation (D-071) so settled decisions are not re-litigated. Silently
+ * dropping the newest entries is the one failure mode worth making impossible to reach by accident.
  */
-export function renderDecisionsIndex(decisions: readonly Decision[]): string {
+export function renderDecisionsIndex(
+  decisions: readonly Decision[],
+  provisional: readonly ProvisionalDecision[],
+): string {
   const lines = [
     '# Decision Log',
     '',
     'Captures the _why_ behind key choices made during planning. Useful when revisiting a decision later — if a choice no longer fits, the original reasoning makes it easier to see what changed and whether to revisit.',
     '',
     `**This file is generated — do not edit it by hand.** Each decision is its own file in \`${DECISIONS_DIR}/\`;`,
-    'this is the index over them. To add one, write a new `DECISIONS/D-NNN-slug.md` and run',
-    '`npm run decisions:index`. Writing a file instead of appending here is what lets two agents log',
-    'two decisions without touching the same lines (D-070).',
+    `this is the index over them. To add one, write \`${INCOMING_DIR}/D-TMP-<TICKET><letter>.md\` — never a`,
+    '`D-NNN` file by hand — and run `npm run decisions:index`. Writing a file instead of appending here',
+    'is what lets two agents log two decisions without touching the same lines (D-070), and leaving the',
+    'number to the cycle is what stops them claiming the same one (D-078).',
     '',
     'Newest first.',
     '',
     '---',
     '',
-    ...decisions.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`),
-    '',
   ];
+
+  if (provisional.length > 0) {
+    lines.push(
+      '## Awaiting a number',
+      '',
+      'Merged, settled, and binding — cite them as they are. Only the *identifier* is provisional:',
+      'the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-078).',
+      '',
+      ...provisional.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`),
+      '',
+      '---',
+      '',
+    );
+  }
+
+  lines.push(...decisions.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`), '');
   return lines.join('\n');
 }
