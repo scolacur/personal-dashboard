@@ -1,0 +1,73 @@
+/* ── Add / edit form (rendered inside the generic Modal) ── */
+.ticket-form {
+  label {
+    display: block;
+    margin-bottom: var(--space-md);
+
+    span {
+      display: block;
+      font-size: var(--font-size-xs);
+      color: var(--muted);
+      margin-bottom: var(--space-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+  }
+
+  input,
+  textarea,
+  select {
+    width: 100%;
+    font-family: var(--font-sans);
+    font-size: var(--font-size-base);
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-sm);
+
+    &:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+  }
+
+  textarea {
+    resize: vertical;
+  }
+
+  // Is-Epic checkbox — inline (not the full-width block the other fields use).
+  .epic-flag {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+    color: var(--text);
+
+    input {
+      width: auto;
+      cursor: pointer;
+    }
+  }
+}
+
+.field-note {
+  display: block;
+  margin-top: var(--space-xs);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+/* Shrink the details textarea so the modal form fits on small screens */
+@media (max-width: 640px) {
+  .ticket-form textarea {
+    height: 100px;
+    min-height: 60px;
+  }
+}

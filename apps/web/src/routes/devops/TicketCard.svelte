@@ -3,7 +3,6 @@
   import {
     TICKET_ASSIGNEES,
     ASSIGNEE_LABELS,
-    TICKET_PRIORITIES,
     AGENT_STATE_LABELS,
     showsTurnProgress,
     turnProgress,
@@ -18,6 +17,7 @@
   let {
     ticket,
     project,
+    epic,
     dragging,
     dropBefore,
     isLocked,
@@ -37,6 +37,8 @@
   }: {
     ticket: AgentTicket;
     project: AgentProject | undefined;
+    /** The Epic this ticket belongs to, for attributing its inherited priority (D-TMP-PD383a). */
+    epic: AgentTicket | undefined;
     dragging: boolean;
     dropBefore: boolean;
     isLocked: boolean;
@@ -110,15 +112,15 @@
     'awaiting-human': 'Needs you',
   };
 
-  async function setPriority(priority: TicketPriority | null) {
-    if (ticket.priority === priority) return;
-    try {
-      await api.updateTicket(ticket.id, { priority });
-      onUpdate();
-    } catch (e) {
-      console.error('[TicketCard] setPriority failed', e);
-    }
-  }
+  // D-TMP-PD383a: the Epic is the unit of priority, so a member's value is not independently
+  // settable — the server overrides any client-supplied one. Say where it came from instead of
+  // offering a control that would silently not take.
+  const priorityTitle = $derived.by(() => {
+    const p = ticket.priority ?? 'No priority';
+    if (ticket.isEpic) return `${p} — set on this Epic`;
+    if (!epic) return `${p} — this ticket has no Epic, so nothing is driving its priority`;
+    return `${p} — inherited from ${epic.displayId ?? epic.title}. Re-prioritise the Epic to change it.`;
+  });
 
   async function setAssignee(assignee: TicketAssignee | null) {
     if (ticket.assignee === assignee) return;
@@ -171,17 +173,11 @@
           <GithubMark size={14} />
         </a>
       {/if}
-      <select
-        class="priority priority-{bandKey(ticket.priority)}"
-        title="Set priority"
-        value={ticket.priority ?? ''}
-        onchange={(e) => setPriority((e.currentTarget.value || null) as TicketPriority | null)}
-      >
-        <option value="">—</option>
-        {#each TICKET_PRIORITIES as p (p)}
-          <option value={p}>{p}</option>
-        {/each}
-      </select>
+      <!-- D-TMP-PD383a: priority belongs to the Epic. A member displays what it inherited and says
+           where that came from; changing it means re-prioritising the Epic. -->
+      <span class="priority priority-{bandKey(ticket.priority)} readonly" title={priorityTitle}>
+        {ticket.priority ?? '—'}
+      </span>
     </span>
   </div>
   <p class="card-title">{ticket.title}</p>

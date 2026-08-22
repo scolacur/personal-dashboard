@@ -4,31 +4,37 @@
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketAssignee, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput } from '@dashboard/shared';
-  import {
-    TICKET_ASSIGNEES,
-    ASSIGNEE_LABELS,
-    TICKET_PRIORITIES,
-    PRIORITY_LABELS,
-    ROBOT_MAX_TURNS_DEFAULT,
-    ROBOT_MAX_TURNS_LIMIT,
-    isReady,
-  } from '@dashboard/shared';
-  import Modal from '$lib/Modal.svelte';
+  import type { AgentProject, AgentState, AgentTicket, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput } from '@dashboard/shared';
+  import { isReady } from '@dashboard/shared';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from '../TicketCard.svelte';
   import EpicCard from '../EpicCard.svelte';
   import RelationPicker from '../RelationPicker.svelte';
   import EpicPicker from '../EpicPicker.svelte';
+  import BoardToolbar from './BoardToolbar.svelte';
+  import TicketFormModal from './TicketFormModal.svelte';
+  import LaneColumn from './LaneColumn.svelte';
+  import EpicLane from './EpicLane.svelte';
+  import ArchiveEpicModal from './ArchiveEpicModal.svelte';
+  import QueueBypassModal from './QueueBypassModal.svelte';
+  import EpicRollbackModal from './EpicRollbackModal.svelte';
+  import { emptyTicketForm, ticketToForm, type TicketFormState } from './ticket-form';
   import { computeBadges, type RelationAction, type RelationBadges } from '../relation-logic';
   import { buildEpicBand, type EpicBandCell } from '../epic-logic';
+  import {
+    isDraggableEpicLane,
+    membersOf,
+    planEpicQueue,
+    planEpicRollback,
+    rollbackNeedsConfirm,
+    type EpicRollbackPlan,
+  } from '../epic-drag';
   import * as api from '../api';
   import { ticketMatchesQuery, ticketMatchesRefineFilter, ticketMatchesAssigneeFilter } from '../filter-logic';
   import type { RefineFilter, AssigneeFilter } from '../filter-logic';
   import { compareTicketsInColumn } from '../sort-logic';
   import { buildCopyText, copyToClipboard } from '../copy-utils';
   import { isStatusLocked, computeSortOrder, computeOrderWithin, clampEpicHeight } from '../board-logic';
-  import Button from '$lib/Button.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -106,10 +112,6 @@
     saveEpicAreaHeight(epicAreaHeight);
   }
 
-  let laneMenuOpen = $state(false);
-  let laneMenuRef = $state<HTMLElement | null>(null);
-  let searchInputRef = $state<HTMLInputElement | null>(null);
-
   function toggleLane(status: TicketStatus) {
     if (hiddenLanes.has(status)) {
       hiddenLanes.delete(status);
@@ -117,24 +119,6 @@
       hiddenLanes.add(status);
     }
     saveLaneVisibility(hiddenLanes);
-  }
-
-  function handleWindowClick(e: MouseEvent) {
-    if (laneMenuOpen && laneMenuRef && !laneMenuRef.contains(e.target as Node)) {
-      laneMenuOpen = false;
-    }
-  }
-
-  function handleWindowKeydown(e: KeyboardEvent) {
-    if (e.metaKey && e.key === 'k' && !formOpen && !glossaryOpen) {
-      e.preventDefault();
-      if (document.activeElement === searchInputRef) {
-        searchInputRef?.blur();
-      } else {
-        searchInputRef?.focus();
-        searchInputRef?.select();
-      }
-    }
   }
 
   // Glossary modal (unified: priority levels, refinement statuses, robot statuses).
@@ -190,41 +174,20 @@
     return p ?? 'none';
   }
 
-
-  // Add / edit form state. `editingId === null` while adding.
+  // Add / edit form state. `editingId === null` while adding; the modal mutates `form` in place.
   let formOpen = $state(false);
   let editingId = $state<number | null>(null);
   let editingLocked = $state(false);
-  let formTitle = $state('');
-  let formBody = $state('');
-  let formStatus = $state<TicketStatus>('backlog');
-  let formPriority = $state<TicketPriority | null>(null);
-  let formAssignee = $state<TicketAssignee | null>(null);
-  // Whether the add form is creating an Epic (D-054). The board's Epic `+` sets this; the
-  // Is-Epic checkbox toggles it in the form (PD-338).
-  let formIsEpic = $state(false);
-  // Which Epic this ticket belongs to (D-054, PD-338); null = none. Forced null when isEpic.
-  let formEpicId = $state<number | null>(null);
-  // PD-432: per-ticket run ceiling as typed text, so an empty field is unambiguously "default"
-  // rather than 0. Parsed on submit; the server rejects anything above ROBOT_MAX_TURNS_LIMIT.
-  let formMaxTurns = $state('');
-  // Caught here as well as server-side so Save is blocked with an explanation, rather than the
-  // write failing after the fact — the bound is a rule worth learning, not an error to hit.
-  const maxTurnsInvalid = $derived.by(() => {
-    const raw = formMaxTurns.trim();
-    if (raw === '') return false;
-    const n = Number(raw);
-    return !Number.isInteger(n) || n < 1 || n > ROBOT_MAX_TURNS_LIMIT;
-  });
-  let formProjectId = $state<number | null>(null);
+  let form = $state<TicketFormState>(emptyTicketForm('backlog', null));
 
   // Epics selectable as a parent in the form's "Belongs to epic" dropdown — same project,
   // excluding the ticket being edited (no nesting / self).
   const epicOptions = $derived(
-    tickets.filter((t) => t.isEpic && t.projectId === formProjectId && t.id !== editingId),
+    tickets.filter((t) => t.isEpic && t.projectId === form.projectId && t.id !== editingId),
   );
 
   const projectsById = $derived(new Map(projects.map((p) => [p.id, p])));
+  const ticketsById = $derived(new Map(tickets.map((t) => [t.id, t])));
 
   // Relations (PD-322): fetched once for the whole board; card badges derive from these plus a
   // status lookup, so an unresolved-blocker count never costs a per-card request.
@@ -241,11 +204,9 @@
   const epicSummaryById = $derived(new Map(epicSummaries.map((s) => [s.ticketId, s])));
 
   // D-054: a non-empty Epic's lane is *derived* from its members, so its own status is inert —
-  // setting it here silently no-ops. Lock the Status field for that case and explain why.
+  // setting it in the form silently no-ops. Lock the Status field for that case and explain why.
   const editingEpicWithMembers = $derived(
-    editingId !== null &&
-      formIsEpic &&
-      (epicSummaryById.get(editingId)?.total ?? 0) > 0,
+    editingId !== null && form.isEpic && (epicSummaryById.get(editingId)?.total ?? 0) > 0,
   );
 
   // Ticket-type filter (D-054): All shows both bands; Epics-only hides the ticket band;
@@ -338,53 +299,31 @@
     // Paint the board from the current DB. The server cron keeps the DB reconciled with
     // GitHub, and the background auto-refresh below re-reads it periodically.
     load();
-    window.addEventListener('click', handleWindowClick);
-    window.addEventListener('keydown', handleWindowKeydown);
     // Background auto-refresh every 30 s. Reads the DB only; the server cron keeps it fresh
     // for idle tabs.
     const refreshTimer = setInterval(() => load(true), 30_000);
-    return () => {
-      window.removeEventListener('click', handleWindowClick);
-      window.removeEventListener('keydown', handleWindowKeydown);
-      clearInterval(refreshTimer);
-    };
+    return () => clearInterval(refreshTimer);
   });
 
   function openAdd(status: TicketStatus = 'backlog') {
     editingId = null;
     editingLocked = false;
-    formTitle = '';
-    formBody = '';
-    formStatus = status;
-    formPriority = null; // unset by default — assigned deliberately
-    formAssignee = null;
-    formIsEpic = false;
-    formMaxTurns = '';
-    formEpicId = null;
     // Default to the active filter, else "personal-dashboard", else the first project.
     const personalDashboard = projects.find((p) => p.slug === 'personal-dashboard');
-    formProjectId = filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null;
+    form = emptyTicketForm(status, filterProjectId ?? personalDashboard?.id ?? projects[0]?.id ?? null);
     formOpen = true;
   }
 
-  // Create an Epic from the Epic band's `+` (Backlog/Prioritized only, D-054).
+  // Create an Epic from the Epic band's `+` (Backlog only, D-TMP-PD383a).
   function openAddEpic(status: TicketStatus) {
     openAdd(status);
-    formIsEpic = true;
+    form.isEpic = true;
   }
 
   function openEdit(ticket: AgentTicket) {
     editingId = ticket.id;
     editingLocked = isStatusLocked(ticket);
-    formTitle = ticket.title;
-    formBody = ticket.body ?? '';
-    formStatus = ticket.status;
-    formPriority = ticket.priority;
-    formAssignee = ticket.assignee;
-    formIsEpic = ticket.isEpic;
-    formMaxTurns = ticket.maxTurns === null ? '' : String(ticket.maxTurns);
-    formEpicId = ticket.epicId;
-    formProjectId = ticket.projectId ?? projects[0]?.id ?? null;
+    form = ticketToForm(ticket, projects[0]?.id ?? null);
     formOpen = true;
   }
 
@@ -393,16 +332,16 @@
   }
 
   async function submitForm() {
-    const title = formTitle.trim();
-    if (!title || formProjectId === null) return;
+    const title = form.title.trim();
+    if (!title || form.projectId === null) return;
     // D-058: editing/creating a not-Ready robot ticket into the Queue needs an explicit bypass ack.
     // Skip the prompt for a ticket that's already bypassed (editing it shouldn't re-ask) and for an
     // agent-locked ticket (its status isn't sent). Confirm sets `readyBypassed`; cancel aborts.
     const existing = editingId !== null ? tickets.find((t) => t.id === editingId) : undefined;
     const needsBypass =
-      formStatus === 'queue' &&
-      formAssignee === 'robot' &&
-      !isReady(formBody.trim() || null) &&
+      form.status === 'queue' &&
+      form.assignee === 'robot' &&
+      !isReady(form.body.trim() || null) &&
       !(existing?.readyBypassed ?? false) &&
       !(editingId !== null && editingLocked);
     if (needsBypass) {
@@ -413,24 +352,24 @@
   }
 
   async function writeForm(bypass: boolean) {
-    const title = formTitle.trim();
-    if (!title || formProjectId === null) return;
+    const title = form.title.trim();
+    if (!title || form.projectId === null) return;
     error = null;
     try {
       // An Epic never belongs to another Epic (no nesting, D-054).
-      const epicId = formIsEpic ? null : formEpicId;
+      const epicId = form.isEpic ? null : form.epicId;
       // Blank = clear the override (inherit the loop default). NaN can't reach here: the input is
-      // type=number and the Save button gates on `maxTurnsInvalid`.
-      const maxTurns = formMaxTurns.trim() === '' ? null : Number(formMaxTurns);
+      // type=number and the Save button gates on the modal's `maxTurnsInvalid`.
+      const maxTurns = form.maxTurns.trim() === '' ? null : Number(form.maxTurns);
       if (editingId === null) {
         const created = await api.createTicket({
           title,
-          projectId: formProjectId,
-          body: formBody.trim() || null,
-          priority: formPriority,
-          status: formStatus,
-          assignee: formAssignee,
-          isEpic: formIsEpic,
+          projectId: form.projectId,
+          body: form.body.trim() || null,
+          priority: form.priority,
+          status: form.status,
+          assignee: form.assignee,
+          isEpic: form.isEpic,
           epicId,
           maxTurns,
         });
@@ -440,15 +379,15 @@
       } else {
         await api.updateTicket(editingId, {
           title,
-          body: formBody.trim() || null,
-          priority: formPriority,
-          projectId: formProjectId,
-          assignee: formAssignee,
-          isEpic: formIsEpic,
+          body: form.body.trim() || null,
+          priority: form.priority,
+          projectId: form.projectId,
+          assignee: form.assignee,
+          isEpic: form.isEpic,
           epicId,
           maxTurns,
           // Don't send status for agent-locked tickets (it's externally controlled).
-          ...(editingLocked ? {} : { status: formStatus }),
+          ...(editingLocked ? {} : { status: form.status }),
           ...(bypass ? { readyBypassed: true } : {}),
         });
       }
@@ -592,14 +531,40 @@
     await applyTicketMove(id, { status, sortOrder });
   }
 
-  /* ── Epic reorder (D-054 amended) ──────────────────────────────────────
-     Epics reorder WITHIN their derived lane only — lane placement stays derived
-     (never dragged across lanes / into a queue); this just sets `sortOrder` among
-     the cell's epics. Separate drag state from tickets so the two bands don't cross-react. */
+  /* ── Epic drag (D-TMP-PD383a) ──────────────────────────────────────────
+     Two moves share one gesture. Dropping an Epic in its OWN lane reorders it there (D-054 as
+     amended by PD-337) — that ordering is what ranks equal-priority Epics for dispatch. Dropping
+     it in the OTHER pending lane moves the Epic itself, and the server cascades to its members:
+     queueing arms everything unstarted, rolling back un-queues everything that never started.
+
+     `completed`/`closed` are not drop targets. Those lanes are derived from what the members
+     actually reached, so dropping a card into one would assert work the loop never did.
+
+     Separate drag state from tickets so the two bands don't cross-react. */
   let epicDraggingId = $state<number | null>(null);
   let epicDropTarget = $state<{ lane: EpicDerivedLane; beforeId: number | null } | null>(null);
 
+  // Rollback confirm — populated only when the cascade would leave members behind.
+  let rollbackTarget = $state<AgentTicket | null>(null);
+  let rollbackPlan = $state<EpicRollbackPlan>({ unqueued: [], running: [], parked: [] });
+
+  const laneOfEpic = (id: number): EpicDerivedLane | undefined =>
+    epicSummaryById.get(id)?.derivedLane;
+
   function onEpicDragStart(e: DragEvent, epic: AgentTicket) {
+    // An Epic in a terminal lane is there because its members finished. Dropping it back would
+    // write a status the derived lane immediately overrules, so the card would snap back with no
+    // explanation — refuse the drag and say why instead.
+    const lane = laneOfEpic(epic.id);
+    if (lane !== undefined && !isDraggableEpicLane(lane)) {
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
+      e.preventDefault();
+      showToast(
+        `${epic.displayId ?? epic.title} is ${lane === 'completed' ? 'Completed' : 'Closed'} ` +
+          'because its members are — reopen a member to bring the Epic back.',
+      );
+      return;
+    }
     epicDraggingId = epic.id;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -613,8 +578,10 @@
   }
 
   function onEpicCellDragOver(e: DragEvent, cell: EpicBandCell) {
-    // Only allow reordering within the epic's own lane (lane is derived, not draggable).
-    if (epicDraggingId === null || !cell.epics.some((ep) => ep.id === epicDraggingId)) return;
+    if (epicDraggingId === null) return;
+    // Backlog and In Progress accept a drop (reorder within, move across). The terminal lanes
+    // never do — an Epic gets there by its members finishing, not by being dragged.
+    if (!isDraggableEpicLane(cell.lane)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     const cards = [
@@ -637,14 +604,71 @@
     const target = epicDropTarget;
     epicDraggingId = null;
     epicDropTarget = null;
-    if (id === null || !cell.epics.some((ep) => ep.id === id)) return; // same-lane only
+    if (id === null || !isDraggableEpicLane(cell.lane)) return;
     const epic = tickets.find((t) => t.id === id);
     if (!epic) return;
-    const sortOrder = computeOrderWithin(cell.epics, target?.beforeId ?? null, id);
-    if (epic.sortOrder === sortOrder) return;
+
+    // Same lane → reorder among that cell's Epics.
+    if (laneOfEpic(id) === cell.lane) {
+      const sortOrder = computeOrderWithin(cell.epics, target?.beforeId ?? null, id);
+      if (epic.sortOrder === sortOrder) return;
+      await applyEpicPatch(id, { sortOrder });
+      return;
+    }
+
+    // Across lanes → move the Epic; the server cascades to its members.
+    const members = membersOf(id, tickets);
+    if (cell.lane === 'in_progress') {
+      const plan = planEpicQueue(members);
+      await applyEpicPatch(id, { status: 'queue' });
+      // Not a blocker — the loop simply never picks these up, so say so rather than leaving a
+      // queued card that looks fine and silently never runs.
+      if (plan.notReady.length > 0) {
+        const names = plan.notReady.map((m) => m.displayId ?? m.title).join(', ');
+        showToast(
+          `Queued, but ${plan.notReady.length} member${plan.notReady.length === 1 ? '' : 's'} ` +
+            `won't dispatch until shaped or bypassed: ${names}`,
+        );
+      }
+      return;
+    }
+
+    // → Backlog. Ask only if the cascade would leave members behind.
+    const plan = planEpicRollback(members);
+    if (rollbackNeedsConfirm(plan)) {
+      rollbackPlan = plan;
+      rollbackTarget = epic;
+      return;
+    }
+    await applyEpicPatch(id, { status: 'backlog' });
+  }
+
+  async function applyEpicPatch(id: number, patch: UpdateTicketInput) {
     error = null;
     try {
-      await api.updateTicket(id, { sortOrder });
+      await api.updateTicket(id, patch);
+      await load(true);
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /** Complete a confirmed rollback. `pullBackParked` also returns the parked members to Backlog —
+   *  the server's cascade deliberately leaves those alone, since only a human knows whether the
+   *  Epic is being shelved or merely nudged. A running member is never touched (D-046). */
+  async function confirmRollback(pullBackParked: boolean) {
+    const epic = rollbackTarget;
+    const parked = rollbackPlan.parked;
+    rollbackTarget = null;
+    if (!epic) return;
+    error = null;
+    try {
+      await api.updateTicket(epic.id, { status: 'backlog' });
+      if (pullBackParked) {
+        for (const m of parked) {
+          await api.updateTicket(m.id, { status: 'backlog' });
+        }
+      }
       await load(true);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -710,224 +734,41 @@
 </script>
 
 <section class="tickets-section">
-  <div class="section-head">
-    <h2 class="section-title">Tickets</h2>
-    <label class="ticket-search" class:has-text={search !== ''}>
-      <span class="sr-label">Search tickets</span>
-      <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
-      {#if search}
-        <button
-          type="button"
-          class="search-clear"
-          aria-label="Clear search"
-          onclick={() => { search = ''; searchInputRef?.focus(); }}
-        >×</button>
-      {/if}
-      <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
-    </label>
-    <div class="head-actions">
-      <Button
-        variant="ghost"
-        title="Glossary"
-        onclick={() => { glossaryTab = 'priority'; glossaryOpen = true; }}
-      >Glossary</Button>
-      <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
-        <Button
-          variant="ghost"
-          title="Show/hide lanes"
-          aria-label="Show/hide lanes"
-          aria-expanded={laneMenuOpen}
-          onclick={() => (laneMenuOpen = !laneMenuOpen)}
-        >Lanes</Button>
-        {#if laneMenuOpen}
-          <div class="lanes-menu">
-            {#each COLUMNS as col (col.status)}
-              <label class="lanes-menu-item">
-                <input
-                  type="checkbox"
-                  checked={!hiddenLanes.has(col.status)}
-                  onchange={() => toggleLane(col.status)}
-                />
-                <span>{col.label}</span>
-              </label>
-            {/each}
-          </div>
-        {/if}
-      </div>
-      <div class="add-ticket-wrap">
-        <Button variant="primary" onclick={() => openAdd()} disabled={projects.length === 0}>
-          + Add Ticket
-        </Button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Second toolbar row: all filters (D-054 adds Ticket Type). Search + buttons stay on row 1. -->
-  <div class="filters-row">
-    <label class="type-filter">
-      <span class="sr-label">Type</span>
-      <select bind:value={filterType}>
-        <option value="all">Epics &amp; Tickets</option>
-        <option value="epics-lone">Epics &amp; Lone Tickets</option>
-        <option value="epics">Epics only</option>
-        <option value="tickets">Tickets only</option>
-      </select>
-    </label>
-    <label class="project-filter">
-      <span class="sr-label">Project</span>
-      <select
-        value={filterProjectId === null ? 'all' : String(filterProjectId)}
-        onchange={(e) => {
-          const v = e.currentTarget.value;
-          filterProjectId = v === 'all' ? null : Number(v);
-        }}
-      >
-        <option value="all">All projects</option>
-        {#each projects as p (p.id)}
-          <option value={String(p.id)}>{p.name}</option>
-        {/each}
-      </select>
-    </label>
-    <label class="priority-filter">
-      <span class="sr-label">Priority</span>
-      <select bind:value={filterPriority}>
-        <option value="all">All priorities</option>
-        {#each TICKET_PRIORITIES as p (p)}
-          <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-        {/each}
-        <option value="none">— None</option>
-      </select>
-    </label>
-    <label class="assignee-filter">
-      <span class="sr-label">Assignee</span>
-      <select
-        value={filterAssignee}
-        onchange={(e) => setAssigneeFilter(e.currentTarget.value as AssigneeFilter)}
-      >
-        <option value="all">All assignees</option>
-        <option value="robot">🤖 Robot</option>
-        <option value="steve">S Steve</option>
-        <option value="none">— Unassigned</option>
-      </select>
-    </label>
-    <label class="refinement-filter">
-      <span class="sr-label">Refinement</span>
-      <select bind:value={filterRefine}>
-        <option value="all">All refinement statuses</option>
-        <option value="refined">Refined</option>
-        <option value="refining">Refining</option>
-        <option value="awaiting-human">Needs you</option>
-        <option value="unrefined">Unrefined</option>
-      </select>
-    </label>
-  </div>
+  <BoardToolbar
+    bind:search
+    bind:filterType
+    bind:filterPriority
+    bind:filterRefine
+    {filterProjectId}
+    {filterAssignee}
+    {projects}
+    columns={COLUMNS}
+    {hiddenLanes}
+    addDisabled={projects.length === 0}
+    shortcutsEnabled={!formOpen && !glossaryOpen}
+    onProjectFilter={(id) => (filterProjectId = id)}
+    onAssigneeFilter={setAssigneeFilter}
+    onToggleLane={toggleLane}
+    onOpenGlossary={() => { glossaryTab = 'priority'; glossaryOpen = true; }}
+    onAdd={() => openAdd()}
+  />
 
 {#if error}
   <p class="error" role="alert">{error}</p>
 {/if}
 
-<Modal open={formOpen} title={editingId === null ? 'New Ticket' : 'Edit Ticket'} onClose={closeForm}>
-  <div class="ticket-form">
-    <label class="epic-flag">
-      <input type="checkbox" bind:checked={formIsEpic} />
-      This is an Epic (an umbrella for other tickets)
-    </label>
-    {#if !formIsEpic}
-      <label>
-        <span>Belongs to epic</span>
-        <select
-          value={formEpicId === null ? '' : String(formEpicId)}
-          onchange={(e) => {
-            const v = e.currentTarget.value;
-            formEpicId = v === '' ? null : Number(v);
-          }}
-        >
-          <option value="">— None</option>
-          {#each epicOptions as ep (ep.id)}
-            <option value={String(ep.id)}>{ep.displayId} — {ep.title}</option>
-          {/each}
-        </select>
-      </label>
-    {/if}
-    <label>
-      <span>Project</span>
-      <select bind:value={formProjectId}>
-        {#each projects as p (p.id)}
-          <option value={p.id}>{p.name}</option>
-        {/each}
-      </select>
-    </label>
-    <label>
-      <span>Title</span>
-      <input type="text" bind:value={formTitle} />
-    </label>
-    <label>
-      <span>Details</span>
-      <textarea bind:value={formBody} rows="12"></textarea>
-    </label>
-    <label>
-      <span>Status</span>
-      <select bind:value={formStatus} disabled={editingLocked || editingEpicWithMembers}>
-        {#each COLUMNS as c (c.status)}
-          <option value={c.status}>{c.label}</option>
-        {/each}
-      </select>
-      {#if editingLocked}
-        <small class="field-note">Locked — this ticket is controlled by its agent.</small>
-      {:else if editingEpicWithMembers}
-        <small class="field-note">Derived from members — prioritize a member to move the Epic.</small>
-      {/if}
-    </label>
-    <label>
-      <span>Priority</span>
-      <select bind:value={formPriority}>
-        <option value={null}>— None</option>
-        {#each TICKET_PRIORITIES as p (p)}
-          <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-        {/each}
-      </select>
-    </label>
-    <label>
-      <span>Assignee</span>
-      <select bind:value={formAssignee} disabled={editingLocked}>
-        <option value={null}>— None</option>
-        {#each TICKET_ASSIGNEES as a (a)}
-          <option value={a}>{ASSIGNEE_LABELS[a]}</option>
-        {/each}
-      </select>
-      {#if editingLocked}
-        <small class="field-note">Locked — controlled by its agent.</small>
-      {/if}
-    </label>
-    <label>
-      <span>Turn ceiling</span>
-      <input
-        type="number"
-        min="1"
-        max={ROBOT_MAX_TURNS_LIMIT}
-        placeholder={`default (${ROBOT_MAX_TURNS_DEFAULT})`}
-        bind:value={formMaxTurns}
-      />
-      <small class="field-note">
-        {#if maxTurnsInvalid}
-          Must be a whole number between 1 and {ROBOT_MAX_TURNS_LIMIT}.
-        {:else}
-          Leave blank for the default. Raise it only for work that cannot be split further.
-        {/if}
-      </small>
-    </label>
-    <div class="form-actions">
-      <Button variant="ghost" onclick={closeForm}>Cancel</Button>
-      <Button
-        variant="primary"
-        onclick={submitForm}
-        disabled={!formTitle.trim() || formProjectId === null || maxTurnsInvalid}
-      >
-        {editingId === null ? 'Add' : 'Save'}
-      </Button>
-    </div>
-  </div>
-</Modal>
+<TicketFormModal
+  open={formOpen}
+  {form}
+  editing={editingId !== null}
+  locked={editingLocked}
+  statusDerived={editingEpicWithMembers}
+  {projects}
+  {epicOptions}
+  columns={COLUMNS}
+  onClose={closeForm}
+  onSubmit={submitForm}
+/>
 
 <GlossaryModal
   open={glossaryOpen}
@@ -939,8 +780,9 @@
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
-  <!-- Two-band board (D-054): a derived, non-draggable Epic band on top; the normal Ticket band
-       below. Only the Ticket band is a drop target, so an Epic can never enter Robot's Queue. -->
+  <!-- Two-band board (D-054, amended by D-TMP-PD383a): the Epic band on top, the Ticket band below.
+       Both are drop targets now — dragging the Epic between Backlog and Queue is what dispatches
+       and recalls its members. The Epic band's terminal lanes stay derived and refuse a drop. -->
   <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}; --epic-area-height: {epicAreaHeight}px">
     <!-- Row 1: lane headers -->
     {#each visibleColumns as col, i (col.status)}
@@ -952,28 +794,17 @@
       </div>
     {/each}
 
-    <!-- Row 2: Epic band (derived placement; In-Progress spans the two queue columns) -->
+    <!-- Row 2: Epic band (derived placement; In-Progress sits over the Queue column) -->
     {#if showEpics}
       {#each epicBandCells as cell (cell.lane)}
-        <div
-          class="epic-cell"
-          class:in-progress={cell.lane === 'in_progress'}
-          class:drag-over={epicDropTarget?.lane === cell.lane && epicDraggingId !== null}
-          style="grid-column: {cell.colStart} / span {cell.colSpan}"
-          ondragover={(e) => onEpicCellDragOver(e, cell)}
-          ondrop={(e) => onEpicDrop(e, cell)}
-          role="list"
+        <EpicLane
+          {cell}
+          dragOver={epicDropTarget?.lane === cell.lane && epicDraggingId !== null}
+          addDisabled={projects.length === 0}
+          onAdd={() => openAddEpic('backlog')}
+          onDragOver={(e) => onEpicCellDragOver(e, cell)}
+          onDrop={(e) => onEpicDrop(e, cell)}
         >
-          {#if cell.canAdd}
-            <button
-              class="column-add-btn epic-add"
-              type="button"
-              title="Add Epic to {cell.label}"
-              aria-label="Add Epic to {cell.label}"
-              onclick={() => openAddEpic('backlog')}
-              disabled={projects.length === 0}
-            >+ Epic</button>
-          {/if}
           {#each cell.epics as epic (epic.id)}
             {@const project = epic.projectId !== null ? projectsById.get(epic.projectId) : undefined}
             <EpicCard
@@ -989,7 +820,7 @@
               onUpdate={() => load(true)}
             />
           {/each}
-        </div>
+        </EpicLane>
       {/each}
       <!-- Row 3: Resize handle — drag up/down to adjust the Epic area height (D-058) -->
       <div
@@ -1004,65 +835,50 @@
       ></div>
     {/if}
 
-    <!-- Row 3: Ticket band (the only drop target) -->
+    <!-- Row 4: Ticket band (the only drop target) -->
     {#if showTickets}
       {#each visibleColumns as col, i (col.status)}
         {@const items = byStatus(col.status)}
-        <section
-          class="ticket-cell"
-          class:robot-queue={col.status === 'queue'}
-          class:drag-over={dropTarget?.status === col.status && draggingId !== null}
-          style="grid-column: {i + 1}"
+        <LaneColumn
+          label={col.label}
+          count={items.length}
+          gridColumn={i + 1}
+          dragOver={dropTarget?.status === col.status && draggingId !== null}
+          addDisabled={projects.length === 0}
+          showDropEnd={draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
+          onAdd={() => openAdd(col.status)}
+          onDragOver={(e) => onColumnDragOver(e, col.status)}
+          onDrop={(e) => onDrop(e, col.status)}
         >
-          <button
-            class="column-add-btn"
-            type="button"
-            title="Add ticket to {col.label}"
-            aria-label="Add ticket to {col.label}"
-            onclick={() => openAdd(col.status)}
-            disabled={projects.length === 0}
-          >+</button>
-          <div
-            class="column-body"
-            role="list"
-            ondragover={(e) => onColumnDragOver(e, col.status)}
-            ondrop={(e) => onDrop(e, col.status)}
-          >
-            {#each items as ticket (ticket.id)}
-              {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
-              <TicketCard
-                {ticket}
-                {project}
-                dragging={draggingId === ticket.id}
-                dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
-                isLocked={isStatusLocked(ticket)}
-                badges={badgesById.get(ticket.id) ?? NO_BADGES}
-                onRelationAction={(action) => openRelationPicker(ticket, action)}
-                onAddToEpic={() => openEpicPicker(ticket)}
-                onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
-                onDragStart={(e) => onDragStart(e, ticket)}
-                {onDragEnd}
-                onEdit={() => openEdit(ticket)}
-                onDuplicate={() => duplicate(ticket)}
-                onCopy={() => copyIssue(ticket, project)}
-                onDelete={() => remove(ticket)}
-                onRefine={() => refine(ticket)}
-                onOpenStatusLegend={(state) => {
-                  glossaryHighlightState = state;
-                  glossaryTab = 'robot';
-                  glossaryOpen = true;
-                }}
-                onUpdate={() => load(true)}
-              />
-            {/each}
-            {#if draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
-              <div class="drop-end"></div>
-            {/if}
-            {#if items.length === 0}
-              <p class="empty">—</p>
-            {/if}
-          </div>
-        </section>
+          {#each items as ticket (ticket.id)}
+            {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
+            <TicketCard
+              {ticket}
+              {project}
+              epic={ticket.epicId !== null ? ticketsById.get(ticket.epicId) : undefined}
+              dragging={draggingId === ticket.id}
+              dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+              isLocked={isStatusLocked(ticket)}
+              badges={badgesById.get(ticket.id) ?? NO_BADGES}
+              onRelationAction={(action) => openRelationPicker(ticket, action)}
+              onAddToEpic={() => openEpicPicker(ticket)}
+              onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
+              onDragStart={(e) => onDragStart(e, ticket)}
+              {onDragEnd}
+              onEdit={() => openEdit(ticket)}
+              onDuplicate={() => duplicate(ticket)}
+              onCopy={() => copyIssue(ticket, project)}
+              onDelete={() => remove(ticket)}
+              onRefine={() => refine(ticket)}
+              onOpenStatusLegend={(state) => {
+                glossaryHighlightState = state;
+                glossaryTab = 'robot';
+                glossaryOpen = true;
+              }}
+              onUpdate={() => load(true)}
+            />
+          {/each}
+        </LaneColumn>
       {/each}
     {/if}
   </div>
@@ -1090,46 +906,24 @@
   onPicked={(epicId) => epicPickerSource && setTicketEpic(epicPickerSource.id, epicId)}
 />
 
-<Modal
-  open={archiveEpicTarget !== null}
-  title="Archive Epic"
-  onClose={() => (archiveEpicTarget = null)}
->
-  {#if archiveEpicTarget}
-    <p class="archive-epic-msg">
-      <strong>{archiveEpicTarget.displayId ?? archiveEpicTarget.title}</strong> has
-      {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}. Archive the Epic
-      only (its members become free tickets), or archive the Epic and all its members?
-    </p>
-    <div class="archive-epic-actions">
-      <Button variant="ghost" onclick={() => (archiveEpicTarget = null)}>Cancel</Button>
-      <span class="spacer"></span>
-      <Button variant="ghost" onclick={() => archiveEpic(false)}>Epic only (unlink members)</Button>
-      <Button variant="primary" onclick={() => archiveEpic(true)}>
-        Epic + {archiveEpicMemberCount} member{archiveEpicMemberCount === 1 ? '' : 's'}
-      </Button>
-    </div>
-  {/if}
-</Modal>
+<ArchiveEpicModal
+  epic={archiveEpicTarget}
+  memberCount={archiveEpicMemberCount}
+  onCancel={() => (archiveEpicTarget = null)}
+  onArchive={archiveEpic}
+/>
 
-<Modal
-  open={queueConfirm !== null}
-  title="Queue a not-Ready ticket?"
-  onClose={cancelQueueConfirm}
->
-  {#if queueConfirm}
-    <p class="queue-confirm-msg">
-      <strong>{queueConfirm.label}</strong> isn't in Ready shape — its body is missing the four
-      sections (## Context / ## Task / ## Done When / ## Out of scope). The Robot works best from a
-      shaped ticket, so <strong>output may be suboptimal</strong>. Queue it anyway?
-    </p>
-    <div class="queue-confirm-actions">
-      <Button variant="ghost" onclick={cancelQueueConfirm}>Cancel</Button>
-      <span class="spacer"></span>
-      <Button variant="primary" onclick={acceptQueueConfirm}>Queue anyway</Button>
-    </div>
-  {/if}
-</Modal>
+<QueueBypassModal
+  label={queueConfirm?.label ?? null}
+  onCancel={cancelQueueConfirm}
+  onConfirm={acceptQueueConfirm}
+/>
 
+<EpicRollbackModal
+  epic={rollbackTarget}
+  plan={rollbackPlan}
+  onCancel={() => (rollbackTarget = null)}
+  onRollback={confirmRollback}
+/>
 
 <style lang="scss" src="./+page.scss"></style>
