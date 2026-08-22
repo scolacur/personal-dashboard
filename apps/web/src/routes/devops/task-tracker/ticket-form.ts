@@ -83,12 +83,36 @@ export function maxTurnsInvalid(raw: string): boolean {
 }
 
 /**
+ * Whether this save must end with the Ticket inside an Epic (D-TMP-PD383a slice C).
+ *
+ * Stated as a rule about the **transition**, not about the state, which is what makes the legacy
+ * question mostly evaporate:
+ *
+ *  - **Creating** — always. Never mint a new orphan.
+ *  - **Editing a Ticket that has an Epic** — always. A Ticket may be moved to another Epic, never
+ *    out of one; un-parenting is what the model has no answer for, since priority and dispatch both
+ *    come from the Epic. An orphaned active Ticket is unpriced and undispatchable by construction.
+ *  - **Editing a Ticket that has no Epic** — only while it is still active. The board holds ~141
+ *    terminal tickets that predate the rule; requiring one there would enforce the model against
+ *    history, and giving each its own Epic in a backfill would add ~125 single-member Epics to the
+ *    Completed band, which is a worse board than the one we have.
+ */
+export function epicRequired(ctx: {
+  creating: boolean;
+  /** The Epic the ticket had before this edit (not the form's current value). */
+  hadEpic: boolean;
+  status: TicketStatus;
+}): boolean {
+  if (ctx.creating) return true;
+  if (ctx.hadEpic) return true;
+  return ctx.status !== 'completed' && ctx.status !== 'closed';
+}
+
+/**
  * Why the form cannot be saved yet, or null when it can.
  *
- * `requireEpic` is on for **creation only** (D-TMP-PD383a slice C: "a Ticket cannot be created
- * without an Epic"). Editing deliberately does not enforce it: the board still holds ~141 terminal
- * tickets that predate the rule, and blocking a typo fix on one of them would enforce the model
- * against history rather than against new work.
+ * `requireEpic` comes from `epicRequired()` — see there for why it is a rule about the transition
+ * rather than about the state.
  */
 export function ticketFormError(
   form: TicketFormState,

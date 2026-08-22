@@ -22,6 +22,7 @@
     dragging,
     dropBefore,
     isLocked,
+    isFrozen = false,
     badges,
     onDragStart,
     onDragEnd,
@@ -32,7 +33,6 @@
     onRefine,
     onRelationAction,
     onAddToEpic,
-    onRemoveFromEpic,
     onSpinOff,
     onOpenStatusLegend,
     onUpdate,
@@ -44,6 +44,8 @@
     dragging: boolean;
     dropBefore: boolean;
     isLocked: boolean;
+    /** D-TMP-PD539a: terminal — the work is over, so nothing here may change it. */
+    isFrozen?: boolean;
     badges: RelationBadges;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
@@ -54,7 +56,6 @@
     onRefine: () => void;
     onRelationAction: (action: RelationAction) => void;
     onAddToEpic: () => void;
-    onRemoveFromEpic: () => void;
     /** D-TMP-PD383a slice C: give this ticket its own Epic, inheriting priority + lane. */
     onSpinOff: () => void;
     onOpenStatusLegend: (state: AgentState) => void;
@@ -260,7 +261,7 @@
         ? 'Agent-controlled — cannot reassign'
         : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
       value={ticket.assignee ?? ''}
-      disabled={isLocked}
+      disabled={isLocked || isFrozen}
       onchange={(e) => setAssignee((e.currentTarget.value || null) as TicketAssignee | null)}
     >
       <option value="">—</option>
@@ -269,10 +270,22 @@
       {/each}
     </select>
     <span class="spacer"></span>
-    <Button variant="icon" title="Edit" aria-label="Edit" onclick={onEdit}><Pencil size={13} /></Button>
+    <Button
+      variant="icon"
+      title={isFrozen ? 'Completed work is read-only — Reopen it from its detail page to edit' : 'Edit'}
+      aria-label="Edit"
+      disabled={isFrozen}
+      onclick={onEdit}
+    ><Pencil size={13} /></Button>
     <Button variant="icon" title="Duplicate" aria-label="Duplicate" onclick={onDuplicate}><Copy size={13} /></Button>
     <Button variant="icon" title="Copy issue text" aria-label="Copy issue text" onclick={onCopy}><ClipboardCopy size={13} /></Button>
-    <Button variant="icon" title="Delete" aria-label="Delete" onclick={onDelete}><Trash2 size={13} /></Button>
+    <Button
+      variant="icon"
+      title={isFrozen ? 'Completed work is read-only' : 'Delete'}
+      aria-label="Delete"
+      disabled={isFrozen}
+      onclick={onDelete}
+    ><Trash2 size={13} /></Button>
     <div class="kebab-wrap">
       <Button variant="icon" title="Mark as…" aria-label="Relation actions" onclick={() => (menuOpen = !menuOpen)}><MoreVertical size={13} /></Button>
       {#if menuOpen}
@@ -286,9 +299,6 @@
             <div class="kebab-divider"></div>
             <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onAddToEpic)}>{ticket.epicId ? 'Move to Epic…' : 'Add to Epic…'}</button>
             <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onSpinOff)}>Spin off into new Epic…</button>
-            {#if ticket.epicId}
-              <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onRemoveFromEpic)}>Remove from Epic</button>
-            {/if}
           {/if}
         </div>
       {/if}

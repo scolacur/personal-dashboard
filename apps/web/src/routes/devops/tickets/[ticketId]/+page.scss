@@ -326,6 +326,41 @@
   }
 }
 
+// D-TMP-PD539a: terminal tickets are read-only; this states it and carries the one way out.
+.frozen-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface-2);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.reopen-btn {
+  margin-left: auto;
+  padding: 2px var(--space-md);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
 // The "Spin off into new Epic…" action beside the epic breadcrumb (slice C).
 .spin-off-btn {
   margin-left: var(--space-sm);

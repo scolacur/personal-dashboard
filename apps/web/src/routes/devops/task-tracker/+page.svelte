@@ -19,7 +19,7 @@
   import QueueBypassModal from './QueueBypassModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
   import SpinOffModal from './SpinOffModal.svelte';
-  import { emptyTicketForm, ticketToForm, type TicketFormState } from './ticket-form';
+  import { emptyTicketForm, epicRequired, ticketToForm, type TicketFormState } from './ticket-form';
   import { planSpinOff, type SpinOffPlan } from '../epic-spinoff';
   import { computeBadges, type RelationAction, type RelationBadges } from '../relation-logic';
   import { buildEpicBand, type EpicBandCell } from '../epic-logic';
@@ -38,7 +38,14 @@
   import type { RefineFilter, AssigneeFilter } from '../filter-logic';
   import { compareTicketsInColumn } from '../sort-logic';
   import { buildCopyText, copyToClipboard } from '../copy-utils';
-  import { isStatusLocked, computeSortOrder, computeOrderWithin, clampEpicHeight } from '../board-logic';
+  import {
+    isStatusLocked,
+    isReadOnly,
+    isTerminal,
+    computeSortOrder,
+    computeOrderWithin,
+    clampEpicHeight,
+  } from '../board-logic';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -209,6 +216,14 @@
 
   // D-054: a non-empty Epic's lane is *derived* from its members, so its own status is inert —
   // setting it in the form silently no-ops. Lock the Status field for that case and explain why.
+  // D-TMP-PD383a slice C: a Ticket may be moved between Epics, never out of one.
+  const editingHadEpic = $derived(
+    editingId !== null && (ticketsById.get(editingId)?.epicId ?? null) !== null,
+  );
+  const formRequiresEpic = $derived(
+    epicRequired({ creating: editingId === null, hadEpic: editingHadEpic, status: form.status }),
+  );
+
   const editingEpicWithMembers = $derived(
     editingId !== null && form.isEpic && (epicSummaryById.get(editingId)?.total ?? 0) > 0,
   );
@@ -325,6 +340,10 @@
   }
 
   function openEdit(ticket: AgentTicket) {
+    if (isReadOnly(ticket) && isTerminal(ticket)) {
+      showToast(`${ticket.displayId ?? ticket.title} is read-only — Reopen it from its detail page.`);
+      return;
+    }
     editingId = ticket.id;
     editingLocked = isStatusLocked(ticket);
     form = ticketToForm(ticket, projects[0]?.id ?? null);
@@ -482,6 +501,16 @@
   }
 
   function onDragStart(e: DragEvent, ticket: AgentTicket) {
+    // D-TMP-PD539a: terminal is final. Leaving it is one deliberate act on the detail page, not a
+    // drag — `completed` is a record of what happened, and a record you can drag out of is not one.
+    if (isTerminal(ticket)) {
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
+      e.preventDefault();
+      showToast(
+        `${ticket.displayId ?? ticket.title} is ${ticket.status} — open it and use Reopen to bring it back.`,
+      );
+      return;
+    }
     if (isStatusLocked(ticket)) {
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
       showToast("This ticket is agent-controlled and can't be moved.");
@@ -802,6 +831,13 @@
   const archiveEpicMemberCount = $derived(
     archiveEpicTarget ? (epicSummaryById.get(archiveEpicTarget.id)?.total ?? 0) : 0,
   );
+  const archiveEpicActiveCount = $derived(
+    archiveEpicTarget
+      ? tickets.filter(
+          (t) => t.epicId === archiveEpicTarget!.id && (t.status === 'backlog' || t.status === 'queue'),
+        ).length
+      : 0,
+  );
 
   async function archiveEpic(cascadeMembers: boolean) {
     const target = archiveEpicTarget;
@@ -904,6 +940,7 @@
   {projects}
   {epicOptions}
   columns={COLUMNS}
+  requireEpic={formRequiresEpic}
   onClose={closeForm}
   onSubmit={submitForm}
 />
@@ -997,10 +1034,10 @@
               dragging={draggingId === ticket.id}
               dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
               isLocked={isStatusLocked(ticket)}
+              isFrozen={isTerminal(ticket)}
               badges={badgesById.get(ticket.id) ?? NO_BADGES}
               onRelationAction={(action) => openRelationPicker(ticket, action)}
               onAddToEpic={() => openEpicPicker(ticket)}
-              onRemoveFromEpic={() => setTicketEpic(ticket.id, null)}
               onSpinOff={() => openSpinOff(ticket)}
               onDragStart={(e) => onDragStart(e, ticket)}
               {onDragEnd}
@@ -1048,6 +1085,7 @@
 <ArchiveEpicModal
   epic={archiveEpicTarget}
   memberCount={archiveEpicMemberCount}
+  activeMemberCount={archiveEpicActiveCount}
   onCancel={() => (archiveEpicTarget = null)}
   onArchive={archiveEpic}
 />

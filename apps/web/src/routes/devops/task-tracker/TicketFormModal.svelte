@@ -23,6 +23,7 @@
     projects,
     epicOptions,
     columns,
+    requireEpic,
     onClose,
     onSubmit,
   }: {
@@ -38,6 +39,8 @@
     /** Epics selectable as a parent — same project, excluding the ticket being edited. */
     epicOptions: AgentTicket[];
     columns: { status: TicketStatus; label: string }[];
+    /** From `epicRequired()` — a Ticket may move between Epics but never out of one. */
+    requireEpic: boolean;
     onClose: () => void;
     onSubmit: () => void;
   } = $props();
@@ -64,7 +67,7 @@
     form.newEpic !== null ? 'the new Epic' : (parentEpic?.displayId ?? 'its Epic'),
   );
 
-  const saveError = $derived(ticketFormError(form, { requireEpic: !editing }));
+  const saveError = $derived(ticketFormError(form, { requireEpic }));
 </script>
 
 <Modal {open} title={editing ? 'Edit Ticket' : 'New Ticket'} {onClose}>
@@ -74,7 +77,7 @@
       This is an Epic (an umbrella for other tickets)
     </label>
     {#if !form.isEpic}
-      <EpicField {form} {epicOptions} required={!editing} />
+      <EpicField {form} {epicOptions} required={requireEpic} />
     {/if}
     <label>
       <span>Project</span>
