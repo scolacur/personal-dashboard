@@ -3,20 +3,25 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
+import type { MaintenanceJobRunner } from '../maintenance/coordinator';
+import { finishJobRun, startJobRun } from '../maintenance/job-runs-db';
 import { runNumberingCycle, type CommandRunner, type CycleConfig, type CycleDeps } from './cycle';
 
 const execFileAsync = promisify(execFile);
 
+/** The `job_runs.job_name` this job records under, and the key its API routes take. */
+export const CONSOLIDATION_JOB_NAME = 'decisions:consolidation';
+
 /**
- * The decision-numbering cycle job (PD-498, D-078) — deterministic, no LLM, no agent session.
+ * The Decision Consolidation job (PD-498, D-078) — deterministic, no LLM, no agent session.
  *
- * Lives beside the LLM jobs in `jobs/` because it shares the same host: the checkout, the proxy, the
- * DB handle, and the maintenance hold on the Robot loop. It is not an agent, and the folder name
- * says `number-decisions` rather than anything agent-flavoured for that reason.
+ * **Not self-scheduling.** It is registered with the maintenance coordinator and runs inside an
+ * open maintenance hold; the coordinator owns the cadence, the drain and the window. What lives
+ * here is the job's identity, its `job_runs` bookkeeping, and the shell runner it needs.
  */
 
 /**
- * Robot runs currently in flight — what the drain waits on.
+ * Robot runs currently in flight — the guard the cycle re-checks inside the hold.
  *
  * A run counts only if its TICKET is also still `working`, which is the same definition
  * `orphanedRunningRuns` uses to decide what a live run is. `status = 'running'` alone is not enough:
@@ -25,9 +30,7 @@ const execFileAsync = promisify(execFile);
  * Found in production, not in a test: on 2026-08-22 the NAS DB held one `running` row from
  * 2026-07-16 whose ticket (PD-380) had been `completed` for five weeks with `agent_state` NULL. The
  * stall reconciler cannot close it — it only looks at runs whose ticket is `working` — so the row is
- * permanent. Counting it would have made the drain never reach zero: every cycle would burn the full
- * ~2h timeout, skip, and leave decisions provisional forever. The unit tests inject this count, so
- * no amount of testing around the cycle would have shown it.
+ * permanent. Counting it would have meant no hold ever opened.
  */
 export function inFlightRunCount(db: Database.Database): number {
   const row = db
@@ -64,7 +67,7 @@ export function defaultRunner(config: AgentWorkerConfig): CommandRunner {
       const { stdout } = await execFileAsync(cmd, args, { env, cwd: opts?.cwd });
       return { stdout };
     } catch (err) {
-      const e = err as { stdout?: string; stderr?: string; message?: string };
+      const e = err as { stdout?: string };
       if (typeof e.stdout === 'string' && e.stdout.length > 0) return { stdout: e.stdout };
       throw err;
     }
@@ -72,45 +75,56 @@ export function defaultRunner(config: AgentWorkerConfig): CommandRunner {
 }
 
 /**
- * Start the numbering cycle. Inert unless `DECISION_CONSOLIDATION_JOB_ENABLED=1`, matching how the Robot loop
- * and the Evaluator ship (D-076): a job that rewrites the decision log repo-wide and admin-merges
- * its own PR does not turn itself on by arriving in an image.
+ * The runner the coordinator invokes inside a hold.
+ *
+ * Returns the `job_runs.id` it recorded so the hold log can link to it, or `null` when there was
+ * nothing to do — an empty inbox is the common case and should not litter the run list with rows
+ * that say "did nothing".
  */
-export function startNumberingCycleJob(db: Database.Database, config: AgentWorkerConfig): void {
-  if (!config.numbering.enabled) {
-    logger.info('numbering cycle: disabled (DECISION_CONSOLIDATION_JOB_ENABLED is not set) — not scheduling');
-    return;
-  }
-
+export function consolidationJobRunner(config: AgentWorkerConfig): MaintenanceJobRunner {
   const cycleConfig: CycleConfig = {
     repoRoot: config.checkoutDir,
     githubRepo: config.githubRepo,
-    // Same bound a stalled run gets (D-078): the drain is what the ~2h worst case refers to.
-    drainTimeoutMs: config.robot.stallThresholdMs,
-    drainPollMs: config.numbering.drainPollMs,
     ciTimeoutMs: config.numbering.ciTimeoutMs,
     ciPollMs: config.numbering.ciPollMs,
   };
-  const deps: CycleDeps = {
-    run: defaultRunner(config),
-    inFlightRuns: () => inFlightRunCount(db),
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    now: () => Date.now(),
+
+  return async (db) => {
+    const deps: CycleDeps = {
+      run: defaultRunner(config),
+      inFlightRuns: () => inFlightRunCount(db),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => Date.now(),
+    };
+
+    const runId = startJobRun(db, CONSOLIDATION_JOB_NAME);
+    try {
+      const outcome = await runNumberingCycle(db, cycleConfig, deps);
+      if (outcome.status === 'nothing-to-do') {
+        // Recorded as `skipped` rather than deleted: "the hold ran and there was nothing to number"
+        // is a real answer, and a hold log with no row for the job reads as a job that failed to
+        // fire. `skipped` distinguishes the two.
+        finishJobRun(db, runId, 'skipped', { message: 'no provisional decisions to number' });
+        return runId;
+      }
+      const ok = outcome.status === 'merged';
+      finishJobRun(
+        db,
+        runId,
+        ok ? 'ok' : 'error',
+        {
+          outcome: outcome.status,
+          ...('prNumber' in outcome ? { prNumber: outcome.prNumber } : {}),
+          ...('assignments' in outcome ? { assigned: outcome.assignments.map((a) => `${a.from.id} → ${a.id}`) } : {}),
+          ...('inFlight' in outcome ? { inFlight: outcome.inFlight } : {}),
+        },
+        ok ? null : `cycle ended as ${outcome.status}`,
+      );
+      return runId;
+    } catch (err) {
+      logger.error({ err }, 'consolidation: cycle threw');
+      finishJobRun(db, runId, 'error', null, err instanceof Error ? err.message : String(err));
+      return runId;
+    }
   };
-
-  let running = false;
-  setInterval(() => {
-    if (running) return; // a cycle can outlast its own interval — the drain alone is bounded at ~2h
-    running = true;
-    void runNumberingCycle(db, cycleConfig, deps)
-      .then((outcome) => {
-        if (outcome.status !== 'nothing-to-do') logger.info({ outcome: outcome.status }, 'numbering: cycle finished');
-      })
-      .catch((err) => logger.error({ err }, 'numbering: cycle failed'))
-      .finally(() => {
-        running = false;
-      });
-  }, config.numbering.intervalMs);
-
-  logger.info({ intervalMs: config.numbering.intervalMs }, 'numbering cycle job ready');
 }

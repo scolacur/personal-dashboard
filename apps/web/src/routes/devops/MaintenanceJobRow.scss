@@ -1,0 +1,84 @@
+.maintenance-job {
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.job-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.job-name {
+  font-weight: 600;
+}
+
+.job-info {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.job-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-sm);
+}
+
+.job-schedule {
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+}
+
+.run-now-wrap {
+  display: inline-flex; // a disabled button swallows pointer events, so the title lives out here
+}
+
+.run-now {
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent-2);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.run-now-why {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.run-now-error {
+  margin: 0 0 var(--space-sm);
+  color: var(--status-error);
+  font-size: var(--font-size-xs);
+}
+
+.job-about {
+  margin: 0;
+}

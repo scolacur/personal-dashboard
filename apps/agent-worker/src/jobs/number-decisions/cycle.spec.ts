@@ -4,20 +4,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ProvisionalDecision } from '../../shared/decisions';
-import { ensureRobotStateTable, maintenanceHold } from '../robot/state';
-import { drain, inMergeOrder, runNumberingCycle, type CycleConfig, type CycleDeps } from './cycle';
+import { inMergeOrder, runNumberingCycle, type CycleConfig, type CycleDeps } from './cycle';
 
 const CONFIG_BASE = {
   githubRepo: 'scolacur/personal-dashboard',
-  drainTimeoutMs: 60_000,
-  drainPollMs: 1_000,
   ciTimeoutMs: 60_000,
   ciPollMs: 1_000,
 };
 
 function makeDb(): Database.Database {
   const db = new Database(':memory:');
-  ensureRobotStateTable(db);
   db.exec(`CREATE TABLE agent_notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, ticket_id INTEGER,
     title TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, read_at INTEGER
@@ -110,26 +106,6 @@ describe('inMergeOrder', () => {
   });
 });
 
-describe('drain', () => {
-  it('returns 0 immediately when nothing is in flight', async () => {
-    const h = harness({ inFlight: 0 });
-    expect(await drain(h.deps, { ...CONFIG_BASE, repoRoot: '/x' })).toBe(0);
-  });
-
-  it('waits for runs to finish', async () => {
-    const h = harness({ inFlight: 2 });
-    setTimeout(() => h.setInFlight(0), 0);
-    const p = drain(h.deps, { ...CONFIG_BASE, repoRoot: '/x' });
-    h.setInFlight(0);
-    expect(await p).toBe(0);
-  });
-
-  it('gives up at the deadline and reports what is still running', async () => {
-    const h = harness({ inFlight: 3 });
-    expect(await drain(h.deps, { ...CONFIG_BASE, repoRoot: '/x', drainTimeoutMs: 5_000 })).toBe(3);
-  });
-});
-
 describe('runNumberingCycle', () => {
   let db: Database.Database;
   beforeEach(() => {
@@ -142,11 +118,10 @@ describe('runNumberingCycle', () => {
     ...over,
   });
 
-  it('does nothing, and takes no hold, when the inbox is empty', async () => {
+  it('does nothing at all when the inbox is empty', async () => {
     const root = makeRepo([]);
     const h = harness();
     expect(await runNumberingCycle(db, config(root), h.deps)).toEqual({ status: 'nothing-to-do' });
-    expect(maintenanceHold(db)).toBeNull();
     expect(h.calls).toEqual([]);
   });
 
@@ -172,24 +147,19 @@ describe('runNumberingCycle', () => {
     expect(index).not.toContain('Awaiting a number');
   });
 
-  it('releases the hold on the happy path', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
-    await runNumberingCycle(db, config(root), harness().deps);
-    expect(maintenanceHold(db)).toBeNull();
-  });
-
-  it('skips the cycle rather than rewriting under a live run', async () => {
+  it('refuses to rewrite when a run is somehow live inside the hold', async () => {
+    // The coordinator drains before opening the window, so this should never fire. It is the
+    // belt-and-braces guard: rewriting under a live Robot puts the conflict on THAT Robot's PR.
     const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
     const h = harness({ inFlight: 2 });
-    const outcome = await runNumberingCycle(db, config(root, { drainTimeoutMs: 5_000 }), h.deps);
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
 
-    expect(outcome).toEqual({ status: 'drain-timeout', inFlight: 2 });
+    expect(outcome).toEqual({ status: 'runs-in-flight', inFlight: 2 });
     // Nothing was touched: the decision is still in the inbox and no PR was opened.
     expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'))).toBe(true);
     expect(h.calls.some((c) => c.cmd === 'gh')).toBe(false);
-    expect(maintenanceHold(db)).toBeNull();
     const n = db.prepare('SELECT title FROM agent_notifications').get() as { title: string };
-    expect(n.title).toContain('would not drain');
+    expect(n.title).toContain('in flight inside the hold');
   });
 
   it('leaves the PR open and notifies on a red verify — never merges red', async () => {
@@ -212,7 +182,9 @@ describe('runNumberingCycle', () => {
     expect(h.calls.some((c) => c.cmd === 'gh' && c.args[1] === 'merge')).toBe(false);
   });
 
-  it('releases the hold even when the cycle throws', async () => {
+  it('propagates a failure rather than swallowing it — the caller owns the hold', async () => {
+    // Releasing the hold moved to the coordinator, which does it in a finally. This job's job is to
+    // fail loudly so the run row records an error.
     const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
     const h = harness();
     const boom: CycleDeps = {
@@ -223,7 +195,6 @@ describe('runNumberingCycle', () => {
       },
     };
     await expect(runNumberingCycle(db, config(root), boom)).rejects.toThrow('network down');
-    expect(maintenanceHold(db)).toBeNull();
   });
 
   it('numbers several decisions in merge order, in one PR', async () => {

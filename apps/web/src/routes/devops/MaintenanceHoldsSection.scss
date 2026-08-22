@@ -1,0 +1,173 @@
+.maintenance-section {
+  scroll-margin-top: 5rem; // clear the sticky top nav when jumped to via #maintenance-holds
+  margin-top: var(--space-xl);
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.hold-pill {
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  border: 1px solid var(--border);
+
+  &--active {
+    color: var(--status-warn);
+    border-color: var(--status-warn);
+  }
+
+  &--queued {
+    color: var(--text-dim);
+  }
+}
+
+.section-sub {
+  margin: 0 0 var(--space-md);
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+  max-width: 70ch;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-lg);
+}
+
+.start-hold {
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent-2);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+}
+
+.hold-notice,
+.hold-error {
+  font-size: var(--font-size-sm);
+  color: var(--text-dim);
+}
+
+.hold-error {
+  color: var(--status-error);
+}
+
+.maintenance-job-list {
+  list-style: none;
+  margin: 0 0 var(--space-lg);
+  padding: 0;
+  display: grid;
+  gap: var(--space-md);
+}
+
+.hold-log-title {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-md);
+  color: var(--text-dim);
+}
+
+.hold-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.hold-log-empty,
+.hold-runs-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--font-size-sm);
+}
+
+.hold-entry {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+
+  &--active {
+    border-left-color: var(--status-warn);
+  }
+
+  &--completed {
+    border-left-color: var(--status-ok);
+  }
+
+  &--abandoned {
+    border-left-color: var(--status-error);
+  }
+
+  &--queued {
+    border-left-color: var(--text-dim);
+  }
+}
+
+.hold-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+}
+
+.hold-trigger,
+.hold-status,
+.hold-duration {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+}
+
+.hold-note {
+  margin: var(--space-xs) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--status-error);
+}
+
+.hold-runs {
+  list-style: none;
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+  font-size: var(--font-size-sm);
+
+  a {
+    color: var(--accent-2);
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+.hold-run-status {
+  color: var(--text-dim);
+  font-size: var(--font-size-xs);
+  margin-left: var(--space-sm);
+}

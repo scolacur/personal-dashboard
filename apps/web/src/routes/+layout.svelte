@@ -9,6 +9,7 @@
   import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from '$lib/nav-utils';
   import DeployStatus from './DeployStatus.svelte';
   import DispatchKillswitch from './DispatchKillswitch.svelte';
+  import MaintenanceHoldIndicator from '$lib/MaintenanceHoldIndicator.svelte';
   import { pageWidgets } from '$lib/page-widgets.svelte';
   import { clearLegacyLayoutKeys } from '$lib/layout';
   import Toast from '$lib/Toast.svelte';
@@ -33,8 +34,9 @@
   const showPomodoro = $derived(page.route.id !== '/devops/tickets/[ticketId]');
 
   // Dev Ops section context in the nav: the deploy/commit readout (PD-414, re-homed from the
-  // `#site-status` section PD-422 removed) and the Robot dispatch killswitch (PD-410). Both are
-  // section-wide operational state, so both ride the same predicate.
+  // `#site-status` section PD-422 removed), the Robot dispatch killswitch (PD-410), and the
+  // maintenance-hold indicator (PD-498). All three are section-wide operational state, so all
+  // three ride the same predicate. The hold indicator renders nothing when no hold is pending.
   const showDevOpsNav = $derived(isDevOpsRoute(page.url.pathname));
 
   // Arrange button: shown only on widget-bearing pages at >=768px (enforced in CSS).
@@ -104,6 +106,7 @@
       {/if}
       <div class="nav-spacer"></div>
       {#if showDevOpsNav}
+        <MaintenanceHoldIndicator />
         <DispatchKillswitch />
         <DeployStatus />
       {/if}
