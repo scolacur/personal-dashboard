@@ -152,14 +152,55 @@ async function restoreCheckout(config: CycleConfig, deps: CycleDeps, branch: str
 }
 
 /** `verify`'s conclusion on the cycle's own PR: `pass`, `fail`, or `pending`. */
+/**
+ * The one check that gates the merge.
+ *
+ * **Only `verify`.** A citation rename touches whatever files happen to cite a decision, and some of
+ * those are sensitive paths — the third live run rewrote a `D-TMP-` reference inside
+ * `apps/server/src/widgets/task-monitor/schema.ts`, which the denylist matches with a `schema.ts` glob. The bot is not on
+ * `AUTHORS_EXEMPT`, so path-guard goes red, correctly and every time.
+ *
+ * D-078 decided this case in advance: `--admin` exists to bypass the approval requirement *and*
+ * path-guard's label ask, because a mechanical rename is not a semantic change to a sensitive file.
+ * It never bypasses a red `verify`, which is why the gate is an allowlist of one rather than
+ * "ignore the checks that are inconvenient".
+ */
+export const MERGE_GATE_CHECK = 'verify';
+
+/** One row of `gh pr checks` output: name, then a status word. */
+function checkRows(stdout: string): { name: string; state: string }[] {
+  return stdout
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts.length >= 2 && parts[0])
+    .map((parts) => ({ name: parts[0], state: parts[1] }));
+}
+
 async function ciState(deps: CycleDeps, config: CycleConfig, prNumber: number): Promise<'pass' | 'fail' | 'pending'> {
   const { stdout } = await deps.run('gh', ['pr', 'checks', String(prNumber), '--repo', config.githubRepo], {
     cwd: config.repoRoot,
   });
-  // `gh pr checks` exits non-zero when anything is failing or pending, so the runner must tolerate a
-  // non-zero exit for this one call; the text is what carries the answer.
-  if (/\bfail\b/.test(stdout)) return 'fail';
-  if (/\bpending\b/.test(stdout)) return 'pending';
+
+  // GitHub has not registered any check runs yet — normal for the first seconds after a PR opens,
+  // and it is what killed the third live run. It means "too early to tell", not "failed".
+  if (/no checks reported/i.test(stdout)) return 'pending';
+
+  const rows = checkRows(stdout);
+  const gate = rows.find((r) => r.name === MERGE_GATE_CHECK);
+  if (!gate) return 'pending'; // the gate itself has not appeared yet
+
+  // Report the others without acting on them, so a red path-guard is visible in the log rather than
+  // silently ignored.
+  const others = rows.filter((r) => r.name !== MERGE_GATE_CHECK && /fail/i.test(r.state));
+  if (others.length > 0) {
+    logger.info(
+      { prNumber, failing: others.map((r) => r.name) },
+      'numbering: non-gating check(s) red — expected for a mechanical rename, --admin covers them (D-078)',
+    );
+  }
+
+  if (/fail/i.test(gate.state)) return 'fail';
+  if (/pending|queued|in_progress/i.test(gate.state)) return 'pending';
   return 'pass';
 }
 

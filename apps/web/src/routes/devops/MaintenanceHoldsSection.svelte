@@ -7,6 +7,7 @@
     holdDurationMs,
     holdExplainer,
     holdStatusLabel,
+    startHoldDisabledReason,
   } from '$lib/maintenance-display';
   import { fetchHolds, fetchMaintenanceStatus, startMaintenanceHold, type MaintenanceStatus } from '$lib/maintenance-api';
   import MaintenanceJobRow from './MaintenanceJobRow.svelte';
@@ -43,8 +44,10 @@
     return () => clearInterval(timer);
   });
 
+  const startDisabledReason = $derived(startHoldDisabledReason(status?.active ?? null, status?.queued ?? null));
+
   async function startHold() {
-    if (starting) return;
+    if (starting || startDisabledReason) return;
     starting = true;
     notice = null;
     try {
@@ -73,16 +76,22 @@
     {:else if status?.queued}
       <span class="hold-pill hold-pill--queued">Hold queued</span>
     {/if}
+    <!-- title on the wrapper, not the button: a disabled button swallows pointer events. -->
+    <span class="start-hold-wrap" title={startDisabledReason ?? 'Queue a maintenance hold now'}>
+      <button
+        class="start-hold"
+        type="button"
+        disabled={starting || startDisabledReason !== null}
+        onclick={startHold}
+      >
+        {starting ? 'Starting…' : 'Start maintenance hold'}
+      </button>
+    </span>
   </div>
 
   <p class="section-sub">{holdExplainer()}</p>
 
-  <div class="section-actions">
-    <button class="start-hold" type="button" disabled={starting} onclick={startHold}>
-      {starting ? 'Starting…' : 'Start maintenance hold'}
-    </button>
-    {#if notice}<span class="hold-notice">{notice}</span>{/if}
-  </div>
+  {#if notice}<p class="hold-notice">{notice}</p>{/if}
 
   {#if error}
     <p class="hold-error">Couldn’t read maintenance status: {error}</p>

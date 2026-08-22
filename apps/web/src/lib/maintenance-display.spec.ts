@@ -7,6 +7,7 @@ import {
   holdExplainer,
   holdStatusLabel,
   runNowDisabledReason,
+  startHoldDisabledReason,
 } from './maintenance-display';
 
 function hold(over: Partial<MaintenanceHold> = {}): MaintenanceHold {
@@ -50,8 +51,8 @@ describe('holdExplainer', () => {
     expect(holdExplainer(6 * 60 * 60_000, 10 * 60_000)).toContain('10 minutes');
   });
 
-  it('says the hold waits for in-flight runs, which is the non-obvious part', () => {
-    expect(holdExplainer()).toContain('in-flight');
+  it('says running Robots are allowed to finish — the non-obvious part', () => {
+    expect(holdExplainer()).toContain('already working are');
   });
 });
 
@@ -87,5 +88,38 @@ describe('runNowDisabledReason', () => {
   it('explains itself when there is no hold, so the tooltip and the disabled state agree', () => {
     const reason = runNowDisabledReason(null);
     expect(reason).toContain('active maintenance hold');
+  });
+});
+
+describe('holdExplainer — what it promises must match the coordinator', () => {
+  it('says a hold is queued unconditionally, not "when convenient"', () => {
+    // The first copy said the hold "only opens once every in-flight run has finished — so it may
+    // wait", which reads as an indefinite wait on a busy queue. That is not what the coordinator
+    // does: it holds dispatch the moment the hold is QUEUED, so the queue cannot refill and the
+    // wait is bounded by the Robots already running.
+    const text = holdExplainer();
+    expect(text).toContain('no matter what');
+    expect(text).toContain('no further Robots are dispatched');
+    expect(text).not.toContain('it may wait');
+  });
+
+  it('describes the order: queue, stop dispatching, drain, open', () => {
+    const text = holdExplainer();
+    expect(text.indexOf('queued')).toBeLessThan(text.indexOf('allowed to finish'));
+    expect(text.indexOf('allowed to finish')).toBeLessThan(text.indexOf('opens as soon as'));
+  });
+});
+
+describe('startHoldDisabledReason', () => {
+  it('is enabled when there is no hold', () => {
+    expect(startHoldDisabledReason(null, null)).toBeNull();
+  });
+
+  it('is disabled while a hold is already open', () => {
+    expect(startHoldDisabledReason(hold({ status: 'active' }), null)).toContain('already open');
+  });
+
+  it('is disabled while one is already queued — pressing again would mean nothing', () => {
+    expect(startHoldDisabledReason(null, hold({ status: 'queued' }))).toContain('already queued');
   });
 });

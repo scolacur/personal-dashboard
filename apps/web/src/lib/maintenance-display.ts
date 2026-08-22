@@ -25,10 +25,13 @@ export function durationLabel(ms: number): string {
 export function holdExplainer(cadenceMs = HOLD_CADENCE_MS, windowMs = HOLD_WINDOW_MS): string {
   return (
     `A maintenance hold pauses Robot dispatch so jobs can safely change shared files. ` +
-    `One comes due every ${durationLabel(cadenceMs)}, and only opens once every in-flight Robot run has finished — ` +
-    `so it may wait. The window stays open up to ${durationLabel(windowMs)}; a scheduled hold closes as soon as its jobs are done.`
+    `One is queued every ${durationLabel(cadenceMs)}, no matter what. ` +
+    `From the moment it is queued no further Robots are dispatched; the Robots already working are ` +
+    `allowed to finish, and the hold opens as soon as none are left. ` +
+    `It then runs for up to ${durationLabel(windowMs)}, ending sooner if its jobs finish first.`
   );
 }
+
 
 export type HoldPhase = 'active' | 'queued' | 'completed' | 'abandoned';
 
@@ -61,4 +64,16 @@ export function holdDurationMs(hold: MaintenanceHold): number | null {
 export function runNowDisabledReason(activeHold: MaintenanceHold | null): string | null {
   if (activeHold) return null;
   return 'Only runs during an active maintenance hold — start one above, or wait for the daily hold.';
+}
+
+/**
+ * Why "Start maintenance hold" is disabled, or null when it is enabled.
+ *
+ * Same one-source-for-both rule as {@link runNowDisabledReason}: the tooltip and the disabled state
+ * are derived from one function so they cannot drift apart.
+ */
+export function startHoldDisabledReason(activeHold: MaintenanceHold | null, queuedHold: MaintenanceHold | null): string | null {
+  if (activeHold) return 'A maintenance hold is already open.';
+  if (queuedHold) return 'A maintenance hold is already queued — it opens once the running Robots finish.';
+  return null;
 }
