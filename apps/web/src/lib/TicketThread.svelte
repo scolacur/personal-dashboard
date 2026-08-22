@@ -65,10 +65,10 @@
   }
 
   // "Approve & queue" (D-057) is offered only for a non-Epic refine_in_place — decompose routes
-  // per-child and an Epic can never enter the Queue. `needsShaping` is a soft hint: the
+  // per-child and an Epic can never enter the Queue. `notReady` is a soft hint: the
   // ticket can still be queued, but its body lacks the four Ready sections.
   const canQueue = $derived(proposal?.mode === 'refine_in_place' && !isEpic);
-  const needsShaping = $derived(
+  const notReady = $derived(
     proposal?.mode === 'refine_in_place' && !isReady(proposal.body ?? null),
   );
 
@@ -230,13 +230,13 @@
                   class="approve-queue"
                   onclick={() => decide('approve-queue')}
                   disabled={deciding}
-                  title={needsShaping
+                  title={notReady
                     ? "Not in Robot-ready shape (missing the four sections) — you can still queue it, but Robot works best from a shaped ticket."
                     : "Approve and move into the Robot's Queue to dispatch now."}
                 >
                   Approve &amp; queue
                 </button>
-                {#if needsShaping}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">needs shaping</span>{/if}
+                {#if notReady}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">not ready</span>{/if}
               {/if}
               <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
             </div>

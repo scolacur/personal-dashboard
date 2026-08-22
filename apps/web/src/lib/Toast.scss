@@ -14,7 +14,12 @@
   z-index: 200;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
   pointer-events: none;
-  white-space: nowrap;
+  // `pre-line` rather than `nowrap`: a toast may now be a short breakdown over several lines (the
+  // board's "Epic queued. Contains: …"), and a long single-line message should wrap rather than
+  // run off the edge. Existing one-line toasts contain no newlines and are unaffected.
+  white-space: pre-line;
+  max-width: min(90vw, 34rem);
+  text-align: center;
 }
 
 /* A failed save is the one case worth colouring — it is the only toast the user may need to

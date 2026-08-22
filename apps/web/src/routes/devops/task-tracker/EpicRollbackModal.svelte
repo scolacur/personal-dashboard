@@ -6,147 +6,134 @@
   import type { EpicRollbackPlan } from '../epic-drag';
 
   /**
-   * Pulling an Epic back from Queue to Backlog when the cascade would leave members behind
-   * (D-TMP-PD383a, PD-508 slice B). Never shown when there is nothing to leave behind — that drag is
-   * silent and instant.
+   * Shown when an Epic is dragged Queue → Backlog and some of its members have work in flight.
+   * It reports what cannot be recalled; it does not offer to stop it, because nothing can — the
+   * loop awaits each session with no cancel channel (D-046).
    *
-   * The one question is about the **parked** members. A member with a live session is reported,
-   * not offered: the loop awaits each session with no cancel channel, and D-046 holds that killing
-   * a Robot mid-hand-off loses the work outright. A button claiming to stop it would be a lie.
+   * Nothing in flight ⇒ this never opens and the drag is silent.
    */
   let {
     epic,
     plan,
+    busy = false,
     onCancel,
-    onRollback,
+    onContinue,
+    onBump,
   }: {
     /** The Epic being rolled back; null closes the modal. */
     epic: AgentTicket | null;
     plan: EpicRollbackPlan;
+    /** A choice is mid-write — both actions take several round trips. */
+    busy?: boolean;
     onCancel: () => void;
-    /** `pullBackParked` also returns the parked members to Backlog. */
-    onRollback: (pullBackParked: boolean) => void;
+    onContinue: () => void;
+    onBump: () => void;
   } = $props();
 
-  const label = (t: AgentTicket) => t.displayId ?? t.title;
+  const n = $derived(plan.inFlight.length);
 </script>
 
-<Modal open={epic !== null} title="Pull this Epic back to Backlog?" onClose={onCancel}>
+<Modal
+  open={epic !== null}
+  title="Some tickets in this epic are actively being worked on"
+  onClose={onCancel}
+>
   {#if epic}
-    <p class="rollback-msg">
-      <strong>{label(epic)}</strong> goes back to Backlog.
-      {#if plan.unqueued.length > 0}
-        {plan.unqueued.length} member{plan.unqueued.length === 1 ? '' : 's'} that hadn't started
-        {plan.unqueued.length === 1 ? 'comes' : 'come'} with it.
-      {:else}
-        No member is waiting to start.
-      {/if}
+    <ul class="active-list">
+      {#each plan.inFlight as m (m.id)}
+        <li>
+          <a href="/devops/tickets/{m.displayId}" target="_blank" rel="noreferrer">
+            <span class="tid">{m.displayId}</span>
+            <span class="ttitle">{m.title}</span>
+          </a>
+          {#if m.agentState}
+            <span class="tstate">{AGENT_STATE_LABELS[m.agentState]}</span>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+
+    <p class="rollback-note">
+      A run in progress can&rsquo;t be stopped, so either the epic stays in the queue with it, or
+      {n === 1 ? 'it moves' : 'they move'} into {n === 1 ? 'its' : 'their'} own epic and this one goes
+      back to the backlog.
     </p>
 
-    {#if plan.running.length > 0}
-      <div class="rollback-group running">
-        <p class="group-head">
-          Still running — {plan.running.length === 1 ? 'this one keeps' : 'these keep'} going
-        </p>
-        <ul>
-          {#each plan.running as m (m.id)}
-            <li><strong>{label(m)}</strong> — {m.title}</li>
-          {/each}
-        </ul>
-        <p class="group-note">
-          A run in progress can't be stopped from the board: the loop works through one session at a
-          time and waits for it to finish, and ending one mid-hand-off throws the work away rather
-          than saving it (D-046). {plan.running.length === 1 ? 'It' : 'They'} will land normally —
-          the Epic keeps reading <em>In Progress</em> until then.
-        </p>
-      </div>
-    {/if}
-
-    {#if plan.parked.length > 0}
-      <div class="rollback-group parked">
-        <p class="group-head">
-          Parked mid-flight — nothing is running for {plan.parked.length === 1 ? 'this' : 'these'}
-        </p>
-        <ul>
-          {#each plan.parked as m (m.id)}
-            <li>
-              <strong>{label(m)}</strong> — {m.title}
-              {#if m.agentState}<span class="state">{AGENT_STATE_LABELS[m.agentState]}</span>{/if}
-            </li>
-          {/each}
-        </ul>
-        <p class="group-note">
-          Safe to pull back with the Epic. Leave them if you're only shelving the Epic briefly and
-          want to pick these up where they stopped.
-        </p>
-      </div>
-    {/if}
-
     <div class="rollback-actions">
-      <Button variant="ghost" onclick={onCancel}>Cancel</Button>
+      <Button variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
       <span class="spacer"></span>
-      {#if plan.parked.length > 0}
-        <Button variant="ghost" onclick={() => onRollback(false)}>Leave them in the Queue</Button>
-        <Button variant="primary" onclick={() => onRollback(true)}>
-          Pull back {plan.parked.length} too
-        </Button>
-      {:else}
-        <Button variant="primary" onclick={() => onRollback(false)}>Move the Epic back</Button>
-      {/if}
+      <Button variant="ghost" onclick={onBump} disabled={busy}>
+        Bump {n === 1 ? 'it' : `all ${n}`} into a new epic &amp; move this one to backlog
+      </Button>
+      <Button variant="primary" onclick={onContinue} disabled={busy}>Continue</Button>
     </div>
+
+    <p class="rollback-fineprint">
+      Clicking &ldquo;Continue&rdquo; will move all of this epic&rsquo;s tickets that are not
+      completed, closed, or actively being worked on back to the backlog. The epic will remain in
+      the queue.
+    </p>
   {/if}
 </Modal>
 
 <style lang="scss">
-  .rollback-msg {
-    margin: 0 0 var(--space-md);
+  .active-list {
+    margin: 0 0 var(--space-lg);
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-sm);
+      padding: var(--space-sm) 0;
+      border-bottom: 1px solid var(--border);
+
+      &:last-child {
+        border-bottom: none;
+      }
+    }
+
+    a {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-sm);
+      min-width: 0;
+      text-decoration: none;
+
+      &:hover .ttitle {
+        color: var(--accent);
+      }
+    }
+  }
+
+  .tid {
+    flex: 0 0 auto;
+    font-family: var(--font-display);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+  }
+
+  .ttitle {
+    font-size: var(--font-size-sm);
+    color: var(--text);
+  }
+
+  .tstate {
+    margin-left: auto;
+    flex: 0 0 auto;
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .rollback-note {
+    margin: 0 0 var(--space-lg);
     font-size: var(--font-size-sm);
     color: var(--text);
     line-height: 1.5;
-  }
-
-  .rollback-group {
-    margin-bottom: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius);
-    background: var(--surface-2);
-    border-left: 3px solid var(--border);
-
-    &.running {
-      border-left-color: var(--accent);
-    }
-
-    ul {
-      margin: 0 0 var(--space-sm);
-      padding-left: var(--space-lg);
-      font-size: var(--font-size-sm);
-      color: var(--text);
-    }
-
-    li {
-      margin-bottom: var(--space-xs);
-    }
-  }
-
-  .group-head {
-    margin: 0 0 var(--space-sm);
-    font-size: var(--font-size-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-  }
-
-  .group-note {
-    margin: 0;
-    font-size: var(--font-size-xs);
-    color: var(--muted);
-    line-height: 1.5;
-  }
-
-  .state {
-    margin-left: var(--space-xs);
-    font-size: var(--font-size-xs);
-    color: var(--muted);
   }
 
   .rollback-actions {
@@ -158,5 +145,14 @@
     .spacer {
       flex: 1;
     }
+  }
+
+  // Spells out what the default action does, below the buttons rather than above them — the
+  // choice is the point; this is the confirmation of it.
+  .rollback-fineprint {
+    margin: var(--space-md) 0 0;
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    line-height: 1.5;
   }
 </style>

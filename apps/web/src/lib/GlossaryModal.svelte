@@ -43,12 +43,16 @@
   ];
 
   const AGENT_STATE_ACTIONS: Partial<Record<AgentState, string[]>> = {
+    // PD-536: these used to describe working through "Request changes" feedback, which is a
+    // different situation entirely — the loop handles review feedback by itself, unboundedly
+    // (`decideReactivation`). This state means someone CLOSED the PR without merging, so the
+    // question is what to do about a rejected attempt.
     'needs-human': [
-      'Read the outstanding "Request changes" review comments on the PR.',
-      'Finish the changes manually — push commits to the robot/<issue> branch to complete the work.',
+      'Open the closed PR and check why it was closed rather than merged.',
+      'If the approach was wrong, edit the ticket to say so, then Unstick it to have Robot retry.',
+      'If the work was fine but the PR went stale, reopen it or re-push the branch yourself.',
       "Re-scope or split the ticket if it's too big, then re-queue the smaller pieces.",
-      'Give clearer / updated feedback and Unstick the ticket to have Robot try again.',
-      "Merge the PR as-is if it's acceptable, or close it wontfix.",
+      "If it shouldn't be attempted again, close the ticket wontfix.",
     ],
     stuck: [
       'Open the robot/<issue> branch / PR (if one exists) and check how far the run got.',

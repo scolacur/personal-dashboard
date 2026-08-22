@@ -115,12 +115,16 @@ export const PRIORITY_LABELS: Record<TicketPriority, string> = {
 };
 
 /** Short labels for each agent state (displayed in pills and the status-legend modal). */
+// Display names for the pill (and the glossary). PD-536: `queued` reads as "waiting", not
+// "queued" — the card already sits in a lane called Queue, so "queued" restated the column while
+// the thing worth knowing is that the loop has not started it yet. That freed "in progress" to
+// mean one thing (a live session) rather than also naming the Epic band's lane.
 export const AGENT_STATE_LABELS: Record<AgentState, string> = {
-  queued: 'queued',
+  queued: 'waiting',
   working: 'in progress',
   'in-review': 'in review',
   stuck: 'stuck',
-  'needs-human': 'needs human',
+  'needs-human': 'PR closed unmerged',
   'awaiting-human': 'awaiting human',
   wontfix: 'wontfix',
   done: 'done',
@@ -204,13 +208,19 @@ export function showsTurnProgress(
 // (PD-262). See also #145 (Karpathy memory model).
 /** One-sentence descriptions for each agent state, shown in the status-legend modal. */
 export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
-  queued: 'Picked up by the Robot loop and waiting to start.',
+  // Not "picked up by the loop" — it is precisely the state of NOT having been picked up yet
+  // (`robotQueueCandidates` selects on `agent_state IS NULL OR 'queued'`).
+  queued: "In the Queue and eligible for dispatch — the loop hasn't started it yet.",
   working: 'A Robot run is actively working the ticket right now.',
   'in-review': 'The run succeeded and a PR is open, awaiting human review.',
   stuck:
     'The run stalled/gave up and was flagged by in-process stall detection; needs human intervention.',
+  // The ONLY writer of this state is `pollInReviewPrs` on a PR that went CLOSED without merging
+  // (pr-state.ts). There is no review-feedback cap anywhere in the loop — `decideReactivation`
+  // re-activates on any trusted feedback, unboundedly — so the previous wording described a
+  // mechanism that does not exist.
   'needs-human':
-    "A PR exists but the automated review-feedback loop hit its cap; a human must drive it home.",
+    'A human closed the Robot\'s PR without merging it. The loop will not touch the ticket again on its own.',
   'awaiting-human':
     'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
   wontfix: "Terminal: the ticket was closed as won't-fix.",
@@ -227,16 +237,24 @@ export const PRIORITY_DESCRIPTIONS: Record<TicketPriority, string> = {
   P5: 'Window dressing.',
 };
 
-/** Short labels for each refinement session state (shown in pills and the glossary modal). */
+/**
+ * Short labels for each refinement session state (shown in pills and the glossary modal).
+ *
+ * PD-536: both states say **Refining…**, because both ARE the same activity — an open refine
+ * session. What differs is only whose turn it is, which the emoji carries: 🤖 the agent is
+ * thinking, 💬 it asked something and is waiting on you. The old pair ("Refining…" / "Needs you")
+ * read as two unrelated states and buried the one thing worth acting on.
+ */
 export const REFINE_STATE_LABELS: Record<RefineState, string> = {
-  refining: 'Refining…',
-  'awaiting-human': 'Needs you',
+  refining: 'Refining… 🤖',
+  'awaiting-human': 'Refining… 💬',
 };
 
 /** One-sentence descriptions for each refinement session state, shown in the glossary modal. */
 export const REFINE_STATE_DESCRIPTIONS: Record<RefineState, string> = {
-  refining: 'A refinement session is active — the agent is currently refining the ticket.',
-  'awaiting-human': 'The agent replied and is waiting for your feedback or approval to continue.',
+  refining: "A refine session is open and it's the agent's turn — it is working on the ticket now.",
+  'awaiting-human':
+    'A refine session is open and it is YOUR turn — the agent asked something and is waiting on your reply or approval.',
 };
 
 // A project the Tickets belong to (personal-dashboard, core, nervous-system-website, …).

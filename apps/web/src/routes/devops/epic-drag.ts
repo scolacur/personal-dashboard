@@ -32,67 +32,109 @@ export function membersOf(epicId: number, tickets: AgentTicket[]): AgentTicket[]
   return tickets.filter((t) => t.epicId === epicId);
 }
 
+/** A member is terminal when the work is over; a rollback never touches these. */
+function isTerminal(m: AgentTicket): boolean {
+  return m.status === 'completed' || m.status === 'closed';
+}
+
+/**
+ * Agent states that mean work is genuinely in flight, so the ticket must be left where it is:
+ *
+ *  - `working`    — a live coding session. It cannot be stopped from here at all (see below).
+ *  - `in-review`  — no session is running, but a PR is open and `pollInReviewPrs` is watching it,
+ *                   and that poll is scoped to `status = 'queue'`. Moving the ticket to Backlog
+ *                   would strand an open PR that nothing is watching any more.
+ *
+ * The parked states (`stuck` / `needs-human` / `awaiting-human`) are deliberately NOT here: nothing
+ * is in flight for those, so they come back with the Epic.
+ */
+export const IN_FLIGHT_AGENT_STATES: readonly string[] = ['working', 'in-review'] as const;
+
+export function isInFlight(m: AgentTicket): boolean {
+  return m.status === 'queue' && m.agentState !== null && IN_FLIGHT_AGENT_STATES.includes(m.agentState);
+}
+
 // ── Queueing ────────────────────────────────────────────────────────────────
 
 export interface EpicQueuePlan {
   /** Members the server will arm. Mirrors its `status = 'backlog'` cascade — `completed`/`closed`
    *  members are deliberately left alone, because a half-done Epic is the normal in-flight state. */
-  willQueue: AgentTicket[];
+  armed: AgentTicket[];
+  /** Armed, robot-assigned, and shaped — the loop can pick these up on its next cycle. */
+  dispatchable: AgentTicket[];
   /**
-   * Of those, the ones the Robot loop will never actually pick up: its candidate query gates on
-   * `(ready = 1 OR ready_bypassed = 1)`, which the Epic cascade does not check. They are not
-   * dangerous — nothing unshaped gets dispatched — but they would sit in the Queue looking normal
-   * and never run, which is the PD-467 failure mode. Surfaced so the dead end is not silent.
+   * Armed and robot-assigned but NOT shaped. The loop's candidate query gates on
+   * `(ready = 1 OR ready_bypassed = 1)`, which the Epic cascade does not check, so these sit in the
+   * Queue looking perfectly normal and never run — the PD-467 failure mode.
    */
   notReady: AgentTicket[];
+  /** Armed but not the Robot's to take. Counted separately so `dispatchable + notReady` can't
+   *  quietly under-report the total the human just queued. */
+  human: AgentTicket[];
 }
 
 export function planEpicQueue(members: AgentTicket[]): EpicQueuePlan {
-  const willQueue = members.filter((m) => m.status === 'backlog');
+  const armed = members.filter((m) => m.status === 'backlog');
+  const robot = armed.filter((m) => m.assignee === 'robot');
   return {
-    willQueue,
-    notReady: willQueue.filter((m) => m.assignee === 'robot' && !m.ready && !m.readyBypassed),
+    armed,
+    dispatchable: robot.filter((m) => m.ready || m.readyBypassed),
+    notReady: robot.filter((m) => !m.ready && !m.readyBypassed),
+    human: armed.filter((m) => m.assignee !== 'robot'),
   };
 }
 
 // ── Rollback ────────────────────────────────────────────────────────────────
 
 export interface EpicRollbackPlan {
-  /** Members the server un-queues on its own: queued and never started. */
-  unqueued: AgentTicket[];
   /**
-   * Members with a live coding session. These cannot be stopped from here — the loop runs sessions
-   * sequentially and awaits each one, with no cancel channel, and D-046 is explicit that killing a
-   * Robot mid-hand-off loses the work outright. The modal reports them; it does not offer to end
-   * them, because no write on this board can.
+   * Members with work in flight. **Nothing on this board can stop them** — the loop runs sessions
+   * sequentially and awaits each one with no cancel channel, and D-046 holds that ending a Robot
+   * mid-hand-off loses the work outright. They stay in the Queue.
    */
-  running: AgentTicket[];
+  inFlight: AgentTicket[];
+  /** Everything that returns to Backlog: queued, not terminal, not in flight. */
+  pullBack: AgentTicket[];
   /**
-   * Members parked mid-flight (in-review / stuck / needs-human / awaiting-human). Nothing is in
-   * flight for these, so pulling them back to Backlog is safe — but the server's cascade leaves
-   * them in the Queue, since only the human knows whether the Epic is being shelved or nudged.
-   * This is the actual question the rollback modal asks.
+   * Whether the Epic's own status moves.
+   *
+   * This is the fix for the bug where a rollback "did nothing": the Epic's lane is derived, and
+   * `deriveEpicLane` reports `in_progress` whenever ANY member sits in `queue`. So moving the Epic
+   * to `backlog` while a run is live wrote a status the view immediately overruled — the card never
+   * moved, and the Epic was left quietly disagreeing with its own lane. When work is in flight the
+   * Epic now stays in the Queue, which is simply the truth.
    */
-  parked: AgentTicket[];
+  movesEpic: boolean;
 }
 
 export function planEpicRollback(members: AgentTicket[]): EpicRollbackPlan {
-  const queued = members.filter((m) => m.status === 'queue');
+  const inFlight = members.filter(isInFlight);
   return {
-    // Mirrors the server's `agent_state IS NULL OR agent_state = 'queued'` predicate exactly.
-    unqueued: queued.filter((m) => m.agentState === null || m.agentState === 'queued'),
-    running: queued.filter((m) => m.agentState === 'working'),
-    parked: queued.filter(
-      (m) => m.agentState !== null && m.agentState !== 'queued' && m.agentState !== 'working',
-    ),
+    inFlight,
+    pullBack: members.filter((m) => m.status === 'queue' && !isTerminal(m) && !isInFlight(m)),
+    movesEpic: inFlight.length === 0,
   };
 }
 
-/**
- * Whether the rollback has anything to tell the human. Nothing left behind ⇒ the drag is silent and
- * instant, which is the common case (an Epic queued by mistake, or shelved before the loop reached
- * it).
- */
+/** The modal appears only to report work that cannot be recalled. Otherwise: silent and instant. */
 export function rollbackNeedsConfirm(plan: EpicRollbackPlan): boolean {
-  return plan.running.length > 0 || plan.parked.length > 0;
+  return plan.inFlight.length > 0;
+}
+
+/**
+ * Title for the Epic that in-flight work is bumped into.
+ *
+ * The bump exists because a run cannot be stopped: rather than telling the human their Epic is
+ * pinned to the Queue by one live ticket, the live ticket gets its own Epic and the rest of the
+ * Epic goes back to Backlog. The Epic is the unit of dispatch (D-TMP-PD383a), so scheduling two
+ * halves differently *requires* two Epics — the split is the model working, not a workaround.
+ *
+ * Preserves an existing `[Epic]` prefix rather than assuming one; board titles use it
+ * inconsistently, and inventing one would rename half the board's conventions by accident.
+ */
+export function splitEpicTitle(title: string): string {
+  const m = /^(\[Epic\]\s*)?([\s\S]*)$/.exec(title);
+  const prefix = m?.[1] ?? '';
+  const rest = (m?.[2] ?? title).trim();
+  return `${prefix}${rest} — active work`;
 }
