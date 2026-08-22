@@ -44,7 +44,9 @@ interface Harness {
   setCi: (state: 'pass' | 'fail' | 'pending') => void;
 }
 
-function harness(opts: { inFlight?: number; ci?: 'pass' | 'fail' | 'pending'; addTimes?: Record<string, number> } = {}): Harness {
+function harness(
+  opts: { inFlight?: number; ci?: 'pass' | 'fail' | 'pending'; addTimes?: Record<string, number>; checksOutput?: string } = {},
+): Harness {
   const calls: { cmd: string; args: string[] }[] = [];
   let inFlight = opts.inFlight ?? 0;
   let ci = opts.ci ?? 'pass';
@@ -62,6 +64,7 @@ function harness(opts: { inFlight?: number; ci?: 'pass' | 'fail' | 'pending'; ad
         return { stdout: 'https://github.com/scolacur/personal-dashboard/pull/412\n' };
       }
       if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
+        if (opts?.checksOutput !== undefined) return { stdout: opts.checksOutput };
         return { stdout: `verify\t${ci}\t2m\turl\n` };
       }
       return { stdout: '' };
@@ -348,5 +351,53 @@ describe('pushing', () => {
     // Local-only commands stay clean — no reason to hand them credentials.
     const commit = h.calls.find((c) => c.cmd === 'git' && c.args.includes('commit'));
     expect(commit?.args.join(' ')).not.toContain('extraHeader');
+  });
+});
+
+describe('the merge gate', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  const run = async (checksOutput: string) => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness({ checksOutput });
+    const outcome = await runNumberingCycle(db, { ...CONFIG_BASE, repoRoot: root, ciTimeoutMs: 5_000 }, h.deps);
+    return { outcome, merged: h.calls.some((c) => c.cmd === 'gh' && c.args[1] === 'merge') };
+  };
+
+  it('merges on a green verify even when path-guard is red', async () => {
+    // The third live run hit exactly this: rewriting a D-TMP- citation inside a file matching the
+    // schema.ts glob turns path-guard red, every time, because the bot is not AUTHORS_EXEMPT.
+    // D-078 decided in advance that --admin covers a mechanical rename. Gating on all checks would
+    // mean the cycle can never merge anything.
+    const { outcome, merged } = await run('verify\tpass\t2m\turl\npath-guard\tfail\t8s\turl\n');
+    expect(outcome.status).toBe('merged');
+    expect(merged).toBe(true);
+  });
+
+  it('never merges on a red verify, whatever else is green', async () => {
+    const { outcome, merged } = await run('verify\tfail\t2m\turl\npath-guard\tpass\t8s\turl\n');
+    expect(outcome).toMatchObject({ status: 'ci-red' });
+    expect(merged).toBe(false);
+  });
+
+  it('treats "no checks reported" as too-early, not as failure', async () => {
+    // Straight after `gh pr create` GitHub has registered nothing. Reading that as a failure is what
+    // killed the third live run — it errored one second after opening a perfectly good PR.
+    const { outcome, merged } = await run('no checks reported on the numbering/2026-08-22-d-080 branch\n');
+    expect(outcome).toMatchObject({ status: 'ci-timeout' });
+    expect(merged).toBe(false);
+  });
+
+  it('waits when the gate check has not appeared yet, even if others have', async () => {
+    const { outcome } = await run('path-guard\tpass\t8s\turl\n');
+    expect(outcome).toMatchObject({ status: 'ci-timeout' });
+  });
+
+  it('waits while verify is still queued or in progress', async () => {
+    const { outcome } = await run('verify\tpending\t0\turl\n');
+    expect(outcome).toMatchObject({ status: 'ci-timeout' });
   });
 });

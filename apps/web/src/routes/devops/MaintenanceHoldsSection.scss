@@ -10,6 +10,12 @@
   margin-bottom: var(--space-sm);
 }
 
+// Pushes the button to the right edge, inline with the heading.
+.start-hold-wrap {
+  margin-left: auto;
+  display: inline-flex;
+}
+
 .section-title {
   margin: 0;
   font-size: var(--font-size-lg);
@@ -38,14 +44,6 @@
   max-width: 70ch;
 }
 
-.section-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-lg);
-}
-
 .start-hold {
   padding: var(--space-xs) var(--space-md);
   border: 1px solid var(--border);
@@ -67,6 +65,7 @@
 
 .hold-notice,
 .hold-error {
+  margin: 0 0 var(--space-md);
   font-size: var(--font-size-sm);
   color: var(--text-dim);
 }
