@@ -67,8 +67,8 @@ describe('parseDecisionHeading', () => {
 
 describe('parseProvisionalFilename', () => {
   it('reads the ticket and letter out of a well-formed name', () => {
-    expect(parseProvisionalFilename('D-TMP-PD383a.md')).toEqual({
-      id: 'D-TMP-PD383a',
+    expect(parseProvisionalFilename('D-080.md')).toEqual({
+      id: 'D-080',
       ticketPrefix: 'PD',
       ticketNum: 383,
       letter: 'a',
@@ -78,7 +78,7 @@ describe('parseProvisionalFilename', () => {
   it('rejects anything that is not D-TMP-<TICKET><letter>.md', () => {
     expect(parseProvisionalFilename('D-TMP-PD383.md')).toBeNull(); // no letter
     expect(parseProvisionalFilename('D-TMP-pd383a.md')).toBeNull(); // lowercase prefix
-    expect(parseProvisionalFilename('D-TMP-PD383a-with-slug.md')).toBeNull();
+    expect(parseProvisionalFilename('D-080-with-slug.md')).toBeNull();
     expect(parseProvisionalFilename('D-079-numbered.md')).toBeNull();
     expect(parseProvisionalFilename('.gitkeep')).toBeNull();
   });
@@ -86,15 +86,15 @@ describe('parseProvisionalFilename', () => {
   it('can never be mistaken for a numbered decision, in either direction', () => {
     // This is what makes `grep -rl 'D-TMP-'` a safe blind rewrite (D-078): the two namespaces
     // cannot overlap, so the cycle cannot rewrite a real citation by accident.
-    expect(parseDecisionFilename('D-TMP-PD383a.md')).toBeNull();
+    expect(parseDecisionFilename('D-080.md')).toBeNull();
     expect(parseProvisionalFilename('D-046-sortie-after-run-safety-net.md')).toBeNull();
   });
 });
 
 describe('parseProvisionalHeading', () => {
   it('reads the title off the first line', () => {
-    expect(parseProvisionalHeading('# D-TMP-PD383a: The Epic is the unit of dispatch\n\n**Decision:**')).toEqual({
-      id: 'D-TMP-PD383a',
+    expect(parseProvisionalHeading('# D-080: The Epic is the unit of dispatch\n\n**Decision:**')).toEqual({
+      id: 'D-080',
       ticketPrefix: 'PD',
       ticketNum: 383,
       letter: 'a',
@@ -103,8 +103,8 @@ describe('parseProvisionalHeading', () => {
   });
 
   it('returns null when the first line is not a well-formed provisional heading', () => {
-    expect(parseProvisionalHeading('## D-TMP-PD383a: Wrong level\n')).toBeNull();
-    expect(parseProvisionalHeading('# D-TMP-PD383a:\n')).toBeNull();
+    expect(parseProvisionalHeading('## D-080: Wrong level\n')).toBeNull();
+    expect(parseProvisionalHeading('# D-080:\n')).toBeNull();
     expect(parseProvisionalHeading('# D-TMP-pd383a: Bad id\n')).toBeNull();
     expect(parseProvisionalHeading('# D-079: Numbered\n')).toBeNull();
   });

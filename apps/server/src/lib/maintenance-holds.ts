@@ -182,7 +182,7 @@ export function lastHoldStartedAt(db: Database.Database): number | null {
  * Close out holds left `active` or `queued` by a process that died.
  *
  * Called at worker start. An `active` row whose window has already elapsed is not holding anything
- * — the worker's own hold state lapses on its deadline (D-TMP-PD498a) — so leaving it `active`
+ * — the worker's own hold state lapses on its deadline (D-081) — so leaving it `active`
  * would show the Dev Ops nav a hold that does not exist.
  */
 export function closeStaleHolds(db: Database.Database, windowMs: number, now: number = Date.now()): number {

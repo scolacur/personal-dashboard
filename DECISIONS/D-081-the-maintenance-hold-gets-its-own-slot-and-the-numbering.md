@@ -1,4 +1,4 @@
-# D-TMP-PD498a: The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
+# D-081: The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
 
 **Decision:** three calls made while building D-078's numbering cycle, none of which D-078 settled:
 

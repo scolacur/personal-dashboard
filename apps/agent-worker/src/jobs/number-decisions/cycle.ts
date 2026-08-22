@@ -217,7 +217,7 @@ export async function runNumberingCycle(
     );
 
     if (result.dangling.length > 0) {
-      // Left as-is, deliberately — see D-TMP-PD498a. A citation with no decision behind it is
+      // Left as-is, deliberately — see D-081. A citation with no decision behind it is
       // usually a PR that was open across a previous cycle, and inventing a target would bury it.
       notifyLoop(
         db,

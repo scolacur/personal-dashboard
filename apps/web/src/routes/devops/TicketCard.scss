@@ -446,7 +446,7 @@
     filter: brightness(1.15);
   }
 
-  // D-TMP-PD383a: on a Ticket this is a read-out of the Epic's priority, not a control. Keep the
+  // D-080: on a Ticket this is a read-out of the Epic's priority, not a control. Keep the
   // pill's shape (the board reads by colour) but drop every affordance that implies it is settable.
   &.readonly {
     display: inline-block;

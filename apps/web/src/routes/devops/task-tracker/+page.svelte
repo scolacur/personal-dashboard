@@ -216,7 +216,7 @@
 
   // D-054: a non-empty Epic's lane is *derived* from its members, so its own status is inert —
   // setting it in the form silently no-ops. Lock the Status field for that case and explain why.
-  // D-TMP-PD383a slice C: a Ticket may be moved between Epics, never out of one.
+  // D-080 slice C: a Ticket may be moved between Epics, never out of one.
   const editingHadEpic = $derived(
     editingId !== null && (ticketsById.get(editingId)?.epicId ?? null) !== null,
   );
@@ -333,7 +333,7 @@
     formOpen = true;
   }
 
-  // Create an Epic from the Epic band's `+` (Backlog only, D-TMP-PD383a).
+  // Create an Epic from the Epic band's `+` (Backlog only, D-080).
   function openAddEpic(status: TicketStatus) {
     openAdd(status);
     form.isEpic = true;
@@ -501,7 +501,7 @@
   }
 
   function onDragStart(e: DragEvent, ticket: AgentTicket) {
-    // D-TMP-PD539a: terminal is final. Leaving it is one deliberate act on the detail page, not a
+    // D-083: terminal is final. Leaving it is one deliberate act on the detail page, not a
     // drag — `completed` is a record of what happened, and a record you can drag out of is not one.
     if (isTerminal(ticket)) {
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
@@ -587,7 +587,7 @@
     await applyTicketMove(id, { status, sortOrder });
   }
 
-  /* ── Epic drag (D-TMP-PD383a) ──────────────────────────────────────────
+  /* ── Epic drag (D-080) ──────────────────────────────────────────
      Two moves share one gesture. Dropping an Epic in its OWN lane reorders it there (D-054 as
      amended by PD-337) — that ordering is what ranks equal-priority Epics for dispatch. Dropping
      it in the OTHER pending lane moves the Epic itself, and the server cascades to its members:
@@ -751,7 +751,7 @@
    * Bump the in-flight members into a new Epic so this one can leave the Queue.
    *
    * The run cannot be stopped, but nothing says the *Epic* has to wait for it. Since the Epic is
-   * the unit of dispatch (D-TMP-PD383a), scheduling the live ticket and the shelved ones
+   * the unit of dispatch (D-080), scheduling the live ticket and the shelved ones
    * differently requires two Epics — so this is the model working rather than a way around it.
    *
    * Order matters. The new Epic carries the original's priority so that re-parenting a member
@@ -852,7 +852,7 @@
     }
   }
 
-  /* ── Spin off into a new Epic (D-TMP-PD383a slice C) ──────────────────
+  /* ── Spin off into a new Epic (D-080 slice C) ──────────────────
      The Epic is the unit of priority and dispatch, so a Ticket that must be scheduled apart from
      its siblings needs its own Epic rather than a different rank inside the current one. */
   let spinOffTarget = $state<AgentTicket | null>(null);
@@ -955,7 +955,7 @@
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
-  <!-- Two-band board (D-054, amended by D-TMP-PD383a): the Epic band on top, the Ticket band below.
+  <!-- Two-band board (D-054, amended by D-080): the Epic band on top, the Ticket band below.
        Both are drop targets now — dragging the Epic between Backlog and Queue is what dispatches
        and recalls its members. The Epic band's terminal lanes stay derived and refuse a drop. -->
   <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}; --epic-area-height: {epicAreaHeight}px">

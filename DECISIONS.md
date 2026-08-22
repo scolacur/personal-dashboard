@@ -12,18 +12,10 @@ Newest first.
 
 ---
 
-## Awaiting a number
-
-Merged, settled, and binding — cite them as they are. Only the *identifier* is provisional:
-the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-078).
-
-- **[D-TMP-PD383a](DECISIONS/incoming/D-TMP-PD383a.md)** — The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
-- **[D-TMP-PD498a](DECISIONS/incoming/D-TMP-PD498a.md)** — The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
-- **[D-TMP-PD498b](DECISIONS/incoming/D-TMP-PD498b.md)** — The maintenance hold is the scheduled thing, and maintenance jobs subscribe to it (PD-498; amends D-078)
-- **[D-TMP-PD539a](DECISIONS/incoming/D-TMP-PD539a.md)** — Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
-
----
-
+- **[D-083](DECISIONS/D-083-terminal-is-final-a-completed-or-closed-ticket-is-read-only.md)** — Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
+- **[D-082](DECISIONS/D-082-the-maintenance-hold-is-the-scheduled-thing-and-maintenance.md)** — The maintenance hold is the scheduled thing, and maintenance jobs subscribe to it (PD-498; amends D-078)
+- **[D-081](DECISIONS/D-081-the-maintenance-hold-gets-its-own-slot-and-the-numbering.md)** — The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
+- **[D-080](DECISIONS/D-080-the-epic-is-the-unit-of-priority-and-dispatch-the.md)** — The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
 - **[D-079](DECISIONS/D-079-report-the-build-sha-not-the-checkout-sha.md)** — A worker reports the commit it was BUILT from, not the one it reads (PD-528)
 - **[D-078](DECISIONS/D-078-decisions-authored-provisionally-numbered-in-cycles.md)** — Decisions are authored with a provisional id and numbered in a daily cycle behind a maintenance hold (PD-498)
 - **[D-077](DECISIONS/D-077-session-memory-inbox-wrap-up-owns-index.md)** — A human session writes to the memory inbox too, and `MEMORY.md` becomes a wrap-up-only write (PD-513)
