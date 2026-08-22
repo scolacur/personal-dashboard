@@ -46,6 +46,42 @@ export function inFlightRunCount(db: Database.Database): number {
 }
 
 /**
+ * Strip the token, and its base64 Authorization form, out of anything on its way to a log or the
+ * `job_runs.error` column.
+ *
+ * **Not optional here.** `execFile`'s error embeds the entire argv, and the auth below travels as a
+ * `-c http.extraHeader=...` argument. A failed push would otherwise write the write-scoped token
+ * into `job_runs.error`, which is served by `/api/jobs/...` and rendered on the Dev Ops page. Same
+ * reasoning as `redactSecrets` in `shared/checkout.ts`, for the same class of mistake.
+ */
+export function redactToken(text: string, token: string): string {
+  if (!token) return text;
+  let out = text;
+  for (const secret of [token, Buffer.from(`x-access-token:${token}`).toString('base64')]) {
+    out = out.split(secret).join('***');
+  }
+  return out;
+}
+
+/**
+ * git `-c` args carrying the WRITE token as an Authorization header, plus the proxy.
+ *
+ * Header rather than a token-in-URL, matching `shared/checkout.ts`: an `http.extraHeader` override
+ * is per-invocation, so git never writes it into `.git/config` — which lives on a shared volume.
+ * The proxy goes inline for the same reason the checkout does it, rather than relying on env alone.
+ */
+export function gitNetworkArgs(config: AgentWorkerConfig): string[] {
+  const token = config.robot.writeToken;
+  const auth = token
+    ? ['-c', `http.extraHeader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`]
+    : [];
+  const proxy = config.httpsProxy
+    ? ['-c', `http.proxy=${config.httpsProxy}`, '-c', `https.proxy=${config.httpsProxy}`]
+    : [];
+  return [...auth, ...proxy];
+}
+
+/**
  * `execFile`, with the write token and proxy attached.
  *
  * Tolerates a non-zero exit and returns whatever was written: `gh pr checks` exits non-zero whenever
@@ -59,6 +95,7 @@ export function defaultRunner(config: AgentWorkerConfig): CommandRunner {
     const token = config.robot.writeToken;
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      // Fail fast on missing credentials instead of blocking forever on a prompt nobody can answer.
       GIT_TERMINAL_PROMPT: '0',
       ...(token ? { GH_TOKEN: token, GITHUB_TOKEN: token } : {}),
       ...(config.httpsProxy ? { HTTPS_PROXY: config.httpsProxy, HTTP_PROXY: config.httpsProxy } : {}),
@@ -68,8 +105,9 @@ export function defaultRunner(config: AgentWorkerConfig): CommandRunner {
       return { stdout };
     } catch (err) {
       const e = err as { stdout?: string };
-      if (typeof e.stdout === 'string' && e.stdout.length > 0) return { stdout: e.stdout };
-      throw err;
+      if (typeof e.stdout === 'string' && e.stdout.length > 0) return { stdout: redactToken(e.stdout, token) };
+      // Rethrow a REDACTED error and drop the original — its .cmd and .stack carry the argv too.
+      throw new Error(redactToken(err instanceof Error ? err.message : String(err), token));
     }
   };
 }
@@ -92,6 +130,7 @@ export function consolidationJobRunner(config: AgentWorkerConfig): MaintenanceJo
     botName: config.robot.botName,
     botEmail: config.robot.botEmail,
     baseBranch: config.numbering.baseBranch,
+    gitNetworkArgs: gitNetworkArgs(config),
   };
 
   return async (db) => {

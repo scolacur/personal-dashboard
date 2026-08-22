@@ -13,6 +13,7 @@ const CONFIG_BASE = {
   botName: 'sortie-bot-55',
   botEmail: 'bot@example.invalid',
   baseBranch: 'main',
+  gitNetworkArgs: ['-c', 'http.extraHeader=Authorization: Basic SECRET'],
 };
 
 function makeDb(): Database.Database {
@@ -193,7 +194,8 @@ describe('runNumberingCycle', () => {
     const boom: CycleDeps = {
       ...h.deps,
       run: async (cmd, args) => {
-        if (cmd === 'git' && args[0] === 'push') throw new Error('network down');
+        // args.includes, not args[0]: push is prefixed with the `-c` auth/proxy overrides.
+        if (cmd === 'git' && args.includes('push')) throw new Error('network down');
         return h.deps.run(cmd, args);
       },
     };
@@ -323,5 +325,28 @@ describe('the shared checkout', () => {
     const h = harness();
     await runNumberingCycle(db, config(root, { baseBranch: 'trunk' }), h.deps);
     expect(h.calls.some((c) => c.cmd === 'git' && c.args.join(' ') === 'checkout trunk')).toBe(true);
+  });
+});
+
+describe('pushing', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  it('attaches the auth/proxy overrides to the push, and only to the push', async () => {
+    // The first live push failed with "could not read Username for 'https://github.com'": GH_TOKEN
+    // in the environment does not authenticate plain `git push`. Auth has to travel as a git -c
+    // override, the same way the grounding checkout does it.
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    await runNumberingCycle(db, { ...CONFIG_BASE, repoRoot: root }, h.deps);
+
+    const push = h.calls.find((c) => c.cmd === 'git' && c.args.includes('push'));
+    expect(push?.args.slice(0, 2)).toEqual(['-c', 'http.extraHeader=Authorization: Basic SECRET']);
+
+    // Local-only commands stay clean — no reason to hand them credentials.
+    const commit = h.calls.find((c) => c.cmd === 'git' && c.args.includes('commit'));
+    expect(commit?.args.join(' ')).not.toContain('extraHeader');
   });
 });

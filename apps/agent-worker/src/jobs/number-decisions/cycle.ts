@@ -58,6 +58,12 @@ export interface CycleConfig {
    */
   botName: string;
   botEmail: string;
+  /**
+   * `git -c` args for commands that hit the network — the write token as an Authorization header,
+   * plus the proxy. Supplied by the caller so the token never reaches this module, which is the
+   * one that builds log lines and PR bodies.
+   */
+  gitNetworkArgs: string[];
   /** The branch the checkout must be returned to. */
   baseBranch: string;
 }
@@ -245,7 +251,7 @@ export async function runNumberingCycle(
       ['-c', `user.name=${config.botName}`, '-c', `user.email=${config.botEmail}`, 'commit', '-m', title],
       { cwd },
     );
-    await deps.run('git', ['push', '-u', 'origin', branchName], { cwd });
+    await deps.run('git', [...config.gitNetworkArgs, 'push', '-u', 'origin', branchName], { cwd });
     const { stdout: prOut } = await deps.run(
       'gh',
       ['pr', 'create', '--repo', config.githubRepo, '--title', title, '--body', body, '--head', branchName],
