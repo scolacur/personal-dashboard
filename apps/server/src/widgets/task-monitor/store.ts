@@ -501,6 +501,20 @@ export function updateTicket(
     next.refineState = null;
   }
 
+  // D-TMP-PD539a: the mirror image. `completeTicket` writes `agent_state = 'done'` alongside the
+  // status, and `UpdateTicketInput` has no `agentState` field for a caller to clear — so a reopened
+  // robot ticket would sit in Backlog still wearing a green "done" pill, and `robotQueueCandidates`
+  // (which selects on `agent_state IS NULL OR 'queued'`) would never pick it up again. Leaving a
+  // terminal lane clears it, so a reopened ticket is genuinely back in play rather than only
+  // looking like it.
+  const leavingTerminal =
+    (existing.status === 'completed' || existing.status === 'closed') &&
+    next.status !== 'completed' &&
+    next.status !== 'closed';
+  if (leavingTerminal) {
+    next.agentState = null;
+  }
+
   // PD-467: a ticket parked `stuck`/`needs-human` keeps that `agent_state` forever, and the loop's
   // selection gates on `agent_state IS NULL OR 'queued'` — so re-queueing a parked ticket from the
   // board produced a card that looked perfectly normal in the Queue and could NEVER dispatch, with
@@ -578,6 +592,14 @@ export function updateTicket(
         ).run(next.updatedAt, id);
       }
     }
+    // D-TMP-PD539a: clear the stale agent state on the way OUT of a terminal lane. `agent_state` is
+    // not in the UPDATE above (it is loop-owned and absent from UpdateTicketInput), so — exactly
+    // like the entering-terminal teardown below — it takes its own statement inside this
+    // transaction rather than riding along on the main write.
+    if (leavingTerminal && existing.agentState !== null) {
+      db.prepare('UPDATE agent_tickets SET agent_state = NULL WHERE id = ?').run(id);
+    }
+
     // PD-400: tear down a lingering agent session on the terminal transition. Idempotent — a
     // ticket that's already clean (no agent_state, no open notification, no active refine) logs
     // no `session_ended` event.

@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentTicket, TicketPriority } from '@dashboard/shared';
-import { isStatusLocked, computeSortOrder, clampEpicHeight, EPIC_HEIGHT_MIN, EPIC_HEIGHT_MAX } from './board-logic';
+import {
+  isStatusLocked,
+  isTerminal,
+  isReadOnly,
+  computeSortOrder,
+  clampEpicHeight,
+  EPIC_HEIGHT_MIN,
+  EPIC_HEIGHT_MAX,
+} from './board-logic';
 
 function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
   return {
@@ -118,5 +126,32 @@ describe('clampEpicHeight', () => {
   it('clamps values above the maximum to EPIC_HEIGHT_MAX', () => {
     expect(clampEpicHeight(EPIC_HEIGHT_MAX + 1)).toBe(EPIC_HEIGHT_MAX);
     expect(clampEpicHeight(9999)).toBe(EPIC_HEIGHT_MAX);
+  });
+});
+
+
+describe('isTerminal / isReadOnly (D-TMP-PD539a)', () => {
+  it('treats completed and closed as terminal', () => {
+    expect(isTerminal(makeTicket({ status: 'completed' }))).toBe(true);
+    expect(isTerminal(makeTicket({ status: 'closed' }))).toBe(true);
+    expect(isTerminal(makeTicket({ status: 'backlog' }))).toBe(false);
+    expect(isTerminal(makeTicket({ status: 'queue' }))).toBe(false);
+  });
+
+  // `completed` should be a record, not a lane you can drag out of — regardless of who owns it.
+  it('freezes every terminal ticket, not just robot-owned ones', () => {
+    expect(isReadOnly(makeTicket({ status: 'completed', assignee: null }))).toBe(true);
+    expect(isReadOnly(makeTicket({ status: 'completed', assignee: 'steve' }))).toBe(true);
+    expect(isReadOnly(makeTicket({ status: 'closed', assignee: 'steve' }))).toBe(true);
+  });
+
+  it('still freezes an in-flight robot ticket, which is the older lock', () => {
+    expect(isReadOnly(makeTicket({ status: 'queue', assignee: 'robot' }))).toBe(true);
+  });
+
+  it('leaves active human work editable', () => {
+    expect(isReadOnly(makeTicket({ status: 'backlog', assignee: 'steve' }))).toBe(false);
+    expect(isReadOnly(makeTicket({ status: 'queue', assignee: 'steve' }))).toBe(false);
+    expect(isReadOnly(makeTicket({ status: 'queue', assignee: null }))).toBe(false);
   });
 });

@@ -687,6 +687,42 @@ describe('terminal-transition cleanup (PD-400)', () => {
     expect(ended[0].detail).toMatchObject({ to: 'completed', clearedAgentState: 'needs-human', resolvedNotifications: 1 });
   });
 
+  // D-TMP-PD539a: the mirror image. `completeTicket` writes agent_state='done' with the status, and
+  // UpdateTicketInput has no agentState field, so without this a reopened robot ticket sits in
+  // Backlog wearing a green "done" pill AND is invisible to robotQueueCandidates, which selects on
+  // `agent_state IS NULL OR 'queued'`.
+  it('reopening a completed ticket clears the stale agent_state', () => {
+    const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
+    updateTicket(db, t.id, { status: 'completed' });
+    setAgentState(t.id, 'done'); // what the loop's completeTicket() writes
+    expect(getTicket(db, t.id)!.agentState).toBe('done');
+
+    updateTicket(db, t.id, { status: 'backlog' });
+
+    expect(getTicket(db, t.id)!.agentState).toBeNull();
+  });
+
+  it('clears it when reopening from closed as well', () => {
+    const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
+    updateTicket(db, t.id, { status: 'closed' });
+    setAgentState(t.id, 'wontfix');
+
+    updateTicket(db, t.id, { status: 'backlog' });
+
+    expect(getTicket(db, t.id)!.agentState).toBeNull();
+  });
+
+  // completed -> closed is not a reopen; it must not be treated as one.
+  it('does not fire between two terminal lanes', () => {
+    const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
+    updateTicket(db, t.id, { status: 'completed' });
+    setAgentState(t.id, 'done');
+
+    updateTicket(db, t.id, { status: 'closed' });
+
+    expect(getTicket(db, t.id)!.agentState).toBe('done');
+  });
+
   it('reproduces the PD-392 flow: closing an awaiting-human ticket leaves it clean', () => {
     const t = createTicket(db, { title: 'x', status: 'queue', assignee: 'robot', projectId: pd });
     setAgentState(t.id, 'awaiting-human');
