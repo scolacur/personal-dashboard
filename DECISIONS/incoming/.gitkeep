@@ -1,0 +1,3 @@
+# The decision inbox (D-078). Keeps the directory in git when the numbering cycle drains it —
+# git cannot track an empty directory, and an author should never have to create this by hand.
+# Not a .md file, so both loadDecisions() and loadProvisionalDecisions() skip it.

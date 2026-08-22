@@ -13,11 +13,20 @@
  */
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { DECISIONS_INDEX, findRepoRoot, loadDecisions, nextDecisionId, renderDecisionsIndex } from './shared/decisions';
+import {
+  DECISIONS_INDEX,
+  findRepoRoot,
+  loadDecisions,
+  loadProvisionalDecisions,
+  renderDecisionsIndex,
+} from './shared/decisions';
 
 const repoRoot = findRepoRoot();
 
 const decisions = loadDecisions(repoRoot);
-writeFileSync(path.join(repoRoot, DECISIONS_INDEX), renderDecisionsIndex(decisions), 'utf8');
+const provisional = loadProvisionalDecisions(repoRoot);
+writeFileSync(path.join(repoRoot, DECISIONS_INDEX), renderDecisionsIndex(decisions, provisional), 'utf8');
 
-console.log(`${DECISIONS_INDEX}: ${decisions.length} decisions indexed. Next free id: ${nextDecisionId(decisions)}`);
+// No "next free id" any more: nobody allocates one at authoring time (D-078). Printing one here is
+// what would keep the obsolete habit alive — the numbering cycle is the only caller that needs it.
+console.log(`${DECISIONS_INDEX}: ${decisions.length} numbered, ${provisional.length} awaiting a number.`);

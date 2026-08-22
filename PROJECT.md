@@ -563,10 +563,17 @@ D-067 it is only ever *needed* on a gated PR — Steve's own PRs go green withou
 Definitions for how a decision is authored and identified (D-070, D-078). The decision *record*
 is one file per decision; this covers how it gets its number.
 
-> ⚠️ **STATUS:** D-070 is live — `DECISIONS/D-NNN-slug.md` plus a generated index. **D-078 is
-> designed, not built** (PD-498): there is no `DECISIONS/incoming/` and no numbering cycle yet, so
-> today an author still claims the next free `D-NNN` directly. The definitions below describe the
-> agreed target; don't cite them as current behaviour until PD-498 ships.
+> ⚠️ **STATUS:** D-070 is live. **D-078 is half-built** (PD-498). Live now: the **decision inbox**
+> and the **provisional id** — `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` is where you author a
+> decision, `loadProvisionalDecisions` parses it, and `renderDecisionsIndex` lists it under
+> *Awaiting a number* above the numbered entries, so it reaches every injected agent immediately.
+> **Not built: the numbering cycle and the maintenance hold** — nothing assigns a `D-NNN` or
+> rewrites a `D-TMP-` citation yet, so provisional decisions accumulate in the inbox until that job
+> ships. That is the intended interim state, not a bug: an un-numbered decision is visible and
+> binding, whereas a hand-numbered one can silently collide.
+>
+> **Author into the inbox from now on — do not hand-number.** The definitions below are current for
+> everything except the last two entries, which describe the unbuilt half.
 
 **Provisional id** (`D-TMP-<ticket><letter>`, e.g. `D-TMP-PD513a`):
 The identifier a decision carries from authoring until the next **numbering cycle** assigns its

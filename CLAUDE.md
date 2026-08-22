@@ -58,10 +58,8 @@ A worktree makes every one of these impossible. It is one command.
   authored four days *after* its PR merged). Squash takes everything on the branch at merge time.
   The habit is still worth keeping — after a merge, verify what you care about actually reached
   `main` with `git show origin/main:<path>` — but for this reason, not that one.
-- **Check the highest `D-NNN` on `origin/main`, not on your branch, immediately before
-  committing a decision** (`npm run decisions:index` prints the next free id). Parallel sessions
-  reserve the same number. This avoids a collision; it is no longer what *catches* one — a test
-  over the merged `DECISIONS/` does that (D-070).
+- **Never allocate a `D-NNN`** — the old "check the highest one on `origin/main` first" habit is
+  obsolete, because you no longer pick a number at all (D-078). See the decisions section below.
 
 ---
 
@@ -77,13 +75,20 @@ and archived to `/Users/steve/Documents/Dev/archive/` (see D-020).
 **A merged PR does not complete its ticket.** The Robot loop only completes tickets *it*
 dispatched, so anything built by hand must be `PATCH`ed to `completed` yourself.
 
-**Decisions (D-070).** Each decision is its own file, `DECISIONS/D-NNN-slug.md`; `DECISIONS.md` is
-a **generated** index over them and must never be hand-edited — that edit is lost on the next
-regeneration.
+**Decisions (D-070, D-078).** Each decision is its own file; `DECISIONS.md` is a **generated** index
+over them and must never be hand-edited — that edit is lost on the next regeneration.
 
 - If you are ever uncertain about why we are taking a certain design approach, skim the index in
-  `DECISIONS.md` and open the file that looks relevant.
-- Whenever we make a significant architectural decision, **write a new
-  `DECISIONS/D-NNN-slug.md`** — first line `# D-NNN: Title` — and run `npm run decisions:index`.
-  Do not append to `DECISIONS.md`. Writing a file is what lets parallel sessions each log a
-  decision without touching the same lines.
+  `DECISIONS.md` and open the file that looks relevant. Entries listed under **Awaiting a number**
+  are just as settled and binding as the numbered ones — only their id is provisional.
+- Whenever we make a significant architectural decision, **write it into the decision inbox** as
+  `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` — e.g. `DECISIONS/incoming/D-TMP-PD513a.md`, first
+  line `# D-TMP-PD513a: Title`. Use `b`, `c`, … if one ticket produces more than one. Cite it by
+  that provisional id everywhere. Then run `npm run decisions:index`.
+- **Never write `DECISIONS/D-NNN-slug.md` by hand, and never pick a number** — not even in a solo
+  session where you are sure nothing else is running. That check is exactly the hand-check this
+  replaces, and it has been wrong here twice (D-056, D-065). A daily numbering cycle assigns the
+  `D-NNN` in merge order and rewrites every `D-TMP-` citation for you.
+- Writing a file rather than appending to the index is what lets parallel sessions each log a
+  decision without touching the same lines; leaving the number to the cycle is what stops them
+  claiming the same one.
