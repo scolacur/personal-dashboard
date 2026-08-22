@@ -27,6 +27,8 @@
     planEpicQueue,
     planEpicRollback,
     rollbackNeedsConfirm,
+    splitEpicTitle,
+    type EpicQueuePlan,
     type EpicRollbackPlan,
   } from '../epic-drag';
   import * as api from '../api';
@@ -544,9 +546,10 @@
   let epicDraggingId = $state<number | null>(null);
   let epicDropTarget = $state<{ lane: EpicDerivedLane; beforeId: number | null } | null>(null);
 
-  // Rollback confirm — populated only when the cascade would leave members behind.
+  // Rollback confirm — opened only when some member's work is in flight and cannot be recalled.
   let rollbackTarget = $state<AgentTicket | null>(null);
-  let rollbackPlan = $state<EpicRollbackPlan>({ unqueued: [], running: [], parked: [] });
+  let rollbackPlan = $state<EpicRollbackPlan>({ inFlight: [], pullBack: [], movesEpic: true });
+  let rollbackBusy = $state(false);
 
   const laneOfEpic = (id: number): EpicDerivedLane | undefined =>
     epicSummaryById.get(id)?.derivedLane;
@@ -621,26 +624,35 @@
     if (cell.lane === 'in_progress') {
       const plan = planEpicQueue(members);
       await applyEpicPatch(id, { status: 'queue' });
-      // Not a blocker — the loop simply never picks these up, so say so rather than leaving a
-      // queued card that looks fine and silently never runs.
-      if (plan.notReady.length > 0) {
-        const names = plan.notReady.map((m) => m.displayId ?? m.title).join(', ');
-        showToast(
-          `Queued, but ${plan.notReady.length} member${plan.notReady.length === 1 ? '' : 's'} ` +
-            `won't dispatch until shaped or bypassed: ${names}`,
-        );
-      }
+      showToast(queuedToast(epic, plan));
       return;
     }
 
-    // → Backlog. Ask only if the cascade would leave members behind.
+    // → Backlog. The modal appears only to report work that cannot be recalled.
     const plan = planEpicRollback(members);
     if (rollbackNeedsConfirm(plan)) {
       rollbackPlan = plan;
       rollbackTarget = epic;
       return;
     }
-    await applyEpicPatch(id, { status: 'backlog' });
+    await runRollback(epic, plan);
+  }
+
+  /** "N tickets" / "1 ticket". */
+  const count = (n: number, noun = 'ticket') => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+  function queuedToast(epic: AgentTicket, plan: EpicQueuePlan): string {
+    const label = epic.displayId ?? epic.title;
+    if (plan.armed.length === 0) return `Epic ${label} queued. Nothing new to arm.`;
+    const lines = [
+      `Epic ${label} queued. Contains:`,
+      `${count(plan.dispatchable.length)} ready for dispatch`,
+      `${count(plan.notReady.length)} not ready for dispatch`,
+    ];
+    // Only when it applies — otherwise the two counts above would silently not add up to what
+    // was actually queued.
+    if (plan.human.length > 0) lines.push(`${count(plan.human.length)} assigned to a human`);
+    return lines.join('\n');
   }
 
   async function applyEpicPatch(id: number, patch: UpdateTicketInput) {
@@ -653,25 +665,82 @@
     }
   }
 
-  /** Complete a confirmed rollback. `pullBackParked` also returns the parked members to Backlog —
-   *  the server's cascade deliberately leaves those alone, since only a human knows whether the
-   *  Epic is being shelved or merely nudged. A running member is never touched (D-046). */
-  async function confirmRollback(pullBackParked: boolean) {
-    const epic = rollbackTarget;
-    const parked = rollbackPlan.parked;
-    rollbackTarget = null;
-    if (!epic) return;
+  /**
+   * Return an Epic's recallable members to Backlog.
+   *
+   * The Epic itself moves only when nothing is in flight (`plan.movesEpic`). With a live run its
+   * lane derives to `in_progress` regardless, so writing `backlog` on it would set a status the
+   * view immediately overrules — the card would not move and the Epic would quietly disagree with
+   * the lane it is drawn in. Leaving it in the Queue is just the truth.
+   */
+  async function runRollback(epic: AgentTicket, plan: EpicRollbackPlan) {
     error = null;
     try {
-      await api.updateTicket(epic.id, { status: 'backlog' });
-      if (pullBackParked) {
-        for (const m of parked) {
-          await api.updateTicket(m.id, { status: 'backlog' });
-        }
+      for (const m of plan.pullBack) {
+        await api.updateTicket(m.id, { status: 'backlog' });
       }
+      if (plan.movesEpic) await api.updateTicket(epic.id, { status: 'backlog' });
       await load(true);
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function confirmRollback() {
+    const epic = rollbackTarget;
+    const plan = rollbackPlan;
+    rollbackTarget = null;
+    if (epic) await runRollback(epic, plan);
+  }
+
+  /**
+   * Bump the in-flight members into a new Epic so this one can leave the Queue.
+   *
+   * The run cannot be stopped, but nothing says the *Epic* has to wait for it. Since the Epic is
+   * the unit of dispatch (D-TMP-PD383a), scheduling the live ticket and the shelved ones
+   * differently requires two Epics — so this is the model working rather than a way around it.
+   *
+   * Order matters. The new Epic carries the original's priority so that re-parenting a member
+   * doesn't silently re-price it (the server pushes the Epic's priority onto every member it
+   * takes). Members move out before the Epic's own status is written, so that by the time it is
+   * written nothing is left in `queue` to make the derived lane contradict it.
+   */
+  async function bumpActiveOut() {
+    const epic = rollbackTarget;
+    const plan = rollbackPlan;
+    rollbackTarget = null;
+    if (!epic || epic.projectId === null) return;
+    error = null;
+    rollbackBusy = true;
+    try {
+      const spun = await api.createTicket({
+        title: splitEpicTitle(epic.title),
+        projectId: epic.projectId,
+        priority: epic.priority,
+        status: 'queue',
+        isEpic: true,
+        body:
+          `*Split out of ${epic.displayId ?? epic.title} — the work below was already running when ` +
+          `the Epic was sent back to the backlog, and a run in progress cannot be stopped ` +
+          `(D-046). It gets its own Epic so the rest of ${epic.displayId ?? 'the Epic'} could be ` +
+          `shelved.*\n\nRename or fold this back in once the run lands.`,
+      });
+      for (const m of plan.inFlight) {
+        await api.updateTicket(m.id, { epicId: spun.id });
+      }
+      for (const m of plan.pullBack) {
+        await api.updateTicket(m.id, { status: 'backlog' });
+      }
+      await api.updateTicket(epic.id, { status: 'backlog' });
+      await load(true);
+      showToast(
+        `${plan.inFlight.map((m) => m.displayId ?? m.title).join(', ')} moved to ` +
+          `${spun.displayId}. ${epic.displayId ?? epic.title} is back in the backlog.`,
+      );
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      rollbackBusy = false;
     }
   }
 
@@ -922,8 +991,10 @@
 <EpicRollbackModal
   epic={rollbackTarget}
   plan={rollbackPlan}
+  busy={rollbackBusy}
   onCancel={() => (rollbackTarget = null)}
-  onRollback={confirmRollback}
+  onContinue={confirmRollback}
+  onBump={bumpActiveOut}
 />
 
 <style lang="scss" src="./+page.scss"></style>

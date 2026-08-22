@@ -4,9 +4,11 @@ import {
   isDraggableEpicLane,
   statusForEpicLane,
   membersOf,
+  isInFlight,
   planEpicQueue,
   planEpicRollback,
   rollbackNeedsConfirm,
+  splitEpicTitle,
 } from './epic-drag';
 
 function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
@@ -75,6 +77,28 @@ describe('membersOf', () => {
   });
 });
 
+describe('isInFlight', () => {
+  it('counts a live session and an open PR the loop is watching', () => {
+    expect(isInFlight(makeTicket({ status: 'queue', agentState: 'working' }))).toBe(true);
+    expect(isInFlight(makeTicket({ status: 'queue', agentState: 'in-review' }))).toBe(true);
+  });
+
+  // Nothing is running for a parked ticket, so it comes back with the Epic.
+  it('does not count a parked ticket', () => {
+    for (const s of ['stuck', 'needs-human', 'awaiting-human'] as const) {
+      expect(isInFlight(makeTicket({ status: 'queue', agentState: s }))).toBe(false);
+    }
+    expect(isInFlight(makeTicket({ status: 'queue', agentState: 'queued' }))).toBe(false);
+    expect(isInFlight(makeTicket({ status: 'queue', agentState: null }))).toBe(false);
+  });
+
+  // A stale agent_state on a ticket that already left the queue is not in flight.
+  it('requires the ticket to still be in the queue', () => {
+    expect(isInFlight(makeTicket({ status: 'backlog', agentState: 'working' }))).toBe(false);
+    expect(isInFlight(makeTicket({ status: 'completed', agentState: 'working' }))).toBe(false);
+  });
+});
+
 describe('planEpicQueue', () => {
   it('arms only the members that have not started', () => {
     const plan = planEpicQueue([
@@ -84,50 +108,72 @@ describe('planEpicQueue', () => {
       makeTicket({ id: 4, status: 'closed' }),
       makeTicket({ id: 5, status: 'backlog' }),
     ]);
-    expect(ids(plan.willQueue)).toEqual([1, 5]);
+    expect(ids(plan.armed)).toEqual([1, 5]);
   });
 
-  // The loop gates on `(ready = 1 OR ready_bypassed = 1)` but the Epic cascade does not, so these
-  // would sit in the Queue looking perfectly normal and never dispatch (the PD-467 failure mode).
-  it('names robot members that will queue but can never be picked up', () => {
+  it('splits the armed members into what the loop can and cannot take', () => {
     const plan = planEpicQueue([
-      makeTicket({ id: 1, status: 'backlog', assignee: 'robot', ready: false }),
-      makeTicket({ id: 2, status: 'backlog', assignee: 'robot', ready: true }),
-      makeTicket({ id: 3, status: 'backlog', assignee: 'robot', ready: false, readyBypassed: true }),
-      // Not the Robot's problem — a human-assigned ticket is never Ready-gated.
+      makeTicket({ id: 1, status: 'backlog', assignee: 'robot', ready: true }),
+      makeTicket({ id: 2, status: 'backlog', assignee: 'robot', ready: false, readyBypassed: true }),
+      makeTicket({ id: 3, status: 'backlog', assignee: 'robot', ready: false }),
       makeTicket({ id: 4, status: 'backlog', assignee: 'steve', ready: false }),
-      // Already queued, so this drag does not arm it.
-      makeTicket({ id: 5, status: 'queue', assignee: 'robot', ready: false }),
+      makeTicket({ id: 5, status: 'backlog', assignee: null, ready: true }),
+      // Already queued — this drag does not arm it, so it is in none of the buckets.
+      makeTicket({ id: 6, status: 'queue', assignee: 'robot', ready: false }),
     ]);
-    expect(ids(plan.notReady)).toEqual([1]);
+    expect(ids(plan.dispatchable)).toEqual([1, 2]);
+    expect(ids(plan.notReady)).toEqual([3]);
+    expect(ids(plan.human)).toEqual([4, 5]);
+  });
+
+  // The toast reports these counts, so they must add up to what was actually queued.
+  it('buckets partition the armed set exactly', () => {
+    const members = [
+      makeTicket({ id: 1, status: 'backlog', assignee: 'robot', ready: true }),
+      makeTicket({ id: 2, status: 'backlog', assignee: 'robot', ready: false }),
+      makeTicket({ id: 3, status: 'backlog', assignee: 'steve' }),
+      makeTicket({ id: 4, status: 'completed' }),
+    ];
+    const p = planEpicQueue(members);
+    expect(p.dispatchable.length + p.notReady.length + p.human.length).toBe(p.armed.length);
   });
 });
 
 describe('planEpicRollback', () => {
-  it('un-queues members that never started, mirroring the server predicate', () => {
+  it('pulls back everything queued that is neither terminal nor in flight', () => {
     const plan = planEpicRollback([
       makeTicket({ id: 1, status: 'queue', agentState: null }),
       makeTicket({ id: 2, status: 'queue', agentState: 'queued' }),
-      makeTicket({ id: 3, status: 'backlog' }),
-      makeTicket({ id: 4, status: 'completed', agentState: 'done' }),
-    ]);
-    expect(ids(plan.unqueued)).toEqual([1, 2]);
-    expect(plan.running).toHaveLength(0);
-    expect(plan.parked).toHaveLength(0);
-  });
-
-  it('separates a live session from a parked one', () => {
-    const plan = planEpicRollback([
-      makeTicket({ id: 1, status: 'queue', agentState: 'working' }),
-      makeTicket({ id: 2, status: 'queue', agentState: 'in-review' }),
       makeTicket({ id: 3, status: 'queue', agentState: 'stuck' }),
       makeTicket({ id: 4, status: 'queue', agentState: 'needs-human' }),
       makeTicket({ id: 5, status: 'queue', agentState: 'awaiting-human' }),
-      makeTicket({ id: 6, status: 'queue', agentState: 'queued' }),
+      makeTicket({ id: 6, status: 'backlog' }),
+      makeTicket({ id: 7, status: 'completed' }),
+      makeTicket({ id: 8, status: 'closed' }),
     ]);
-    expect(ids(plan.running)).toEqual([1]);
-    expect(ids(plan.parked)).toEqual([2, 3, 4, 5]);
-    expect(ids(plan.unqueued)).toEqual([6]);
+    expect(ids(plan.pullBack)).toEqual([1, 2, 3, 4, 5]);
+    expect(plan.inFlight).toHaveLength(0);
+    expect(plan.movesEpic).toBe(true);
+  });
+
+  // The bug this design fixes: the Epic's lane is derived, and any member left in `queue` makes it
+  // read `in_progress`. Moving the Epic anyway wrote a status the view instantly overruled.
+  it('leaves the Epic in the Queue when work is in flight', () => {
+    const plan = planEpicRollback([
+      makeTicket({ id: 1, status: 'queue', agentState: 'working' }),
+      makeTicket({ id: 2, status: 'queue', agentState: 'queued' }),
+      makeTicket({ id: 3, status: 'queue', agentState: 'stuck' }),
+    ]);
+    expect(ids(plan.inFlight)).toEqual([1]);
+    expect(ids(plan.pullBack)).toEqual([2, 3]);
+    expect(plan.movesEpic).toBe(false);
+  });
+
+  it('treats an in-review PR as in flight so it is never stranded', () => {
+    const plan = planEpicRollback([makeTicket({ id: 1, status: 'queue', agentState: 'in-review' })]);
+    expect(ids(plan.inFlight)).toEqual([1]);
+    expect(plan.pullBack).toHaveLength(0);
+    expect(plan.movesEpic).toBe(false);
   });
 
   it('leaves terminal members alone — a half-done Epic is the normal in-flight state', () => {
@@ -135,32 +181,49 @@ describe('planEpicRollback', () => {
       makeTicket({ id: 1, status: 'completed', agentState: 'done' }),
       makeTicket({ id: 2, status: 'closed' }),
     ]);
-    expect(plan.unqueued).toHaveLength(0);
-    expect(plan.running).toHaveLength(0);
-    expect(plan.parked).toHaveLength(0);
+    expect(plan.pullBack).toHaveLength(0);
+    expect(plan.inFlight).toHaveLength(0);
+    expect(plan.movesEpic).toBe(true);
   });
 });
 
 describe('rollbackNeedsConfirm', () => {
-  it('stays silent when the server cascade handles everything', () => {
-    const plan = planEpicRollback([
-      makeTicket({ id: 1, status: 'queue', agentState: null }),
-      makeTicket({ id: 2, status: 'queue', agentState: 'queued' }),
-      makeTicket({ id: 3, status: 'completed' }),
-    ]);
-    expect(rollbackNeedsConfirm(plan)).toBe(false);
+  it('stays silent when nothing is in flight', () => {
+    expect(
+      rollbackNeedsConfirm(
+        planEpicRollback([
+          makeTicket({ id: 1, status: 'queue', agentState: null }),
+          makeTicket({ id: 2, status: 'queue', agentState: 'stuck' }),
+          makeTicket({ id: 3, status: 'completed' }),
+        ]),
+      ),
+    ).toBe(false);
   });
 
-  it('asks when a member is running or parked', () => {
+  it('asks only about work it cannot recall', () => {
     expect(
       rollbackNeedsConfirm(planEpicRollback([makeTicket({ status: 'queue', agentState: 'working' })])),
     ).toBe(true);
     expect(
-      rollbackNeedsConfirm(planEpicRollback([makeTicket({ status: 'queue', agentState: 'stuck' })])),
+      rollbackNeedsConfirm(planEpicRollback([makeTicket({ status: 'queue', agentState: 'in-review' })])),
     ).toBe(true);
   });
 
   it('stays silent for an Epic with no members at all', () => {
     expect(rollbackNeedsConfirm(planEpicRollback([]))).toBe(false);
+  });
+});
+
+describe('splitEpicTitle', () => {
+  it('keeps an existing [Epic] prefix', () => {
+    expect(splitEpicTitle('[Epic] Music Tracker Widget')).toBe('[Epic] Music Tracker Widget — active work');
+  });
+
+  it('does not invent a prefix where the board has none', () => {
+    expect(splitEpicTitle('Misc Minor Bugfixes')).toBe('Misc Minor Bugfixes — active work');
+  });
+
+  it('tolerates odd spacing', () => {
+    expect(splitEpicTitle('[Epic]   Spaced  ')).toBe('[Epic]   Spaced — active work');
   });
 });

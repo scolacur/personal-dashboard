@@ -58,11 +58,11 @@
   } = $props();
 
   // Readiness badges (D-058, PD-399). A robot-assigned ticket that isn't Ready (missing the four
-  // sections) shows a soft "needs shaping" hint; once a human queues it past the confirm modal it
+  // sections) shows a soft "not ready" hint; once a human queues it past the confirm modal it
   // carries an honest "⚠ bypassed" badge instead (readyBypassed never fakes `ready`). Both are moot
   // on terminal tickets.
   const isActive = $derived(ticket.status !== 'completed' && ticket.status !== 'closed');
-  const needsShaping = $derived(
+  const notReady = $derived(
     ticket.assignee === 'robot' && !ticket.ready && !ticket.readyBypassed && isActive && !ticket.isEpic,
   );
   // Queued-but-blocked (D-051 amended, PD-408): a blocked ticket may sit in the queue, but the loop
@@ -194,7 +194,7 @@
       {/if}
     </div>
   {/if}
-  {#if ticket.readyBypassed || needsShaping}
+  {#if ticket.readyBypassed || notReady}
     <div class="card-readiness">
       {#if ticket.readyBypassed}
         <span
@@ -203,9 +203,9 @@
         >⚠ bypassed</span>
       {:else}
         <span
-          class="ready-badge needs-shaping"
+          class="ready-badge not-ready"
           title="Body is missing the four Ready sections (## Context / ## Task / ## Done When / ## Out of scope). Refine it to shape it for the Robot."
-        >needs shaping</span>
+        >not ready</span>
       {/if}
     </div>
   {/if}
