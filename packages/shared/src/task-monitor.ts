@@ -622,24 +622,28 @@ export interface RefineChildProposal {
   body: string;
   status: TicketStatus;
   assignee: TicketAssignee | null;
-  /** P0–P5, or null/omitted when the agent leaves it for Steve to set. Optional so proposals
-   *  stored before priority-support (and terse fixtures) still typecheck; normalized to null. */
-  priority?: TicketPriority | null;
   /** PD-432: an estimated per-run turn ceiling, set ONLY when the agent has argued the work cannot
    *  decompose further. Omitted/null = the loop default, which is the expected case — decomposing
    *  stays the preferred move, and raising the cap is the escape hatch. */
   maxTurns?: number | null;
 }
 
-/** The structured commit proposal, stored as the detail of a `refine_proposal` event. */
+/**
+ * The structured commit proposal, stored as the detail of a `refine_proposal` event.
+ *
+ * **There is no `priority` here, on the proposal or on a child (D-TMP-PD383a, PD-510).** Priority is
+ * an Epic property that the write path cascades to members, so a Ticket-level priority was being
+ * accepted, stored, shown in the approval panel, and then silently overridden — the agent spent
+ * turns choosing a value that never survived the write. Proposals persisted before PD-510 may still
+ * carry the key in their stored JSON; it is simply not read. Absence from the type is the point:
+ * every reader is a compile error rather than a field that quietly does nothing.
+ */
 export interface RefineProposal {
   mode: RefineCommitMode;
   /** refine_in_place: the rewritten body + routing for the SAME ticket. */
   body?: string;
   status?: TicketStatus;
   assignee?: TicketAssignee | null;
-  /** refine_in_place: P0–P5 for THIS ticket, or null to clear. Omit to leave unchanged. */
-  priority?: TicketPriority | null;
   /** refine_in_place: an estimated turn ceiling for THIS ticket (PD-432); null clears it. */
   maxTurns?: number | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */

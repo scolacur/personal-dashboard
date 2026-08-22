@@ -20,6 +20,7 @@ the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-0
 - **[D-TMP-PD383a](DECISIONS/incoming/D-TMP-PD383a.md)** — The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
 - **[D-TMP-PD498a](DECISIONS/incoming/D-TMP-PD498a.md)** — The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
 - **[D-TMP-PD498b](DECISIONS/incoming/D-TMP-PD498b.md)** — The maintenance hold is the scheduled thing, and maintenance jobs subscribe to it (PD-498; amends D-078)
+- **[D-TMP-PD510a](DECISIONS/incoming/D-TMP-PD510a.md)** — Approving a Refine proposal writes content, never placement (PD-510; strengthens D-057, implements D-TMP-PD383a)
 - **[D-TMP-PD539a](DECISIONS/incoming/D-TMP-PD539a.md)** — Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
 
 ---

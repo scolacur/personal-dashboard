@@ -14,29 +14,35 @@ import type { RefineProposal } from '@dashboard/shared';
  * ## Out of scope, PD-177) so they are Ready the moment they're queued (D-058).
  */
 
-// D-TMP-PD383a retired `prioritized`. Kept in the *input* enum on purpose: an un-redeployed worker or a
-// stale in-flight proposal can still emit it, and `coerceTicketStatus` folds it into `backlog` at
-// the write boundary. Rejecting it here would fail the whole proposal over a lane name.
+// The retired `prioritized` lane (D-TMP-PD383a) is no longer accepted here. It used to be kept in
+// the input enum so an un-redeployed worker's proposal wasn't lost over a lane name — but PD-510
+// makes the approval ignore `status` entirely, so there is nothing left for the tolerance to save.
+// A stale agent that emits it now gets an immediate, self-correcting tool error instead of a value
+// that is quietly folded and then discarded anyway.
+//
+// `queue` stays in the enum on purpose: `queueLaneError` below turns it into an instructive refusal
+// ("Refine does not dispatch"), which teaches more than a bare zod enum failure would.
 const STATUS = z.enum([
   'backlog',
-  'prioritized',
   'queue',
   'completed',
   'closed',
 ]);
 const ASSIGNEE = z.enum(['steve', 'robot']).nullable();
-const PRIORITY = z.enum(['P0', 'P1', 'P2', 'P3', 'P4', 'P5']).nullable();
 
 // PD-432: the estimated ceiling. Bounded here as well as at the write boundary so a bad estimate
 // is rejected while the agent can still see the error and re-propose, rather than at approval time.
 const MAX_TURNS = z.number().int().min(1).max(ROBOT_MAX_TURNS_LIMIT).nullable();
 
+// D-TMP-PD383a: no `priority` field, on a child or on the parent. Priority is an Epic property that
+// cascades to members, so a Ticket-level priority has nowhere to land — the write path overrides it
+// from the Epic. Offering the field would have the agent spend turns on a value that is discarded
+// without telling it, which is worse than not offering it (PD-510).
 const CHILD = z.object({
   title: z.string().min(1),
   body: z.string().min(1),
   status: STATUS,
   assignee: ASSIGNEE.optional(),
-  priority: PRIORITY.optional(),
   maxTurns: MAX_TURNS.optional(),
 });
 
@@ -46,7 +52,6 @@ const PROPOSE_COMMIT_SHAPE = {
   body: z.string().optional(),
   status: STATUS.optional(),
   assignee: ASSIGNEE.optional(),
-  priority: PRIORITY.optional(),
   maxTurns: MAX_TURNS.optional(),
   children: z.array(CHILD).optional(),
   rationale: z.string().optional(),
@@ -55,14 +60,17 @@ const PROPOSE_COMMIT_SHAPE = {
 const DESCRIPTION = [
   'Propose the commit for this Refine session once you and Steve have converged. Do NOT call',
   'until the plan is concrete. You never write tickets — this records a proposal Steve approves.',
-  'mode "refine_in_place": provide the rewritten `body` (+ optional `status`/`assignee`/`priority`)',
-  'for THIS ticket. mode "decompose": provide `children` (each title/body/status/assignee/priority);',
+  'mode "refine_in_place": provide the rewritten `body` (+ optional `assignee`)',
+  'for THIS ticket. mode "decompose": provide `children` (each title/body/status/assignee);',
   'the parent is then closed and linked to them — EXCEPT when the parent is an Epic, where the same',
   'decompose is reinterpreted as Populate (D-058): children become members of the Epic and the Epic',
-  'stays open (no close, no split). `priority` is P0–P5 (P0 most urgent) or null to',
-  'leave unset — set it when the plan implies urgency (e.g. deferred follow-ons → P3).',
-  'DO NOT route into a queue lane. `status` is a PRE-queue lane only — "backlog" or "prioritized"',
-  '(or omit to leave it unchanged). Refine shapes tickets; it does NOT dispatch them (D-057):',
+  'stays open (no close, no split).',
+  'There is NO priority field: priority belongs to the Epic and cascades to its members, so a',
+  'Ticket-level priority has nowhere to land. If the plan implies a different urgency, say so in',
+  '`rationale` and let Steve price the Epic.',
+  'DO NOT route into a queue lane. `status` is "backlog"',
+  '(or omit to leave it unchanged) — approval never moves a ticket between lanes anyway.',
+  'Refine shapes tickets; it does NOT dispatch them (D-057):',
   "approval never queues, and Steve moves a ticket into the Robot's / Steve's Queue himself",
   'afterwards. Use `assignee` ("robot" | "steve" | null) to hint who should do the work. A ticket',
   'you intend for the robot MUST still carry a Robot-shaped body — the four sections ## Context,',
@@ -79,7 +87,7 @@ const DESCRIPTION = [
  *  and they'd otherwise create an orphaned invalid lane on approval. */
 function queueLaneError(where: string, status: string | undefined): string | null {
   if (status === 'queue' || status === 'robot_queue' || status === 'steve_queue') {
-    return `${where} routes into a queue lane ("${status}"), but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" or "prioritized" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
+    return `${where} routes into a queue lane ("${status}"), but Refine does not queue tickets (D-057) — approval never dispatches; Steve queues explicitly (Approve & queue, or a board drag). Use "backlog" (or omit to leave the lane unchanged), and set \`assignee\` to hint who should do it.`;
   }
   return null;
 }
@@ -125,23 +133,24 @@ export function buildProposeToolServer(onProposal: (proposal: RefineProposal) =>
       const proposal: RefineProposal = {
         mode: args.mode,
         ...(args.body !== undefined ? { body: args.body } : {}),
-        // D-TMP-PD383a: fold a retired/legacy lane (`prioritized`, and the pre-D-058 queue lanes) to a
-        // live one here rather than carrying it into the proposal. `null` cannot occur — the zod
-        // enum already rejects anything outside the known set — but the fallback keeps the type
-        // honest without inventing a lane.
+        // The proposal still records the lane the agent asked for, because it is part of what was
+        // proposed and belongs in the event log — but nothing downstream acts on it: PD-510 makes
+        // approval leave the lane alone, and creates every decompose child in `backlog`. The
+        // `coerceTicketStatus` fold is now belt-and-braces (the enum above already excludes every
+        // retired lane) and is kept only so a proposal reconstructed from older stored JSON, which
+        // predates that enum, still normalizes rather than carrying a dead lane forward.
         ...(args.status !== undefined
           ? { status: coerceTicketStatus(args.status) ?? 'backlog' }
           : {}),
         ...(args.assignee !== undefined ? { assignee: args.assignee } : {}),
-        ...(args.priority !== undefined ? { priority: args.priority } : {}),
         ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
         ...(args.children !== undefined
           ? {
               children: args.children.map((c) => ({
                 ...c,
                 assignee: c.assignee ?? null,
-                priority: c.priority ?? null,
-                // Same D-TMP-PD383a lane fold as the parent status above, applied per child.
+                // Same fold as the parent status above, and equally advisory — the approval
+                // creates every child in `backlog` whatever this says (PD-510).
                 status: coerceTicketStatus(c.status) ?? 'backlog',
               })),
             }

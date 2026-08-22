@@ -1360,10 +1360,6 @@ export function approveRefine(
 
   if (p.mode === 'refine_in_place') {
     const body = p.body ?? parent.body;
-    // PD-417: a stale proposal may carry a legacy `robot_queue`/`steve_queue` — normalize it to
-    // `queue` so the D-057 parking below (queue → prioritized) catches it, instead of writing an
-    // orphaned lane verbatim. An unrecognized status falls back to the parent's current lane.
-    const proposed = p.status === undefined ? parent.status : (coerceTicketStatus(p.status) ?? parent.status);
     const wantQueue = opts.queue === true;
 
     if (wantQueue) {
@@ -1376,19 +1372,25 @@ export function approveRefine(
       }
     }
 
-    // D-057/D-058: plain approve parks a proposed `queue`; only `queue: true` dispatches. `ready`
-    // is recomputed from the body on write (never enforced here). D-TMP-PD383a retired the `prioritized`
-    // parking lane, so the park is now `backlog`; PD-510 removes the lane write altogether
-    // ("approval never moves a Ticket"), which is the stronger form of D-057.
-    const status = wantQueue ? 'queue' : proposed === 'queue' ? 'backlog' : proposed;
-    const queued = status === 'queue';
+    // PD-510, the stronger form of D-057: **an approval never moves a Ticket between lanes.** The
+    // proposal's `status` is not read at all — not honoured, not parked, not coerced. Earlier this
+    // parked an agent-proposed `queue` in `prioritized`, then in `backlog` once D-TMP-PD383a retired
+    // that lane; both were still a lane write derived from what the agent asked for, and a proposal
+    // that says "backlog" on a Ticket already in Queue would have quietly pulled it back out.
+    // The one exception is Steve's own explicit "Approve & queue" (`opts.queue`) — that is a human
+    // dispatching, identical in kind to a board drag, which is exactly what D-057 reserves to him.
+    //
+    // `priority` is gone for the same reason from the other direction: it is an Epic property that
+    // the write path cascades to members, so honouring a Ticket-level one here would either be
+    // overridden a moment later or, on an Epic-less Ticket, stick and disagree with the model.
+    const status = wantQueue ? 'queue' : parent.status;
+    const queued = wantQueue;
 
     const run = db.transaction(() => {
       updateTicket(db, ticketId, {
         body,
         status,
         assignee: p.assignee === undefined ? parent.assignee : p.assignee,
-        priority: p.priority === undefined ? parent.priority : p.priority,
         // PD-432: an estimated ceiling from the proposal, else leave the ticket's own as it is.
         maxTurns: p.maxTurns === undefined ? parent.maxTurns : p.maxTurns,
         refined: true,
@@ -1416,23 +1418,23 @@ export function approveRefine(
   const childIds: number[] = [];
   const run = db.transaction(() => {
     for (const c of children) {
-      // Decompose-A (D-057/D-058): a child never enters `queue` at approval — an agent-proposed
-      // `queue` is parked in `prioritized`; Steve drags the ready ones in. The shaped body is
-      // preserved, so a downgraded child stays one drag away from dispatch. PD-417: normalize a
-      // legacy `robot_queue`/`steve_queue` first (→ `queue` → parked) so a stale proposal never
-      // creates an orphaned lane; an unrecognized status falls back to `backlog`.
-      const coercedChild = coerceTicketStatus(c.status);
-      // D-TMP-PD383a: the `prioritized` parking lane is retired, so a proposed-`queue` child parks in
-      // `backlog`. Under D-TMP-PD383a a Ticket is not queued by hand at all — its Epic is — so PD-510
-      // drops the lane write here entirely.
-      const childStatus =
-        coercedChild === null ? 'backlog' : coercedChild === 'queue' ? 'backlog' : coercedChild;
+      // PD-510: **a Refine-created child is always born in `backlog`.** The child's proposed
+      // `status` is not read — which makes D-039 ("an autonomous agent may create into backlog
+      // only") structural here rather than a lane-coercion chain that had to grow a new case each
+      // time a lane was retired (`robot_queue`/`steve_queue` in PD-417, `prioritized` in
+      // D-TMP-PD383a). It also closes the quieter half: a child proposed as `completed`/`closed`
+      // used to be created already terminal, i.e. work asserted as finished before it existed.
+      // The shaped body is preserved either way, so a child stays one drag from dispatch.
+      //
+      // Populate into a queued Epic lands in `backlog` too — `createTicket` enforces that
+      // independently (D-TMP-PD383a), so joining an in-flight Epic stays an explicit act.
       const child = createTicket(db, {
         title: c.title,
         body: c.body,
-        status: childStatus,
+        status: 'backlog',
         assignee: c.assignee ?? undefined,
-        priority: c.priority ?? null,
+        // Priority comes from the Epic, never the proposal; `createTicket` cascades it on insert.
+        priority: null,
         // PD-432: the child's estimated ceiling, when the agent argued the work is irreducible.
         maxTurns: c.maxTurns ?? null,
         projectId,
