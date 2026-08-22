@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
+  activeMaintenanceHold,
   activeSessionLimitHold,
   clearSessionLimitHold,
   dispatchPauseState,
   ensureRobotStateTable,
   holdForSessionLimit,
   isDispatchPaused,
+  maintenanceHold,
   pauseDispatch,
+  releaseMaintenanceHold,
   resumeDispatch,
   sessionLimitHold,
+  takeMaintenanceHold,
   writeState,
 } from './state';
 
@@ -91,5 +95,72 @@ describe('session-limit hold (PD-470)', () => {
     holdForSessionLimit(db, 5000, 'x', 1000);
     clearSessionLimitHold(db, 1500);
     expect(sessionLimitHold(db)).toBeNull();
+  });
+});
+
+describe('maintenance hold (PD-498, D-078)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    ensureRobotStateTable(db);
+  });
+
+  it('defaults to none', () => {
+    expect(maintenanceHold(db)).toBeNull();
+    expect(activeMaintenanceHold(db, 1000)).toBeNull();
+  });
+
+  it('holds with a reason and a lapse deadline', () => {
+    takeMaintenanceHold(db, 5000, 'numbering 2 decision(s)', 1000);
+    expect(activeMaintenanceHold(db, 2000)).toMatchObject({ until: 5000, reason: 'numbering 2 decision(s)' });
+  });
+
+  it('lapses on its own, so a cycle that dies cannot wedge dispatch shut', () => {
+    takeMaintenanceHold(db, 5000, 'numbering', 1000);
+    expect(activeMaintenanceHold(db, 5001)).toBeNull();
+    expect(maintenanceHold(db)).toBeNull(); // the read cleared it, like the session-limit hold
+  });
+
+  it('releases explicitly, which is the normal path', () => {
+    takeMaintenanceHold(db, 5000, 'numbering', 1000);
+    releaseMaintenanceHold(db, 2000);
+    expect(activeMaintenanceHold(db, 2001)).toBeNull();
+  });
+
+  it('a second take extends the deadline', () => {
+    takeMaintenanceHold(db, 5000, 'numbering', 1000);
+    takeMaintenanceHold(db, 9000, 'numbering, still draining', 2000);
+    expect(activeMaintenanceHold(db, 6000)?.until).toBe(9000);
+  });
+
+  // ── The reason this is a separate slot and not a third `kind` (see state.ts) ──────────────
+  it('does not disturb a session-limit hold, and is not disturbed by one', () => {
+    holdForSessionLimit(db, 8000, 'quota spent', 1000);
+    takeMaintenanceHold(db, 5000, 'numbering', 1000);
+    expect(activeSessionLimitHold(db, 2000)?.reason).toBe('quota spent');
+    expect(activeMaintenanceHold(db, 2000)?.reason).toBe('numbering');
+  });
+
+  it('releasing the maintenance hold leaves a session-limit hold in force', () => {
+    // The failure this prevents: the cycle finishes, clears "the hold", and dispatch resumes
+    // straight into a spent quota — PD-470's bug, reintroduced by sharing one slot.
+    holdForSessionLimit(db, 8000, 'quota spent', 1000);
+    takeMaintenanceHold(db, 5000, 'numbering', 1000);
+    releaseMaintenanceHold(db, 3000);
+    expect(activeMaintenanceHold(db, 3001)).toBeNull();
+    expect(activeSessionLimitHold(db, 3001)?.reason).toBe('quota spent');
+  });
+
+  it('a session limit arriving mid-cycle does not lift the maintenance hold', () => {
+    takeMaintenanceHold(db, 9000, 'numbering', 1000);
+    holdForSessionLimit(db, 2000, 'quota spent', 1000);
+    // The session-limit hold expires first; the maintenance hold must still be holding.
+    expect(activeSessionLimitHold(db, 2001)).toBeNull();
+    expect(activeMaintenanceHold(db, 2001)?.reason).toBe('numbering');
+  });
+
+  it('survives a corrupt row without wedging the loop', () => {
+    writeState(db, 'maintenance_hold', 'not json', 1000);
+    expect(maintenanceHold(db)).toBeNull();
   });
 });

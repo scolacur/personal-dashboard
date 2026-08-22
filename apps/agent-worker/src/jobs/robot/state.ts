@@ -139,6 +139,93 @@ export function activeSessionLimitHold(db: Database.Database, now: number = Date
   return null;
 }
 
+/* ── Maintenance hold (PD-498, D-078) ──────────────────────────────────────────
+ * The hold the decision-numbering cycle takes so it can rewrite `D-TMP-` citations repo-wide
+ * without racing a Robot that is mid-run against the same files.
+ *
+ * ## Why this is a SEPARATE key, and not a third `kind` on the session-limit hold
+ *
+ * D-078 called it "a third kind on the existing hold, not new machinery", and that reads right
+ * until you notice `session_limit_until` is ONE k/v slot with last-writer-wins semantics. Sharing
+ * it breaks in both directions, and both are silent:
+ *
+ *   - A provider session limit arriving mid-cycle overwrites the maintenance hold. `until` moves to
+ *     the quota reset and the *reason* changes, so when that expires the loop resumes dispatch while
+ *     the cycle is still rewriting files underneath it.
+ *   - Worse in reverse: the cycle finishes and releases "the hold", nulling a session-limit hold
+ *     that arrived while it ran. Dispatch resumes straight into a spent quota — the exact PD-470
+ *     failure, reintroduced.
+ *
+ * Two conditions with independent causes and independent lifetimes need two slots. This is the same
+ * rule D-077 applied to memory files: one owner per slot, so a release only ever clears what its
+ * owner set. The `kind` still exists — for DISPLAY, so the dashboard can say which condition is in
+ * force — but it is not what keeps the two apart.
+ *
+ * The gate reads both. `until` is a bound, not a schedule: the cycle releases the hold explicitly
+ * when it finishes, and the expiry exists only so a cycle that dies mid-run cannot wedge dispatch
+ * shut forever.
+ */
+
+const MAINTENANCE_HOLD = 'maintenance_hold';
+
+export interface MaintenanceHold {
+  /** Epoch ms the hold lapses on its own — a DEADLINE, not a plan. See `takeMaintenanceHold`. */
+  until: number;
+  /** What is holding dispatch, for the UI and the log. */
+  reason: string;
+  /** Epoch ms the hold was taken. */
+  since: number;
+}
+
+/** The stored maintenance hold, expired or not — `null` when none is set. Pure read, so the server
+ *  can render it in the status API without mutating worker state. */
+export function maintenanceHold(db: Database.Database): MaintenanceHold | null {
+  const row = db.prepare('SELECT value, updated_at FROM robot_state WHERE key = ?').get(MAINTENANCE_HOLD) as
+    | { value: string | null; updated_at: number }
+    | undefined;
+  if (!row || row.value === null) return null;
+  try {
+    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown };
+    if (typeof parsed.until !== 'number') return null;
+    return {
+      until: parsed.until,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      since: row.updated_at,
+    };
+  } catch {
+    return null; // a corrupt row must not wedge the loop shut
+  }
+}
+
+/**
+ * Take the hold. `until` is the deadline past which it lapses **whatever happened to the holder** —
+ * the numbering cycle passes `now + stallThresholdMs`, the same bound a stalled run gets, because a
+ * cycle that dies between taking the hold and releasing it must not stop dispatch indefinitely.
+ *
+ * A second take WINS, and is the normal way to extend a long-running cycle's deadline.
+ */
+export function takeMaintenanceHold(db: Database.Database, until: number, reason: string, now: number = Date.now()): void {
+  writeState(db, MAINTENANCE_HOLD, JSON.stringify({ until, reason }), now);
+}
+
+/** Release the hold. Clears ONLY this slot — never the session-limit hold, which has its own owner. */
+export function releaseMaintenanceHold(db: Database.Database, now: number = Date.now()): void {
+  db.prepare(
+    `INSERT INTO robot_state (key, value, updated_at) VALUES (?, NULL, ?)
+       ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
+  ).run(MAINTENANCE_HOLD, now);
+}
+
+/** The dispatch gate: the hold if it is still in force, or `null` — clearing a lapsed one as it goes,
+ *  exactly like {@link activeSessionLimitHold}, so a dead cycle self-heals with no human. */
+export function activeMaintenanceHold(db: Database.Database, now: number = Date.now()): MaintenanceHold | null {
+  const hold = maintenanceHold(db);
+  if (!hold) return null;
+  if (now < hold.until) return hold;
+  releaseMaintenanceHold(db, now);
+  return null;
+}
+
 /** Upsert an arbitrary `robot_state` key (C5/PD-346 — used to throttle the PR-state poll). */
 export function writeState(db: Database.Database, key: string, value: string, now: number = Date.now()): void {
   db.prepare(

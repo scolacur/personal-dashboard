@@ -7,6 +7,7 @@ import { startRefineJob } from './jobs/refine';
 import { startAuditJob } from './jobs/audit';
 import { startRobotJob } from './jobs/robot';
 import { startEvaluatorJob } from './jobs/evaluate';
+import { startNumberingCycleJob } from './jobs/number-decisions';
 import { startHeartbeat } from './heartbeat';
 
 /**
@@ -18,7 +19,9 @@ import { startHeartbeat } from './heartbeat';
  *
  * Jobs: `refine` (interactive, D-044), `audit` (autonomous, weekly, D-045/PD-283), and
  * `robot` (the in-house dispatcher, D-055/PD-342 — inert unless ROBOT_DISPATCH_ENABLED), and
- * `evaluator` (post-hand-off PR review, PD-487/D-076 — inert unless EVALUATOR_ENABLED).
+ * `evaluator` (post-hand-off PR review, PD-487/D-076 — inert unless EVALUATOR_ENABLED), and
+ * `numbering` (the decision-numbering cycle, PD-498/D-078 — deterministic, no LLM; inert unless
+ * NUMBERING_CYCLE_ENABLED).
  */
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -42,6 +45,7 @@ async function main(): Promise<void> {
   startAuditJob(db, config);
   startRobotJob(db, config);
   startEvaluatorJob(db, config);
+  startNumberingCycleJob(db, config);
 
   logger.info('agent-worker ready');
 }

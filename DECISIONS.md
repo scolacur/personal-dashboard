@@ -18,6 +18,7 @@ Merged, settled, and binding — cite them as they are. Only the *identifier* is
 the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-078).
 
 - **[D-TMP-PD383a](DECISIONS/incoming/D-TMP-PD383a.md)** — The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
+- **[D-TMP-PD498a](DECISIONS/incoming/D-TMP-PD498a.md)** — The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
 
 ---
 

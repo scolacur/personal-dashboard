@@ -31,6 +31,36 @@ export interface AgentWorkerConfig {
   robot: RobotConfig;
   /** The Evaluator (PD-487, D-076) — post-hand-off PR review. Off by default. */
   evaluator: EvaluatorConfig;
+  /** The decision-numbering cycle (PD-498, D-078) — deterministic, no LLM. Off by default. */
+  numbering: NumberingConfig;
+}
+
+/**
+ * Config for the decision-numbering cycle (PD-498, D-078).
+ *
+ * Off by default like the Robot loop and the Evaluator: this job rewrites citations across the whole
+ * repo and admin-merges its own PR, which is not something an image should start doing merely by
+ * being deployed.
+ */
+export interface NumberingConfig {
+  enabled: boolean;
+  /** How often to look for provisional decisions. Daily — the cadence D-078 chose. */
+  intervalMs: number;
+  /** How often to re-check the in-flight run count while draining. */
+  drainPollMs: number;
+  /** How long to wait for CI on the cycle's own PR before leaving it open for a human. */
+  ciTimeoutMs: number;
+  ciPollMs: number;
+}
+
+export function loadNumberingConfig(env: NodeJS.ProcessEnv): NumberingConfig {
+  return {
+    enabled: env.NUMBERING_CYCLE_ENABLED === '1' || env.NUMBERING_CYCLE_ENABLED === 'true',
+    intervalMs: Number(env.NUMBERING_CYCLE_INTERVAL_MS ?? 24 * 60 * 60_000),
+    drainPollMs: Number(env.NUMBERING_DRAIN_POLL_MS ?? 60_000),
+    ciTimeoutMs: Number(env.NUMBERING_CI_TIMEOUT_MS ?? 20 * 60_000),
+    ciPollMs: Number(env.NUMBERING_CI_POLL_MS ?? 30_000),
+  };
 }
 
 /**
@@ -214,6 +244,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
     robot: loadRobotConfig(env),
     evaluator: loadEvaluatorConfig(env),
+    numbering: loadNumberingConfig(env),
   };
 }
 

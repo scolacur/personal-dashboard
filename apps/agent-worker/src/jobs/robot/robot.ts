@@ -22,6 +22,7 @@ import {
 } from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
 import {
+  activeMaintenanceHold,
   activeSessionLimitHold,
   ensureRobotStateTable,
   holdForSessionLimit,
@@ -138,6 +139,18 @@ export async function processRobotQueue(
     logger.info(
       { until: hold.until, reason: hold.reason },
       'robot: holding — provider session limit, dispatch resumes automatically at the reset',
+    );
+    return 0;
+  }
+
+  // Maintenance hold (PD-498, D-078): the decision-numbering cycle is rewriting `D-TMP-` citations
+  // repo-wide and must not race a Robot editing the same files. Its own slot, not a `kind` on the
+  // hold above — see the block comment in `state.ts` for why sharing one silently breaks both.
+  const maintenance = activeMaintenanceHold(db, now());
+  if (maintenance) {
+    logger.info(
+      { until: maintenance.until, reason: maintenance.reason },
+      'robot: holding — maintenance window, dispatch resumes when it releases',
     );
     return 0;
   }

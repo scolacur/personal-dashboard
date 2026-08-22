@@ -1,0 +1,253 @@
+import Database from 'better-sqlite3';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { ProvisionalDecision } from '../../shared/decisions';
+import { ensureRobotStateTable, maintenanceHold } from '../robot/state';
+import { drain, inMergeOrder, runNumberingCycle, type CycleConfig, type CycleDeps } from './cycle';
+
+const CONFIG_BASE = {
+  githubRepo: 'scolacur/personal-dashboard',
+  drainTimeoutMs: 60_000,
+  drainPollMs: 1_000,
+  ciTimeoutMs: 60_000,
+  ciPollMs: 1_000,
+};
+
+function makeDb(): Database.Database {
+  const db = new Database(':memory:');
+  ensureRobotStateTable(db);
+  db.exec(`CREATE TABLE agent_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, ticket_id INTEGER,
+    title TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, read_at INTEGER
+  );`);
+  return db;
+}
+
+/** A tree with `n` provisional decisions and one numbered one. */
+function makeRepo(provisional: { id: string; title: string }[]): string {
+  const root = mkdtempSync(path.join(tmpdir(), 'cycle-'));
+  mkdirSync(path.join(root, 'DECISIONS/incoming'), { recursive: true });
+  writeFileSync(path.join(root, 'DECISIONS/D-079-x.md'), '# D-079: Existing\n\nbody\n');
+  writeFileSync(path.join(root, 'DECISIONS.md'), 'placeholder\n');
+  for (const p of provisional) {
+    writeFileSync(path.join(root, `DECISIONS/incoming/${p.id}.md`), `# ${p.id}: ${p.title}\n\nbody\n`);
+  }
+  return root;
+}
+
+interface Harness {
+  deps: CycleDeps;
+  calls: { cmd: string; args: string[] }[];
+  setInFlight: (n: number) => void;
+  setCi: (state: 'pass' | 'fail' | 'pending') => void;
+}
+
+function harness(opts: { inFlight?: number; ci?: 'pass' | 'fail' | 'pending'; addTimes?: Record<string, number> } = {}): Harness {
+  const calls: { cmd: string; args: string[] }[] = [];
+  let inFlight = opts.inFlight ?? 0;
+  let ci = opts.ci ?? 'pass';
+  let clock = 1_000_000;
+
+  const deps: CycleDeps = {
+    run: async (cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === 'git' && args[0] === 'log') {
+        const file = args[args.length - 1];
+        const t = opts.addTimes?.[path.basename(file, '.md')];
+        return { stdout: t === undefined ? '' : String(t) };
+      }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') {
+        return { stdout: 'https://github.com/scolacur/personal-dashboard/pull/412\n' };
+      }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
+        return { stdout: `verify\t${ci}\t2m\turl\n` };
+      }
+      return { stdout: '' };
+    },
+    inFlightRuns: () => inFlight,
+    sleep: async (ms) => {
+      clock += ms; // virtual time: the drain/CI deadlines advance without a real wait
+    },
+    now: () => clock,
+  };
+  return {
+    deps,
+    calls,
+    setInFlight: (n) => {
+      inFlight = n;
+    },
+    setCi: (s) => {
+      ci = s;
+    },
+  };
+}
+
+describe('inMergeOrder', () => {
+  function prov(id: string): ProvisionalDecision {
+    return { id, ticketPrefix: 'PD', ticketNum: 1, letter: 'a', title: 't', file: `DECISIONS/incoming/${id}.md` };
+  }
+
+  it('orders by the commit that ADDED each file, not by filename', () => {
+    // PD-600 was authored first, so it must take the lower number even though 383 sorts first.
+    const h = harness({ addTimes: { 'D-TMP-PD600a': 100, 'D-TMP-PD383a': 200 } });
+    return inMergeOrder([prov('D-TMP-PD383a'), prov('D-TMP-PD600a')], h.deps, '/x').then((out) => {
+      expect(out.map((d) => d.id)).toEqual(['D-TMP-PD600a', 'D-TMP-PD383a']);
+    });
+  });
+
+  it('sorts an undatable file last — it is almost always one added just now', async () => {
+    const h = harness({ addTimes: { 'D-TMP-PD383a': 200 } });
+    const out = await inMergeOrder([prov('D-TMP-PD999a'), prov('D-TMP-PD383a')], h.deps, '/x');
+    expect(out.map((d) => d.id)).toEqual(['D-TMP-PD383a', 'D-TMP-PD999a']);
+  });
+
+  it('breaks a tie on id, so two decisions in one commit get a stable order', async () => {
+    const h = harness({ addTimes: { 'D-TMP-PD5b': 100, 'D-TMP-PD5a': 100 } });
+    const out = await inMergeOrder([prov('D-TMP-PD5b'), prov('D-TMP-PD5a')], h.deps, '/x');
+    expect(out.map((d) => d.id)).toEqual(['D-TMP-PD5a', 'D-TMP-PD5b']);
+  });
+});
+
+describe('drain', () => {
+  it('returns 0 immediately when nothing is in flight', async () => {
+    const h = harness({ inFlight: 0 });
+    expect(await drain(h.deps, { ...CONFIG_BASE, repoRoot: '/x' })).toBe(0);
+  });
+
+  it('waits for runs to finish', async () => {
+    const h = harness({ inFlight: 2 });
+    setTimeout(() => h.setInFlight(0), 0);
+    const p = drain(h.deps, { ...CONFIG_BASE, repoRoot: '/x' });
+    h.setInFlight(0);
+    expect(await p).toBe(0);
+  });
+
+  it('gives up at the deadline and reports what is still running', async () => {
+    const h = harness({ inFlight: 3 });
+    expect(await drain(h.deps, { ...CONFIG_BASE, repoRoot: '/x', drainTimeoutMs: 5_000 })).toBe(3);
+  });
+});
+
+describe('runNumberingCycle', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  const config = (repoRoot: string, over: Partial<CycleConfig> = {}): CycleConfig => ({
+    ...CONFIG_BASE,
+    repoRoot,
+    ...over,
+  });
+
+  it('does nothing, and takes no hold, when the inbox is empty', async () => {
+    const root = makeRepo([]);
+    const h = harness();
+    expect(await runNumberingCycle(db, config(root), h.deps)).toEqual({ status: 'nothing-to-do' });
+    expect(maintenanceHold(db)).toBeNull();
+    expect(h.calls).toEqual([]);
+  });
+
+  it('numbers, moves, rewrites, opens a PR and admin-merges on green', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'Epic dispatch' }]);
+    const h = harness({ ci: 'pass' });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+
+    expect(outcome.status).toBe('merged');
+    expect(existsSync(path.join(root, 'DECISIONS/D-080-epic-dispatch.md'))).toBe(true);
+    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'))).toBe(false);
+
+    const merge = h.calls.find((c) => c.cmd === 'gh' && c.args[1] === 'merge');
+    expect(merge?.args).toContain('--admin');
+    expect(merge?.args).toContain('412');
+  });
+
+  it('regenerates the index so the numbered decision is listed and the inbox section is gone', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'Epic dispatch' }]);
+    await runNumberingCycle(db, config(root), harness().deps);
+    const index = readFileSync(path.join(root, 'DECISIONS.md'), 'utf8');
+    expect(index).toContain('- **[D-080](DECISIONS/D-080-epic-dispatch.md)** — Epic dispatch');
+    expect(index).not.toContain('Awaiting a number');
+  });
+
+  it('releases the hold on the happy path', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    await runNumberingCycle(db, config(root), harness().deps);
+    expect(maintenanceHold(db)).toBeNull();
+  });
+
+  it('skips the cycle rather than rewriting under a live run', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness({ inFlight: 2 });
+    const outcome = await runNumberingCycle(db, config(root, { drainTimeoutMs: 5_000 }), h.deps);
+
+    expect(outcome).toEqual({ status: 'drain-timeout', inFlight: 2 });
+    // Nothing was touched: the decision is still in the inbox and no PR was opened.
+    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'))).toBe(true);
+    expect(h.calls.some((c) => c.cmd === 'gh')).toBe(false);
+    expect(maintenanceHold(db)).toBeNull();
+    const n = db.prepare('SELECT title FROM agent_notifications').get() as { title: string };
+    expect(n.title).toContain('would not drain');
+  });
+
+  it('leaves the PR open and notifies on a red verify — never merges red', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness({ ci: 'fail' });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+
+    expect(outcome).toMatchObject({ status: 'ci-red', prNumber: 412 });
+    expect(h.calls.some((c) => c.cmd === 'gh' && c.args[1] === 'merge')).toBe(false);
+    const n = db.prepare('SELECT title FROM agent_notifications').get() as { title: string };
+    expect(n.title).toContain('is red');
+  });
+
+  it('gives up on CI that never finishes, leaving the PR open', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness({ ci: 'pending' });
+    const outcome = await runNumberingCycle(db, config(root, { ciTimeoutMs: 5_000 }), h.deps);
+
+    expect(outcome).toMatchObject({ status: 'ci-timeout', prNumber: 412 });
+    expect(h.calls.some((c) => c.cmd === 'gh' && c.args[1] === 'merge')).toBe(false);
+  });
+
+  it('releases the hold even when the cycle throws', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const h = harness();
+    const boom: CycleDeps = {
+      ...h.deps,
+      run: async (cmd, args) => {
+        if (cmd === 'git' && args[0] === 'push') throw new Error('network down');
+        return h.deps.run(cmd, args);
+      },
+    };
+    await expect(runNumberingCycle(db, config(root), boom)).rejects.toThrow('network down');
+    expect(maintenanceHold(db)).toBeNull();
+  });
+
+  it('numbers several decisions in merge order, in one PR', async () => {
+    const root = makeRepo([
+      { id: 'D-TMP-PD383a', title: 'Second' },
+      { id: 'D-TMP-PD600a', title: 'First' },
+    ]);
+    const h = harness({ addTimes: { 'D-TMP-PD600a': 100, 'D-TMP-PD383a': 200 } });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+
+    expect(outcome.status).toBe('merged');
+    expect(existsSync(path.join(root, 'DECISIONS/D-080-first.md'))).toBe(true);
+    expect(existsSync(path.join(root, 'DECISIONS/D-081-second.md'))).toBe(true);
+    expect(h.calls.filter((c) => c.cmd === 'gh' && c.args[1] === 'create')).toHaveLength(1);
+  });
+
+  it('reports a dangling citation without blocking the cycle', async () => {
+    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    writeFileSync(path.join(root, 'PROJECT.md'), 'cites D-TMP-PD999z\n');
+    const outcome = await runNumberingCycle(db, config(root), harness().deps);
+
+    expect(outcome.status).toBe('merged'); // advisory, not a gate
+    expect(readFileSync(path.join(root, 'PROJECT.md'), 'utf8')).toContain('D-TMP-PD999z');
+    const titles = (db.prepare('SELECT title FROM agent_notifications').all() as { title: string }[]).map((r) => r.title);
+    expect(titles.some((t) => t.includes('no decision behind them'))).toBe(true);
+  });
+});
