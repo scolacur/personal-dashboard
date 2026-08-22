@@ -44,10 +44,9 @@ export interface AgentWorkerConfig {
  */
 export interface NumberingConfig {
   enabled: boolean;
-  /** How often to look for provisional decisions. Daily — the cadence D-078 chose. */
-  intervalMs: number;
-  /** How often to re-check the in-flight run count while draining. */
-  drainPollMs: number;
+  /** How often the coordinator advances the hold state machine. Not the hold cadence — that is
+   *  HOLD_CADENCE_MS in shared, because the UI has to state it too. */
+  pollMs: number;
   /** How long to wait for CI on the cycle's own PR before leaving it open for a human. */
   ciTimeoutMs: number;
   ciPollMs: number;
@@ -56,8 +55,7 @@ export interface NumberingConfig {
 export function loadNumberingConfig(env: NodeJS.ProcessEnv): NumberingConfig {
   return {
     enabled: env.DECISION_CONSOLIDATION_JOB_ENABLED === '1' || env.DECISION_CONSOLIDATION_JOB_ENABLED === 'true',
-    intervalMs: Number(env.DECISION_CONSOLIDATION_INTERVAL_MS ?? 24 * 60 * 60_000),
-    drainPollMs: Number(env.DECISION_CONSOLIDATION_DRAIN_POLL_MS ?? 60_000),
+    pollMs: Number(env.DECISION_CONSOLIDATION_POLL_MS ?? 60_000),
     ciTimeoutMs: Number(env.DECISION_CONSOLIDATION_CI_TIMEOUT_MS ?? 20 * 60_000),
     ciPollMs: Number(env.DECISION_CONSOLIDATION_CI_POLL_MS ?? 30_000),
   };

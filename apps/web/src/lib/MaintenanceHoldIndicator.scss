@@ -1,0 +1,30 @@
+.hold-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  text-decoration: none;
+  white-space: nowrap;
+
+  &:hover {
+    border-color: var(--accent-2);
+    color: var(--text);
+  }
+
+  // Active is the one worth catching the eye: dispatch is paused right now.
+  &--active {
+    color: var(--status-warn);
+    border-color: var(--status-warn);
+  }
+}
+
+// The nav is tight on phones; the icon alone still says "something is holding".
+@media (max-width: 640px) {
+  .hold-indicator span {
+    display: none;
+  }
+}

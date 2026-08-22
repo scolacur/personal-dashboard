@@ -237,3 +237,5 @@ export {
   validateDocUrl,
   fenceFetchedContent,
 } from './doc-allowlist';
+export type { HoldTrigger, HoldStatus, MaintenanceHold, MaintenanceHoldRun, MaintenanceJob } from './maintenance';
+export { HOLD_WINDOW_MS, HOLD_CADENCE_MS, MAINTENANCE_JOBS, isHoldActive } from './maintenance';

@@ -7,6 +7,9 @@ import { CronRegistry } from './cron';
 import { registerBackupJob } from './backup';
 import { bootstrapJobRunsSchema } from './lib/job-runs';
 import { registerJobRunRoutes } from './lib/job-runs-routes';
+import { bootstrapMaintenanceHoldsSchema } from './lib/maintenance-holds';
+import { bootstrapMaintenanceJobRequestsSchema } from './lib/maintenance-job-requests';
+import { registerMaintenanceRoutes } from './lib/maintenance-routes';
 import { bootstrapShellLayoutSchema } from './lib/shell-layout';
 import { registerShellLayoutRoutes } from './lib/shell-layout-routes';
 import type { BackendWidget } from './types';
@@ -41,6 +44,8 @@ const app = Fastify({
 // run row on its very first tick, and because the boot-time sweep of interrupted runs should
 // happen once, up front.
 bootstrapJobRunsSchema(db);
+bootstrapMaintenanceHoldsSchema(db);
+bootstrapMaintenanceJobRequestsSchema(db);
 
 // Shell page membership (PD-334, D-073). Bootstrapped alongside the job-run store: the shell is
 // not a widget, and its one-time seed must land before anything serves a page.
@@ -55,6 +60,7 @@ for (const widget of widgets) {
 }
 
 registerJobRunRoutes(app, db);
+registerMaintenanceRoutes(app, db);
 registerShellLayoutRoutes(app, db);
 
 // In-process scheduler (PROJECT.md §2). Widgets register jobs via registerCron;

@@ -7,7 +7,7 @@ import { startRefineJob } from './jobs/refine';
 import { startAuditJob } from './jobs/audit';
 import { startRobotJob } from './jobs/robot';
 import { startEvaluatorJob } from './jobs/evaluate';
-import { startNumberingCycleJob } from './jobs/number-decisions';
+import { startMaintenanceCoordinator } from './jobs/maintenance';
 import { startHeartbeat } from './heartbeat';
 
 /**
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   startAuditJob(db, config);
   startRobotJob(db, config);
   startEvaluatorJob(db, config);
-  startNumberingCycleJob(db, config);
+  startMaintenanceCoordinator(db, config);
 
   logger.info('agent-worker ready');
 }

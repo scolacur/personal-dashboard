@@ -10,7 +10,6 @@ import {
 } from '../../shared/decisions';
 import { logger } from '../../shared/logger';
 import { notifyLoop } from '../robot/notify';
-import { releaseMaintenanceHold, takeMaintenanceHold } from '../robot/state';
 import { applyAssignments } from './apply';
 import { assignNumbers, type Assignment } from './numbering';
 
@@ -19,14 +18,12 @@ import { assignNumbers, type Assignment } from './numbering';
  * A rename and a regenerated index need no judgement, and an agent here would be a token cost with a
  * non-deterministic failure mode attached to the project's decision record.
  *
- * The sequence, and why it is this order:
+ * **It runs inside an already-open maintenance hold** (PD-498). Taking the hold and draining
+ * in-flight Robot runs belong to `jobs/maintenance/coordinator.ts`, which owns the window; this job
+ * only does the work:
  *
- *   1. Take the **maintenance hold**, so no Robot starts a run mid-rewrite.
- *   2. **Drain** — wait for in-flight runs to finish, bounded. The hold stops new dispatch; it does
- *      not stop the runs already going, and those are the ones editing files.
- *   3. Assign, apply, regenerate the index.
- *   4. Branch, commit, push, open a PR, wait for CI, **admin-merge**.
- *   5. Release the hold — in a `finally`, so a throw anywhere above still releases it.
+ *   1. Assign `D-NNN` in merge order, apply the renames, regenerate the index.
+ *   2. Branch, commit, push, open a PR, wait for CI, **admin-merge**.
  *
  * On a red `verify` the PR is left open and a notification is raised. `--admin` skips the *approval*
  * requirement, never a failing check: a daily mechanical-rename PR is the definition of a rubber
@@ -38,7 +35,7 @@ export type CommandRunner = (cmd: string, args: string[], opts?: { cwd?: string 
 
 export interface CycleDeps {
   run: CommandRunner;
-  /** Number of Robot runs currently in flight. The cycle waits for this to reach zero. */
+  /** Number of Robot runs currently in flight — re-checked as a guard, not waited on. */
   inFlightRuns: () => number;
   /** Resolves after `ms`. Injected so a test does not actually wait. */
   sleep: (ms: number) => Promise<void>;
@@ -48,10 +45,6 @@ export interface CycleDeps {
 export interface CycleConfig {
   repoRoot: string;
   githubRepo: string;
-  /** Hard bound on the drain, and the hold's lapse deadline. The loop's `stallThresholdMs` (~2h). */
-  drainTimeoutMs: number;
-  /** How often to re-check the in-flight count while draining. */
-  drainPollMs: number;
   /** How long to wait for CI on the cycle's own PR before giving up and leaving it open. */
   ciTimeoutMs: number;
   ciPollMs: number;
@@ -59,7 +52,7 @@ export interface CycleConfig {
 
 export type CycleOutcome =
   | { status: 'nothing-to-do' }
-  | { status: 'drain-timeout'; inFlight: number }
+  | { status: 'runs-in-flight'; inFlight: number }
   | { status: 'merged'; prNumber: number; assignments: Assignment[] }
   | { status: 'ci-red'; prNumber: number; assignments: Assignment[] }
   | { status: 'ci-timeout'; prNumber: number; assignments: Assignment[] };
@@ -97,23 +90,6 @@ export async function inMergeOrder(
   return dated.sort((a, b) => a.ts - b.ts || a.d.id.localeCompare(b.d.id)).map((x) => x.d);
 }
 
-/**
- * Wait for in-flight Robot runs to finish, up to `drainTimeoutMs`.
- *
- * Returns the count still running when it gave up — `0` means drained. The bound is what makes the
- * hold safe to take: "run when nothing is dispatched" is unbounded exactly when the queue is
- * busiest, so the cycle forces the window instead of waiting for one (D-078).
- */
-export async function drain(deps: CycleDeps, config: CycleConfig): Promise<number> {
-  const deadline = deps.now() + config.drainTimeoutMs;
-  let inFlight = deps.inFlightRuns();
-  while (inFlight > 0 && deps.now() < deadline) {
-    logger.info({ inFlight }, 'numbering: draining — waiting for in-flight runs');
-    await deps.sleep(config.drainPollMs);
-    inFlight = deps.inFlightRuns();
-  }
-  return inFlight;
-}
 
 /** `verify`'s conclusion on the cycle's own PR: `pass`, `fail`, or `pending`. */
 async function ciState(deps: CycleDeps, config: CycleConfig, prNumber: number): Promise<'pass' | 'fail' | 'pending'> {
@@ -128,8 +104,14 @@ async function ciState(deps: CycleDeps, config: CycleConfig, prNumber: number): 
 }
 
 /**
- * Run one full cycle. Safe to call when there is nothing to do — that is the common case, and it
- * returns before taking the hold so an empty inbox never touches dispatch at all.
+ * Run one consolidation pass.
+ *
+ * **The caller must already hold dispatch.** Since PD-498's coordinator, the maintenance hold is
+ * the scheduled thing and this runs *inside* an open one — it no longer takes or releases the hold,
+ * and no longer drains. Both moved to `jobs/maintenance/coordinator.ts` so a second maintenance job
+ * inherits them instead of re-deriving them.
+ *
+ * Safe to call with an empty inbox; that is the common case and it returns immediately.
  */
 export async function runNumberingCycle(
   db: Database.Database,
@@ -139,26 +121,26 @@ export async function runNumberingCycle(
   const provisional = loadProvisionalDecisions(config.repoRoot);
   if (provisional.length === 0) return { status: 'nothing-to-do' };
 
-  const reason = `numbering ${provisional.length} decision(s)`;
-  takeMaintenanceHold(db, deps.now() + config.drainTimeoutMs, reason, deps.now());
-
-  try {
-    const stillRunning = await drain(deps, config);
+  {
+    // Belt-and-braces, not the gate: the coordinator drains before opening the window, but this job
+    // rewrites files repo-wide and the cost of doing that under a live Robot is a conflict on
+    // someone else's PR. Cheap to re-check what we are about to rely on.
+    const stillRunning = deps.inFlightRuns();
     if (stillRunning > 0) {
-      // Do NOT rewrite under a live run: it would edit files a Robot has open, and the resulting
-      // conflict lands on that Robot's PR rather than here. Skip; the next cycle tries again.
-      logger.warn({ inFlight: stillRunning }, 'numbering: drain timed out — skipping this cycle');
+      logger.warn({ inFlight: stillRunning }, 'numbering: runs in flight inside the hold — skipping');
       notifyLoop(
         db,
         'agent_needs_human',
-        'Decision numbering skipped — runs would not drain',
-        `${stillRunning} run(s) still in flight after ${Math.round(config.drainTimeoutMs / 60_000)}m. ` +
-          `${provisional.length} decision(s) stay provisional until the next cycle.`,
+        'Decision consolidation skipped — runs were in flight inside the hold',
+        `${stillRunning} run(s) were still running when the hold opened. ` +
+          `${provisional.length} decision(s) stay provisional until the next hold.`,
         deps.now(),
       );
-      return { status: 'drain-timeout', inFlight: stillRunning };
+      return { status: 'runs-in-flight', inFlight: stillRunning };
     }
+  }
 
+  {
     const ordered = await inMergeOrder(provisional, deps, config.repoRoot);
     const assignments = assignNumbers(loadDecisions(config.repoRoot), ordered);
     const result = applyAssignments(config.repoRoot, assignments);
@@ -240,9 +222,5 @@ export async function runNumberingCycle(
     await deps.run('gh', ['pr', 'merge', String(prNumber), '--repo', config.githubRepo, '--squash', '--admin'], { cwd });
     logger.info({ prNumber, assigned: assignments.map((a) => a.id) }, 'numbering: cycle complete');
     return { status: 'merged', prNumber, assignments };
-  } finally {
-    // Always — a throw between taking the hold and here must not leave dispatch held. The lapse
-    // deadline would eventually free it anyway, but that is a backstop, not the mechanism.
-    releaseMaintenanceHold(db, deps.now());
   }
 }
