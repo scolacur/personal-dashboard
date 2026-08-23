@@ -890,6 +890,26 @@ export interface SystemStatus {
   budget: RobotBudgetStatus | null;
   /** PD-248: GitHub API headroom from the worker's periodic probe; null until one has run. */
   githubRateLimit: GithubRateLimitStatus | null;
+  /**
+   * PD-498: the open maintenance hold, or null.
+   *
+   * A FOURTH independent halt, alongside `dispatch.paused` and `sessionLimit`. It has to be here
+   * rather than read separately by the nav, because the nav's whole job is to say why the loop is
+   * not dispatching — and a condition it cannot see is one it will contradict. Before this, the nav
+   * showed "Dispatch running" (true: `dispatch_paused` was clear) next to a maintenance-hold pill
+   * (also true), which read as nonsense.
+   */
+  maintenanceHold: MaintenanceHoldStatus | null;
+}
+
+/** The subset of a maintenance hold the status API carries (PD-498). */
+export interface MaintenanceHoldStatus {
+  id: number;
+  trigger: 'scheduled' | 'manual';
+  /** Epoch ms the window opened. */
+  startedAt: number;
+  /** Epoch ms the window closes at the latest — `startedAt + HOLD_WINDOW_MS`. */
+  endsBy: number;
 }
 
 // ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────

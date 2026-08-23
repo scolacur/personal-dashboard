@@ -146,3 +146,42 @@
     font-size: var(--font-size-xs);
   }
 }
+
+/* Fleet breakdown (PD-498). The label says whether the loop is armed; these say what it is doing. */
+.ks-counts {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.ks-count--live {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ks-count--attention {
+  color: var(--status-warn);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+/* Monospace so the digits do not jitter as the countdown ticks. */
+.ks-countdown {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-xs);
+  color: var(--status-warn);
+}
+
+/* The nav is tight on phones; the counts are the first thing to go. */
+@media (max-width: 860px) {
+  .ks-counts {
+    display: none;
+  }
+}

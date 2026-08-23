@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SystemStatus } from '@dashboard/shared';
   import { pauseDispatch, resumeDispatch } from './devops/api';
-  import { describeDispatch } from './dispatch-killswitch-utils';
+  import { countdownLabel, describeDispatch, fleetCounts } from './dispatch-killswitch-utils';
 
   // PD-410 — the loop-wide killswitch, in the nav rather than inside the Site Status widget.
   // Same C4 pause the widget drives (`robot_state.dispatch_paused`); no new backend. The widget
@@ -39,6 +39,10 @@
   });
 
   let view = $derived(describeDispatch(status, now));
+  // The fleet breakdown answers the question the label cannot: the loop being armed and a Robot
+  // actually running are different facts, and "Dispatch running" used to conflate them.
+  let counts = $derived(fleetCounts(status));
+  let countdown = $derived(countdownLabel(view?.endsBy ?? null, now));
 
   async function toggle(): Promise<void> {
     if (toggling || !view || view.action === null) return;
@@ -66,8 +70,22 @@
       <span class="ks-label">
         {#if view.mode === 'paused'}⛔ {/if}{view.label}
       </span>
+      {#if countdown}
+        <!-- Only a maintenance hold sets endsBy: its window is a fixed length, so a ticking clock
+             is honest. A provider hold shows a wall-clock reset time instead (see endsBy's doc). -->
+        <span class="ks-countdown" title="Dispatch resumes when the window closes">{countdown}</span>
+      {/if}
       {#if view.detail}
         <span class="ks-detail">{view.detail}</span>
+      {/if}
+    </span>
+
+    <span class="ks-counts" title="Robot fleet by state">
+      <span class="ks-count" class:ks-count--live={counts.working > 0}>{counts.working} working</span>
+      <span class="ks-count">{counts.queued} queued</span>
+      <span class="ks-count">{counts.inReview} in review</span>
+      {#if counts.needsYou > 0}
+        <a class="ks-count ks-count--attention" href="/devops/task-tracker">{counts.needsYou} needs you</a>
       {/if}
     </span>
 
@@ -86,7 +104,11 @@
       <!-- Both halts are active. Resuming clears the pause but `robot.ts` still gates on the
            session-limit hold, so dispatch will not actually restart yet — say so rather than let
            the click imply it was enough. -->
-      <span class="ks-note">won't re-arm until the session limit resets</span>
+      <span class="ks-note">
+        {view.endsBy !== null
+          ? "won't re-arm until the maintenance hold closes"
+          : "won't re-arm until the session limit resets"}
+      </span>
     {/if}
   </div>
 {/if}

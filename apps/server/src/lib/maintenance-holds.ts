@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { HoldStatus, HoldTrigger, MaintenanceHold, MaintenanceHoldRun } from '@dashboard/shared';
+import { HOLD_WINDOW_MS } from '@dashboard/shared';
+import type { HoldStatus, HoldTrigger, MaintenanceHold, MaintenanceHoldRun, MaintenanceHoldStatus } from '@dashboard/shared';
 
 /**
  * The maintenance-hold log and request queue (PD-498, extends D-078).
@@ -194,4 +195,24 @@ export function closeStaleHolds(db: Database.Database, windowMs: number, now: nu
     )
     .run(now, now - windowMs);
   return info.changes;
+}
+
+/**
+ * The open hold in the shape `SystemStatus` carries (PD-498), or null.
+ *
+ * `endsBy` is computed here rather than stored: the window length is a shared constant, and a
+ * second copy in the DB is a value that can disagree with the coordinator that enforces it.
+ */
+export function getMaintenanceHoldStatus(
+  db: Database.Database,
+  windowMs: number = HOLD_WINDOW_MS,
+): MaintenanceHoldStatus | null {
+  const hold = activeHold(db);
+  if (!hold || hold.startedAt === null) return null;
+  return {
+    id: hold.id,
+    trigger: hold.trigger,
+    startedAt: hold.startedAt,
+    endsBy: hold.startedAt + windowMs,
+  };
 }

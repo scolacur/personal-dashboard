@@ -57,6 +57,7 @@ import {
 } from './store';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
+import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import {
   GITHUB_WRITE_TOKEN_ENV,
   closeIssueNotPlanned,
@@ -707,5 +708,8 @@ export function registerRoutes(
     sessionLimit: getSessionLimitHold(db),
     budget: getRobotBudget(db),
     githubRateLimit: getGithubRateLimit(db),
+    // PD-498: a fourth halt the nav has to be able to see. Without it the header says
+    // "Loop on" during a maintenance window, which is true of the killswitch and false of reality.
+    maintenanceHold: getMaintenanceHoldStatus(db),
   }));
 }
