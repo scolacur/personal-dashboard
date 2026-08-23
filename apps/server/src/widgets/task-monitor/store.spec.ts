@@ -192,7 +192,7 @@ describe('D-040 + D-058 lane migration (legacy statuses → single queue model)'
     // D-040 collapses to robot_queue; D-058 then collapses robot_queue → queue + assignee robot.
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_lanes_d040'").run();
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_queue_model_d058'").run();
-    // D-TMP-PD383a folds the `prioritized` lane D-040 produces; it also already ran on the empty DB.
+    // D-080 folds the `prioritized` lane D-040 produces; it also already ran on the empty DB.
     db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_retire_prioritized_lane'").run();
     bootstrapSchema(db);
 
@@ -687,7 +687,7 @@ describe('terminal-transition cleanup (PD-400)', () => {
     expect(ended[0].detail).toMatchObject({ to: 'completed', clearedAgentState: 'needs-human', resolvedNotifications: 1 });
   });
 
-  // D-TMP-PD539a: the mirror image. `completeTicket` writes agent_state='done' with the status, and
+  // D-083: the mirror image. `completeTicket` writes agent_state='done' with the status, and
   // UpdateTicketInput has no agentState field, so without this a reopened robot ticket sits in
   // Backlog wearing a green "done" pill AND is invisible to robotQueueCandidates, which selects on
   // `agent_state IS NULL OR 'queued'`.
@@ -1141,7 +1141,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(steveChild.assignee).toBe('steve');
   });
 
-  // PD-510 / D-TMP-PD383a. `priority` is no longer part of the proposal type at all, so these
+  // PD-510 / D-080. `priority` is no longer part of the proposal type at all, so these
   // seed it through a cast: the case that matters is a proposal persisted BEFORE PD-510, whose
   // stored JSON still carries the key. It must be inert, not honoured.
   it('approveRefine ignores a Ticket priority on a legacy stored proposal (priority is the Epic’s)', () => {
@@ -1444,9 +1444,9 @@ describe('epics (D-054, PD-336)', () => {
     }
   });
 
-  // D-TMP-PD383a REVERSES the old "an Epic can never enter queue" guard: queueing the Epic is now how
+  // D-080 REVERSES the old "an Epic can never enter queue" guard: queueing the Epic is now how
   // work is dispatched. What replaced the guard is the member cascade, tested here.
-  it('D-TMP-PD383a: queueing an Epic queues its unstarted members and leaves finished ones alone', () => {
+  it('D-080: queueing an Epic queues its unstarted members and leaves finished ones alone', () => {
     const e = epic();
     const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
     const done = createTicket(db, { title: 'done', projectId: pd, epicId: e, status: 'completed' });
@@ -1456,7 +1456,7 @@ describe('epics (D-054, PD-336)', () => {
     expect(getTicket(db, done.id)!.status).toBe('completed');
   });
 
-  it('D-TMP-PD383a: rolling an Epic back un-queues only members that never started', () => {
+  it('D-080: rolling an Epic back un-queues only members that never started', () => {
     const e = epic();
     const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
     const live = createTicket(db, { title: 'live', projectId: pd, epicId: e });
@@ -1468,14 +1468,14 @@ describe('epics (D-054, PD-336)', () => {
     expect(getTicket(db, live.id)!.status).toBe('queue');
   });
 
-  it('D-TMP-PD383a: a Ticket created into a queued Epic lands in backlog, keeping D-039 structural', () => {
+  it('D-080: a Ticket created into a queued Epic lands in backlog, keeping D-039 structural', () => {
     const e = epic();
     updateTicket(db, e, { status: 'queue' });
     const t = createTicket(db, { title: 'late', projectId: pd, epicId: e, status: 'queue' });
     expect(t.status).toBe('backlog');
   });
 
-  it('D-TMP-PD383a: an Epic priority change cascades to every member', () => {
+  it('D-080: an Epic priority change cascades to every member', () => {
     const e = epic();
     const m = createTicket(db, { title: 'm', projectId: pd, epicId: e, priority: 'P4' });
     updateTicket(db, e, { priority: 'P1' });

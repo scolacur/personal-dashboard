@@ -2,7 +2,7 @@ import type { AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '
 import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 
 /**
- * An Epic to mint on save, with this Ticket as its first member (D-TMP-PD383a slice C).
+ * An Epic to mint on save, with this Ticket as its first member (D-080 slice C).
  *
  * It carries a priority because that is the whole point: priority is an Epic property, so the
  * moment you create work that belongs to no existing Epic you are also deciding how urgent it is.
@@ -83,7 +83,7 @@ export function maxTurnsInvalid(raw: string): boolean {
 }
 
 /**
- * Whether this save must end with the Ticket inside an Epic (D-TMP-PD383a slice C).
+ * Whether this save must end with the Ticket inside an Epic (D-080 slice C).
  *
  * Stated as a rule about the **transition**, not about the state, which is what makes the legacy
  * question mostly evaporate:

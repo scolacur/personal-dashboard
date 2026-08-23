@@ -135,11 +135,11 @@
   // status editing is disabled for Epics.
   const statusLocked = $derived(ticket?.isEpic ?? false);
 
-  // D-TMP-PD539a: a terminal Ticket is read-only everywhere. An Epic is exempt — its terminal lane
+  // D-083: a terminal Ticket is read-only everywhere. An Epic is exempt — its terminal lane
   // is derived from its members, so there is nothing here to freeze.
   const frozen = $derived(ticket !== null && !ticket.isEpic && isTerminal(ticket));
 
-  // D-TMP-PD383a: priority belongs to the Epic and cascades to its members, and `updateTicket`
+  // D-080: priority belongs to the Epic and cascades to its members, and `updateTicket`
   // silently overrides a member's own value. An editable control here would accept an edit that
   // never lands, so a member reads its inherited priority instead. An unclassified Epic (`null`)
   // leaves the member's value alone — matching the server — so it stays editable in that case.
@@ -150,12 +150,12 @@
   );
   const priorityInherited = $derived(parentEpic !== undefined && parentEpic.priority !== null);
 
-  /* ── Reopen (D-TMP-PD539a) ──────────────────────────────────────────
+  /* ── Reopen (D-083) ──────────────────────────────────────────
      The single exception to "terminal is final". Deliberately a considered click on this page
      rather than a drag on the board, because a drag is what makes accidental completion cheap.
 
      It carries two obligations, not just a status write: the Ticket must land inside an Epic
-     (an Epic-less active Ticket is unpriced and undispatchable — D-TMP-PD383a), and the server
+     (an Epic-less active Ticket is unpriced and undispatchable — D-080), and the server
      clears its stale `agent_state` so a robot-completed ticket does not come back wearing a
      green "done" pill that also hides it from the loop's candidate query. */
   let reopening = $state(false);
@@ -184,7 +184,7 @@
     }
   }
 
-  // D-TMP-PD383a slice C: give this Ticket its own Epic, inheriting the source Epic's priority and
+  // D-080 slice C: give this Ticket its own Epic, inheriting the source Epic's priority and
   // lane. Same action as the board card's kebab — the detail page is where you land after opening
   // a ticket to decide exactly this.
   let spinOffOpen = $state(false);
@@ -428,7 +428,7 @@
     await setMemberEpic(t.id, ticket.id);
   }
 
-  // ── Member lane + dispatch order (PD-384, slice D of D-TMP-PD383a) ────────
+  // ── Member lane + dispatch order (PD-384, slice D of D-080) ────────
   // A member's `sortOrder` IS the order its Epic's work is dispatched in, so this list is the
   // control surface for order-of-operations — see `epic-members.ts`.
   const canReorderMembers = $derived(membersReorderable(epicMembers));

@@ -26,7 +26,7 @@ function member(over: Partial<AgentTicket> & { id: number }): AgentTicket {
 }
 
 describe('MEMBER_LANE_CHOICES', () => {
-  // D-TMP-PD539a: terminal is final. A dropdown that can complete a ticket in one click is the
+  // D-083: terminal is final. A dropdown that can complete a ticket in one click is the
   // easy slip that decision exists to prevent, and the Reopen that undoes it lives elsewhere.
   it('offers no terminal lane', () => {
     expect(MEMBER_LANE_CHOICES).toEqual(['backlog', 'queue']);
