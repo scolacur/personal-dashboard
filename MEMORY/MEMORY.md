@@ -8,6 +8,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-21](2026-08-21.md) — PD-468 gate done + loop/Evaluator on; D-079 build-sha; D-078 id collision; D-077 memory inbox; ID Tracker shipped (#331/#333); NAS compose incident.
 
-- [2026-08-22](2026-08-22.md) — Data-entry only: two DJ tracklists into Music Tracker + ID Tracker; a 39-commit-stale checkout hid the whole ID Tracker widget; filed PD-540/PD-541.
+- [2026-08-22](2026-08-22.md) — Two DJ tracklists entered, then the backup audit: 5 silent nights, `integrity_check` passes an empty DB → PD-550 shipped (#350); PD-540/541/552 filed.
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
