@@ -96,7 +96,10 @@ export function robotSystemPrompt(orientation = ''): string {
     '  those citations for you.',
     '  NEVER allocate a `D-NNN` yourself and never write `DECISIONS/D-NNN-slug.md`: another session',
     '  running right now would claim the same number, and git would merge both silently.',
-    '  Then run `npm run decisions:index` to regenerate DECISIONS.md.',
+    '  Writing that ONE file is the whole change. Do NOT run `npm run decisions:index` and do NOT',
+    '  touch DECISIONS.md — it lists numbered decisions only, so authoring one conflicts with nobody',
+    '  (PD-551). Your decision still reaches every agent immediately: the index they are shown is',
+    '  composed at run time from DECISIONS/incoming/.',
     '  NEVER hand-edit DECISIONS.md: it is generated, and your edit would be silently overwritten.',
     '- Stay strictly within this one ticket. Do not refactor unrelated code.',
     '- Any new/changed business logic MUST ship with vitest tests. Never weaken, skip, or delete',
@@ -254,8 +257,8 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     '   **b. A decision file — ONLY if you made a non-obvious design choice** that a future reader',
     '   would otherwise have to reverse-engineer. Follow the rule in your system prompt: a new',
-    '   `DECISIONS/incoming/D-TMP-<TICKET>a.md` under a provisional id — never a hand-picked `D-NNN` —',
-    '   then `npm run decisions:index`. Most tickets do not need one; do',
+    '   `DECISIONS/incoming/D-TMP-<TICKET>a.md` under a provisional id — never a hand-picked `D-NNN`,',
+    '   and never touching DECISIONS.md. Most tickets do not need one; do',
     '   not invent a decision to have something to write.',
     '',
     '3. **Commit** with a clear conventional-commit message (this becomes your PR title):',
@@ -327,7 +330,7 @@ export const ORIENTATION_SOURCES = [
   {
     file: 'DECISIONS.md',
     heading:
-      'DECISIONS.md — the INDEX of settled decisions (D-070). Open the DECISIONS/ file behind any line that looks relevant to your ticket; do not re-litigate one. Entries under "Awaiting a number" carry a provisional `D-TMP-` id and are every bit as settled (D-078).',
+      'DECISIONS.md — the INDEX of settled decisions (D-070). Open the DECISIONS/ file behind any line that looks relevant to your ticket; do not re-litigate one. Entries under "Awaiting a number" carry a provisional `D-TMP-` id and are every bit as settled (D-078); they are appended to this block at run time and are NOT in the committed file (PD-551).',
     note: 'The generated index only (~80 lines of id + title + link), including the provisional entries — a decision on main that the index omits is one an agent will re-litigate.',
   },
   {

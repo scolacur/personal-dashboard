@@ -12,6 +12,8 @@ import {
   parseProvisionalFilename,
   parseProvisionalHeading,
   renderDecisionsIndex,
+  renderInjectedIndex,
+  renderProvisionalSection,
   type Decision,
   type ProvisionalDecision,
 } from './decisions';
@@ -122,43 +124,35 @@ describe('nextDecisionId', () => {
 
 describe('renderDecisionsIndex', () => {
   it('lists newest first, with a link to each file', () => {
-    const out = renderDecisionsIndex([decision(70, 'Newer'), decision(12, 'Older')], []);
+    const out = renderDecisionsIndex([decision(70, 'Newer'), decision(12, 'Older')]);
     expect(out).toContain('- **[D-070](DECISIONS/D-070-x.md)** — Newer');
     expect(out.indexOf('D-070')).toBeLessThan(out.indexOf('D-012'));
   });
 
   it('says it is generated, so nobody hand-edits a file that gets overwritten', () => {
-    expect(renderDecisionsIndex([decision(1, 'a')], [])).toContain('generated');
+    expect(renderDecisionsIndex([decision(1, 'a')])).toContain('generated');
   });
 
   it('tells an author to write the inbox, never a D-NNN file by hand', () => {
-    const out = renderDecisionsIndex([decision(1, 'a')], []);
+    const out = renderDecisionsIndex([decision(1, 'a')]);
     expect(out).toContain('DECISIONS/incoming/D-TMP-<TICKET><letter>.md');
     expect(out).toContain('never a');
   });
 
-  it('lists provisional decisions ABOVE the numbered ones', () => {
-    // The whole point of indexing them (D-078): this file is injected into every agent's
-    // orientation (D-071), so a merged-but-unnumbered decision that is missing here is one an
-    // agent will happily re-litigate for up to a numbering cycle.
-    const out = renderDecisionsIndex([decision(70, 'Numbered')], [provisional(513, 'Provisional')]);
-    expect(out).toContain('- **[D-TMP-PD513a](DECISIONS/incoming/D-TMP-PD513a.md)** — Provisional');
-    // Compare the ENTRY lines, not the bare ids: the preamble cites D-070 and D-078 in prose, so
-    // indexOf('D-070') finds the explanation rather than the listing.
-    expect(out.indexOf('- **[D-TMP-PD513a]')).toBeLessThan(out.indexOf('- **[D-070]'));
+  it('does NOT list provisional decisions — that is what stops authoring PRs colliding', () => {
+    // PD-551: they were listed here briefly and every authoring PR then regenerated the index and
+    // inserted a line into the same block, so two concurrent authors collided on a generated file.
+    // Targets ENTRY lines, not the string: the preamble legitimately says `D-TMP-<TICKET><letter>`
+    // as the authoring instruction. What must not appear is a listed provisional decision.
+    const out = renderDecisionsIndex([decision(70, 'Numbered')]);
+    expect(out).not.toMatch(/^- \*\*\[D-TMP-/m);
+    expect(out).not.toContain('## Awaiting a number');
   });
 
-  it('does not call them draft or pending — the id is provisional, the decision is binding', () => {
-    const out = renderDecisionsIndex([decision(70, 'n')], [provisional(513, 'p')]);
-    expect(out).toContain('Awaiting a number');
+  it('says where the unnumbered ones are, so their absence does not mislead a reader', () => {
+    const out = renderDecisionsIndex([decision(70, 'n')]);
+    expect(out).toContain('DECISIONS/incoming/');
     expect(out).toContain('binding');
-    // Word-boundary, not substring: "appending" in the preamble contains "pending". The words to
-    // keep out are the ones that invite an agent to treat a merged decision as arguable (D-078).
-    expect(out).not.toMatch(/\b(draft|pending|proposed)\b/i);
-  });
-
-  it('omits the section entirely when the inbox is empty', () => {
-    expect(renderDecisionsIndex([decision(70, 'n')], [])).not.toContain('Awaiting a number');
   });
 });
 
@@ -179,15 +173,16 @@ describe('the real decision log', () => {
 
   it('DECISIONS.md is in sync — regenerate with `npm run decisions:index`', () => {
     const onDisk = readFileSync(path.join(REPO_ROOT, DECISIONS_INDEX), 'utf8');
-    expect(onDisk).toBe(renderDecisionsIndex(loadDecisions(REPO_ROOT), loadProvisionalDecisions(REPO_ROOT)));
+    expect(onDisk).toBe(renderDecisionsIndex(loadDecisions(REPO_ROOT)));
   });
 
-  it('the real inbox parses, and every provisional decision reaches the index', () => {
-    // Same shape of guard as the duplicate-id test above, for the other half of the log: a file in
-    // the inbox that nobody can parse is a decision nobody will ever number.
+  it('the real inbox parses, and every provisional decision reaches the INJECTED index', () => {
+    // Same shape of guard as the duplicate-id test above, for the other half of the log. It checks
+    // the injected index, not the file on disk: since PD-551 the committed file deliberately omits
+    // these, and asserting against it would pin the bug rather than the fix.
     const incoming = loadProvisionalDecisions(REPO_ROOT);
-    const onDisk = readFileSync(path.join(REPO_ROOT, DECISIONS_INDEX), 'utf8');
-    for (const d of incoming) expect(onDisk).toContain(`](${d.file})`);
+    const injected = renderInjectedIndex(loadDecisions(REPO_ROOT), incoming);
+    for (const d of incoming) expect(injected).toContain(`](${d.file})`);
   });
 
   it('no numbered decision was written by hand into DECISIONS/incoming/', () => {
@@ -201,5 +196,39 @@ describe('the real decision log', () => {
     // (path-guard) are cited from CI, code, and prompts, and D-024 from a build file.
     const ids = new Set(loadDecisions(REPO_ROOT).map((d) => d.id));
     for (const id of ['D-001', 'D-024', 'D-046', 'D-047', 'D-070']) expect(ids).toContain(id);
+  });
+});
+
+describe('renderInjectedIndex — what an agent actually reads', () => {
+  it('carries the numbered decisions AND the provisional ones', () => {
+    // The committed file omits provisional decisions so authoring cannot conflict; the injected
+    // index must still include them, or an agent re-litigates a decision that merged an hour ago
+    // (D-071). Splitting the two renderers is what buys both.
+    const out = renderInjectedIndex([decision(70, 'Numbered')], [provisional(513, 'Provisional')]);
+    expect(out).toContain('- **[D-070](DECISIONS/D-070-x.md)** — Numbered');
+    expect(out).toContain('- **[D-TMP-PD513a](DECISIONS/incoming/D-TMP-PD513a.md)** — Provisional');
+  });
+
+  it('is exactly the committed file when the inbox is empty', () => {
+    // No stray heading, no trailing section — an empty inbox must not change the injected text.
+    expect(renderInjectedIndex([decision(70, 'n')], [])).toBe(renderDecisionsIndex([decision(70, 'n')]));
+  });
+
+  it('does not call them draft or pending — the id is provisional, the decision is binding', () => {
+    const out = renderInjectedIndex([decision(70, 'n')], [provisional(513, 'p')]);
+    expect(out).toContain('Awaiting a number');
+    expect(out).not.toMatch(/\b(draft|pending|proposed)\b/i);
+  });
+});
+
+describe('renderProvisionalSection', () => {
+  it('is empty for an empty inbox, so callers can concatenate unconditionally', () => {
+    expect(renderProvisionalSection([])).toBe('');
+  });
+
+  it('lists each provisional decision with a link to its file', () => {
+    expect(renderProvisionalSection([provisional(513, 'Memory inbox')])).toContain(
+      '- **[D-TMP-PD513a](DECISIONS/incoming/D-TMP-PD513a.md)** — Memory inbox',
+    );
   });
 });

@@ -4,24 +4,14 @@ Captures the _why_ behind key choices made during planning. Useful when revisiti
 
 **This file is generated — do not edit it by hand.** Each decision is its own file in `DECISIONS/`;
 this is the index over them. To add one, write `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` — never a
-`D-NNN` file by hand — and run `npm run decisions:index`. Writing a file instead of appending here
-is what lets two agents log two decisions without touching the same lines (D-070), and leaving the
-number to the cycle is what stops them claiming the same one (D-078).
+`D-NNN` file by hand — and cite it by that provisional id.
+
+**Decisions awaiting a number are NOT listed here.** They live in `DECISIONS/incoming/` and are just as
+settled and binding; read that directory alongside this file. They are deliberately kept out so that
+authoring one touches no shared file and two authors can never collide on this index (D-070, D-078,
+PD-551). The consolidation cycle adds them here when it assigns their numbers.
 
 Newest first.
-
----
-
-## Awaiting a number
-
-Merged, settled, and binding — cite them as they are. Only the *identifier* is provisional:
-the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-078).
-
-- **[D-TMP-PD383a](DECISIONS/incoming/D-TMP-PD383a.md)** — The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
-- **[D-TMP-PD498a](DECISIONS/incoming/D-TMP-PD498a.md)** — The maintenance hold gets its own slot, and the numbering cycle reports dangling citations rather than repairing them (PD-498; implements D-078)
-- **[D-TMP-PD498b](DECISIONS/incoming/D-TMP-PD498b.md)** — The maintenance hold is the scheduled thing, and maintenance jobs subscribe to it (PD-498; amends D-078)
-- **[D-TMP-PD510a](DECISIONS/incoming/D-TMP-PD510a.md)** — Approving a Refine proposal writes content, never placement (PD-510; strengthens D-057, implements D-TMP-PD383a)
-- **[D-TMP-PD539a](DECISIONS/incoming/D-TMP-PD539a.md)** — Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
 
 ---
 

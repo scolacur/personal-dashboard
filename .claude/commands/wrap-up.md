@@ -47,8 +47,9 @@ here.
 A durable architectural decision goes in its own file in the **decision inbox** —
 **`DECISIONS/incoming/D-TMP-<TICKET><letter>.md`**, first line `# D-TMP-<TICKET><letter>: Title`
 (D-070, D-078). For a session on PD-513 that is `DECISIONS/incoming/D-TMP-PD513a.md`; use `b`, `c`, …
-for a second decision from the same ticket. Then run `npm run decisions:index` to regenerate
-`DECISIONS.md`. Never hand-edit `DECISIONS.md`; it is generated.
+for a second decision from the same ticket. **That file is the entire change** — do not run
+`npm run decisions:index` and do not touch `DECISIONS.md`. It lists numbered decisions only, so
+authoring one conflicts with nobody (PD-551). Never hand-edit `DECISIONS.md`; it is generated.
 
 **Do not pick a `D-NNN`, even when you are certain no other session is running.** That certainty is
 the hand-check D-078 removes, and it has been wrong here twice. A daily numbering cycle assigns the
