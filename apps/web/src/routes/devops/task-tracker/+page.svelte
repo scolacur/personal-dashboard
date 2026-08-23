@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toast } from '$lib/toast-store.svelte';
+  import { queuedDuringHoldNotice } from '$lib/maintenance-display';
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
@@ -472,7 +473,12 @@
 
   // Toast promoted to `$lib/toast.svelte` + `$lib/Toast.svelte` (PD-334) once the shell's
   // membership writes became a second caller. `<Toast />` is mounted in the root layout.
-  const showToast = (message: string) => toast.show(message);
+  const showToast = (message: string, ms?: number) => toast.show(message, 'info', ms);
+
+  // The maintenance-hold notice is three sentences and explains why the thing you just did will
+  // not visibly do anything — the 3s default is not enough time to read it, and re-reading is not
+  // an option once it is gone.
+  const HOLD_TOAST_MS = 12_000;
 
   // Queue-bypass confirm (D-058, PD-399): queueing a not-Ready robot ticket pops this modal —
   // confirm sets `readyBypassed` (honest override, never fakes `ready`) and completes the move;
@@ -495,8 +501,34 @@
     try {
       await api.updateTicket(id, patch);
       await load(true);
+      if (patch.status === 'queue') {
+        const ticket = tickets.find((t) => t.id === id);
+        const notice = await holdNotice(ticket?.displayId ?? ticket?.title);
+        if (notice) showToast(notice, HOLD_TOAST_MS);
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * The "nothing will pick this up yet" notice, or null when dispatch is running (PD-498).
+   *
+   * **Fetched on the action rather than polled.** The board has no reason to watch the loop's
+   * status the rest of the time, and a 30s-stale poll is exactly wrong here: a hold that opened or
+   * closed in the last half-minute would produce a toast that contradicts what actually happens to
+   * the ticket. One request, at the moment the claim is made.
+   *
+   * Failure is silent by design — this is an explanation, not the operation. A board that reported
+   * "couldn't check the maintenance hold" after a move that plainly succeeded would be worse than
+   * one that says nothing.
+   */
+  async function holdNotice(label?: string): Promise<string | null> {
+    try {
+      const status = await api.fetchSystemStatus();
+      return queuedDuringHoldNotice(status.maintenanceHold, Date.now(), label);
+    } catch {
+      return null;
     }
   }
 
@@ -678,7 +710,10 @@
     if (cell.lane === 'in_progress') {
       const plan = planEpicQueue(members);
       await applyEpicPatch(id, { status: 'queue' });
-      showToast(queuedToast(epic, plan));
+      // Appended rather than shown separately: `toast.show` replaces whatever is current, so a
+      // second call would eat the "Epic queued. Contains: …" breakdown the user asked for.
+      const notice = await holdNotice(`Epic ${epic.displayId ?? epic.title}`);
+      showToast(queuedToast(epic, plan) + (notice ? `\n\n${notice}` : ''), notice ? HOLD_TOAST_MS : undefined);
       return;
     }
 

@@ -104,10 +104,12 @@
       <!-- Both halts are active. Resuming clears the pause but `robot.ts` still gates on the
            session-limit hold, so dispatch will not actually restart yet — say so rather than let
            the click imply it was enough. -->
+      <!-- Keyed on WHICH hold, not on whether there is a countdown: a queued maintenance hold has
+           no endsBy yet, and an endsBy check would call it a session limit. -->
       <span class="ks-note">
-        {view.endsBy !== null
-          ? "won't re-arm until the maintenance hold closes"
-          : "won't re-arm until the session limit resets"}
+        {view.holdKind !== null
+          ? "won't re-arm until the session limit resets"
+          : "won't re-arm until the maintenance hold closes"}
       </span>
     {/if}
   </div>

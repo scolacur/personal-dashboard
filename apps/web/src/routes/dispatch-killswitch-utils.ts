@@ -17,9 +17,11 @@ import type { AgentState, HoldKind, SystemStatus } from '@dashboard/shared';
  *                 **Ends by itself** at a known time, so there is deliberately no button: there is
  *                 nothing for a human to do. The label names WHICH — the remedies differ (a quota
  *                 reset is just a wait; GitHub throttling the loop is worth looking into).
- *  - `maintenance` — a maintenance hold is open (PD-498). Also ends by itself, also no button, but
- *                 unlike a provider hold its length is KNOWN (a fixed window), so this is the one
- *                 mode that can honestly show a countdown.
+ *  - `maintenance` — a maintenance hold is stopping dispatch (PD-498). Also ends by itself, also no
+ *                 button, but unlike a provider hold its length is KNOWN once the window opens, so
+ *                 this is the one mode that can honestly show a countdown. Covers BOTH halves of a
+ *                 hold: dispatch stops when one is queued, not when the window opens, so a nav that
+ *                 only knew about open windows would report "Loop on" all through the drain.
  *
  * **Why maintenance is a mode and not a badge.** It is a fourth independent halt in `robot.ts`, and
  * the nav previously could not see it: `dispatch_paused` was clear, so it said "Dispatch running"
@@ -78,7 +80,11 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
   // gone even if a poll is still in flight, exactly as SystemStatus does.
   const holding = status.sessionLimit !== null && status.sessionLimit.until > now;
   const paused = status.dispatch.paused;
-  const maintenance = status.maintenanceHold !== null && status.maintenanceHold.endsBy > now;
+  // A queued hold has no `endsBy` to expire against — it is stopping dispatch until the coordinator
+  // says otherwise, so only the open window gets the lapsed-clock check.
+  const maintenance =
+    status.maintenanceHold !== null &&
+    (status.maintenanceHold.endsBy === null || status.maintenanceHold.endsBy > now);
 
   if (paused) {
     return {
@@ -113,10 +119,14 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
   // more consequential thing to be told about — a maintenance window is routine and brief.
   if (maintenance) {
     const hold = status.maintenanceHold!;
+    const trigger = hold.trigger === 'manual' ? 'started by hand' : 'scheduled';
     return {
       mode: 'maintenance',
-      label: 'Maintenance hold',
-      detail: hold.trigger === 'manual' ? 'started by hand' : 'scheduled',
+      // The label carries the phase because the two are operationally different: during the drain
+      // Robots are still working and the wait is open-ended, once open nothing is running and the
+      // wait is bounded. One label for both would misdescribe whichever half you are looking at.
+      label: hold.phase === 'queued' ? 'Maintenance hold queued' : 'Maintenance hold',
+      detail: hold.phase === 'queued' ? `${trigger} — finishing current runs` : trigger,
       action: null,
       resumeBlockedByHold: false,
       holdKind: null,

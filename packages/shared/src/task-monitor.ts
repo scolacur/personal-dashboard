@@ -906,10 +906,25 @@ export interface SystemStatus {
 export interface MaintenanceHoldStatus {
   id: number;
   trigger: 'scheduled' | 'manual';
-  /** Epoch ms the window opened. */
-  startedAt: number;
-  /** Epoch ms the window closes at the latest — `startedAt + HOLD_WINDOW_MS`. */
-  endsBy: number;
+  /**
+   * Which half of the hold we are in.
+   *
+   * **Both halves stop dispatch, which is why `queued` is reported at all.** The coordinator
+   * refuses to dispatch from the moment a hold is *queued* — that is the whole drain mechanism —
+   * and only then waits for the running Robots to finish before opening the window. Reporting the
+   * active half alone would leave the nav saying "Loop on" through a drain that can last as long
+   * as the longest run, and would leave a human who queues a ticket during it with no explanation
+   * for why nothing picks it up.
+   */
+  phase: 'queued' | 'active';
+  /** Epoch ms the window opened; null while still queued. */
+  startedAt: number | null;
+  /**
+   * Epoch ms the window closes at the latest — `startedAt + HOLD_WINDOW_MS` — or null while
+   * queued, because the window's clock does not start until the drain finishes. A countdown is
+   * only honest once there is something bounded to count.
+   */
+  endsBy: number | null;
 }
 
 // ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────

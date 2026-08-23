@@ -198,7 +198,11 @@ export function closeStaleHolds(db: Database.Database, windowMs: number, now: nu
 }
 
 /**
- * The open hold in the shape `SystemStatus` carries (PD-498), or null.
+ * The hold that is stopping dispatch in the shape `SystemStatus` carries (PD-498), or null.
+ *
+ * **An active hold outranks a queued one** — they can coexist only briefly, and the open window is
+ * the more specific fact (it is the one with a deadline). While draining there is no active hold,
+ * so the queued one is reported and the nav can say dispatch has already stopped.
  *
  * `endsBy` is computed here rather than stored: the window length is a shared constant, and a
  * second copy in the DB is a value that can disagree with the coordinator that enforces it.
@@ -207,12 +211,25 @@ export function getMaintenanceHoldStatus(
   db: Database.Database,
   windowMs: number = HOLD_WINDOW_MS,
 ): MaintenanceHoldStatus | null {
-  const hold = activeHold(db);
-  if (!hold || hold.startedAt === null) return null;
+  const open = activeHold(db);
+  if (open && open.startedAt !== null) {
+    return {
+      id: open.id,
+      trigger: open.trigger,
+      phase: 'active',
+      startedAt: open.startedAt,
+      endsBy: open.startedAt + windowMs,
+    };
+  }
+  const queued = nextQueuedHold(db);
+  if (!queued) return null;
   return {
-    id: hold.id,
-    trigger: hold.trigger,
-    startedAt: hold.startedAt,
-    endsBy: hold.startedAt + windowMs,
+    id: queued.id,
+    trigger: queued.trigger,
+    phase: 'queued',
+    startedAt: null,
+    // No deadline yet: the window's clock starts when the drain completes, and the drain is bounded
+    // by the longest run in flight, not by anything this function can see.
+    endsBy: null,
   };
 }

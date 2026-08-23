@@ -214,3 +214,96 @@ describe('maintenance coordinator', () => {
     expect(row.n).toBe(0);
   });
 });
+
+// PD-546. The hold's whole safety property is that it gives dispatch back. Before this, `tick`
+// awaited every registered job back-to-back with no reference to the window — so the "window
+// elapsed, close it" branch could not run until after the jobs it was supposed to bound had
+// already finished. Two slow jobs would hold the loop for as long as they took.
+describe('the window bounds job STARTS, and never kills a running job (PD-546)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  /** A harness with two jobs, each of which advances the clock by `costMs` as it runs. */
+  function twoJobs(costMs: number, startNow = 1_000_000) {
+    let now = startNow;
+    const ran: string[] = [];
+    const job = (name: string): MaintenanceJobRunner => async () => {
+      ran.push(name);
+      now += costMs;
+      return null;
+    };
+    return {
+      ran,
+      nowAt: () => now,
+      deps: {
+        inFlightRuns: () => 0,
+        now: () => now,
+        jobs: new Map([
+          ['job-a', job('job-a')],
+          ['job-b', job('job-b')],
+        ]),
+      } as CoordinatorDeps,
+    };
+  }
+
+  it('runs every job when they all fit in the window', async () => {
+    const h = twoJobs(60_000);
+    requestHold(db, 'scheduled', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    expect(h.ran).toEqual(['job-a', 'job-b']);
+  });
+
+  it('does not START a job once the window is spent', async () => {
+    // job-a alone overruns the 30-minute window, so job-b must not begin.
+    const h = twoJobs(CONFIG.windowMs + 60_000);
+    requestHold(db, 'scheduled', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    expect(h.ran).toEqual(['job-a']);
+  });
+
+  it('lets the job already running finish rather than cutting it off', async () => {
+    // The overrun is real and accepted: the guarantee is "nothing new starts", not "the hold never
+    // overruns". Killing a consolidation job between the rewrite and the push is the worse failure.
+    const h = twoJobs(CONFIG.windowMs + 60_000);
+    requestHold(db, 'scheduled', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    expect(h.ran).toContain('job-a');
+    expect(h.nowAt()).toBeGreaterThan(1_000_000 + CONFIG.windowMs);
+  });
+
+  it('releases dispatch even when the jobs overran', async () => {
+    const h = twoJobs(CONFIG.windowMs + 60_000);
+    requestHold(db, 'scheduled', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    expect(activeHold(db)).toBeNull();
+    expect(maintenanceHold(db)).toBeNull();
+  });
+
+  it('records that jobs were deferred, so the log says why one did not run', async () => {
+    const h = twoJobs(CONFIG.windowMs + 60_000);
+    requestHold(db, 'scheduled', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    const row = db.prepare('SELECT note FROM maintenance_holds ORDER BY id DESC LIMIT 1').get() as { note: string | null };
+    expect(row.note).toContain('deferred');
+  });
+
+  // A manual hold normally stays open for the rest of the window so "Run now" is usable. When the
+  // jobs ate the window there is no rest-of-the-window left, and staying open would hold dispatch
+  // for a button nobody can usefully press.
+  it('closes an overrun MANUAL hold instead of sitting on dispatch', async () => {
+    const h = twoJobs(CONFIG.windowMs + 60_000);
+    requestHold(db, 'manual', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    expect(activeHold(db)).toBeNull();
+    expect(maintenanceHold(db)).toBeNull();
+  });
+
+  it('still leaves a manual hold open when its jobs finished in time', async () => {
+    const h = twoJobs(60_000);
+    requestHold(db, 'manual', 1_000_000);
+    await tick(db, CONFIG, h.deps);
+    expect(activeHold(db)).not.toBeNull();
+  });
+});

@@ -80,8 +80,17 @@ export async function tick(db: Database.Database, config: CoordinatorConfig, dep
     // An on-demand "Run now" request takes priority — it is a human waiting on a button.
     const request = claimMaintenanceJobRun(db, open.id, now);
     if (request) {
-      await runJob(db, open.id, request.jobName, deps);
-      return;
+      if (!windowHasRoom(open.startedAt, now, config.windowMs)) {
+        // Refused rather than started late: the window is what bounds the hold, and a job started
+        // after it lapsed would hold dispatch past the deadline the button itself advertises.
+        logger.warn(
+          { holdId: open.id, jobName: request.jobName },
+          'maintenance: window spent before the requested job could start — not starting it',
+        );
+      } else {
+        await runJob(db, open.id, request.jobName, deps);
+        return;
+      }
     }
     // Window elapsed with nothing left to do: close it and give dispatch back.
     if (open.startedAt !== null && now - open.startedAt >= config.windowMs) {
@@ -116,18 +125,48 @@ export async function tick(db: Database.Database, config: CoordinatorConfig, dep
   startHold(db, queued.id, now);
   logger.info({ holdId: queued.id, trigger: queued.trigger }, 'maintenance: hold active — dispatch held');
 
+  const skipped: string[] = [];
   for (const jobName of deps.jobs.keys()) {
+    // PD-546: budget the STARTS. Checked before each job rather than once up front, because the
+    // whole point is that the jobs ahead of this one have already spent some of the window.
+    if (!windowHasRoom(queued.startedAt ?? now, deps.now(), config.windowMs)) {
+      skipped.push(jobName);
+      continue;
+    }
     await runJob(db, queued.id, jobName, deps);
+  }
+  if (skipped.length > 0) {
+    // Not an error. A skipped job runs in the next hold; the cadence is what makes that safe.
+    logger.warn({ holdId: queued.id, skipped }, 'maintenance: window spent — remaining jobs deferred to the next hold');
   }
 
   // A scheduled hold has done what it came for; close it immediately rather than sitting on
   // dispatch for the rest of the window. A MANUAL hold stays open — the human asked for a window,
-  // and "Run now" is only enabled while one is open.
-  if (queued.trigger === 'scheduled') {
-    endHold(db, queued.id, 'completed', null, deps.now());
+  // and "Run now" is only enabled while one is open — UNLESS the jobs overran it, in which case
+  // the window it was asking for no longer exists and sitting on dispatch would be the bug.
+  const closingNote = skipped.length > 0 ? `${skipped.length} job(s) deferred — window spent` : null;
+  if (queued.trigger === 'scheduled' || !windowHasRoom(queued.startedAt ?? now, deps.now(), config.windowMs)) {
+    endHold(db, queued.id, 'completed', closingNote, deps.now());
     releaseMaintenanceHold(db, deps.now());
-    logger.info({ holdId: queued.id }, 'maintenance: scheduled hold complete — dispatch released');
+    logger.info({ holdId: queued.id, trigger: queued.trigger }, 'maintenance: hold complete — dispatch released');
   }
+}
+
+/**
+ * Is there any of the window left to start a job in? (PD-546)
+ *
+ * **Starts are budgeted; running jobs are never killed.** The alternative — cancelling a job that
+ * has run past the deadline — means a consolidation cycle can be interrupted between rewriting the
+ * citations and pushing the branch, which is the one state this machinery must never be left in.
+ * So the guarantee is the weaker, honest one: nothing NEW starts once the window is spent, and the
+ * hold can overrun by at most the length of the single job already running.
+ *
+ * That bound is only as good as the jobs are short. It is the reason a job that could plausibly
+ * exceed the window belongs in its own hold, not appended to this list.
+ */
+export function windowHasRoom(startedAt: number | null, now: number, windowMs: number): boolean {
+  if (startedAt === null) return true;
+  return now - startedAt < windowMs;
 }
 
 /** Run one job inside a hold and attach whatever run it recorded to the hold's log. */

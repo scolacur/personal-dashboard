@@ -119,10 +119,15 @@ describe('the maintenance hold as a dispatch mode (PD-498)', () => {
   const hold = (over: Partial<NonNullable<SystemStatus['maintenanceHold']>> = {}) => ({
     id: 1,
     trigger: 'manual' as const,
+    phase: 'active' as const,
     startedAt: NOW - 60_000,
     endsBy: NOW + 600_000,
     ...over,
   });
+
+  /** A hold that has stopped dispatch but whose window has not opened — no deadline yet. */
+  const queuedHold = (over: Partial<NonNullable<SystemStatus['maintenanceHold']>> = {}) =>
+    hold({ phase: 'queued', startedAt: null, endsBy: null, ...over });
 
   it('reports the hold instead of claiming the loop is dispatching', () => {
     // The bug this fixes: dispatch_paused is clear during a maintenance hold, so the nav said
@@ -168,6 +173,35 @@ describe('the maintenance hold as a dispatch mode (PD-498)', () => {
     )!;
     expect(view.mode).toBe('paused');
     expect(view.resumeBlockedByHold).toBe(true);
+  });
+
+  // The drain is not a footnote: it lasts as long as the longest run in flight, and dispatch is
+  // already stopped throughout. A nav that only knew about open windows would say "Loop on".
+  it('reports a QUEUED hold as maintenance too — dispatch is already stopped', () => {
+    const view = describeDispatch(status({ maintenanceHold: queuedHold() }), NOW)!;
+    expect(view.mode).toBe('maintenance');
+    expect(view.label).toBe('Maintenance hold queued');
+    expect(view.detail).toContain('finishing current runs');
+  });
+
+  it('shows no countdown while queued — the window has not started', () => {
+    expect(describeDispatch(status({ maintenanceHold: queuedHold() }), NOW)!.endsBy).toBeNull();
+  });
+
+  // The lapsed-clock check exists for an open window whose endsBy has passed. A queued hold has no
+  // clock at all, and `null > now` is false — so a naive check would drop it back to "Loop on".
+  it('does not treat a queued hold as expired for want of an end time', () => {
+    expect(describeDispatch(status({ maintenanceHold: queuedHold() }), NOW)!.mode).not.toBe('running');
+  });
+
+  it('says a resume will not re-arm during a queued hold either', () => {
+    const view = describeDispatch(
+      status({ maintenanceHold: queuedHold(), dispatch: { paused: true, reason: 'by human', since: NOW } }),
+      NOW,
+    )!;
+    expect(view.resumeBlockedByHold).toBe(true);
+    // ...and with no holdKind, so the note names the maintenance hold rather than a session limit.
+    expect(view.holdKind).toBeNull();
   });
 
   it('does not report a session-limit hold as countable — only maintenance has a known length', () => {
