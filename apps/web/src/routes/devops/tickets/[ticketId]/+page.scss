@@ -944,13 +944,65 @@
   padding: 0;
 }
 
+// PD-384: the member list is the dispatch-order control for its Epic, so the rows carry a grip,
+// a drop indicator and a position badge. `align-items: center` rather than `baseline` — a row now
+// holds a select, whose box would drag the whole row's baseline around.
 .member-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-sm);
   padding: var(--space-xs) 0;
   font-size: var(--font-size-sm);
   border-bottom: 1px solid var(--border);
+  // The 2px is the drop indicator's slot, held open so rows never shift as it appears.
+  border-top: 2px solid transparent;
+
+  &.dragging {
+    opacity: 0.45;
+  }
+
+  &.drop-before {
+    border-top-color: var(--accent);
+  }
+}
+
+.member-order-hint {
+  margin: var(--space-sm) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.member-grip {
+  flex: 0 0 auto;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+  line-height: 1;
+}
+
+// Only the dispatchable members are numbered, so this badge doubles as "the Robot can pick this
+// up" — see `dispatchPositions`.
+.member-pos {
+  flex: 0 0 auto;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.member-lane {
+  flex: 0 0 auto;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2px var(--space-xs);
+  font-size: var(--font-size-xs);
 }
 
 .member-ref {
