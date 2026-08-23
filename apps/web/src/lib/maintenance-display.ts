@@ -1,4 +1,9 @@
-import { HOLD_CADENCE_MS, HOLD_WINDOW_MS, type MaintenanceHold } from '@dashboard/shared';
+import {
+  HOLD_CADENCE_MS,
+  HOLD_WINDOW_MS,
+  type MaintenanceHold,
+  type MaintenanceHoldStatus,
+} from '@dashboard/shared';
 
 /**
  * Display helpers for the maintenance-hold section (PD-498).
@@ -32,6 +37,48 @@ export function holdExplainer(cadenceMs = HOLD_CADENCE_MS, windowMs = HOLD_WINDO
   );
 }
 
+
+/** "about 7 minutes" / "under a minute" — deliberately vague, because the window closes early when
+ *  its jobs finish and a precise "6:42" would be a promise the coordinator does not make. */
+export function approxRemainingLabel(endsBy: number, now: number): string {
+  const remaining = Math.max(0, endsBy - now);
+  if (remaining < 60_000) return 'under a minute';
+  return `about ${durationLabel(remaining)}`;
+}
+
+/**
+ * What to tell someone who just queued a ticket while a maintenance hold is stopping dispatch.
+ *
+ * Null when nothing is holding — the caller shows no toast at all.
+ *
+ * **Why this is worth saying at all:** queueing a ticket normally means a Robot picks it up within
+ * a tick. During a hold it does not, and every visible signal (the card moved, the board saved)
+ * says it worked. Without this the only available reading is that the loop is broken.
+ *
+ * The two phases get different copy because the waits are different in kind: a queued hold is
+ * waiting on runs that are still going and has no deadline, an open one has a bounded window.
+ */
+export function queuedDuringHoldNotice(
+  hold: MaintenanceHoldStatus | null,
+  now: number,
+  label = 'this ticket',
+): string | null {
+  if (!hold) return null;
+  const trigger = hold.trigger === 'manual' ? 'manual' : 'scheduled';
+  if (hold.phase === 'queued') {
+    return (
+      `Osiris has a ${trigger} maintenance hold queued, so no further Robots are being dispatched. ` +
+      `The Robots already working will finish, then the hold runs. ` +
+      `A Robot will be dispatched to work on ${label} once it is over.`
+    );
+  }
+  const remaining = hold.endsBy === null ? null : approxRemainingLabel(hold.endsBy, now);
+  return (
+    `Osiris is currently in a ${trigger} maintenance hold. During this time no Robots can be dispatched. ` +
+    `A Robot will be dispatched to work on ${label} when the hold is over` +
+    (remaining === null ? '.' : ` — ${remaining}.`)
+  );
+}
 
 export type HoldPhase = 'active' | 'queued' | 'completed' | 'abandoned';
 

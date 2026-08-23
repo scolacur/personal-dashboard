@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemStatus } from '@dashboard/shared';
-import { HOLD_LABELS, describeDispatch } from './dispatch-killswitch-utils';
+import { HOLD_LABELS, countdownLabel, describeDispatch, fleetCounts } from './dispatch-killswitch-utils';
 
 const NOW = 1_000_000;
 
@@ -12,6 +12,7 @@ function status(over: Partial<SystemStatus> = {}): SystemStatus {
     sessionLimit: null,
     budget: null,
     githubRateLimit: null,
+    maintenanceHold: null,
     ...over,
   };
 }
@@ -111,5 +112,144 @@ describe('naming which hold is in force (PD-248)', () => {
 
   it('has no hold kind when nothing is holding', () => {
     expect(describeDispatch(status(), NOW)?.holdKind).toBeNull();
+  });
+});
+
+describe('the maintenance hold as a dispatch mode (PD-498)', () => {
+  const hold = (over: Partial<NonNullable<SystemStatus['maintenanceHold']>> = {}) => ({
+    id: 1,
+    trigger: 'manual' as const,
+    phase: 'active' as const,
+    startedAt: NOW - 60_000,
+    endsBy: NOW + 600_000,
+    ...over,
+  });
+
+  /** A hold that has stopped dispatch but whose window has not opened — no deadline yet. */
+  const queuedHold = (over: Partial<NonNullable<SystemStatus['maintenanceHold']>> = {}) =>
+    hold({ phase: 'queued', startedAt: null, endsBy: null, ...over });
+
+  it('reports the hold instead of claiming the loop is dispatching', () => {
+    // The bug this fixes: dispatch_paused is clear during a maintenance hold, so the nav said
+    // "Dispatch running" beside a maintenance-hold pill. Both true, together nonsense.
+    const view = describeDispatch(status({ maintenanceHold: hold() }), NOW)!;
+    expect(view.mode).toBe('maintenance');
+    expect(view.label).toBe('Maintenance hold');
+  });
+
+  it('offers no button — there is nothing for a human to do', () => {
+    expect(describeDispatch(status({ maintenanceHold: hold() }), NOW)!.action).toBeNull();
+  });
+
+  it('carries an end time, because a maintenance window has a known length', () => {
+    expect(describeDispatch(status({ maintenanceHold: hold() }), NOW)!.endsBy).toBe(NOW + 600_000);
+  });
+
+  it('says whether the hold was scheduled or started by hand', () => {
+    expect(describeDispatch(status({ maintenanceHold: hold({ trigger: 'manual' }) }), NOW)!.detail).toBe('started by hand');
+    expect(describeDispatch(status({ maintenanceHold: hold({ trigger: 'scheduled' }) }), NOW)!.detail).toBe('scheduled');
+  });
+
+  it('reads as gone the moment it expires, without waiting for a poll', () => {
+    const view = describeDispatch(status({ maintenanceHold: hold({ endsBy: NOW - 1 }) }), NOW)!;
+    expect(view.mode).toBe('running');
+  });
+
+  it('a provider session limit outranks it — the more consequential thing wins the label', () => {
+    const view = describeDispatch(
+      status({
+        maintenanceHold: hold(),
+        sessionLimit: { kind: 'session-limit', until: NOW + 60_000, reason: 'quota', since: NOW },
+      }),
+      NOW,
+    )!;
+    expect(view.mode).toBe('holding');
+  });
+
+  it('a pause still wins, and records that resuming will not be enough on its own', () => {
+    const view = describeDispatch(
+      status({ maintenanceHold: hold(), dispatch: { paused: true, reason: 'by human', since: NOW } }),
+      NOW,
+    )!;
+    expect(view.mode).toBe('paused');
+    expect(view.resumeBlockedByHold).toBe(true);
+  });
+
+  // The drain is not a footnote: it lasts as long as the longest run in flight, and dispatch is
+  // already stopped throughout. A nav that only knew about open windows would say "Loop on".
+  it('reports a QUEUED hold as maintenance too — dispatch is already stopped', () => {
+    const view = describeDispatch(status({ maintenanceHold: queuedHold() }), NOW)!;
+    expect(view.mode).toBe('maintenance');
+    expect(view.label).toBe('Maintenance hold queued');
+    expect(view.detail).toContain('finishing current runs');
+  });
+
+  it('shows no countdown while queued — the window has not started', () => {
+    expect(describeDispatch(status({ maintenanceHold: queuedHold() }), NOW)!.endsBy).toBeNull();
+  });
+
+  // The lapsed-clock check exists for an open window whose endsBy has passed. A queued hold has no
+  // clock at all, and `null > now` is false — so a naive check would drop it back to "Loop on".
+  it('does not treat a queued hold as expired for want of an end time', () => {
+    expect(describeDispatch(status({ maintenanceHold: queuedHold() }), NOW)!.mode).not.toBe('running');
+  });
+
+  it('says a resume will not re-arm during a queued hold either', () => {
+    const view = describeDispatch(
+      status({ maintenanceHold: queuedHold(), dispatch: { paused: true, reason: 'by human', since: NOW } }),
+      NOW,
+    )!;
+    expect(view.resumeBlockedByHold).toBe(true);
+    // ...and with no holdKind, so the note names the maintenance hold rather than a session limit.
+    expect(view.holdKind).toBeNull();
+  });
+
+  it('does not report a session-limit hold as countable — only maintenance has a known length', () => {
+    const view = describeDispatch(
+      status({ sessionLimit: { kind: 'session-limit', until: NOW + 60_000, reason: 'quota', since: NOW } }),
+      NOW,
+    )!;
+    expect(view.endsBy).toBeNull();
+  });
+});
+
+describe('fleetCounts', () => {
+  it('is all zeroes before the first poll', () => {
+    expect(fleetCounts(null)).toEqual({ working: 0, queued: 0, inReview: 0, needsYou: 0 });
+  });
+
+  it('counts the states a reader actually asks about', () => {
+    const counts = fleetCounts(status({ sortie: { working: 2, queued: 5, 'in-review': 1 } }));
+    expect(counts).toMatchObject({ working: 2, queued: 5, inReview: 1 });
+  });
+
+  it('rolls the three parked states into one "needs you"', () => {
+    // stuck / needs-human / awaiting-human differ in cause but not in what the reader must do:
+    // look at it. Three separate nav numbers would be noise.
+    expect(fleetCounts(status({ sortie: { stuck: 1, 'needs-human': 2, 'awaiting-human': 3 } })).needsYou).toBe(6);
+  });
+
+  it('treats an absent state as zero, not undefined', () => {
+    expect(fleetCounts(status({ sortie: {} })).working).toBe(0);
+  });
+});
+
+describe('countdownLabel', () => {
+  it('renders mm:ss', () => {
+    expect(countdownLabel(NOW + 125_000, NOW)).toBe('2:05');
+  });
+
+  it('pads the seconds', () => {
+    expect(countdownLabel(NOW + 61_000, NOW)).toBe('1:01');
+  });
+
+  it('floors at zero rather than counting negative', () => {
+    // The poll that clears a lapsed hold can be a few seconds behind the clock; "-0:03" reads as
+    // broken, "0:00" reads as finished.
+    expect(countdownLabel(NOW - 5_000, NOW)).toBe('0:00');
+  });
+
+  it('is null when there is nothing to count down to', () => {
+    expect(countdownLabel(null, NOW)).toBeNull();
   });
 });

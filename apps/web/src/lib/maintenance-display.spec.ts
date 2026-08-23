@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import type { MaintenanceHold } from '@dashboard/shared';
+import type { MaintenanceHold, MaintenanceHoldStatus } from '@dashboard/shared';
 import { HOLD_CADENCE_MS, HOLD_WINDOW_MS } from '@dashboard/shared';
 import {
+  approxRemainingLabel,
   durationLabel,
   holdDurationMs,
   holdExplainer,
   holdStatusLabel,
+  queuedDuringHoldNotice,
   runNowDisabledReason,
   startHoldDisabledReason,
 } from './maintenance-display';
+
+const NOW = 1_000_000;
 
 function hold(over: Partial<MaintenanceHold> = {}): MaintenanceHold {
   return {
@@ -121,5 +125,72 @@ describe('startHoldDisabledReason', () => {
 
   it('is disabled while one is already queued — pressing again would mean nothing', () => {
     expect(startHoldDisabledReason(null, hold({ status: 'queued' }))).toContain('already queued');
+  });
+});
+
+describe('approxRemainingLabel', () => {
+  it('rounds to minutes', () => {
+    expect(approxRemainingLabel(NOW + 7 * 60_000, NOW)).toBe('about 7 minutes');
+  });
+
+  it('says "under a minute" rather than "about 0 minutes"', () => {
+    expect(approxRemainingLabel(NOW + 30_000, NOW)).toBe('under a minute');
+  });
+
+  it('does not go negative when the poll is behind the clock', () => {
+    expect(approxRemainingLabel(NOW - 10_000, NOW)).toBe('under a minute');
+  });
+});
+
+// PD-498. Queueing a ticket during a hold succeeds, saves, and moves the card — and then nothing
+// happens for up to half an hour. Every visible signal says it worked, so without this the only
+// available reading is that the loop is broken.
+describe('queuedDuringHoldNotice', () => {
+  const status = (over: Partial<MaintenanceHoldStatus> = {}): MaintenanceHoldStatus => ({
+    id: 1,
+    trigger: 'scheduled',
+    phase: 'active',
+    startedAt: NOW - 60_000,
+    endsBy: NOW + 7 * 60_000,
+    ...over,
+  });
+
+  it('says nothing when no hold is in force', () => {
+    expect(queuedDuringHoldNotice(null, NOW)).toBeNull();
+  });
+
+  it('explains that no Robot can be dispatched, and that one will be', () => {
+    const msg = queuedDuringHoldNotice(status(), NOW, 'PD-500')!;
+    expect(msg).toContain('no Robots can be dispatched');
+    expect(msg).toContain('A Robot will be dispatched to work on PD-500');
+  });
+
+  it('names the ticket it is talking about, and falls back when there is none', () => {
+    expect(queuedDuringHoldNotice(status(), NOW, 'PD-500')).toContain('PD-500');
+    expect(queuedDuringHoldNotice(status(), NOW)).toContain('this ticket');
+  });
+
+  it('carries the countdown, so the wait is a number rather than a mystery', () => {
+    expect(queuedDuringHoldNotice(status(), NOW, 'PD-500')).toContain('about 7 minutes');
+  });
+
+  it('says whether the hold was scheduled or started by hand', () => {
+    expect(queuedDuringHoldNotice(status({ trigger: 'scheduled' }), NOW)).toContain('scheduled maintenance hold');
+    expect(queuedDuringHoldNotice(status({ trigger: 'manual' }), NOW)).toContain('manual maintenance hold');
+  });
+
+  // The two waits differ in kind: a queued hold is waiting on runs that are still going and has no
+  // deadline at all. Promising "about N minutes" there would be a number nobody can honour.
+  it('promises no duration while the hold is only queued', () => {
+    const msg = queuedDuringHoldNotice(status({ phase: 'queued', startedAt: null, endsBy: null }), NOW, 'PD-500')!;
+    expect(msg).toContain('queued');
+    expect(msg).toContain('already working will finish');
+    expect(msg).not.toMatch(/\babout \d+ minute/);
+  });
+
+  it('omits the countdown when an open hold somehow has no end time', () => {
+    const msg = queuedDuringHoldNotice(status({ endsBy: null }), NOW, 'PD-500')!;
+    expect(msg).toContain('when the hold is over.');
+    expect(msg).not.toContain('—');
   });
 });

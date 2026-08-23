@@ -7,6 +7,7 @@ import {
   bootstrapMaintenanceHoldsSchema,
   closeStaleHolds,
   endHold,
+  getMaintenanceHoldStatus,
   lastHoldStartedAt,
   listHolds,
   nextQueuedHold,
@@ -126,5 +127,59 @@ describe('maintenance job requests', () => {
   it('keeps requests scoped to their hold', () => {
     requestMaintenanceJobRun(db, 1, 'decisions:consolidation', 100);
     expect(claimMaintenanceJobRun(db, 2, 150)).toBeNull();
+  });
+});
+
+// PD-498. `SystemStatus.maintenanceHold` is the ONLY channel by which the nav and the board learn
+// that dispatch has stopped for maintenance. Anything it omits, they contradict.
+describe('getMaintenanceHoldStatus — what the nav is allowed to see', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  const WINDOW = 30 * 60_000;
+
+  it('is null when nothing is holding', () => {
+    expect(getMaintenanceHoldStatus(db, WINDOW)).toBeNull();
+  });
+
+  it('reports an open window with a deadline computed from the shared constant', () => {
+    const h = requestHold(db, 'manual', 1000);
+    startHold(db, h.id, 2000);
+    expect(getMaintenanceHoldStatus(db, WINDOW)).toMatchObject({
+      phase: 'active',
+      trigger: 'manual',
+      startedAt: 2000,
+      endsBy: 2000 + WINDOW,
+    });
+  });
+
+  // The drain lasts as long as the longest run in flight, and dispatch is already refused
+  // throughout it. Reporting only open windows left the nav saying "Loop on" for that whole span.
+  it('reports a QUEUED hold, because dispatch is already stopped', () => {
+    requestHold(db, 'scheduled', 1000);
+    expect(getMaintenanceHoldStatus(db, WINDOW)).toMatchObject({ phase: 'queued', trigger: 'scheduled' });
+  });
+
+  it('gives a queued hold no deadline — its window has not started', () => {
+    requestHold(db, 'scheduled', 1000);
+    const status = getMaintenanceHoldStatus(db, WINDOW)!;
+    expect(status.startedAt).toBeNull();
+    expect(status.endsBy).toBeNull();
+  });
+
+  it('prefers the open window when a hold is queued behind one', () => {
+    const open = requestHold(db, 'manual', 1000);
+    startHold(db, open.id, 2000);
+    requestHold(db, 'scheduled', 3000);
+    expect(getMaintenanceHoldStatus(db, WINDOW)).toMatchObject({ id: open.id, phase: 'active' });
+  });
+
+  it('goes back to null once the hold ends', () => {
+    const h = requestHold(db, 'manual', 1000);
+    startHold(db, h.id, 2000);
+    endHold(db, h.id, 'completed', null, 3000);
+    expect(getMaintenanceHoldStatus(db, WINDOW)).toBeNull();
   });
 });

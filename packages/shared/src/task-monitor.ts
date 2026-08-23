@@ -890,6 +890,41 @@ export interface SystemStatus {
   budget: RobotBudgetStatus | null;
   /** PD-248: GitHub API headroom from the worker's periodic probe; null until one has run. */
   githubRateLimit: GithubRateLimitStatus | null;
+  /**
+   * PD-498: the open maintenance hold, or null.
+   *
+   * A FOURTH independent halt, alongside `dispatch.paused` and `sessionLimit`. It has to be here
+   * rather than read separately by the nav, because the nav's whole job is to say why the loop is
+   * not dispatching — and a condition it cannot see is one it will contradict. Before this, the nav
+   * showed "Dispatch running" (true: `dispatch_paused` was clear) next to a maintenance-hold pill
+   * (also true), which read as nonsense.
+   */
+  maintenanceHold: MaintenanceHoldStatus | null;
+}
+
+/** The subset of a maintenance hold the status API carries (PD-498). */
+export interface MaintenanceHoldStatus {
+  id: number;
+  trigger: 'scheduled' | 'manual';
+  /**
+   * Which half of the hold we are in.
+   *
+   * **Both halves stop dispatch, which is why `queued` is reported at all.** The coordinator
+   * refuses to dispatch from the moment a hold is *queued* — that is the whole drain mechanism —
+   * and only then waits for the running Robots to finish before opening the window. Reporting the
+   * active half alone would leave the nav saying "Loop on" through a drain that can last as long
+   * as the longest run, and would leave a human who queues a ticket during it with no explanation
+   * for why nothing picks it up.
+   */
+  phase: 'queued' | 'active';
+  /** Epoch ms the window opened; null while still queued. */
+  startedAt: number | null;
+  /**
+   * Epoch ms the window closes at the latest — `startedAt + HOLD_WINDOW_MS` — or null while
+   * queued, because the window's clock does not start until the drain finishes. A countdown is
+   * only honest once there is something bounded to count.
+   */
+  endsBy: number | null;
 }
 
 // ── Robot runs + milestones (C3/PD-344 observability) ────────────────────────
