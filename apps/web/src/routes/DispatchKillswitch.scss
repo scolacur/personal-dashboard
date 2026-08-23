@@ -37,6 +37,19 @@
   color: var(--muted);
 }
 
+// Inherits the label's colour rather than the link colour: it sits inside a status readout, and a
+// blue word among grey ones reads as a different KIND of thing rather than as the same thing,
+// clickable. The underline on hover is what advertises it.
+.ks-label--link {
+  color: inherit;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .ks-detail {
   color: var(--muted);
   max-width: 32ch;

@@ -67,9 +67,16 @@
   <div class="killswitch mode-{view.mode}">
     <span class="ks-state" title={view.detail ?? 'Robot dispatch is running'}>
       <span class="dot" aria-hidden="true"></span>
-      <span class="ks-label">
-        {#if view.mode === 'paused'}⛔ {/if}{view.label}
-      </span>
+      {#if view.mode === 'maintenance'}
+        <!-- The one mode with somewhere to go: the hold section is where you watch it, see which
+             jobs ran, and press "Run now". Inherited from the separate hold pill this replaced —
+             the pill was redundant next to the label, but its link was not. -->
+        <a class="ks-label ks-label--link" href="/devops/jobs#maintenance-holds">{view.label}</a>
+      {:else}
+        <span class="ks-label">
+          {#if view.mode === 'paused'}⛔ {/if}{view.label}
+        </span>
+      {/if}
       {#if countdown}
         <!-- Only a maintenance hold sets endsBy: its window is a fixed length, so a ticking clock
              is honest. A provider hold shows a wall-clock reset time instead (see endsBy's doc). -->
