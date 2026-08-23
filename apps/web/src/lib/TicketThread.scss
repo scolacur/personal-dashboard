@@ -287,9 +287,10 @@
     gap: var(--space-sm);
     font-size: var(--font-size-sm);
   }
+  // `.child-priority` was dropped with the field itself in PD-510 (Refine proposes content, not
+  // placement) — a Refine proposal no longer carries a Ticket priority to display.
   .child-lane,
-  .child-assignee,
-  .child-priority {
+  .child-assignee {
     font-size: var(--font-size-xs);
     color: var(--muted);
     border: 1px solid var(--border);

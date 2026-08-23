@@ -36,7 +36,15 @@
   import RelationPicker from '../../RelationPicker.svelte';
   import SpinOffModal from '../../task-tracker/SpinOffModal.svelte';
   import { planSpinOff } from '../../epic-spinoff';
-  import { isTerminal } from '../../board-logic';
+  import { computeOrderWithin, isTerminal } from '../../board-logic';
+  import {
+    MEMBER_LANE_CHOICES,
+    canSetMemberLane,
+    dispatchPositions,
+    memberLockReason,
+    membersReorderable,
+    reorderedMembers,
+  } from '../../epic-members';
   import EpicPicker from '../../EpicPicker.svelte';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
   import { ticketMatchesQuery } from '../../filter-logic';
@@ -419,6 +427,62 @@
     memberPickerOpen = false;
     await setMemberEpic(t.id, ticket.id);
   }
+
+  // ── Member lane + dispatch order (PD-384, slice D of D-TMP-PD383a) ────────
+  // A member's `sortOrder` IS the order its Epic's work is dispatched in, so this list is the
+  // control surface for order-of-operations — see `epic-members.ts`.
+  const canReorderMembers = $derived(membersReorderable(epicMembers));
+  const memberPositions = $derived(dispatchPositions(epicMembers));
+
+  let draggingMemberId = $state<number | null>(null);
+  let memberDropBeforeId = $state<number | null>(null);
+
+  async function setMemberLane(m: AgentTicket, status: TicketStatus) {
+    if (status === m.status) return;
+    error = null;
+    try {
+      await api.updateTicket(m.id, { status });
+      if (ticketId) await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function onMemberDragStart(e: DragEvent, m: AgentTicket) {
+    if (!canReorderMembers) return;
+    draggingMemberId = m.id;
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onMemberDragOver(e: DragEvent, overId: number | null) {
+    if (draggingMemberId === null) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    memberDropBeforeId = overId;
+  }
+
+  async function onMemberDrop(e: DragEvent) {
+    e.preventDefault();
+    const draggedId = draggingMemberId;
+    const beforeId = memberDropBeforeId;
+    draggingMemberId = null;
+    memberDropBeforeId = null;
+    if (draggedId === null || draggedId === beforeId) return;
+
+    // Optimistic: the row moves under the cursor now. A list that snaps back until the refetch
+    // lands reads as a failed drag and invites the user to drag again.
+    const previous = epicMembers;
+    epicMembers = reorderedMembers(epicMembers, draggedId, beforeId);
+    const sortOrder = computeOrderWithin(previous, beforeId, draggedId);
+    error = null;
+    try {
+      await api.updateTicket(draggedId, { sortOrder });
+      if (ticketId) await load(ticketId);
+    } catch (err) {
+      epicMembers = previous; // put it back rather than leave the list lying about the order
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
 </script>
 
 <nav class="detail-nav">
@@ -588,13 +652,59 @@
           {#if epicMembers.length === 0}
             <p class="muted">No members yet.</p>
           {:else}
-            <ul class="member-list">
+            {#if canReorderMembers}
+              <p class="member-order-hint">
+                Drag to set the order these are worked in. Numbered rows are what the Robot picks
+                up next, in that order.
+              </p>
+            {/if}
+            <ul class="member-list" ondragover={(e) => onMemberDragOver(e, null)} ondrop={onMemberDrop}>
               {#each epicMembers as m (m.id)}
-                <li class="member-row">
+                {@const lockedBecause = memberLockReason(m)}
+                <li
+                  class="member-row"
+                  class:dragging={draggingMemberId === m.id}
+                  class:drop-before={memberDropBeforeId === m.id && draggingMemberId !== null}
+                  draggable={canReorderMembers}
+                  ondragstart={(e) => onMemberDragStart(e, m)}
+                  ondragover={(e) => onMemberDragOver(e, m.id)}
+                  ondragend={() => {
+                    draggingMemberId = null;
+                    memberDropBeforeId = null;
+                  }}
+                >
+                  {#if canReorderMembers}
+                    <span class="member-grip" aria-hidden="true">⠿</span>
+                  {/if}
+                  {#if memberPositions.has(m.id)}
+                    <span class="member-pos" title="Dispatch order within this epic"
+                      >{memberPositions.get(m.id)}</span
+                    >
+                  {/if}
                   <a class="member-ref" href="/devops/tickets/{m.displayId}"
                     >{m.displayId} — {m.title}</a
                   >
-                  <span class="member-status">{STATUS_LABELS[m.status] ?? m.status}</span>
+                  {#if canSetMemberLane(m)}
+                    <select
+                      class="member-lane"
+                      aria-label="Lane for {m.displayId}"
+                      value={m.status}
+                      onchange={(e) => setMemberLane(m, e.currentTarget.value as TicketStatus)}
+                    >
+                      {#each MEMBER_LANE_CHOICES as s (s)}
+                        <option value={s}>{STATUS_LABELS[s] ?? s}</option>
+                      {/each}
+                      {#if !MEMBER_LANE_CHOICES.includes(m.status)}
+                        <!-- The member's current lane, so the control never misreports it. It is
+                             not a choice: re-selecting a terminal lane is not offered. -->
+                        <option value={m.status} disabled>{STATUS_LABELS[m.status] ?? m.status}</option>
+                      {/if}
+                    </select>
+                  {:else}
+                    <span class="member-status" title={lockedBecause ?? ''}
+                      >{STATUS_LABELS[m.status] ?? m.status}</span
+                    >
+                  {/if}
                   <button
                     class="member-remove"
                     type="button"
