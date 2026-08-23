@@ -57,6 +57,28 @@ start doing so merely by arriving in an image. The rewrite sweep must skip `.cla
 because this repo nests worktrees inside the checkout and every concurrent session's branch lives
 there.
 
+> ⚠️ **AMENDMENT (2026-08-22, same day): the dangling-citation half of this decision is WRONG in
+> practice. Do not build on it — see PD-548.**
+>
+> The reasoning below — "a dangling citation is evidence, not a defect to paper over" — rests on an
+> assumption that was never tested: that the check can tell a real citation from an example. It
+> cannot. They are the same string by construction.
+>
+> Measured against `origin/main` on the first live run, **every single reported id was a
+> documentation example or a test fixture, and none were real**: `D-TMP-PD513a` ×18 (the worked
+> example in `CLAUDE.md`, `PROJECT.md`, `decisions.ts`, `agent-prompts.ts`), `D-TMP-PD999z` ×8,
+> `D-TMP-PD600a` ×5, plus assorted fixtures and negative test cases. The four ids actually in the
+> inbox all resolved correctly.
+>
+> So the check fires on every cycle, forever, with nothing to act on — which is worse than silence,
+> because it teaches the reader to ignore the Notification Center. PD-548 decides whether to give
+> examples a reserved namespace the scanner skips, or to drop the check; it must not be left as is.
+>
+> **The lesson worth keeping is not about citations.** It is that "report it and let a human look"
+> is only a real answer when the report can distinguish the thing it is reporting from ordinary
+> background. This one could not, and that was knowable before shipping by grepping the repo — which
+> is what eventually diagnosed it.
+
 **Revisit if:** dangling citations stop being rare, which would mean PRs routinely sit open across
 cycles and the ledger rejected above becomes worth its cost. Or if the drain routinely times out —
 that is the throughput cost D-078 said to watch for, and the recorded fallback is its optimistic
