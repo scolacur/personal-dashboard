@@ -39,6 +39,7 @@ export type { PageWidget, PageWidgetMap } from './shell';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
 export {
   JOB_RUN_STATUSES,
+  DB_BACKUP_JOB,
   isJobRunStatus,
   isRunFinished,
   isRunFailure,

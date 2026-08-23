@@ -1,6 +1,8 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import { mkdirSync, readdirSync, statSync, unlinkSync, existsSync } from 'node:fs';
+import { DB_BACKUP_JOB } from '@dashboard/shared';
+import { recordRun } from './lib/job-runs';
 import type { CronLogger, CronRegistry } from './cron';
 
 /**
@@ -45,6 +47,8 @@ export interface BackupResult {
   file?: string;
   /** How many old snapshots for this label were pruned. */
   pruned: number;
+  /** What verification actually measured. Absent only when the source could not be opened. */
+  check?: SnapshotCheck;
 }
 
 /** ISO-8601 with `:`/`.` swapped for `-` so it's a legal filename on every FS. */
@@ -57,20 +61,139 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * Snapshot one open database to `destPath` and verify it. Returns true only if
- * the snapshot both wrote and passes `PRAGMA integrity_check`. A snapshot that
- * fails verification is deleted so it can never be mistaken for a good restore.
+ * Snapshot completeness thresholds.
+ *
+ * Neither is an equality check, and that is deliberate — see `checkSnapshot`.
+ */
+/** Snapshot rows must reach this share of the source's. Slack absorbs writes that land mid-run. */
+const MIN_ROW_RATIO = 0.95;
+/** Snapshot bytes must reach this share of the source file's. Coarse: only catches a stub. */
+const MIN_SIZE_RATIO = 0.5;
+
+export interface SnapshotCheck {
+  ok: boolean;
+  /** Why it failed, for the log and the run summary. Absent when `ok`. */
+  reason?: string;
+  sourceTables: number;
+  snapshotTables: number;
+  /** Tables present in the source but missing from the snapshot. */
+  missingTables: string[];
+  sourceRows: number;
+  snapshotRows: number;
+  sourceBytes: number;
+  snapshotBytes: number;
+}
+
+/** Every user table in an open DB, `sqlite_*` internals excluded. */
+function tableNames(db: Database.Database): string[] {
+  const rows = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    .all() as { name: string }[];
+  return rows.map((r) => r.name);
+}
+
+/** Total rows across every user table. The one number that says "the data is in there". */
+function totalRows(db: Database.Database, tables: string[]): number {
+  let total = 0;
+  for (const t of tables) {
+    // Identifier, not a bindable parameter — quoted so an exotic table name can't break the SQL.
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM "${t.replace(/"/g, '""')}"`).get() as { n: number };
+    total += row.n;
+  }
+  return total;
+}
+
+function fileSize(p: string): number {
+  try {
+    return statSync(p).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Does this snapshot actually contain the database?
+ *
+ * **`PRAGMA integrity_check` is not enough, and that is the whole reason this exists.** It answers
+ * "is this file structurally valid SQLite", and a *completely empty* database answers `ok`. So does
+ * a schema-only one. A backup that silently captured nothing would pass every check the job had
+ * before this, and would be discovered at the only moment it matters — a restore.
+ *
+ * Three checks, weakest to strongest:
+ *
+ * - **Size floor.** Coarse and deliberately generous: a snapshot is checkpointed to a single file
+ *   while the live DB carries a separate `-wal`, so the two legitimately differ in both directions
+ *   and cannot be compared for equality. It only catches the near-empty stub.
+ * - **Schema parity.** Every source table must exist in the snapshot. This is what catches a
+ *   partial copy that is nonetheless valid SQLite.
+ * - **Row-count floor.** The real check. Not equality: `.backup()` is a point-in-time copy and the
+ *   app keeps writing, so the source can legitimately be *ahead* by the time it is counted. The
+ *   snapshot may not be meaningfully *behind*.
+ */
+export function checkSnapshot(
+  source: Database.Database,
+  snapshot: Database.Database,
+  sourcePath: string,
+  snapshotPath: string,
+): SnapshotCheck {
+  const sourceTableList = tableNames(source);
+  const snapshotTableList = tableNames(snapshot);
+  const snapshotSet = new Set(snapshotTableList);
+  const missingTables = sourceTableList.filter((t) => !snapshotSet.has(t));
+
+  const sourceRows = totalRows(source, sourceTableList);
+  const snapshotRows = totalRows(snapshot, snapshotTableList);
+  const sourceBytes = fileSize(sourcePath);
+  const snapshotBytes = fileSize(snapshotPath);
+
+  const base: Omit<SnapshotCheck, 'ok' | 'reason'> = {
+    sourceTables: sourceTableList.length,
+    snapshotTables: snapshotTableList.length,
+    missingTables,
+    sourceRows,
+    snapshotRows,
+    sourceBytes,
+    snapshotBytes,
+  };
+
+  if (missingTables.length > 0) {
+    return { ...base, ok: false, reason: `snapshot is missing ${missingTables.length} table(s): ${missingTables.join(', ')}` };
+  }
+  if (sourceRows > 0 && snapshotRows < Math.floor(sourceRows * MIN_ROW_RATIO)) {
+    return { ...base, ok: false, reason: `snapshot holds ${snapshotRows} rows against the source's ${sourceRows}` };
+  }
+  if (sourceBytes > 0 && snapshotBytes < Math.floor(sourceBytes * MIN_SIZE_RATIO)) {
+    return { ...base, ok: false, reason: `snapshot is ${snapshotBytes} bytes against the source's ${sourceBytes}` };
+  }
+  return { ...base, ok: true };
+}
+
+/**
+ * Snapshot one open database to `destPath` and verify it. `ok` only when the snapshot wrote,
+ * passed `PRAGMA integrity_check`, **and** carries the source's schema and rows (`checkSnapshot`).
+ * A snapshot that fails any of those is deleted so it can never be mistaken for a good restore.
  */
 export async function backupDatabase(
   source: Database.Database,
   destPath: string,
   log: CronLogger,
-): Promise<boolean> {
+  sourcePath?: string,
+): Promise<SnapshotCheck> {
+  const empty = {
+    sourceTables: 0,
+    snapshotTables: 0,
+    missingTables: [] as string[],
+    sourceRows: 0,
+    snapshotRows: 0,
+    sourceBytes: sourcePath ? fileSize(sourcePath) : 0,
+    snapshotBytes: 0,
+  };
+
   await source.backup(destPath);
 
-  // A snapshot that fails integrity_check — or can't even be opened — is worse
-  // than useless (it could be restored by mistake), so verify then delete on any
-  // failure. Return false so the caller skips pruning good older snapshots.
+  // A snapshot that fails verification — or can't even be opened — is worse than useless (it
+  // could be restored by mistake), so verify then delete on any failure. A failed result also
+  // makes the caller skip pruning, so a bad run never eats good backups.
   try {
     const check = new Database(destPath, { fileMustExist: true });
     try {
@@ -79,17 +202,32 @@ export async function backupDatabase(
       // A lone .db is the whole point — one coherent file for the off-box backup.
       check.pragma('journal_mode = DELETE');
       const integrity = check.pragma('integrity_check', { simple: true }) as string;
-      if (integrity === 'ok') return true;
-      log.error(`backup: snapshot ${destPath} failed integrity_check (${integrity}); deleting`);
+      if (integrity !== 'ok') {
+        log.error(`backup: snapshot ${destPath} failed integrity_check (${integrity}); deleting`);
+        removeSnapshot(destPath);
+        return { ...empty, ok: false, reason: `integrity_check: ${integrity}` };
+      }
+
+      // Structurally valid is not the same as complete — an empty DB passes the check above.
+      const result = checkSnapshot(source, check, sourcePath ?? '', destPath);
+      if (!result.ok) {
+        log.error(`backup: snapshot ${destPath} is incomplete — ${result.reason}; deleting`);
+        removeSnapshot(destPath);
+        return result;
+      }
+      log.info(
+        `backup: verified ${destPath} — ${result.snapshotTables} tables, ${result.snapshotRows} rows, ${result.snapshotBytes} bytes`,
+      );
+      return result;
     } finally {
       check.close();
     }
   } catch (err) {
-    log.error(`backup: cannot verify snapshot ${destPath}: ${err instanceof Error ? err.message : String(err)}; deleting`);
+    const reason = err instanceof Error ? err.message : String(err);
+    log.error(`backup: cannot verify snapshot ${destPath}: ${reason}; deleting`);
+    removeSnapshot(destPath);
+    return { ...empty, ok: false, reason };
   }
-
-  removeSnapshot(destPath);
-  return false;
 }
 
 /** Remove a snapshot and any WAL/SHM sidecars it may have left behind. */
@@ -162,11 +300,13 @@ async function snapshotTarget(
 ): Promise<BackupResult> {
   const dest = path.join(opts.backupDir, `${label}.${stamp}.db`);
   try {
-    const ok = await backupDatabase(source, dest, log);
+    // `.name` is better-sqlite3's path for the open file — the size check needs it, and taking it
+    // from the handle keeps callers from having to pass a path that could disagree with it.
+    const check = await backupDatabase(source, dest, log, source.name);
     // Prune only after a verified new snapshot, so a bad run never eats good backups.
-    const pruned = ok ? pruneOldBackups(opts.backupDir, label, opts.retainDays, log) : 0;
-    if (ok) log.info(`backup: wrote ${dest}`);
-    return { label, ok, file: ok ? dest : undefined, pruned };
+    const pruned = check.ok ? pruneOldBackups(opts.backupDir, label, opts.retainDays, log) : 0;
+    if (check.ok) log.info(`backup: wrote ${dest}`);
+    return { label, ok: check.ok, file: check.ok ? dest : undefined, pruned, check };
   } finally {
     if (ownsConnection) source.close();
   }
@@ -197,6 +337,34 @@ export function registerBackupJob(
       .filter(Boolean),
   };
   registry.register('db-backup', schedule, async () => {
-    await runBackup(log, opts);
+    // Recorded to `job_runs` (PD-442) so a verification failure is a visible run on the Dev Ops
+    // Jobs surface rather than one line in a container log nobody reads. Before this, the only
+    // evidence the nightly backup had ever run was the files themselves — which is exactly the
+    // wrong place to find out it stopped.
+    await recordRun(primarySource, DB_BACKUP_JOB, async (ctx) => {
+      const results = await runBackup(log, opts);
+      const primary = results.find((r) => r.label === opts.primaryLabel);
+      const failed = results.filter((r) => !r.ok);
+
+      ctx.setSummary({
+        targets: results.length,
+        verified: results.length - failed.length,
+        failed: failed.length,
+        tables: primary?.check?.snapshotTables ?? 0,
+        rows: primary?.check?.snapshotRows ?? 0,
+        bytes: primary?.check?.snapshotBytes ?? 0,
+        pruned: results.reduce((n, r) => n + r.pruned, 0),
+      });
+
+      // A failure here is not thrown: the extras are best-effort by design, and a thrown run
+      // would lose the summary's numbers. `setOutcome` records it honestly instead — `error`
+      // when nothing was backed up at all, `partial` when the primary survived but an extra
+      // did not.
+      if (failed.length > 0) {
+        const detail = failed.map((r) => `${r.label}: ${r.check?.reason ?? 'unknown'}`).join('; ');
+        ctx.setOutcome(primary?.ok ? 'partial' : 'error', detail);
+      }
+      return results;
+    });
   });
 }

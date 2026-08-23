@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync, existsSync } from 'node:fs';
-import { runBackup, pruneOldBackups, backupDatabase } from './backup';
+import { runBackup, pruneOldBackups, backupDatabase, checkSnapshot } from './backup';
 
 const silentLog = { info: () => {}, error: () => {} };
 
@@ -85,7 +85,7 @@ describe('runBackup', () => {
 });
 
 describe('backupDatabase', () => {
-  it('deletes a snapshot that fails integrity_check and returns false', async () => {
+  it('deletes a snapshot that fails integrity_check and reports not-ok', async () => {
     const source = seededDb('dashboard.db', 1);
     const dest = path.join(backupDir, 'dashboard.now.db');
     // Point at a "snapshot" location we pre-fill with garbage so the post-backup
@@ -94,9 +94,84 @@ describe('backupDatabase', () => {
     writeFileSync(dest, 'not a sqlite file at all');
     const stub = { backup: async () => ({}) } as unknown as Database.Database;
 
-    const ok = await backupDatabase(stub, dest, silentLog);
-    expect(ok).toBe(false);
+    const result = await backupDatabase(stub, dest, silentLog);
+    expect(result.ok).toBe(false);
     expect(existsSync(dest)).toBe(false); // corrupt snapshot removed
+    source.close();
+  });
+
+  /**
+   * The case the whole completeness check exists for. An empty database is *structurally valid*
+   * SQLite — `PRAGMA integrity_check` answers `ok` — so before this check a backup that captured
+   * nothing was indistinguishable from a good one, and would only be found out at a restore.
+   */
+  it('rejects a snapshot that is valid SQLite but empty', async () => {
+    const source = seededDb('dashboard.db', 500);
+    const dest = path.join(backupDir, 'dashboard.now.db');
+    mkdirSync(backupDir, { recursive: true });
+
+    // A real, well-formed, completely empty DB at the destination — and a source that no-ops
+    // instead of writing over it, standing in for a backup that silently produced nothing.
+    const emptyDb = new Database(dest);
+    emptyDb.close();
+    expect(new Database(dest).pragma('integrity_check', { simple: true })).toBe('ok');
+
+    const stub = {
+      backup: async () => ({}),
+      prepare: source.prepare.bind(source),
+      name: source.name,
+    } as unknown as Database.Database;
+
+    const result = await backupDatabase(stub, dest, silentLog, source.name);
+
+    expect(result.ok).toBe(false);
+    expect(result.sourceRows).toBe(500);
+    expect(result.snapshotRows).toBe(0);
+    expect(result.missingTables).toContain('t');
+    expect(existsSync(dest)).toBe(false); // empty snapshot removed, never mistaken for good
+    source.close();
+  });
+
+  it('accepts a real snapshot and reports what it measured', async () => {
+    const source = seededDb('dashboard.db', 120);
+    const dest = path.join(backupDir, 'dashboard.now.db');
+    mkdirSync(backupDir, { recursive: true });
+
+    const result = await backupDatabase(source, dest, silentLog, source.name);
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+    expect(result.snapshotRows).toBe(120);
+    expect(result.sourceRows).toBe(120);
+    expect(result.missingTables).toEqual([]);
+    expect(result.snapshotTables).toBe(result.sourceTables);
+    expect(result.snapshotBytes).toBeGreaterThan(0);
+    expect(existsSync(dest)).toBe(true);
+    source.close();
+  });
+
+  /**
+   * `.backup()` is a point-in-time copy while the app keeps writing, so the source can legitimately
+   * be ahead of the snapshot by the time both are counted. Equality would make the job flap; only a
+   * meaningful shortfall is a failure.
+   */
+  it('tolerates the source racing ahead of the snapshot', async () => {
+    const source = seededDb('dashboard.db', 1000);
+    const dest = path.join(backupDir, 'dashboard.now.db');
+    mkdirSync(backupDir, { recursive: true });
+
+    await source.backup(dest);
+    // Simulate writes landing after the snapshot point: +2%, inside the 5% tolerance.
+    const insert = source.prepare('INSERT INTO t (v) VALUES (?)');
+    for (let i = 0; i < 20; i++) insert.run(`late-${i}`);
+
+    const snapshot = new Database(dest, { readonly: true });
+    const check = checkSnapshot(source, snapshot, source.name, dest);
+    snapshot.close();
+
+    expect(check.sourceRows).toBe(1020);
+    expect(check.snapshotRows).toBe(1000);
+    expect(check.ok).toBe(true);
     source.close();
   });
 });

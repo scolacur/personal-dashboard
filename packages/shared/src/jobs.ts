@@ -22,6 +22,9 @@
 export const JOB_RUN_STATUSES = ['running', 'ok', 'error', 'partial', 'interrupted'] as const;
 export type JobRunStatus = (typeof JOB_RUN_STATUSES)[number];
 
+/** Shared job-run name for the nightly DB backup. Core, not a widget — hence it lives here. */
+export const DB_BACKUP_JOB = 'db-backup';
+
 /**
  * Did this run fail outright?
  *
