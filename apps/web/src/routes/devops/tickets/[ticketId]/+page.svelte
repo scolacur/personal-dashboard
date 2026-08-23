@@ -38,9 +38,13 @@
   import { planSpinOff } from '../../epic-spinoff';
   import { computeOrderWithin, isTerminal } from '../../board-logic';
   import {
+    MEMBER_ASSIGNEES,
     MEMBER_LANE_CHOICES,
+    assigneeGlyph,
+    canEditMember,
     canSetMemberLane,
     dispatchPositions,
+    memberAssigneeHint,
     memberLockReason,
     membersReorderable,
     reorderedMembers,
@@ -437,6 +441,17 @@
   let draggingMemberId = $state<number | null>(null);
   let memberDropBeforeId = $state<number | null>(null);
 
+  async function setMemberAssignee(m: AgentTicket, assignee: TicketAssignee | null) {
+    if (assignee === m.assignee) return;
+    error = null;
+    try {
+      await api.updateTicket(m.id, { assignee });
+      if (ticketId) await load(ticketId);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function setMemberLane(m: AgentTicket, status: TicketStatus) {
     if (status === m.status) return;
     error = null;
@@ -705,6 +720,21 @@
                       >{STATUS_LABELS[m.status] ?? m.status}</span
                     >
                   {/if}
+                  <!-- PD-532: assignee is the field that decides dispatch, and a queued row
+                       assigned to Steve looks identical to one assigned to the Robot without it. -->
+                  <select
+                    class="assignee-pill assignee-{m.assignee ?? 'none'}"
+                    aria-label="Assignee for {m.displayId}"
+                    title={memberAssigneeHint(m)}
+                    disabled={!canEditMember(m)}
+                    value={m.assignee ?? ''}
+                    onchange={(e) =>
+                      setMemberAssignee(m, (e.currentTarget.value || null) as TicketAssignee | null)}
+                  >
+                    {#each MEMBER_ASSIGNEES as a (a ?? 'none')}
+                      <option value={a ?? ''}>{assigneeGlyph(a)}</option>
+                    {/each}
+                  </select>
                   <button
                     class="member-remove"
                     type="button"

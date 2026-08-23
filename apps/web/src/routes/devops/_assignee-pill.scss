@@ -1,0 +1,49 @@
+/* The round assignee control (PD-532). Shared by the board's ticket card and the Epic member list,
+   which are separate components — Svelte scopes styles per component, so a single rule in either
+   one would not reach the other. `@use`d rather than duplicated, so the two lists stay scannable
+   the same way: the same glyph in the same shape means the same thing wherever it appears.
+
+   Unassigned is a dashed border rather than an absent badge on purpose. An Epic full of unassigned
+   members is a real state worth seeing at a glance, and "no badge" reads as "no column" instead. */
+.assignee-pill {
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  text-align-last: center;
+  line-height: 22px;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  &.assignee-steve {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  &.assignee-robot {
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  &.assignee-none {
+    color: var(--muted);
+    border-style: dashed;
+  }
+}

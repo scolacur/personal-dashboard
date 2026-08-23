@@ -1,4 +1,4 @@
-import type { AgentTicket, TicketStatus } from '@dashboard/shared';
+import type { AgentTicket, TicketAssignee, TicketStatus } from '@dashboard/shared';
 import { isReadOnly, isTerminal } from './board-logic';
 
 /**
@@ -34,7 +34,56 @@ export const MEMBER_LANE_CHOICES: readonly TicketStatus[] = ['backlog', 'queue']
  * thing to ask, and so the reason a row is inert is testable without rendering it.
  */
 export function canSetMemberLane(m: AgentTicket): boolean {
+  return canEditMember(m);
+}
+
+/**
+ * Whether any of this member's fields may be edited from the Epic page.
+ *
+ * One predicate behind both the lane control and the assignee control, so a frozen row cannot end
+ * up half-editable — which is exactly the state a reader would read as a bug rather than a rule.
+ */
+export function canEditMember(m: AgentTicket): boolean {
   return !isReadOnly(m);
+}
+
+/**
+ * The assignee options a member row offers, in menu order (PD-532).
+ *
+ * `null` is first and is a real choice, not an empty state: D-058 made assignee an axis
+ * independent of lane, so "nobody has taken this yet" is a position, and un-assigning is a move
+ * someone actually makes.
+ */
+export const MEMBER_ASSIGNEES: readonly (TicketAssignee | null)[] = [null, 'steve', 'robot'] as const;
+
+/**
+ * The one-glyph label for an assignee, matching the board's ticket cards exactly.
+ *
+ * The point of PD-532 is that the member list and the board are scannable the same way, so this
+ * duplicates the card's mapping deliberately rather than inventing a second vocabulary — and lives
+ * here, in tested code, so the two cannot drift silently.
+ */
+export function assigneeGlyph(assignee: TicketAssignee | null): string {
+  if (assignee === 'steve') return 'S';
+  if (assignee === 'robot') return '🤖';
+  return '—';
+}
+
+/**
+ * Why this member is or is not a dispatch candidate, for the assignee control's tooltip.
+ *
+ * Assignee is the field that decides it (`robotQueueCandidates` requires `assignee = 'robot'`), and
+ * a queued row assigned to Steve looks identical to a queued row assigned to the Robot unless the
+ * row says so. This is the sentence that makes the badge worth having rather than decorative.
+ */
+export function memberAssigneeHint(m: AgentTicket): string {
+  if (m.assignee === 'robot') {
+    return m.status === 'queue'
+      ? 'Assigned to the Robot — queued, so it is a dispatch candidate'
+      : 'Assigned to the Robot — not queued, so nothing will pick it up yet';
+  }
+  if (m.assignee === 'steve') return 'Assigned to Steve — a personal to-do, never dispatched';
+  return 'Unassigned — never dispatched until someone takes it';
 }
 
 /**
