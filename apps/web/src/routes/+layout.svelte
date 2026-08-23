@@ -9,7 +9,6 @@
   import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from '$lib/nav-utils';
   import DeployStatus from './DeployStatus.svelte';
   import DispatchKillswitch from './DispatchKillswitch.svelte';
-  import MaintenanceHoldIndicator from '$lib/MaintenanceHoldIndicator.svelte';
   import { pageWidgets } from '$lib/page-widgets.svelte';
   import { clearLegacyLayoutKeys } from '$lib/layout';
   import Toast from '$lib/Toast.svelte';
@@ -106,7 +105,6 @@
       {/if}
       <div class="nav-spacer"></div>
       {#if showDevOpsNav}
-        <MaintenanceHoldIndicator />
         <DispatchKillswitch />
         <DeployStatus />
       {/if}
