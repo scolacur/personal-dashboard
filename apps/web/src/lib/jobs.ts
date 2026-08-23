@@ -7,6 +7,8 @@
 // is `runs` — not `kind` — that decides whether a job shows history, which is why new jobs are
 // plain 'generic' rather than growing this union one entry per job.
 
+import { DB_BACKUP_JOB } from '@dashboard/shared';
+
 export type JobKind = 'audit' | 'backup' | 'generic';
 
 /**
@@ -55,9 +57,12 @@ export const RECURRING_JOBS: RecurringJob[] = [
   {
     id: 'db-backup',
     name: 'Nightly DB Backup',
-    description: 'Consistent snapshot of dashboard.db into the backups dir (PD-33).',
+    description:
+      'Consistent snapshot of dashboard.db into the backups dir (PD-33), verified against the ' +
+      'live DB for schema and row completeness before the old snapshots are pruned.',
     schedule: '0 3 * * *', // daily 03:00
     kind: 'backup',
+    runs: { jobName: DB_BACKUP_JOB },
   },
   {
     id: 'bst-scan',
