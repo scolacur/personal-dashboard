@@ -34,7 +34,7 @@ import {
   updateTicket,
   ValidationError,
 } from './store';
-import type { TicketStatus } from '@dashboard/shared';
+import type { RefineProposal, TicketStatus } from '@dashboard/shared';
 import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 
 const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
@@ -1141,33 +1141,85 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     expect(steveChild.assignee).toBe('steve');
   });
 
-  it('approveRefine decompose carries each child priority (unset → null)', () => {
+  // PD-510 / D-TMP-PD383a. `priority` is no longer part of the proposal type at all, so these
+  // seed it through a cast: the case that matters is a proposal persisted BEFORE PD-510, whose
+  // stored JSON still carries the key. It must be inert, not honoured.
+  it('approveRefine ignores a Ticket priority on a legacy stored proposal (priority is the Epic’s)', () => {
+    const a = createTicket(db, { title: 'a', status: 'backlog', priority: 'P4', projectId: pd });
+    seedProposal(db, a.id, {
+      mode: 'refine_in_place',
+      body: ROBOT_BODY,
+      priority: 'P0',
+    } as unknown as RefineProposal);
+    expect(approveRefine(db, a.id).ok).toBe(true);
+    expect(getTicket(db, a.id)!.priority).toBe('P4'); // the agent's P0 is discarded
+  });
+
+  it('approveRefine creates every decompose child unpriced, whatever the proposal asked for', () => {
     const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
     seedProposal(db, parent.id, {
       mode: 'decompose',
       children: [
-        { title: 'urgent', body: ROBOT_BODY, status: 'queue', assignee: 'robot', priority: 'P1' },
+        { title: 'urgent', body: ROBOT_BODY, status: 'backlog', assignee: 'robot', priority: 'P1' },
         { title: 'later', body: 'loose', status: 'backlog', assignee: null, priority: 'P3' },
-        { title: 'unset', body: 'loose', status: 'backlog', assignee: null },
       ],
-    });
+    } as unknown as RefineProposal);
     expect(approveRefine(db, parent.id).ok).toBe(true);
     const byTitle = (t: string) => listTickets(db).find((x) => x.title === t)!;
-    expect(byTitle('urgent').priority).toBe('P1');
-    expect(byTitle('later').priority).toBe('P3');
-    expect(byTitle('unset').priority).toBeNull();
+    expect(byTitle('urgent').priority).toBeNull();
+    expect(byTitle('later').priority).toBeNull();
   });
 
-  it('approveRefine refine_in_place applies proposed priority; omitted leaves it unchanged', () => {
-    const a = createTicket(db, { title: 'a', status: 'backlog', priority: 'P4', projectId: pd });
-    seedProposal(db, a.id, { mode: 'refine_in_place', body: ROBOT_BODY, priority: 'P0' });
-    expect(approveRefine(db, a.id).ok).toBe(true);
-    expect(getTicket(db, a.id)!.priority).toBe('P0');
+  // A Populate child DOES get a priority — from its Epic, on insert, not from the proposal.
+  it('approveRefine Populate gives each member the Epic’s priority, not the proposed one', () => {
+    const epic = createTicket(db, {
+      title: 'umbrella',
+      status: 'backlog',
+      priority: 'P2',
+      isEpic: true,
+      projectId: pd,
+    });
+    seedProposal(db, epic.id, {
+      mode: 'decompose',
+      children: [{ title: 'member', body: ROBOT_BODY, status: 'backlog', assignee: 'robot', priority: 'P5' }],
+    } as unknown as RefineProposal);
+    expect(approveRefine(db, epic.id).ok).toBe(true);
+    const member = listTickets(db).find((x) => x.title === 'member')!;
+    expect(member.priority).toBe('P2');
+    expect(member.epicId).toBe(epic.id);
+  });
 
-    const b = createTicket(db, { title: 'b', status: 'backlog', priority: 'P4', projectId: pd });
-    seedProposal(db, b.id, { mode: 'refine_in_place', body: ROBOT_BODY });
-    expect(approveRefine(db, b.id).ok).toBe(true);
-    expect(getTicket(db, b.id)!.priority).toBe('P4'); // unchanged
+  // PD-510, the stronger form of D-057: a plain approve writes body/assignee and leaves the lane
+  // exactly where it was — including when the proposal names a lane the ticket has already left.
+  it('approveRefine never moves a Ticket between lanes on a plain approve', () => {
+    const queued = createTicket(db, { title: 'already queued', status: 'queue', projectId: pd });
+    seedProposal(db, queued.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' });
+    expect(approveRefine(db, queued.id).ok).toBe(true);
+    expect(getTicket(db, queued.id)!.status).toBe('queue'); // not pulled back out
+
+    const parked = createTicket(db, { title: 'in backlog', status: 'backlog', projectId: pd });
+    seedProposal(db, parked.id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'completed' });
+    expect(approveRefine(db, parked.id).ok).toBe(true);
+    expect(getTicket(db, parked.id)!.status).toBe('backlog'); // not completed on the agent's say-so
+  });
+
+  // The one exception, and it is Steve, not the agent: "Approve & queue".
+  it('approveRefine { queue: true } still dispatches — a human queueing is not the agent doing it', () => {
+    const t = createTicket(db, { title: 'ready', body: ROBOT_BODY, status: 'backlog', assignee: 'robot', projectId: pd });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: ROBOT_BODY });
+    const res = approveRefine(db, t.id, { queue: true });
+    expect(res.ok).toBe(true);
+    expect(getTicket(db, t.id)!.status).toBe('queue');
+  });
+
+  it('approveRefine creates a decompose child in backlog even when it proposed a terminal lane', () => {
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [{ title: 'born done', body: 'loose', status: 'completed', assignee: null }],
+    });
+    expect(approveRefine(db, parent.id).ok).toBe(true);
+    expect(listTickets(db).find((x) => x.title === 'born done')!.status).toBe('backlog');
   });
 
   it('approveRefine decompose parks an unshaped robot child in backlog (soft gate, D-057)', () => {

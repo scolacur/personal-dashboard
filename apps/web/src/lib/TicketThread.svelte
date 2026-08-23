@@ -198,11 +198,12 @@
             </div>
             {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
 
+            <!-- PD-510: only fields an approval actually writes are shown. Lane and priority used
+                 to be listed here and are no longer applied — a panel that displays a value the
+                 approve button then ignores is worse than one that omits it. -->
             {#if proposal.mode === 'refine_in_place'}
               <dl class="proposal-fields">
-                {#if proposal.status}<div><dt>Lane</dt><dd>{proposal.status}</dd></div>{/if}
                 {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
-                {#if proposal.priority !== undefined}<div><dt>Priority</dt><dd>{proposal.priority ?? '—'}</dd></div>{/if}
               </dl>
               {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
             {:else}
@@ -210,9 +211,11 @@
                 {#each proposal.children ?? [] as child, i (i)}
                   <li>
                     <div class="child-head">
-                      <span class="child-lane">{child.status}</span>
+                      <!-- Every child is created in backlog regardless of what was proposed
+                           (PD-510), so the lane is stated as a fact rather than read from the
+                           proposal. Priority is the Epic's and is not shown per-child. -->
+                      <span class="child-lane">backlog</span>
                       <span class="child-assignee">{child.assignee ?? '—'}</span>
-                      {#if child.priority}<span class="child-priority">{child.priority}</span>{/if}
                       <span class="child-title">{child.title}</span>
                     </div>
                     <pre class="proposal-body">{child.body}</pre>
