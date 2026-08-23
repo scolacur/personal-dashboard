@@ -1,0 +1,14 @@
+# DECISIONS.md is generated from DECISIONS/ (D-070, D-078) — never hand-edited. Every branch that
+# adds a decision regenerates it, and each one appends a line to the same short "Awaiting a number"
+# block, so two such branches collide on adjacent lines. Git calls that a conflict even though
+# nothing is actually in contention: both lines belong in the result.
+#
+# `merge=union` takes both sides instead of stopping. The result can come out mis-ordered or
+# duplicated, which is fine here and only here, because the index is *derived*: running
+# `npm run decisions:index` rewrites it from the files, and `decisions.spec.ts` fails verify if the
+# committed index differs from a fresh render. So a mangled union is caught before merge, and the
+# fix is one command — never a hand edit.
+#
+# Deliberately narrow: this is safe only for generated, line-oriented, append-only files. Do not
+# extend it to anything a human writes.
+DECISIONS.md merge=union
