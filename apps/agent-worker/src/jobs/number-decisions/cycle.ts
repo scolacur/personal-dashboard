@@ -249,11 +249,12 @@ export async function runNumberingCycle(
     const assignments = assignNumbers(loadDecisions(config.repoRoot), ordered);
     const result = applyAssignments(config.repoRoot, assignments);
 
-    // Regenerate the index over the post-rename tree. The inbox is empty now, so every entry lands
-    // in the numbered list and the "Awaiting a number" section disappears until the next author.
+    // Regenerate the committed index over the post-rename tree. The inbox is empty now, so every
+    // entry lands in the numbered list. This is the ONE place the committed index legitimately
+    // changes (PD-551) — authoring never touches it, so there is never a second writer.
     writeFileSync(
       path.join(config.repoRoot, DECISIONS_INDEX),
-      renderDecisionsIndex(loadDecisions(config.repoRoot), loadProvisionalDecisions(config.repoRoot)),
+      renderDecisionsIndex(loadDecisions(config.repoRoot)),
       'utf8',
     );
 

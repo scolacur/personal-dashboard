@@ -25,8 +25,13 @@ const repoRoot = findRepoRoot();
 
 const decisions = loadDecisions(repoRoot);
 const provisional = loadProvisionalDecisions(repoRoot);
-writeFileSync(path.join(repoRoot, DECISIONS_INDEX), renderDecisionsIndex(decisions, provisional), 'utf8');
+writeFileSync(path.join(repoRoot, DECISIONS_INDEX), renderDecisionsIndex(decisions), 'utf8');
 
 // No "next free id" any more: nobody allocates one at authoring time (D-078). Printing one here is
 // what would keep the obsolete habit alive — the numbering cycle is the only caller that needs it.
-console.log(`${DECISIONS_INDEX}: ${decisions.length} numbered, ${provisional.length} awaiting a number.`);
+// The provisional count is reported but NOT written: they are deliberately absent from the
+// committed file (PD-551). Saying so here stops the next reader thinking the write dropped them.
+console.log(
+  `${DECISIONS_INDEX}: ${decisions.length} numbered. ` +
+    `${provisional.length} awaiting a number in DECISIONS/incoming/ (not written to the index — injected at read time).`,
+);

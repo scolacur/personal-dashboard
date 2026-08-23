@@ -246,22 +246,28 @@ export function nextDecisionId(decisions: readonly Decision[]): string {
 }
 
 /**
- * Render `DECISIONS.md` — the human-facing rollup, and the block injected into agent context.
+ * Render `DECISIONS.md` — the **committed** index.
  *
  * Deliberately id + title + link and nothing else: every field here is a field that can drift
  * from the file it describes, and the titles in this log are already written as full sentences,
  * so the title *is* the one-line summary. There is no date column for the same reason — the
  * numbering is chronological, and `git log --diff-filter=A` has the real answer.
  *
- * `provisional` is a required parameter, not an optional one, because a caller that forgets it
- * renders an index in which a merged decision is *invisible* — and this index is what gets injected
- * into every agent's orientation (D-071) so settled decisions are not re-litigated. Silently
- * dropping the newest entries is the one failure mode worth making impossible to reach by accident.
+ * ## Numbered decisions only, and that is the point (PD-551)
+ *
+ * Provisional decisions are **not** in this file. They were, briefly, and it put the merge conflict
+ * straight back: every authoring PR regenerated the index and inserted a line into the same block,
+ * so two concurrent authors collided on a generated file — the exact failure D-070 removed and
+ * D-078 claimed to have retired.
+ *
+ * With them out, an authoring PR touches only its own uniquely-named file in `incoming/` and no
+ * shared file at all. The committed index changes only when the consolidation cycle numbers
+ * something, and only one cycle ever runs.
+ *
+ * Agents still see provisional decisions — see {@link renderInjectedIndex}, which is what actually
+ * reaches them. This function is what gets written to disk; that one is what gets read aloud.
  */
-export function renderDecisionsIndex(
-  decisions: readonly Decision[],
-  provisional: readonly ProvisionalDecision[],
-): string {
+export function renderDecisionsIndex(decisions: readonly Decision[]): string {
   const lines = [
     '# Decision Log',
     '',
@@ -269,30 +275,54 @@ export function renderDecisionsIndex(
     '',
     `**This file is generated — do not edit it by hand.** Each decision is its own file in \`${DECISIONS_DIR}/\`;`,
     `this is the index over them. To add one, write \`${INCOMING_DIR}/D-TMP-<TICKET><letter>.md\` — never a`,
-    '`D-NNN` file by hand — and run `npm run decisions:index`. Writing a file instead of appending here',
-    'is what lets two agents log two decisions without touching the same lines (D-070), and leaving the',
-    'number to the cycle is what stops them claiming the same one (D-078).',
+    '`D-NNN` file by hand — and cite it by that provisional id.',
+    '',
+    `**Decisions awaiting a number are NOT listed here.** They live in \`${INCOMING_DIR}/\` and are just as`,
+    'settled and binding; read that directory alongside this file. They are deliberately kept out so that',
+    'authoring one touches no shared file and two authors can never collide on this index (D-070, D-078,',
+    'PD-551). The consolidation cycle adds them here when it assigns their numbers.',
     '',
     'Newest first.',
     '',
     '---',
     '',
+    ...decisions.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`),
+    '',
   ];
-
-  if (provisional.length > 0) {
-    lines.push(
-      '## Awaiting a number',
-      '',
-      'Merged, settled, and binding — cite them as they are. Only the *identifier* is provisional:',
-      'the numbering cycle assigns each one a `D-NNN` and rewrites these citations (D-078).',
-      '',
-      ...provisional.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`),
-      '',
-      '---',
-      '',
-    );
-  }
-
-  lines.push(...decisions.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`), '');
   return lines.join('\n');
+}
+
+/**
+ * The `## Awaiting a number` block: merged, binding decisions that have not been numbered yet.
+ *
+ * Rendered on demand rather than committed, so it costs no shared file. Empty string when the inbox
+ * is empty, so a caller can concatenate unconditionally.
+ */
+export function renderProvisionalSection(provisional: readonly ProvisionalDecision[]): string {
+  if (provisional.length === 0) return '';
+  return [
+    '',
+    '## Awaiting a number',
+    '',
+    'Merged, settled, and binding — cite them as they are. Only the *identifier* is provisional:',
+    'the consolidation cycle assigns each one a `D-NNN` and rewrites these citations (D-078).',
+    '',
+    ...provisional.map((d) => `- **[${d.id}](${d.file})** — ${d.title}`),
+    '',
+  ].join('\n');
+}
+
+/**
+ * The index as an **agent** should see it (D-071): the committed file plus the provisional block.
+ *
+ * This is the function the orientation builder must call. A decision that merged an hour ago is
+ * binding, and an agent that cannot see it will re-litigate it — which is the failure item 3 of
+ * D-078 exists to prevent. Keeping the two renderers separate is what lets the committed file stay
+ * conflict-free without making merged decisions invisible.
+ */
+export function renderInjectedIndex(
+  decisions: readonly Decision[],
+  provisional: readonly ProvisionalDecision[],
+): string {
+  return renderDecisionsIndex(decisions) + renderProvisionalSection(provisional);
 }

@@ -79,12 +79,16 @@ dispatched, so anything built by hand must be `PATCH`ed to `completed` yourself.
 over them and must never be hand-edited — that edit is lost on the next regeneration.
 
 - If you are ever uncertain about why we are taking a certain design approach, skim the index in
-  `DECISIONS.md` and open the file that looks relevant. Entries listed under **Awaiting a number**
-  are just as settled and binding as the numbered ones — only their id is provisional.
+  `DECISIONS.md` and open the file that looks relevant. **`DECISIONS.md` lists numbered decisions
+  only** — the unnumbered ones are files in `DECISIONS/incoming/`, just as settled and binding, and
+  worth reading alongside it.
 - Whenever we make a significant architectural decision, **write it into the decision inbox** as
   `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` — e.g. `DECISIONS/incoming/D-TMP-PD513a.md`, first
   line `# D-TMP-PD513a: Title`. Use `b`, `c`, … if one ticket produces more than one. Cite it by
-  that provisional id everywhere. Then run `npm run decisions:index`.
+  that provisional id everywhere. **That one file is the whole change** — do not run
+  `npm run decisions:index` and do not touch `DECISIONS.md`: provisional decisions are deliberately
+  not listed there, so authoring collides with nobody (PD-551). Agents are still shown your decision
+  immediately; the index they read is composed at run time from `DECISIONS/incoming/`.
 - **Never write `DECISIONS/D-NNN-slug.md` by hand, and never pick a number** — not even in a solo
   session where you are sure nothing else is running. That check is exactly the hand-check this
   replaces, and it has been wrong here twice (D-056, D-065). A daily numbering cycle assigns the

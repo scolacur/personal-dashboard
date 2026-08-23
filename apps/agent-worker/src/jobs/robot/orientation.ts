@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { composeOrientation, orientationBlock } from '@dashboard/shared';
+import { loadProvisionalDecisions, renderProvisionalSection } from '../../shared/decisions';
+import { logger } from '../../shared/logger';
 
 /**
  * The Robot's orientation context (PD-306).
@@ -96,7 +98,20 @@ export function buildOrientation({ repoDir, now = new Date(), onMissing = () => 
 
   const decisionsIndex = path.join(repoDir, 'DECISIONS.md');
   if (existsSync(decisionsIndex)) {
-    parts.push(orientationBlock('DECISIONS.md', readFileSync(decisionsIndex, 'utf8').trim()));
+    // The committed file carries NUMBERED decisions only (PD-551) — provisional ones are kept out
+    // so that authoring one touches no shared file. They are still binding, so they are appended
+    // here, read live from `DECISIONS/incoming/`. An agent that cannot see a decision that merged
+    // an hour ago will re-litigate it, which is the whole reason the index is injected (D-071).
+    //
+    // Best-effort: a malformed inbox file must not cost the agent its entire decision index. The
+    // CI duplicate/parse test is what catches that, not a Robot's orientation.
+    let provisional = '';
+    try {
+      provisional = renderProvisionalSection(loadProvisionalDecisions(repoDir));
+    } catch (err) {
+      logger.warn({ err }, 'orientation: could not read the decision inbox — injecting numbered decisions only');
+    }
+    parts.push(orientationBlock('DECISIONS.md', (readFileSync(decisionsIndex, 'utf8').trim() + provisional).trim()));
   } else {
     onMissing('DECISIONS.md');
   }
