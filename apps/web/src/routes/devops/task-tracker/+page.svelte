@@ -15,6 +15,7 @@
   import TicketFormModal from './TicketFormModal.svelte';
   import LaneColumn from './LaneColumn.svelte';
   import EpicLane from './EpicLane.svelte';
+  import LaneHelp from './LaneHelp.svelte';
   import ArchiveEpicModal from './ArchiveEpicModal.svelte';
   import QueueBypassModal from './QueueBypassModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
@@ -965,6 +966,13 @@
       <div class="lane-head" style="grid-column: {i + 1}">
         <h2 class="column-head">
           {col.label}<span class="count">{tItems.length}</span>
+          <!-- PD-517: a lane's rules are invisible on the surface, and the header is where the
+               question gets asked. -->
+          <LaneHelp
+            status={col.status}
+            label={col.label}
+            alignEnd={i >= visibleColumns.length - 1}
+          />
         </h2>
       </div>
     {/each}
