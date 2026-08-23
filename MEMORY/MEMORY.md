@@ -10,4 +10,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-08-22](2026-08-22.md) — Two DJ tracklists entered, then the backup audit: 5 silent nights, `integrity_check` passes an empty DB → PD-550 shipped (#350); PD-540/541/552 filed.
 
+- [2026-08-23](2026-08-23.md) — The off-box restore proven byte-for-byte for the first time (PD-553); three lookalike `data/` dirs; a coincidence read as evidence; PD-317 closed.
+
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
