@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentTicket, TicketAssignee, TicketStatus } from '@dashboard/shared';
 import {
+  MEMBER_ASSIGNEES,
   MEMBER_LANE_CHOICES,
+  assigneeGlyph,
+  canEditMember,
   canSetMemberLane,
+  memberAssigneeHint,
   dispatchPositions,
   memberLockReason,
   membersReorderable,
@@ -48,6 +52,47 @@ describe('canSetMemberLane / memberLockReason', () => {
       expect(canSetMemberLane(m)).toBe(false);
       expect(memberLockReason(m)).toMatch(/read-only|reopen/i);
     }
+  });
+});
+
+describe('assignee on a member row (PD-532)', () => {
+  it('offers unassigned as a real choice, first', () => {
+    expect(MEMBER_ASSIGNEES).toEqual([null, 'steve', 'robot']);
+  });
+
+  // The whole point is that the member list and the board are scannable the same way, so the
+  // glyphs must match TicketCard's exactly.
+  it('uses the board’s glyphs, and a visible mark for unassigned', () => {
+    expect(assigneeGlyph('steve')).toBe('S');
+    expect(assigneeGlyph('robot')).toBe('🤖');
+    expect(assigneeGlyph(null)).toBe('—');
+    expect(assigneeGlyph(null)).not.toBe('');
+  });
+
+  // Assignee is the field that decides dispatch (`robotQueueCandidates` requires assignee=robot),
+  // so the hint has to distinguish queued-and-armed from queued-but-never-going-to-run.
+  it('says whether the member is actually a dispatch candidate', () => {
+    const armed = member({ id: 1, status: 'queue', assignee: 'robot' });
+    expect(memberAssigneeHint(armed)).toMatch(/candidate/i);
+
+    const notQueued = member({ id: 2, status: 'backlog', assignee: 'robot' });
+    expect(memberAssigneeHint(notQueued)).toMatch(/not queued/i);
+
+    const personal = member({ id: 3, status: 'queue', assignee: 'steve' });
+    expect(memberAssigneeHint(personal)).toMatch(/never dispatched/i);
+
+    const nobody = member({ id: 4, status: 'queue', assignee: null });
+    expect(memberAssigneeHint(nobody)).toMatch(/never dispatched/i);
+  });
+
+  // One predicate behind both controls, so a frozen row can never end up half-editable.
+  it('gates assignee and lane on the same rule', () => {
+    const live = member({ id: 5, status: 'backlog' });
+    expect(canEditMember(live)).toBe(canSetMemberLane(live));
+
+    const done = member({ id: 6, status: 'completed' });
+    expect(canEditMember(done)).toBe(false);
+    expect(canSetMemberLane(done)).toBe(false);
   });
 });
 

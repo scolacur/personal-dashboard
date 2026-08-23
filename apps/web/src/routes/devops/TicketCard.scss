@@ -1,3 +1,4 @@
+@use './assignee-pill';
 /* ── Card ──────────────────────────────────────── */
 .card {
   background: var(--bg);
@@ -244,48 +245,9 @@
 }
 
 // Assignee circle — in-place <select> on each card.
-.assignee-pill {
-  appearance: none;
-  -webkit-appearance: none;
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  text-align: center;
-  text-align-last: center;
-  line-height: 22px;
-  border-radius: 50%;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  padding: 0;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
+// `.assignee-pill` now lives in `_assignee-pill.scss`, shared with the Epic member list
+// (PD-532) so the two surfaces cannot drift apart.
 
-  &:hover:not(:disabled) {
-    filter: brightness(1.15);
-  }
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  &.assignee-steve {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-
-  &.assignee-robot {
-    color: var(--text);
-    border-color: var(--border);
-  }
-
-  &.assignee-none {
-    color: var(--muted);
-    border-style: dashed;
-  }
-}
 
 // Agent-state badge — mirrors .priority pill patterns. In Robot's Queue (D-040) it shows
 // the fine agent state: info (queued/in progress/in review), attention
