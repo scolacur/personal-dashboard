@@ -1,0 +1,96 @@
+// The `?` beside a lane header and its popover (PD-517). Tokens only — see PROJECT.md §5.
+
+.lane-help {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.lane-help-btn {
+  width: 1.05rem;
+  height: 1.05rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: help;
+
+  &:hover,
+  &:focus-visible,
+  &.pinned {
+    color: var(--fg);
+    border-color: var(--accent);
+  }
+}
+
+.lane-help-pop {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  left: 0;
+  z-index: 40;
+
+  &.align-end {
+    left: auto;
+    right: 0;
+  }
+  // The lane column is narrow; the popover is not bound by it.
+  width: max-content;
+  max-width: min(28rem, 80vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel, var(--bg));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 35%);
+  color: var(--fg);
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  line-height: 1.45;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+
+  // Hidden by default, revealed by hover/focus on the control or by pinning. `visibility` rather
+  // than `display` so the element stays in the accessibility tree for `aria-describedby`.
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+
+  &.pinned {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+// Reveal on hover of the whole control, and on keyboard focus of the button. `:focus-within`
+// covers focus moving into the popover itself.
+.lane-help:hover .lane-help-pop,
+.lane-help:focus-within .lane-help-pop {
+  opacity: 1;
+  visibility: visible;
+}
+
+.lane-help-summary {
+  font-weight: 600;
+}
+
+.lane-help-list {
+  margin: 0;
+  padding-left: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lane-help-foot {
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-xs);
+}
