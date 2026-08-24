@@ -41,14 +41,14 @@ describe('laneHelp', () => {
     expect(text).toContain('drag order');
   });
 
-  // D-TMP-PD383a: a Ticket is not queued on its own; its Epic is what moves.
+  // D-080: a Ticket is not queued on its own; its Epic is what moves.
   it('tells Backlog readers that the Epic is what gets queued', () => {
     const text = laneHelpText('backlog').toLowerCase();
     expect(text).toContain('epic');
     expect(text).toMatch(/not by being dragged|on its own/);
   });
 
-  // D-TMP-PD539a: terminal is final.
+  // D-083: terminal is final.
   it('says both terminal lanes are read-only and how to leave them', () => {
     for (const status of ['completed', 'closed'] as const) {
       expect(laneHelpText(status).toLowerCase()).toContain('read-only');

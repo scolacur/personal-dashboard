@@ -27,19 +27,19 @@ function makeTree(): string {
 
   writeFileSync(path.join(root, 'DECISIONS/D-079-x.md'), '# D-079: An existing decision\n\nbody\n');
   writeFileSync(
-    path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'),
-    '# D-TMP-PD383a: The Epic is the unit of dispatch\n\nSupersedes nothing. See D-TMP-PD513a.\n',
+    path.join(root, 'DECISIONS/incoming/D-080.md'),
+    '# D-080: The Epic is the unit of dispatch\n\nSupersedes nothing. See D-TMP-PD513a.\n',
   );
   writeFileSync(
     path.join(root, 'DECISIONS/incoming/D-TMP-PD513a.md'),
-    '# D-TMP-PD513a: A session writes to the memory inbox\n\nSee D-079 and D-TMP-PD383a.\n',
+    '# D-TMP-PD513a: A session writes to the memory inbox\n\nSee D-079 and D-080.\n',
   );
-  writeFileSync(path.join(root, 'PROJECT.md'), 'Priority is an Epic property (D-TMP-PD383a).\n');
-  writeFileSync(path.join(root, 'apps/server/src/store.ts'), '// D-TMP-PD383a: cascade on write\nexport const x = 1;\n');
+  writeFileSync(path.join(root, 'PROJECT.md'), 'Priority is an Epic property (D-080).\n');
+  writeFileSync(path.join(root, 'apps/server/src/store.ts'), '// D-080: cascade on write\nexport const x = 1;\n');
   writeFileSync(path.join(root, 'README.md'), 'No citations here.\n');
   // Traps: neither of these may be touched.
-  writeFileSync(path.join(root, 'node_modules/pkg/index.js'), '// D-TMP-PD383a\n');
-  writeFileSync(path.join(root, '.claude/worktrees/other-session/notes.md'), 'D-TMP-PD383a on another branch\n');
+  writeFileSync(path.join(root, 'node_modules/pkg/index.js'), '// D-080\n');
+  writeFileSync(path.join(root, '.claude/worktrees/other-session/notes.md'), 'D-080 on another branch\n');
   return root;
 }
 
@@ -72,7 +72,7 @@ describe('applyAssignments', () => {
 
   it('moves each decision out of the inbox to its numbered path', () => {
     const result = applyAssignments(root, assignments());
-    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'))).toBe(false);
+    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-080.md'))).toBe(false);
     expect(existsSync(path.join(root, 'DECISIONS/D-080-the-epic-is-the-unit-of-dispatch.md'))).toBe(true);
     expect(result.moved).toHaveLength(2);
   });
@@ -103,8 +103,8 @@ describe('applyAssignments', () => {
 
   it('leaves node_modules and other sessions’ worktrees untouched', () => {
     applyAssignments(root, assignments());
-    expect(readFileSync(path.join(root, 'node_modules/pkg/index.js'), 'utf8')).toContain('D-TMP-PD383a');
-    expect(readFileSync(path.join(root, '.claude/worktrees/other-session/notes.md'), 'utf8')).toContain('D-TMP-PD383a');
+    expect(readFileSync(path.join(root, 'node_modules/pkg/index.js'), 'utf8')).toContain('D-080');
+    expect(readFileSync(path.join(root, '.claude/worktrees/other-session/notes.md'), 'utf8')).toContain('D-080');
   });
 
   it('reports only the files it actually changed', () => {

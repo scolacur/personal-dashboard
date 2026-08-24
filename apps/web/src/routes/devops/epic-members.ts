@@ -2,9 +2,9 @@ import type { AgentTicket, TicketAssignee, TicketStatus } from '@dashboard/share
 import { isReadOnly, isTerminal } from './board-logic';
 
 /**
- * The Epic detail page's member list (PD-384, slice D of D-TMP-PD383a).
+ * The Epic detail page's member list (PD-384, slice D of D-080).
  *
- * The list is not decoration. Under D-TMP-PD383a a Ticket has no priority of its own, so a member's
+ * The list is not decoration. Under D-080 a Ticket has no priority of its own, so a member's
  * `sortOrder` **is** the order its Epic's work is dispatched in — it is the third key of
  * `robotQueueCandidates`' `ORDER BY epic.priority, epic.sortOrder, t.sortOrder, t.id`. Dragging a
  * row here is how order-of-operations is expressed now that `blocks` is reserved for true
@@ -19,7 +19,7 @@ import { isReadOnly, isTerminal } from './board-logic';
  * The lanes a member can be moved to from the Epic page, in menu order.
  *
  * Terminal lanes are deliberately absent. Entering `completed`/`closed` is not reversible from a
- * list row (D-TMP-PD539a: terminal is final, and leaving it is a deliberate Reopen on the ticket's
+ * list row (D-083: terminal is final, and leaving it is a deliberate Reopen on the ticket's
  * own detail page), and a one-click dropdown is exactly the "easy slip" that decision exists to
  * prevent. Completing a member stays a decision made on that member, where the Reopen affordance
  * that undoes it also lives.
@@ -29,7 +29,7 @@ export const MEMBER_LANE_CHOICES: readonly TicketStatus[] = ['backlog', 'queue']
 /**
  * Whether this member's lane may be changed from the Epic page.
  *
- * `isReadOnly` covers both halves already: a terminal member is frozen (D-TMP-PD539a) and a
+ * `isReadOnly` covers both halves already: a terminal member is frozen (D-083) and a
  * robot-completed one is status-locked (D-058). Stated as its own function so the row has one
  * thing to ask, and so the reason a row is inert is testable without rendering it.
  */

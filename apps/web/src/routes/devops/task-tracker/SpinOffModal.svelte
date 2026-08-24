@@ -6,7 +6,7 @@
   import type { SpinOffPlan } from '../epic-spinoff';
 
   /**
-   * Spin a Ticket out into its own Epic (D-TMP-PD383a slice C).
+   * Spin a Ticket out into its own Epic (D-080 slice C).
    *
    * The name is editable rather than auto-derived-and-done: the Epic ends up on a band you scan by
    * eye, and a wall of Epics named after single tickets is the failure mode this is one step away

@@ -1,9 +1,9 @@
 import type { AgentTicket, EpicDerivedLane, TicketStatus } from '@dashboard/shared';
 
 /**
- * Dragging an Epic between lanes (D-TMP-PD383a, PD-508 slice B).
+ * Dragging an Epic between lanes (D-080, PD-508 slice B).
  *
- * Under D-054 an Epic's lane was wholly derived and the Epic band was not a drop target. D-TMP-PD383a
+ * Under D-054 an Epic's lane was wholly derived and the Epic band was not a drop target. D-080
  * splits that by direction: the *pending* lanes are now driven by the Epic's own status, because
  * queueing the Epic is how work is dispatched, while `completed`/`closed` stay derived — those are
  * observations of what the loop actually did, and no top-down drag may assert them.
@@ -126,7 +126,7 @@ export function rollbackNeedsConfirm(plan: EpicRollbackPlan): boolean {
  *
  * The bump exists because a run cannot be stopped: rather than telling the human their Epic is
  * pinned to the Queue by one live ticket, the live ticket gets its own Epic and the rest of the
- * Epic goes back to Backlog. The Epic is the unit of dispatch (D-TMP-PD383a), so scheduling two
+ * Epic goes back to Backlog. The Epic is the unit of dispatch (D-080), so scheduling two
  * halves differently *requires* two Epics — the split is the model working, not a workaround.
  *
  * Preserves an existing `[Epic]` prefix rather than assuming one; board titles use it

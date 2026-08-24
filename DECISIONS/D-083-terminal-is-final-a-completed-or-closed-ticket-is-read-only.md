@@ -1,4 +1,4 @@
-# D-TMP-PD539a: Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
+# D-083: Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
 
 ## Decision
 
@@ -9,7 +9,7 @@ the ticket detail page, which returns it to `backlog`.
 Reopen is not a plain status write. It must:
 
 - **attach the Ticket to an Epic**, picking one if it has none — an Epic-less active Ticket is
-  unpriced and undispatchable by construction (D-TMP-PD383a), so reopening into that state would
+  unpriced and undispatchable by construction (D-080), so reopening into that state would
   create exactly the invisible dead end this decision exists to prevent;
 - **clear `agent_state`**, server-side, on any transition out of a terminal lane.
 

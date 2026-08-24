@@ -39,12 +39,12 @@
   }: {
     ticket: AgentTicket;
     project: AgentProject | undefined;
-    /** The Epic this ticket belongs to, for attributing its inherited priority (D-TMP-PD383a). */
+    /** The Epic this ticket belongs to, for attributing its inherited priority (D-080). */
     epic: AgentTicket | undefined;
     dragging: boolean;
     dropBefore: boolean;
     isLocked: boolean;
-    /** D-TMP-PD539a: terminal — the work is over, so nothing here may change it. */
+    /** D-083: terminal — the work is over, so nothing here may change it. */
     isFrozen?: boolean;
     badges: RelationBadges;
     onDragStart: (e: DragEvent) => void;
@@ -56,7 +56,7 @@
     onRefine: () => void;
     onRelationAction: (action: RelationAction) => void;
     onAddToEpic: () => void;
-    /** D-TMP-PD383a slice C: give this ticket its own Epic, inheriting priority + lane. */
+    /** D-080 slice C: give this ticket its own Epic, inheriting priority + lane. */
     onSpinOff: () => void;
     onOpenStatusLegend: (state: AgentState) => void;
     onUpdate: () => void;
@@ -112,7 +112,7 @@
     return '—';
   }
 
-  // D-TMP-PD383a: the Epic is the unit of priority, so a member's value is not independently
+  // D-080: the Epic is the unit of priority, so a member's value is not independently
   // settable — the server overrides any client-supplied one. Say where it came from instead of
   // offering a control that would silently not take.
   const priorityTitle = $derived.by(() => {
@@ -173,7 +173,7 @@
           <GithubMark size={14} />
         </a>
       {/if}
-      <!-- D-TMP-PD383a: priority belongs to the Epic. A member displays what it inherited and says
+      <!-- D-080: priority belongs to the Epic. A member displays what it inherited and says
            where that came from; changing it means re-prioritising the Epic. -->
       <span class="priority priority-{bandKey(ticket.priority)} readonly" title={priorityTitle}>
         {ticket.priority ?? '—'}
