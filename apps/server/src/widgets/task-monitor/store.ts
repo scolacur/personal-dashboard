@@ -3,6 +3,7 @@ import type {
   AgentNotification,
   AgentProject,
   AgentState,
+  NeedsHumanTicket,
   AgentTicket,
   CreateProjectInput,
   CreateTicketInput,
@@ -1604,6 +1605,29 @@ export function getSortieFleet(db: Database.Database): Partial<Record<AgentState
   const out: Partial<Record<AgentState, number>> = {};
   for (const r of rows) out[r.state as AgentState] = r.n;
   return out;
+}
+
+/**
+ * The tickets parked waiting on a human — stuck, needs-human, awaiting-human (PD-498).
+ *
+ * Identities, not a count, because the nav's "N needs you" is only useful if it goes somewhere. A
+ * count alone forces the reader to the board and then to hunt for which ticket it meant, which is
+ * the trip the number was supposed to save them.
+ *
+ * Capped: this rides on a 30s poll and the nav can only act on one link. Past a handful the right
+ * destination is the board anyway, so there is nothing to gain from carrying fifty rows.
+ */
+export function getNeedsHumanTickets(db: Database.Database, limit = 10): NeedsHumanTicket[] {
+  return db
+    .prepare(
+      `SELECT id, display_id AS displayId, title, agent_state AS agentState
+         FROM agent_tickets
+        WHERE archived_at IS NULL
+          AND agent_state IN ('stuck', 'needs-human', 'awaiting-human')
+        ORDER BY updated_at DESC
+        LIMIT ?`,
+    )
+    .all(limit) as NeedsHumanTicket[];
 }
 
 /** The Robot loop's global dispatch-pause flag (C2/PD-343), read from the worker-owned

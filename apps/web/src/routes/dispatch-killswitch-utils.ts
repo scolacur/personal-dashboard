@@ -73,6 +73,19 @@ export function formatClockTime(ms: number): string {
  * Derive what the nav should show. `now` is passed in (not read from the clock) so an expiring
  * hold is evaluated against the same tick the caller renders with, and so this stays testable.
  */
+/**
+ * The pause reason, as something worth reading in a nav.
+ *
+ * The loop stores `paused by human (nav killswitch)` so a later reader of `robot_state` knows which
+ * surface did it. That provenance matters in the record and is noise in the header — the person
+ * reading the nav is the person who clicked it. Anything the loop raised on itself is passed
+ * through verbatim, because that text is the whole content of the warning.
+ */
+export function pauseReasonLabel(reason: string | null): string {
+  if (reason === null) return 'Manual pause';
+  return /paused by human/i.test(reason) ? 'Manual pause' : reason;
+}
+
 export function describeDispatch(status: SystemStatus | null, now: number): DispatchView | null {
   if (!status) return null;
 
@@ -90,7 +103,7 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
     return {
       mode: 'paused',
       label: 'Dispatch paused',
-      detail: status.dispatch.reason ?? 'paused by human',
+      detail: pauseReasonLabel(status.dispatch.reason),
       action: 'resume',
       // A maintenance hold blocks a resume every bit as much as a provider hold does: clearing the
       // pause is correct but will not re-arm dispatch until the window closes, and the UI must not
@@ -155,6 +168,55 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
  * "Paused" collapses three states with three different remedies. These four each correspond to a
  * real state, so a number here can always be traced to specific tickets.
  */
+/** One row of the fleet box: a count, what it is called, and where it goes. */
+export interface FleetRow {
+  key: 'working' | 'queued' | 'inReview' | 'needsYou';
+  label: string;
+  count: number;
+  /** Where clicking it goes, or null when there is nothing worth navigating to. */
+  href: string | null;
+}
+
+/**
+ * The fleet box, as rows rather than a bag of numbers.
+ *
+ * Built here rather than in markup so the destination of each row is testable — "N needs you" that
+ * lands on an unfiltered board is the bug this exists to fix, and a template cannot be asserted on.
+ *
+ * `needsHuman` carries identities, so with exactly ONE parked ticket the row links to that ticket.
+ * With several there is no single right answer and the board is the honest destination.
+ */
+export function fleetRows(status: SystemStatus | null): FleetRow[] {
+  const c = fleetCounts(status);
+  const parked = status?.needsHuman ?? [];
+  return [
+    { key: 'working', label: 'working', count: c.working, href: c.working > 0 ? '/devops/task-tracker' : null },
+    { key: 'queued', label: 'queued', count: c.queued, href: c.queued > 0 ? '/devops/task-tracker' : null },
+    { key: 'inReview', label: 'in review', count: c.inReview, href: c.inReview > 0 ? '/devops/task-tracker' : null },
+    {
+      key: 'needsYou',
+      label: 'needs you',
+      count: c.needsYou,
+      href: needsYouHref(parked, c.needsYou),
+    },
+  ];
+}
+
+/**
+ * Where "needs you" should go.
+ *
+ * One parked ticket → that ticket's detail page, which is where you can actually answer it. More
+ * than one → the board, because picking one of several would be arbitrary. None → nowhere.
+ *
+ * Guards on the COUNT as well as the list because the list is capped: if the cap ever sits below
+ * the real number, a single carried row must not masquerade as "the only one".
+ */
+export function needsYouHref(parked: SystemStatus['needsHuman'], count: number): string | null {
+  if (count <= 0) return null;
+  if (count === 1 && parked.length === 1) return `/devops/tickets/${parked[0].id}`;
+  return '/devops/task-tracker';
+}
+
 export interface FleetCounts {
   /** Live runs right now — the number that answers "is anything actually happening". */
   working: number;

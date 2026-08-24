@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemStatus } from '@dashboard/shared';
-import { HOLD_LABELS, countdownLabel, describeDispatch, fleetCounts } from './dispatch-killswitch-utils';
+import {
+  HOLD_LABELS,
+  countdownLabel,
+  describeDispatch,
+  fleetCounts,
+  fleetRows,
+  needsYouHref,
+  pauseReasonLabel,
+} from './dispatch-killswitch-utils';
 
 const NOW = 1_000_000;
 
@@ -13,6 +21,7 @@ function status(over: Partial<SystemStatus> = {}): SystemStatus {
     budget: null,
     githubRateLimit: null,
     maintenanceHold: null,
+    needsHuman: [],
     ...over,
   };
 }
@@ -42,7 +51,7 @@ describe('describeDispatch', () => {
 
   it('falls back to a reason when the pause recorded none', () => {
     const s = status({ dispatch: { paused: true, reason: null, since: 500 } });
-    expect(describeDispatch(s, NOW)?.detail).toBe('paused by human');
+    expect(describeDispatch(s, NOW)?.detail).toBe('Manual pause');
   });
 
   // The point of the three-mode split. A session-limit hold stops dispatch, but `robot.ts` gates on
@@ -251,5 +260,76 @@ describe('countdownLabel', () => {
 
   it('is null when there is nothing to count down to', () => {
     expect(countdownLabel(null, NOW)).toBeNull();
+  });
+});
+
+describe('pauseReasonLabel', () => {
+  it('shortens the loop’s own provenance string', () => {
+    // `robot_state` records WHICH surface paused it, which matters in the record and is noise in a
+    // header read by the person who clicked the switch.
+    expect(pauseReasonLabel('paused by human (nav killswitch)')).toBe('Manual pause');
+  });
+
+  it('passes a fault through verbatim — that text IS the warning', () => {
+    expect(pauseReasonLabel('auth/credit fault (loop-wide): HTTP 401 Unauthorized')).toBe(
+      'auth/credit fault (loop-wide): HTTP 401 Unauthorized',
+    );
+  });
+
+  it('still says something when the pause recorded no reason', () => {
+    expect(pauseReasonLabel(null)).toBe('Manual pause');
+  });
+});
+
+describe('needsYouHref', () => {
+  const t = (id: number) => ({ id, displayId: `PD-${id}`, title: 't', agentState: 'stuck' as const });
+
+  it('goes to the ticket itself when exactly one is parked', () => {
+    // The complaint this fixes: the count sent you to the board and left you to find which ticket
+    // it meant — the exact trip the number was supposed to save.
+    expect(needsYouHref([t(42)], 1)).toBe('/devops/tickets/42');
+  });
+
+  it('falls back to the board when several are parked', () => {
+    expect(needsYouHref([t(1), t(2)], 2)).toBe('/devops/task-tracker');
+  });
+
+  it('goes nowhere when nothing is parked', () => {
+    expect(needsYouHref([], 0)).toBeNull();
+  });
+
+  // The carried list is capped. If the cap ever sits below the real count, one carried row must not
+  // masquerade as "the only one" and send the reader to a ticket that is not the whole story.
+  it('does not treat one carried row as the only one when the count disagrees', () => {
+    expect(needsYouHref([t(7)], 5)).toBe('/devops/task-tracker');
+  });
+});
+
+describe('fleetRows', () => {
+  it('returns the four states in a fixed order', () => {
+    expect(fleetRows(status()).map((r) => r.key)).toEqual(['working', 'queued', 'inReview', 'needsYou']);
+  });
+
+  it('carries the counts through', () => {
+    const rows = fleetRows(status({ sortie: { working: 2, queued: 5, 'in-review': 1, stuck: 3 } }));
+    expect(rows.map((r) => r.count)).toEqual([2, 5, 1, 3]);
+  });
+
+  it('gives a zero row no destination — there is nothing to look at', () => {
+    expect(fleetRows(status()).every((r) => r.href === null)).toBe(true);
+  });
+
+  it('links "needs you" at the ticket when one is parked', () => {
+    const rows = fleetRows(
+      status({
+        sortie: { stuck: 1 },
+        needsHuman: [{ id: 99, displayId: 'PD-99', title: 't', agentState: 'stuck' }],
+      }),
+    );
+    expect(rows.find((r) => r.key === 'needsYou')?.href).toBe('/devops/tickets/99');
+  });
+
+  it('is all zeroes and no links before the first poll', () => {
+    expect(fleetRows(null).every((r) => r.count === 0 && r.href === null)).toBe(true);
   });
 });

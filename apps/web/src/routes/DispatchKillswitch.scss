@@ -1,46 +1,110 @@
-// The nav killswitch (PD-410). Styled for its one consumer, the Dev Ops top nav, like
-// DeployStatus beside it: no trailing margin, no wrapping.
+// The nav killswitch (PD-410, redesigned PD-498). Styled for its one consumer, the Dev Ops top nav,
+// like DeployStatus beside it: no trailing margin, no wrapping.
 //
-// The visual weight is deliberately asymmetric. `running` is quiet — it is the normal state and
-// must not compete with the page. `paused` is loud, because the whole ticket exists to stop a
-// stopped loop from looking like an idle one. `holding` sits between: it is worth seeing, but it
-// resolves itself and is not something to act on.
+// **The tinted red panel is gone.** It was there to stop a paused loop looking like an idle one —
+// still the point — but a switch reading "Loop Off" in red says that by itself, and the panel was
+// shouting it a second time while shoving the rest of the nav sideways.
 .killswitch {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space-md);
   font-size: var(--font-size-sm);
   flex-wrap: nowrap;
   white-space: nowrap;
-  padding: 0.15rem var(--space-sm);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
 }
 
-.ks-state {
+/* ── The toggle ────────────────────────────────────────────────────────────
+   A real switch, not a label plus a Pause button. The old pairing made you read the state and the
+   verb and work out that they were opposites; a switch shows the state and offers the change in
+   one object. */
+.ks-loop {
   display: flex;
-  align-items: center;
-  gap: 0.35rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
   min-width: 0;
 }
 
-.dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
+.ks-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+
+  &:disabled {
+    cursor: default;
+  }
+}
+
+.ks-toggle-label {
+  color: var(--text-dim);
+}
+
+.ks-track {
+  position: relative;
+  width: 1.9rem;
+  height: 1rem;
+  border-radius: 999px;
+  // Red by default: `Off` is the state that needs to be loud, so it is the one that is not opt-in.
+  background: var(--status-stuck);
+  transition: background 120ms ease;
   flex-shrink: 0;
-  background: var(--muted);
 }
 
-.ks-label {
-  font-weight: 500;
-  color: var(--muted);
+.ks-thumb {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--bg);
+  transition: transform 120ms ease;
 }
 
-// Inherits the label's colour rather than the link colour: it sits inside a status readout, and a
-// blue word among grey ones reads as a different KIND of thing rather than as the same thing,
-// clickable. The underline on hover is what advertises it.
-.ks-label--link {
+.ks-toggle-state {
+  font-weight: 600;
+  color: var(--status-stuck);
+  min-width: 2ch; // reserve both words so the nav does not shift as it flips
+}
+
+.ks-toggle--on {
+  .ks-track {
+    background: var(--status-done);
+  }
+
+  .ks-thumb {
+    transform: translateX(0.9rem);
+  }
+
+  .ks-toggle-state {
+    color: var(--status-done);
+  }
+}
+
+/* A hold is not something a human turns off, so the switch is inert — but it must not look
+   broken, and it must not look like the loop was switched off by hand. */
+.ks-toggle:disabled .ks-track {
+  opacity: 0.55;
+}
+
+/* ── The line under the toggle: WHY the loop is in this state ────────────── */
+.ks-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: var(--font-size-xs);
+  color: var(--text-dim);
+  max-width: 34ch;
+  overflow: hidden;
+}
+
+.ks-reason-link {
   color: inherit;
   text-decoration: none;
 
@@ -51,8 +115,6 @@
 }
 
 .ks-detail {
-  color: var(--muted);
-  max-width: 32ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -63,138 +125,99 @@
   font-size: var(--font-size-xs);
 }
 
-.ks-btn {
-  background: none;
+/* Monospace so the digits do not jitter as the countdown ticks once a second. */
+.ks-countdown {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--status-warn);
+}
+
+/* ── The fleet box ─────────────────────────────────────────────────────────
+   Stacked and boxed, because these four are ONE reading — what the fleet is doing right now — and
+   strung along the nav they read as four unrelated facts. Each state gets its own colour so the
+   number you are looking for is found by hue rather than by reading all four labels. */
+.ks-fleet {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0 0.4rem;
+  align-items: baseline;
+  padding: 0.25rem var(--space-sm);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  color: var(--text);
   font-size: var(--font-size-xs);
-  padding: 0.1rem var(--space-sm);
-  cursor: pointer;
-
-  &:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  &:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
+  line-height: 1.35;
 }
 
-// ── Running: quiet. A green dot and nothing else competing for attention. ──
-.mode-running {
-  .dot {
-    background: var(--status-done);
-  }
+.ks-row {
+  display: contents;
+  color: var(--text-dim);
+  text-decoration: none;
 }
 
-// ── Paused: unmistakable. Tinted panel, red border, the label in full colour. ──
-.mode-paused {
-  border-color: var(--status-stuck);
-  background: color-mix(in srgb, var(--status-stuck) 12%, transparent);
-
-  .dot {
-    background: var(--status-stuck);
-  }
-
-  .ks-label {
-    color: var(--status-stuck);
-    font-weight: 600;
-  }
-
-  .ks-btn {
-    border-color: var(--status-stuck);
-    color: var(--status-stuck);
-
-    &:hover:not(:disabled) {
-      background: var(--status-stuck);
-      color: var(--bg);
-      border-color: var(--status-stuck);
-    }
-  }
+.ks-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
-// ── Holding: visible, not alarming. It ends on its own. ──
-.mode-holding {
-  border-color: color-mix(in srgb, var(--status-warn) 50%, transparent);
+a.ks-row:hover .ks-row-label,
+a.ks-row:focus-visible .ks-row-label {
+  text-decoration: underline;
+}
 
-  .dot {
-    background: var(--status-warn);
-  }
+.ks-row--working .ks-count {
+  color: var(--status-done);
+}
 
-  .ks-label {
-    color: var(--status-warn);
+.ks-row--queued .ks-count {
+  color: var(--accent);
+}
+
+.ks-row--inReview .ks-count {
+  color: var(--status-warn);
+}
+
+.ks-row--needsYou .ks-count {
+  color: var(--status-stuck);
+}
+
+/* Zero is context, not news — dim the whole row so a non-zero one is what the eye lands on. */
+.ks-row--zero {
+  opacity: 0.4;
+
+  .ks-count {
+    color: var(--text-dim);
   }
 }
 
 /* ── Narrow viewports ──────────────────────────────────────────────────────
-   Shed detail as the nav tightens, but NEVER the paused state itself — the whole point is that
-   it is always visible. The label and the button survive at every width. */
+   Shed detail as the nav tightens, but NEVER the toggle — the whole point is that a stopped loop
+   is always visible. */
 
 @media (max-width: 1100px) {
   .ks-note {
     display: none;
   }
 
-  .ks-detail {
+  .ks-reason {
     max-width: 18ch;
   }
 }
 
-@media (max-width: 768px) {
-  .ks-detail {
+@media (max-width: 940px) {
+  // The box is the first thing to go: it is the largest and the least urgent.
+  .ks-fleet {
     display: none;
   }
+}
 
-  // Running is the quiet default and the least worth nav space when it is scarce; a paused or
-  // holding loop keeps its label.
-  .mode-running .ks-label {
+@media (max-width: 768px) {
+  .ks-reason {
     display: none;
   }
 
   .killswitch {
-    gap: var(--space-xs);
+    gap: var(--space-sm);
     font-size: var(--font-size-xs);
-  }
-}
-
-/* Fleet breakdown (PD-498). The label says whether the loop is armed; these say what it is doing. */
-.ks-counts {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-sm);
-  font-size: var(--font-size-xs);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.ks-count--live {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.ks-count--attention {
-  color: var(--status-warn);
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-/* Monospace so the digits do not jitter as the countdown ticks. */
-.ks-countdown {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-xs);
-  color: var(--status-warn);
-}
-
-/* The nav is tight on phones; the counts are the first thing to go. */
-@media (max-width: 860px) {
-  .ks-counts {
-    display: none;
   }
 }
