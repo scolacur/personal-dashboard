@@ -15,8 +15,8 @@ function numbered(num: number): Decision {
 }
 
 function prov(ticketNum: number, title: string, letter = 'a'): ProvisionalDecision {
-  const id = `D-TMP-PD${ticketNum}${letter}`;
-  return { id, ticketPrefix: 'PD', ticketNum, letter, title, file: `DECISIONS/incoming/${id}.md` };
+  const id = `D-TMP-EG${ticketNum}${letter}`;
+  return { id, ticketPrefix: 'EG', ticketNum, letter, title, file: `DECISIONS/incoming/${id}.md` };
 }
 
 describe('slugify', () => {
@@ -85,12 +85,12 @@ describe('rewriteCitations', () => {
   const assignments = assignNumbers([numbered(79)], [prov(383, 'Epic dispatch'), prov(513, 'Memory inbox')]);
 
   it('rewrites a citation wherever it appears', () => {
-    const before = 'See D-TMP-PD383a for the model, and D-TMP-PD513a for memory.';
+    const before = 'See D-TMP-EG383a for the model, and D-TMP-EG513a for memory.';
     expect(rewriteCitations(before, assignments)).toBe('See D-080 for the model, and D-081 for memory.');
   });
 
   it('rewrites inside prose, code comments, and links alike', () => {
-    expect(rewriteCitations('[D-TMP-PD383a](DECISIONS/incoming/D-TMP-PD383a.md)', assignments)).toBe(
+    expect(rewriteCitations('[D-TMP-EG383a](DECISIONS/incoming/D-TMP-EG383a.md)', assignments)).toBe(
       '[D-080](DECISIONS/incoming/D-080.md)',
     );
   });
@@ -101,15 +101,15 @@ describe('rewriteCitations', () => {
   });
 
   it('does not let one id match inside a longer one', () => {
-    // `D-TMP-PD38a` is a prefix of `D-TMP-PD383a` in plain string terms. Without a boundary the
+    // `D-TMP-EG38a` is a prefix of `D-TMP-EG383a` in plain string terms. Without a boundary the
     // shorter id's rewrite would corrupt the longer one.
     const two = assignNumbers([numbered(79)], [prov(38, 'Short'), prov(383, 'Long')]);
-    expect(rewriteCitations('D-TMP-PD383a', two)).toBe('D-081');
-    expect(rewriteCitations('D-TMP-PD38a', two)).toBe('D-080');
+    expect(rewriteCitations('D-TMP-EG383a', two)).toBe('D-081');
+    expect(rewriteCitations('D-TMP-EG38a', two)).toBe('D-080');
   });
 
   it('leaves an unassigned provisional id alone rather than guessing', () => {
-    const before = 'D-TMP-PD999z was never in the inbox.';
+    const before = 'D-TMP-EG999z was never in the inbox.';
     expect(rewriteCitations(before, assignments)).toBe(before);
   });
 
@@ -121,8 +121,23 @@ describe('rewriteCitations', () => {
 describe('danglingIds', () => {
   const assignments = assignNumbers([numbered(79)], [prov(383, 'Epic dispatch')]);
 
+  // A dangling id must be OUTSIDE the example namespace to be a finding at all, so this fixture
+  // cannot use `EG`. It is assembled rather than written as one literal because a real-looking
+  // `D-TMP-` id sitting in this file would itself be reported dangling by the live cycle — which is
+  // precisely the noise PD-548 removes.
+  const TYPO = `D-TMP-${'PD'}777q`;
+
   it('reports a citation with no decision behind it', () => {
-    expect(danglingIds('cites D-TMP-PD383a and D-TMP-PD999z', assignments)).toEqual(['D-TMP-PD999z']);
+    expect(danglingIds(`cites D-TMP-EG383a and ${TYPO}`, assignments)).toEqual([TYPO]);
+  });
+
+  it('stays quiet about reserved example ids — they are dangling BY DESIGN (PD-548)', () => {
+    // The first live run reported 100% false positives: every id it flagged was a doc example.
+    expect(danglingIds('see D-TMP-EG513a and D-TMP-EG999z for the format', assignments)).toEqual([]);
+  });
+
+  it('still reports a real typo sitting next to an example', () => {
+    expect(danglingIds(`D-TMP-EG513a is fine, ${TYPO} is not`, assignments)).toEqual([TYPO]);
   });
 
   it('deduplicates and sorts', () => {
@@ -130,7 +145,7 @@ describe('danglingIds', () => {
   });
 
   it('is empty when every citation is covered', () => {
-    expect(danglingIds('only D-TMP-PD383a here', assignments)).toEqual([]);
+    expect(danglingIds('only D-TMP-EG383a here', assignments)).toEqual([]);
   });
 });
 
@@ -138,19 +153,19 @@ describe('renumberHeading', () => {
   const [assignment] = assignNumbers([numbered(79)], [prov(383, 'The Epic is the unit of dispatch')]);
 
   it('replaces the id and carries the title across verbatim', () => {
-    const before = '# D-TMP-PD383a: The Epic is the unit of dispatch\n\n**Decision:** ...\n';
+    const before = '# D-TMP-EG383a: The Epic is the unit of dispatch\n\n**Decision:** ...\n';
     expect(renumberHeading(before, assignment)).toBe('# D-080: The Epic is the unit of dispatch\n\n**Decision:** ...\n');
   });
 
   it('leaves the body untouched, including later D-TMP- citations', () => {
     // The body is rewritten by rewriteCitations, not here — this function owns line 1 only.
-    const before = '# D-TMP-PD383a: T\n\nsee D-TMP-PD383a below\n';
-    expect(renumberHeading(before, assignment)).toContain('see D-TMP-PD383a below');
+    const before = '# D-TMP-EG383a: T\n\nsee D-TMP-EG383a below\n';
+    expect(renumberHeading(before, assignment)).toContain('see D-TMP-EG383a below');
   });
 
   it('produces a heading whose id agrees with the assigned filename', () => {
     // loadDecisions throws when these disagree, so this pairing is the actual contract.
-    const out = renumberHeading('# D-TMP-PD383a: T\n', assignment);
+    const out = renumberHeading('# D-TMP-EG383a: T\n', assignment);
     expect(out.split('\n')[0]).toBe(`# ${assignment.id}: The Epic is the unit of dispatch`);
     expect(assignment.file).toContain(assignment.id);
   });

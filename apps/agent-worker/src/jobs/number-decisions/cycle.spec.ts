@@ -89,27 +89,27 @@ function harness(
 
 describe('inMergeOrder', () => {
   function prov(id: string): ProvisionalDecision {
-    return { id, ticketPrefix: 'PD', ticketNum: 1, letter: 'a', title: 't', file: `DECISIONS/incoming/${id}.md` };
+    return { id, ticketPrefix: 'EG', ticketNum: 1, letter: 'a', title: 't', file: `DECISIONS/incoming/${id}.md` };
   }
 
   it('orders by the commit that ADDED each file, not by filename', () => {
     // PD-600 was authored first, so it must take the lower number even though 383 sorts first.
-    const h = harness({ addTimes: { 'D-TMP-PD600a': 100, 'D-TMP-PD383a': 200 } });
-    return inMergeOrder([prov('D-TMP-PD383a'), prov('D-TMP-PD600a')], h.deps, '/x').then((out) => {
-      expect(out.map((d) => d.id)).toEqual(['D-TMP-PD600a', 'D-TMP-PD383a']);
+    const h = harness({ addTimes: { 'D-TMP-EG600a': 100, 'D-TMP-EG383a': 200 } });
+    return inMergeOrder([prov('D-TMP-EG383a'), prov('D-TMP-EG600a')], h.deps, '/x').then((out) => {
+      expect(out.map((d) => d.id)).toEqual(['D-TMP-EG600a', 'D-TMP-EG383a']);
     });
   });
 
   it('sorts an undatable file last — it is almost always one added just now', async () => {
-    const h = harness({ addTimes: { 'D-TMP-PD383a': 200 } });
-    const out = await inMergeOrder([prov('D-TMP-PD999a'), prov('D-TMP-PD383a')], h.deps, '/x');
-    expect(out.map((d) => d.id)).toEqual(['D-TMP-PD383a', 'D-TMP-PD999a']);
+    const h = harness({ addTimes: { 'D-TMP-EG383a': 200 } });
+    const out = await inMergeOrder([prov('D-TMP-EG999a'), prov('D-TMP-EG383a')], h.deps, '/x');
+    expect(out.map((d) => d.id)).toEqual(['D-TMP-EG383a', 'D-TMP-EG999a']);
   });
 
   it('breaks a tie on id, so two decisions in one commit get a stable order', async () => {
-    const h = harness({ addTimes: { 'D-TMP-PD5b': 100, 'D-TMP-PD5a': 100 } });
-    const out = await inMergeOrder([prov('D-TMP-PD5b'), prov('D-TMP-PD5a')], h.deps, '/x');
-    expect(out.map((d) => d.id)).toEqual(['D-TMP-PD5a', 'D-TMP-PD5b']);
+    const h = harness({ addTimes: { 'D-TMP-EG5b': 100, 'D-TMP-EG5a': 100 } });
+    const out = await inMergeOrder([prov('D-TMP-EG5b'), prov('D-TMP-EG5a')], h.deps, '/x');
+    expect(out.map((d) => d.id)).toEqual(['D-TMP-EG5a', 'D-TMP-EG5b']);
   });
 });
 
@@ -133,13 +133,13 @@ describe('runNumberingCycle', () => {
   });
 
   it('numbers, moves, rewrites, opens a PR and admin-merges on green', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'Epic dispatch' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'Epic dispatch' }]);
     const h = harness({ ci: 'pass' });
     const outcome = await runNumberingCycle(db, config(root), h.deps);
 
     expect(outcome.status).toBe('merged');
     expect(existsSync(path.join(root, 'DECISIONS/D-080-epic-dispatch.md'))).toBe(true);
-    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'))).toBe(false);
+    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-EG383a.md'))).toBe(false);
 
     const merge = h.calls.find((c) => c.cmd === 'gh' && c.args[1] === 'merge');
     expect(merge?.args).toContain('--admin');
@@ -147,7 +147,7 @@ describe('runNumberingCycle', () => {
   });
 
   it('regenerates the index so the numbered decision is listed and the inbox section is gone', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'Epic dispatch' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'Epic dispatch' }]);
     await runNumberingCycle(db, config(root), harness().deps);
     const index = readFileSync(path.join(root, 'DECISIONS.md'), 'utf8');
     expect(index).toContain('- **[D-080](DECISIONS/D-080-epic-dispatch.md)** — Epic dispatch');
@@ -157,20 +157,20 @@ describe('runNumberingCycle', () => {
   it('refuses to rewrite when a run is somehow live inside the hold', async () => {
     // The coordinator drains before opening the window, so this should never fire. It is the
     // belt-and-braces guard: rewriting under a live Robot puts the conflict on THAT Robot's PR.
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness({ inFlight: 2 });
     const outcome = await runNumberingCycle(db, config(root), h.deps);
 
     expect(outcome).toEqual({ status: 'runs-in-flight', inFlight: 2 });
     // Nothing was touched: the decision is still in the inbox and no PR was opened.
-    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-PD383a.md'))).toBe(true);
+    expect(existsSync(path.join(root, 'DECISIONS/incoming/D-TMP-EG383a.md'))).toBe(true);
     expect(h.calls.some((c) => c.cmd === 'gh')).toBe(false);
     const n = db.prepare('SELECT title FROM agent_notifications').get() as { title: string };
     expect(n.title).toContain('in flight inside the hold');
   });
 
   it('leaves the PR open and notifies on a red verify — never merges red', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness({ ci: 'fail' });
     const outcome = await runNumberingCycle(db, config(root), h.deps);
 
@@ -181,7 +181,7 @@ describe('runNumberingCycle', () => {
   });
 
   it('gives up on CI that never finishes, leaving the PR open', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness({ ci: 'pending' });
     const outcome = await runNumberingCycle(db, config(root, { ciTimeoutMs: 5_000 }), h.deps);
 
@@ -192,7 +192,7 @@ describe('runNumberingCycle', () => {
   it('propagates a failure rather than swallowing it — the caller owns the hold', async () => {
     // Releasing the hold moved to the coordinator, which does it in a finally. This job's job is to
     // fail loudly so the run row records an error.
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     const boom: CycleDeps = {
       ...h.deps,
@@ -207,10 +207,10 @@ describe('runNumberingCycle', () => {
 
   it('numbers several decisions in merge order, in one PR', async () => {
     const root = makeRepo([
-      { id: 'D-TMP-PD383a', title: 'Second' },
-      { id: 'D-TMP-PD600a', title: 'First' },
+      { id: 'D-TMP-EG383a', title: 'Second' },
+      { id: 'D-TMP-EG600a', title: 'First' },
     ]);
-    const h = harness({ addTimes: { 'D-TMP-PD600a': 100, 'D-TMP-PD383a': 200 } });
+    const h = harness({ addTimes: { 'D-TMP-EG600a': 100, 'D-TMP-EG383a': 200 } });
     const outcome = await runNumberingCycle(db, config(root), h.deps);
 
     expect(outcome.status).toBe('merged');
@@ -220,12 +220,14 @@ describe('runNumberingCycle', () => {
   });
 
   it('reports a dangling citation without blocking the cycle', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
-    writeFileSync(path.join(root, 'PROJECT.md'), 'cites D-TMP-PD999z\n');
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    // Not an `EG` id: reserved example ids are excluded from the report by design (PD-548).
+    const typo = `D-TMP-${'PD'}777q`;
+    writeFileSync(path.join(root, 'PROJECT.md'), `cites ${typo}\n`);
     const outcome = await runNumberingCycle(db, config(root), harness().deps);
 
     expect(outcome.status).toBe('merged'); // advisory, not a gate
-    expect(readFileSync(path.join(root, 'PROJECT.md'), 'utf8')).toContain('D-TMP-PD999z');
+    expect(readFileSync(path.join(root, 'PROJECT.md'), 'utf8')).toContain(typo);
     const titles = (db.prepare('SELECT title FROM agent_notifications').all() as { title: string }[]).map((r) => r.title);
     expect(titles.some((t) => t.includes('no decision behind them'))).toBe(true);
   });
@@ -247,7 +249,7 @@ describe('the shared checkout', () => {
     // The first live run (2026-08-22) failed exactly here: `git commit` with no user.email, AFTER
     // the renames had been applied. Identity is passed per-command so the shared checkout's own
     // config is never written to.
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     await runNumberingCycle(db, config(root), h.deps);
 
@@ -263,7 +265,7 @@ describe('the shared checkout', () => {
   });
 
   it('restores the checkout after a successful cycle', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     await runNumberingCycle(db, config(root), h.deps);
     const tail = h.calls.filter((c) => c.cmd === 'git').map((c) => c.args.join(' '));
@@ -276,7 +278,7 @@ describe('the shared checkout', () => {
     // The real damage from the live failure was not the failed commit — it was 36 staged changes
     // left on a `numbering/` branch, which poisons `pullLatest` and every later job that grounds
     // against this checkout (the PD-340 failure mode).
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     const boom: CycleDeps = {
       ...h.deps,
@@ -296,7 +298,7 @@ describe('the shared checkout', () => {
   });
 
   it('does not try to delete a branch it never created', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     const boom: CycleDeps = {
       ...h.deps,
@@ -310,7 +312,7 @@ describe('the shared checkout', () => {
   });
 
   it('a restore step that itself fails does not mask the real error', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     const boom: CycleDeps = {
       ...h.deps,
@@ -324,7 +326,7 @@ describe('the shared checkout', () => {
   });
 
   it('returns to a configured non-default base branch', async () => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     await runNumberingCycle(db, config(root, { baseBranch: 'trunk' }), h.deps);
     expect(h.calls.some((c) => c.cmd === 'git' && c.args.join(' ') === 'checkout trunk')).toBe(true);
@@ -341,7 +343,7 @@ describe('pushing', () => {
     // The first live push failed with "could not read Username for 'https://github.com'": GH_TOKEN
     // in the environment does not authenticate plain `git push`. Auth has to travel as a git -c
     // override, the same way the grounding checkout does it.
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness();
     await runNumberingCycle(db, { ...CONFIG_BASE, repoRoot: root }, h.deps);
 
@@ -361,7 +363,7 @@ describe('the merge gate', () => {
   });
 
   const run = async (checksOutput: string) => {
-    const root = makeRepo([{ id: 'D-TMP-PD383a', title: 'x' }]);
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
     const h = harness({ checksOutput });
     const outcome = await runNumberingCycle(db, { ...CONFIG_BASE, repoRoot: root, ciTimeoutMs: 5_000 }, h.deps);
     return { outcome, merged: h.calls.some((c) => c.cmd === 'gh' && c.args[1] === 'merge') };

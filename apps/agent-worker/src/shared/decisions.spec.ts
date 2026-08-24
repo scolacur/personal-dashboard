@@ -3,7 +3,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DECISIONS_INDEX,
+  EXAMPLE_TICKET_PREFIX,
   findRepoRoot,
+  isExampleId,
   loadDecisions,
   loadProvisionalDecisions,
   nextDecisionId,
@@ -26,8 +28,8 @@ function decision(num: number, title: string, slug = 'x'): Decision {
 }
 
 function provisional(ticketNum: number, title: string, letter = 'a'): ProvisionalDecision {
-  const id = `D-TMP-PD${ticketNum}${letter}`;
-  return { id, ticketPrefix: 'PD', ticketNum, letter, title, file: `DECISIONS/incoming/${id}.md` };
+  const id = `D-TMP-EG${ticketNum}${letter}`;
+  return { id, ticketPrefix: 'EG', ticketNum, letter, title, file: `DECISIONS/incoming/${id}.md` };
 }
 
 describe('parseDecisionFilename', () => {
@@ -69,9 +71,9 @@ describe('parseDecisionHeading', () => {
 
 describe('parseProvisionalFilename', () => {
   it('reads the ticket and letter out of a well-formed name', () => {
-    expect(parseProvisionalFilename('D-TMP-PD383a.md')).toEqual({
-      id: 'D-TMP-PD383a',
-      ticketPrefix: 'PD',
+    expect(parseProvisionalFilename('D-TMP-EG383a.md')).toEqual({
+      id: 'D-TMP-EG383a',
+      ticketPrefix: 'EG',
       ticketNum: 383,
       letter: 'a',
     });
@@ -80,7 +82,7 @@ describe('parseProvisionalFilename', () => {
   it('rejects anything that is not D-TMP-<TICKET><letter>.md', () => {
     expect(parseProvisionalFilename('D-TMP-PD383.md')).toBeNull(); // no letter
     expect(parseProvisionalFilename('D-TMP-pd383a.md')).toBeNull(); // lowercase prefix
-    expect(parseProvisionalFilename('D-TMP-PD383a-with-slug.md')).toBeNull();
+    expect(parseProvisionalFilename('D-TMP-EG383a-with-slug.md')).toBeNull();
     expect(parseProvisionalFilename('D-079-numbered.md')).toBeNull();
     expect(parseProvisionalFilename('.gitkeep')).toBeNull();
   });
@@ -88,16 +90,16 @@ describe('parseProvisionalFilename', () => {
   it('can never be mistaken for a numbered decision, in either direction', () => {
     // This is what makes `grep -rl 'D-TMP-'` a safe blind rewrite (D-078): the two namespaces
     // cannot overlap, so the cycle cannot rewrite a real citation by accident.
-    expect(parseDecisionFilename('D-TMP-PD383a.md')).toBeNull();
+    expect(parseDecisionFilename('D-TMP-EG383a.md')).toBeNull();
     expect(parseProvisionalFilename('D-046-sortie-after-run-safety-net.md')).toBeNull();
   });
 });
 
 describe('parseProvisionalHeading', () => {
   it('reads the title off the first line', () => {
-    expect(parseProvisionalHeading('# D-TMP-PD383a: The Epic is the unit of dispatch\n\n**Decision:**')).toEqual({
-      id: 'D-TMP-PD383a',
-      ticketPrefix: 'PD',
+    expect(parseProvisionalHeading('# D-TMP-EG383a: The Epic is the unit of dispatch\n\n**Decision:**')).toEqual({
+      id: 'D-TMP-EG383a',
+      ticketPrefix: 'EG',
       ticketNum: 383,
       letter: 'a',
       title: 'The Epic is the unit of dispatch',
@@ -105,8 +107,8 @@ describe('parseProvisionalHeading', () => {
   });
 
   it('returns null when the first line is not a well-formed provisional heading', () => {
-    expect(parseProvisionalHeading('## D-TMP-PD383a: Wrong level\n')).toBeNull();
-    expect(parseProvisionalHeading('# D-TMP-PD383a:\n')).toBeNull();
+    expect(parseProvisionalHeading('## D-TMP-EG383a: Wrong level\n')).toBeNull();
+    expect(parseProvisionalHeading('# D-TMP-EG383a:\n')).toBeNull();
     expect(parseProvisionalHeading('# D-TMP-pd383a: Bad id\n')).toBeNull();
     expect(parseProvisionalHeading('# D-079: Numbered\n')).toBeNull();
   });
@@ -199,6 +201,28 @@ describe('the real decision log', () => {
   });
 });
 
+// PD-548. The example namespace works only while nothing real is authored under it: an `EG` file in
+// the inbox would give the rewriter a genuine mapping for an id that docs and fixtures use freely,
+// and every one of them would be rewritten. This runs over the REAL inbox on every CI run.
+//
+// It lives here rather than in `loadProvisionalDecisions` on purpose — that loader is also what the
+// tests point at temp inboxes full of deliberately-`EG` fixtures, so a guard inside it would forbid
+// the very fixtures the namespace exists to make safe.
+describe('the real decision inbox', () => {
+  it('never contains a decision authored under the reserved example prefix', () => {
+    const offenders = loadProvisionalDecisions(REPO_ROOT)
+      .filter((d) => d.ticketPrefix === EXAMPLE_TICKET_PREFIX)
+      .map((d) => d.file);
+    expect(offenders).toEqual([]);
+  });
+
+  it('every inbox id is one a real ticket could have produced', () => {
+    for (const d of loadProvisionalDecisions(REPO_ROOT)) {
+      expect(isExampleId(d.id)).toBe(false);
+    }
+  });
+});
+
 describe('renderInjectedIndex — what an agent actually reads', () => {
   it('carries the numbered decisions AND the provisional ones', () => {
     // The committed file omits provisional decisions so authoring cannot conflict; the injected
@@ -206,7 +230,7 @@ describe('renderInjectedIndex — what an agent actually reads', () => {
     // (D-071). Splitting the two renderers is what buys both.
     const out = renderInjectedIndex([decision(70, 'Numbered')], [provisional(513, 'Provisional')]);
     expect(out).toContain('- **[D-070](DECISIONS/D-070-x.md)** — Numbered');
-    expect(out).toContain('- **[D-TMP-PD513a](DECISIONS/incoming/D-TMP-PD513a.md)** — Provisional');
+    expect(out).toContain('- **[D-TMP-EG513a](DECISIONS/incoming/D-TMP-EG513a.md)** — Provisional');
   });
 
   it('is exactly the committed file when the inbox is empty', () => {
@@ -228,7 +252,7 @@ describe('renderProvisionalSection', () => {
 
   it('lists each provisional decision with a link to its file', () => {
     expect(renderProvisionalSection([provisional(513, 'Memory inbox')])).toContain(
-      '- **[D-TMP-PD513a](DECISIONS/incoming/D-TMP-PD513a.md)** — Memory inbox',
+      '- **[D-TMP-EG513a](DECISIONS/incoming/D-TMP-EG513a.md)** — Memory inbox',
     );
   });
 });

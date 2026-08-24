@@ -32,7 +32,7 @@ import path from 'node:path';
  * That guard is detection, not prevention, and `strict: false` branch protection lets two PRs go
  * green against merge bases that exclude each other and both land. So authors no longer pick a
  * number at all: a decision is written into {@link INCOMING_DIR} under a **provisional id**
- * (`D-TMP-PD513a`) and a later numbering cycle assigns its `D-NNN` in merge order. Two provisional
+ * (`D-TMP-EG513a`) and a later numbering cycle assigns its `D-NNN` in merge order. Two provisional
  * decisions cannot collide, because neither carries a number.
  *
  * The duplicate-id throw below stays as belt-and-braces over the numbered log.
@@ -54,10 +54,10 @@ export interface Decision {
  * A decision that has merged but has not been numbered yet (D-078).
  *
  * Settled and binding — "provisional" attaches to the *identifier*, not the authority. It is cited
- * as `D-TMP-PD513a` everywhere until the numbering cycle rewrites those citations to a `D-NNN`.
+ * as `D-TMP-EG513a` everywhere until the numbering cycle rewrites those citations to a `D-NNN`.
  */
 export interface ProvisionalDecision {
-  /** Citation form: `D-TMP-PD513a`. Namespaced so it can never match `D-\d{3}`. */
+  /** Citation form: `D-TMP-EG513a`. Namespaced so it can never match `D-\d{3}`. */
   id: string;
   /** The authoring ticket, digits only for ordering: `513`. */
   ticketNum: number;
@@ -67,7 +67,7 @@ export interface ProvisionalDecision {
   letter: string;
   /** First-line heading text, minus the `# D-TMP-…: ` prefix. */
   title: string;
-  /** Path relative to the repo root, e.g. `DECISIONS/incoming/D-TMP-PD383a.md`. */
+  /** Path relative to the repo root, e.g. `DECISIONS/incoming/D-TMP-EG383a.md`. */
   file: string;
 }
 
@@ -117,7 +117,41 @@ export function parseDecisionHeading(contents: string): { num: number; title: st
 }
 
 /**
- * `D-TMP-PD383a.md` → `{ id: 'D-TMP-PD383a', ticketPrefix: 'PD', ticketNum: 383, letter: 'a' }`.
+ * The ticket prefix reserved for examples and test fixtures — `D-TMP-EG513a` (PD-548).
+ *
+ * **Why a reserved prefix and not a convention.** The numbering cycle rewrites `D-TMP-` citations
+ * by walking the whole repo, and it cannot tell a citation from a fixture that looks like one. On
+ * 2026-08-23 it proved that: the fixtures in the tests below cited a provisional id that was also a
+ * real decision in the inbox, so the cycle rewrote it *inside the string literals of the very tests
+ * that verify rewriting*. Correctly, by its own rules — which is the point. The fixtures came out
+ * half-renamed and `verify` went red (closed PR #361). The same ambiguity made the
+ * dangling-citation report 100% false positives on its first run: every id it flagged was an
+ * example.
+ *
+ * **This is a fix for a mechanism that is itself being removed.** Epic PD-556 allocates decision
+ * ids at authoring time, which deletes the rewrite and with it the reason a fixture id was ever
+ * dangerous. Until that lands, the cycle cannot number anything without this.
+ *
+ * So examples get a namespace that is **structurally** not a real ticket. `EG` is not a project
+ * prefix and never will be, which makes "is this a real citation?" a lookup rather than a judgement.
+ * {@link isExampleId} is what tells the dangling report to stay quiet about them.
+ *
+ * **The rule that keeps this working: no decision is ever authored under `EG`.** That would give the
+ * rewriter a real mapping for an id every doc and fixture uses freely — the exact collision the
+ * prefix removes. It is enforced by a test over the real inbox rather than by
+ * {@link loadProvisionalDecisions}, because the loader is also what the tests point at a temp inbox
+ * full of deliberately-`EG` fixtures. A guard in the loader would forbid the fixtures it exists to
+ * make safe.
+ */
+export const EXAMPLE_TICKET_PREFIX = 'EG';
+
+/** True for a reserved example id like `D-TMP-EG513a` — never a real decision, never rewritten. */
+export function isExampleId(id: string): boolean {
+  return parseProvisionalId(id)?.ticketPrefix === EXAMPLE_TICKET_PREFIX;
+}
+
+/**
+ * `D-TMP-EG383a.md` → `{ id: 'D-TMP-EG383a', ticketPrefix: 'EG', ticketNum: 383, letter: 'a' }`.
  * Returns null for anything else.
  *
  * No slug, unlike a numbered decision: the id is already unique and the file is short-lived, so a
@@ -130,13 +164,13 @@ export function parseProvisionalId(text: string): Omit<ProvisionalDecision, 'tit
   return { id: text, ticketPrefix: m[1], ticketNum: Number(m[2]), letter: m[3] };
 }
 
-/** `D-TMP-PD383a.md` → the parsed id. Returns null for anything else. */
+/** `D-TMP-EG383a.md` → the parsed id. Returns null for anything else. */
 export function parseProvisionalFilename(filename: string): Omit<ProvisionalDecision, 'title' | 'file'> | null {
   if (!filename.endsWith('.md')) return null;
   return parseProvisionalId(filename.slice(0, -'.md'.length));
 }
 
-/** `# D-TMP-PD383a: Title here` → `{ id, title }`. Returns null for anything else. */
+/** `# D-TMP-EG383a: Title here` → `{ id, title }`. Returns null for anything else. */
 export function parseProvisionalHeading(
   contents: string,
 ): (Omit<ProvisionalDecision, 'title' | 'file'> & { title: string }) | null {
@@ -214,7 +248,7 @@ export function loadProvisionalDecisions(repoRoot: string): ProvisionalDecision[
     const parsed = parseProvisionalFilename(filename);
     if (!parsed) {
       throw new Error(
-        `${file}: filename must be D-TMP-<TICKET><letter>.md, e.g. D-TMP-PD513a.md ` +
+        `${file}: filename must be D-TMP-<TICKET><letter>.md, e.g. D-TMP-EG513a.md ` +
           `(uppercase ticket prefix, no slug, a single lowercase letter). Numbered decisions go in ${DECISIONS_DIR}/, not here.`,
       );
     }

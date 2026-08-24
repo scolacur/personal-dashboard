@@ -1,5 +1,5 @@
 import type { Decision, ProvisionalDecision } from '../../shared/decisions';
-import { DECISIONS_DIR } from '../../shared/decisions';
+import { DECISIONS_DIR, isExampleId } from '../../shared/decisions';
 
 /**
  * The pure core of the decision-numbering cycle (PD-498, D-078): given the numbered log and the
@@ -88,7 +88,7 @@ export function assignNumbers(
  * Safe as a blind whole-repo pass because the namespaces cannot overlap: `D-TMP-` can never match
  * `D-\d{3}`, which is the property D-078 chose the prefix for.
  *
- * Ids are not prefix-free (`D-TMP-PD38a` is a prefix of `D-TMP-PD383a` as plain text), so the match
+ * Ids are not prefix-free (`D-TMP-EG38a` is a prefix of `D-TMP-EG383a` as plain text), so the match
  * must not be a per-id search-and-replace. Matching the whole `[A-Za-z0-9]+` tail greedily and
  * looking the result up is what keeps the shorter id from corrupting the longer one.
  *
@@ -102,11 +102,21 @@ export function rewriteCitations(text: string, assignments: readonly Assignment[
   return text.replace(/D-TMP-[A-Za-z0-9]+/g, (match) => byId.get(match) ?? match);
 }
 
-/** Every `D-TMP-` id cited in `text` that no assignment covers — a citation with nothing behind it. */
+/**
+ * Every `D-TMP-` id cited in `text` that no assignment covers — a citation with nothing behind it.
+ *
+ * Reserved example ids are excluded (PD-548). They are *by definition* citations with nothing
+ * behind them — that is what makes them safe to write in a doc — so reporting them is not a finding,
+ * it is the check restating its own premise. On the first live run every single id it flagged was an
+ * example, which is a report a human learns to ignore, and a report a human ignores is worse than
+ * no report.
+ */
 export function danglingIds(text: string, assignments: readonly Assignment[]): string[] {
   const known = new Set(assignments.map((a) => a.from.id));
   const found = new Set<string>();
-  for (const m of text.matchAll(/D-TMP-[A-Za-z0-9]+/g)) if (!known.has(m[0])) found.add(m[0]);
+  for (const m of text.matchAll(/D-TMP-[A-Za-z0-9]+/g)) {
+    if (!known.has(m[0]) && !isExampleId(m[0])) found.add(m[0]);
+  }
   return [...found].sort();
 }
 
