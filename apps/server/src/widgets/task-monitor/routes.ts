@@ -33,6 +33,7 @@ import {
   getProjectBySlug,
   getSortieFleet,
   getTicket,
+  projectHasEpics,
   getTicketIssueRef,
   listAllRelations,
   listNotifications,
@@ -55,6 +56,7 @@ import {
   updateTicket,
   ValidationError,
 } from './store';
+import { createGuardFailure, patchGuardFailure, reopenGuardFailure } from './ticket-guards';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
@@ -178,6 +180,12 @@ export function registerRoutes(
       isEpic: body.isEpic === true,
       epicId: body.epicId === undefined ? undefined : (body.epicId as number | null),
     };
+    // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-TMP-PD383a / PD-509),
+    // which until now only the board's form enforced.
+    const createFail = createGuardFailure(input, projectHasEpics(db, input.projectId));
+    if (createFail) {
+      return reply.status(400).send({ error: createFail.message, code: createFail.code });
+    }
     try {
       return reply.status(201).send(createTicket(db, input));
     } catch (e) {
@@ -323,6 +331,18 @@ export function registerRoutes(
       patch.epicId = body.epicId as number | null;
     }
 
+    // PD-542: terminal is read-only and a Ticket never leaves its Epic — enforced here rather than
+    // inside `updateTicket`, which the server also calls internally for writes that are correct
+    // (approveRefine closing a decomposed parent, the recurrence respawn). See `ticket-guards.ts`.
+    const existingForGuard = getTicket(db, id);
+    if (!existingForGuard) {
+      return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    }
+    const patchFail = patchGuardFailure(existingForGuard, patch as Record<string, unknown>);
+    if (patchFail) {
+      return reply.status(409).send({ error: patchFail.message, code: patchFail.code });
+    }
+
     let updated;
     try {
       updated = updateTicket(db, id, patch);
@@ -337,6 +357,43 @@ export function registerRoutes(
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return updated;
+  });
+
+  // The one sanctioned way out of a terminal lane (D-TMP-PD539a, PD-542). A plain PATCH now refuses
+  // it, so that this is not a status write dressed up as one: reopening carries obligations — the
+  // Ticket must land in an Epic, and its `agent_state` must be cleared — and those were previously
+  // implemented by the board, which meant any other caller simply skipped them.
+  app.post(`${base}/tickets/:id/reopen`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const existing = getTicket(db, id);
+    if (!existing) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+
+    const body = (request.body ?? {}) as { epicId?: unknown };
+    if (body.epicId !== undefined && body.epicId !== null && !Number.isInteger(body.epicId)) {
+      return reply.status(400).send({ error: 'epicId must be an integer', code: 'INVALID_EPIC_ID' });
+    }
+    const epicId = body.epicId === undefined ? undefined : (body.epicId as number | null);
+
+    const fail = reopenGuardFailure(existing, epicId);
+    if (fail) return reply.status(409).send({ error: fail.message, code: fail.code });
+
+    try {
+      // `agent_state` is cleared by updateTicket's own leaving-terminal path, so it is not set here
+      // — one implementation of that teardown, not two that can disagree.
+      const updated = updateTicket(db, id, {
+        status: 'backlog',
+        ...(epicId !== undefined && epicId !== null ? { epicId } : {}),
+      });
+      if (!updated) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+      return updated;
+    } catch (e) {
+      if (e instanceof EpicGuardError) return sendEpicError(reply, e);
+      if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
+      throw e;
+    }
   });
 
   // Soft-delete: archives the ticket (recoverable), hidden from the board.

@@ -53,8 +53,11 @@ confirm dialog on a drag only looks like it has that property.
 
 ## Deliberately not done here
 
-- **No server-side refusal of terminal edits.** The loop writes to terminal tickets by design
-  (`completeTicket`), and the reconciliation sweeps read and write them. A server guard would have to
-  distinguish the loop from a human, which the API has no notion of. The enforcement is the board's,
-  and it is honest about being the board's.
+- ~~**No server-side refusal of terminal edits.**~~ **Superseded by D-TMP-PD542a (PD-542).** The
+  reasoning here was wrong on its facts: it assumed a server guard would have to distinguish the loop
+  from a human. It does not, because **the loop never goes through the server** — `apps/agent-worker`
+  makes no HTTP calls and never imports `store.ts`; it opens `dashboard.db` directly with its own
+  SQL. Loop and server are two independent writers on one table, so a guard at the API boundary only
+  ever sees callers that should be restricted. The refusal now lives at the route layer, and Reopen
+  has its own route rather than being a status write any caller could skip the obligations of.
 - **No backfill.** Nothing about existing terminal tickets changes; they simply stop being editable.

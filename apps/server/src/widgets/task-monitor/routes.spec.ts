@@ -875,3 +875,116 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
     expect((await app.inject({ method: 'GET', url: `${B}/tickets/99999/relations` })).statusCode).toBe(404);
   });
 });
+
+/**
+ * PD-542 — the queue-model rules hold against a raw call, not just against the board.
+ *
+ * These go through `app.inject`, i.e. the same path a `curl` takes, because the whole point of the
+ * ticket is that the board was the only thing enforcing them.
+ */
+describe('PD-542 — queue-model invariants at the HTTP boundary', () => {
+  /** A project that uses the Epic model, plus one Epic and one member in it. */
+  async function withEpic(app: ReturnType<typeof freshSetup>['app'], db: Database.Database) {
+    const pid = projectId(db, 'personal-dashboard');
+    const epic = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 'umbrella', projectId: pid, isEpic: true },
+    });
+    const epicId = epic.json().id as number;
+    const member = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 'member', projectId: pid, epicId },
+    });
+    return { pid, epicId, memberId: member.json().id as number };
+  }
+
+  it('refuses a create with no Epic once the project uses Epics', async () => {
+    const { app, db } = freshSetup();
+    const { pid } = await withEpic(app, db);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 'orphan', projectId: pid },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('EPIC_REQUIRED');
+  });
+
+  it('refuses to un-parent an active member', async () => {
+    const { app, db } = freshSetup();
+    const { memberId } = await withEpic(app, db);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/task-monitor/tickets/${memberId}`,
+      payload: { epicId: null },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('EPIC_REQUIRED');
+  });
+
+  it('refuses to un-complete a Ticket with a plain PATCH, and points at reopen', async () => {
+    const { app, db } = freshSetup();
+    const { memberId } = await withEpic(app, db);
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/task-monitor/tickets/${memberId}`,
+      payload: { status: 'completed' },
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/task-monitor/tickets/${memberId}`,
+      payload: { status: 'backlog' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('TERMINAL_IS_FINAL');
+    expect(res.json().error).toMatch(/reopen/i);
+  });
+
+  it('refuses to edit a completed Ticket', async () => {
+    const { app, db } = freshSetup();
+    const { memberId } = await withEpic(app, db);
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/task-monitor/tickets/${memberId}`,
+      payload: { status: 'completed' },
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/task-monitor/tickets/${memberId}`,
+      payload: { title: 'rewriting history' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('TERMINAL_IS_READ_ONLY');
+  });
+
+  it('reopens through the dedicated route, back to backlog', async () => {
+    const { app, db } = freshSetup();
+    const { memberId } = await withEpic(app, db);
+    await app.inject({
+      method: 'PATCH',
+      url: `/api/widgets/task-monitor/tickets/${memberId}`,
+      payload: { status: 'completed' },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/task-monitor/tickets/${memberId}/reopen`,
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().status).toBe('backlog');
+  });
+
+  it('refuses to reopen a Ticket that is not terminal', async () => {
+    const { app, db } = freshSetup();
+    const { memberId } = await withEpic(app, db);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/widgets/task-monitor/tickets/${memberId}/reopen`,
+      payload: {},
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('NOT_TERMINAL');
+  });
+});

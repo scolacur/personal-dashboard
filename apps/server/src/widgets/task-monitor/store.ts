@@ -240,6 +240,22 @@ function latestRunTurns(db: Database.Database, ticketId?: number): Map<number, n
   return byTicket;
 }
 
+/**
+ * Whether a project has any Epic at all (PD-542).
+ *
+ * Gates the create-time "every Ticket belongs to an Epic" rule, so it applies only to projects
+ * already using the Epic model — see `createGuardFailure`. Counts archived Epics too: a project
+ * that once had Epics has adopted the model, and archiving its last one should not quietly switch
+ * the rule back off.
+ */
+export function projectHasEpics(db: Database.Database, projectId: number | null): boolean {
+  if (projectId === null) return false;
+  const row = db
+    .prepare('SELECT 1 FROM agent_tickets WHERE project_id = ? AND is_epic = 1 LIMIT 1')
+    .get(projectId);
+  return row !== undefined;
+}
+
 export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
@@ -655,6 +671,11 @@ export function updateTicket(
         recurInterval: existing.recurInterval,
         source: 'recur',
         status: 'backlog',
+        // PD-542: the next occurrence stays in its Epic. Without this the respawn was a standing
+        // orphan factory — every recurrence produced an Epic-less active Ticket, which under
+        // D-TMP-PD383a is unpriced and undispatchable, and which no create-time guard would ever
+        // catch because the server was creating it itself.
+        epicId: existing.epicId ?? undefined,
       });
       logEvent(db, id, 'recurred', { spawnedId: spawned.id, spawnedDisplayId: spawned.displayId });
     }
