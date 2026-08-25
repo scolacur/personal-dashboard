@@ -33,7 +33,6 @@ import {
   getProjectBySlug,
   getSortieFleet,
   getTicket,
-  projectHasEpics,
   getTicketIssueRef,
   listAllRelations,
   listNotifications,
@@ -182,7 +181,7 @@ export function registerRoutes(
     };
     // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-TMP-PD383a / PD-509),
     // which until now only the board's form enforced.
-    const createFail = createGuardFailure(input, projectHasEpics(db, input.projectId));
+    const createFail = createGuardFailure(input);
     if (createFail) {
       return reply.status(400).send({ error: createFail.message, code: createFail.code });
     }

@@ -106,30 +106,13 @@ export function patchGuardFailure(
  * board applies (`epicRequired`). Terminal creates are exempt: importing or recording something
  * already finished is bookkeeping about the past, not new work that needs pricing.
  */
-export function createGuardFailure(
-  input: {
-    isEpic?: boolean;
-    epicId?: number | null;
-    status?: TicketStatus;
-  },
-  /**
-   * Whether the target project has any Epic at all.
-   *
-   * The rule turns itself on per project, and that is not a hedge — it is the only way to enforce
-   * it without locking a project out of its own board. **Core (project 2) has 23 active tickets and
-   * zero Epics**, so a blanket rule would refuse every Core create with an instruction the caller
-   * cannot follow. PD-507 says this in as many words: C-89 (give every active Core ticket an Epic)
-   * "must land before D-TMP-PD383a's create-time rule can be enforced on Core tickets."
-   *
-   * It bootstraps cleanly, because creating an Epic is itself exempt: a project's first Epic is
-   * always allowed, and from that moment every non-Epic create in it must name a parent. So the
-   * rule switches on exactly when the project starts using the model, with no flag to remember.
-   */
-  projectHasEpics: boolean,
-): GuardFailure | null {
+export function createGuardFailure(input: {
+  isEpic?: boolean;
+  epicId?: number | null;
+  status?: TicketStatus;
+}): GuardFailure | null {
   if (input.isEpic === true) return null; // Epics do not nest, so they never need a parent.
   if (input.status !== undefined && isTerminal(input.status)) return null;
-  if (!projectHasEpics) return null;
   if (input.epicId === undefined || input.epicId === null) {
     return {
       message:

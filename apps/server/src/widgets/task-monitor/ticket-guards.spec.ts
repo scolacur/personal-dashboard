@@ -60,8 +60,8 @@ describe('patchGuardFailure — a Ticket never leaves its Epic (D-TMP-PD383a)', 
     expect(patchGuardFailure(existing({ epicId: 7 }), { epicId: 9 })).toBeNull();
   });
 
-  // Requiring an Epic on every edit would enforce the model retroactively against history, and
-  // would break Core outright — 23 active tickets, zero Epics (tracked as C-89).
+  // Requiring an Epic on every *edit* would enforce the model retroactively against history. The
+  // create-time rule is global; this one is not, deliberately — legacy terminal tickets predate it.
   it('leaves a Ticket that never had an Epic alone', () => {
     expect(patchGuardFailure(existing({ epicId: null }), { title: 'edit' })).toBeNull();
     expect(patchGuardFailure(existing({ epicId: null }), { epicId: null })).toBeNull();
@@ -82,29 +82,28 @@ describe('patchGuardFailure — a Ticket never leaves its Epic (D-TMP-PD383a)', 
 
 describe('createGuardFailure', () => {
   it('refuses a new Ticket with no Epic', () => {
-    expect(createGuardFailure({ status: 'backlog' }, true)?.code).toBe('EPIC_REQUIRED');
-    expect(createGuardFailure({ epicId: null }, true)?.code).toBe('EPIC_REQUIRED');
+    expect(createGuardFailure({ status: 'backlog' })?.code).toBe('EPIC_REQUIRED');
+    expect(createGuardFailure({ epicId: null })?.code).toBe('EPIC_REQUIRED');
   });
 
   it('accepts one that names its Epic', () => {
-    expect(createGuardFailure({ epicId: 7 }, true)).toBeNull();
+    expect(createGuardFailure({ epicId: 7 })).toBeNull();
   });
 
   it('never requires an Epic of an Epic — they do not nest', () => {
-    expect(createGuardFailure({ isEpic: true }, true)).toBeNull();
+    expect(createGuardFailure({ isEpic: true })).toBeNull();
   });
 
-  // Core (project 2) has 23 active tickets and zero Epics; a blanket rule would refuse every Core
-  // create with an instruction the caller cannot follow. PD-507 names C-89 as the prerequisite.
-  it('stays off for a project that has no Epics yet, and switches on once it does', () => {
-    expect(createGuardFailure({ status: 'backlog' }, false)).toBeNull();
-    expect(createGuardFailure({ status: 'backlog' }, true)?.code).toBe('EPIC_REQUIRED');
+  // Global — no per-project escape. C-89 adopted every active Core ticket into an Epic first, so
+  // there is no project left that cannot satisfy it.
+  it('applies to every project, with no opt-out', () => {
+    expect(createGuardFailure({ status: 'backlog', epicId: null })?.code).toBe('EPIC_REQUIRED');
   });
 
   // Recording something already finished is bookkeeping about the past, not new work to price.
   it('exempts a create straight into a terminal lane', () => {
-    expect(createGuardFailure({ status: 'completed' }, true)).toBeNull();
-    expect(createGuardFailure({ status: 'closed' }, true)).toBeNull();
+    expect(createGuardFailure({ status: 'completed' })).toBeNull();
+    expect(createGuardFailure({ status: 'closed' })).toBeNull();
   });
 });
 

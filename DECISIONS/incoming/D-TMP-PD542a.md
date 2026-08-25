@@ -17,7 +17,7 @@ terminal. It enforces the obligations D-TMP-PD539a gave it: the Ticket must land
 
 **The guards live at the route layer, not inside `updateTicket`.**
 
-**The create-time Epic rule turns itself on per project**, gated on the project having any Epic.
+**The create-time Epic rule is global**, with no per-project opt-out.
 
 ## Why the route layer, not the store
 
@@ -43,16 +43,23 @@ anyone who can reach the API can also reach the database file. Attribution of wr
 concern, tracked as PD-543, and this decision does not depend on it: refusing a write and recording
 who made it are different problems, and conflating them was what kept this ticket blocked.
 
-## Why the create rule is per project, not global
+## Why the create rule is global, and what had to happen first
 
-**Core (project 2) has 23 active tickets and zero Epics.** A blanket create rule would refuse every
-Core create with an instruction the caller cannot follow, locking a project out of its own board.
-PD-507 says this explicitly: C-89 (*give every active Core ticket an Epic*) "must land before
-D-TMP-PD383a's create-time rule can be enforced on Core tickets."
+The rule was briefly built with a per-project gate — enforce only where the project already has an
+Epic — because PD-507 recorded that **Core had 23 active tickets and zero Epics**, so a blanket rule
+would refuse every Core create with an instruction the caller could not follow.
 
-Gating on "does this project have any Epic" encodes that without a flag anyone has to remember, and
-bootstraps cleanly: creating an Epic is itself exempt, so a project's first Epic is always allowed
-and the rule switches on the moment the project starts using the model.
+**That gate was removed, because the prerequisite was met instead of designed around.** C-89 (*give
+every active Core ticket an Epic*) was completed in the same pass: Core's Epic taxonomy already
+existed (C-90…C-98, purpose-built for this backlog — 24 of the 25 tickets are named by id inside the
+Epics' own bodies), and every active Core ticket was adopted into it. Both projects now report **zero
+Epic-less active tickets**, so there is no project that cannot satisfy the rule.
+
+Global is the better rule for a reason worth stating: a per-project gate makes the invariant a
+function of history rather than a property of the model, and it fails silently in the direction that
+matters — a brand-new project would quietly accept orphans until someone happened to create its
+first Epic. The point of moving enforcement off the board was to stop rules holding only where
+someone remembered to apply them.
 
 ## Consequences accepted
 

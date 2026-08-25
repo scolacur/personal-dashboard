@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes, type TaskMonitorRouteDeps } from './routes';
-import { createNotification, getProjectBySlug } from './store';
+import { createNotification, createTicket, getProjectBySlug } from './store';
 
 function freshSetup(deps?: TaskMonitorRouteDeps) {
   const db = new Database(':memory:');
@@ -25,6 +25,23 @@ function recordingFetch(mode: 'ok' | 'notok' | 'throw' = 'ok') {
   return { impl, calls };
 }
 
+/**
+ * An Epic in `slug`'s project, created once per DB and reused.
+ *
+ * PD-542 made "every Ticket belongs to an Epic" a create-time rule at the route layer, so fixtures
+ * that only care about status/assignee/GitHub behaviour still need a parent to exist. Created
+ * through the store rather than the route, because the guard being tested lives on the route and a
+ * fixture should not have to satisfy it to set up an unrelated case.
+ */
+const epicCache = new WeakMap<Database.Database, number>();
+function anEpic(db: Database.Database, pid: number): number {
+  const hit = epicCache.get(db);
+  if (hit !== undefined) return hit;
+  const epic = createTicket(db, { title: 'fixture epic', projectId: pid, isEpic: true });
+  epicCache.set(db, epic.id);
+  return epic.id;
+}
+
 function projectId(db: Database.Database, slug: string): number {
   const p = getProjectBySlug(db, slug);
   if (!p) throw new Error(`no project ${slug}`);
@@ -38,7 +55,7 @@ describe('POST /api/widgets/task-monitor/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid) },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().status).toBe('backlog');
@@ -50,7 +67,7 @@ describe('POST /api/widgets/task-monitor/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, status: 'backlog' },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid), status: 'backlog' },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().status).toBe('backlog');
@@ -62,7 +79,7 @@ describe('POST /api/widgets/task-monitor/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, status: 'closed' },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid), status: 'closed' },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().status).toBe('closed');
@@ -74,7 +91,7 @@ describe('POST /api/widgets/task-monitor/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, status: 'banana' },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid), status: 'banana' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('INVALID_STATUS');
@@ -86,7 +103,7 @@ describe('POST /api/widgets/task-monitor/tickets — status', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'cancelled', projectId: pid, status: 'closed' },
+      payload: { title: 'cancelled', projectId: pid, epicId: anEpic(db, pid), status: 'closed' },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().status).toBe('closed');
@@ -100,7 +117,7 @@ describe('PATCH /api/widgets/task-monitor/tickets/:id — status closed', () => 
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
 
@@ -119,7 +136,7 @@ describe('PATCH /api/widgets/task-monitor/tickets/:id — status closed', () => 
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
 
@@ -140,7 +157,7 @@ describe('POST /api/widgets/task-monitor/tickets — assignee', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid) },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().assignee).toBeNull();
@@ -152,7 +169,7 @@ describe('POST /api/widgets/task-monitor/tickets — assignee', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, assignee: 'robot' },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid), assignee: 'robot' },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().assignee).toBe('robot');
@@ -164,7 +181,7 @@ describe('POST /api/widgets/task-monitor/tickets — assignee', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, assignee: null },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid), assignee: null },
     });
     expect(res.statusCode).toBe(201);
     expect(res.json().assignee).toBeNull();
@@ -176,7 +193,7 @@ describe('POST /api/widgets/task-monitor/tickets — assignee', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid, assignee: 'bob' },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid), assignee: 'bob' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('INVALID_ASSIGNEE');
@@ -190,7 +207,7 @@ describe('PATCH /api/widgets/task-monitor/tickets/:id — assignee', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
 
@@ -221,7 +238,7 @@ describe('PATCH /api/widgets/task-monitor/tickets/:id — assignee', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'test', projectId: pid },
+      payload: { title: 'test', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
 
@@ -241,7 +258,7 @@ describe('DELETE /api/widgets/task-monitor/tickets/:id — close-on-delete (PD-2
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'linked', projectId: pid },
+      payload: { title: 'linked', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
     await app.inject({
@@ -272,7 +289,7 @@ describe('DELETE /api/widgets/task-monitor/tickets/:id — close-on-delete (PD-2
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'unlinked', projectId: pid },
+      payload: { title: 'unlinked', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
 
@@ -375,7 +392,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'parked', projectId: pid },
+      payload: { title: 'parked', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
     await app.inject({
@@ -432,7 +449,7 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
     const create = await app.inject({
       method: 'POST',
       url: '/api/widgets/task-monitor/tickets',
-      payload: { title: 'unlinked', projectId: pid },
+      payload: { title: 'unlinked', projectId: pid, epicId: anEpic(db, pid) },
     });
     const id: number = create.json().id;
     const res = await app.inject({
@@ -485,14 +502,14 @@ describe('POST /tickets/:id/reply (PD-250 inline reply)', () => {
 describe('ticket events + Refine reply (D-044, PD-267)', () => {
   const base = '/api/widgets/task-monitor';
 
-  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number): Promise<number> {
-    const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title: 't', projectId: pid } });
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, pid: number): Promise<number> {
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title: 't', projectId: pid, epicId: anEpic(db, pid) } });
     return res.json().id as number;
   }
 
   it('GET /tickets/:id/events returns the activity log (created event present)', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     const res = await app.inject({ method: 'GET', url: `${base}/tickets/${id}/events` });
     expect(res.statusCode).toBe(200);
     const events = res.json() as { type: string }[];
@@ -507,7 +524,7 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
 
   it('GET /tickets/:id returns the single ticket; 404 unknown; 400 bad id', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     const ok = await app.inject({ method: 'GET', url: `${base}/tickets/${id}` });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().id).toBe(id);
@@ -517,7 +534,7 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
 
   it('POST /tickets/:id/refine-reply writes a refine_human event and echoes it', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets/${id}/refine-reply`,
@@ -533,7 +550,7 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
 
   it('POST /tickets/:id/refine-reply 400s on an empty body', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reply`, payload: { body: '  ' } });
     expect(res.statusCode).toBe(400);
   });
@@ -548,14 +565,14 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
 describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', () => {
   const base = '/api/widgets/task-monitor';
 
-  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, title = 't', body?: string) {
-    const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title, body, projectId: pid } });
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, pid: number, title = 't', body?: string) {
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title, body, projectId: pid, epicId: anEpic(db, pid) } });
     return res.json().id as number;
   }
 
   it('writes the kickoff refine_human event and 201s', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'), 'Add widget', 'shows X');
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'), 'Add widget', 'shows X');
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` });
     expect(res.statusCode).toBe(201);
     expect(res.json().type).toBe('refine_human');
@@ -567,7 +584,7 @@ describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', 
 
   it('409s on a double-start (no second thread)', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` })).statusCode).toBe(201);
     const again = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` });
     expect(again.statusCode).toBe(409);
@@ -582,7 +599,7 @@ describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', 
 
   it('reflects refineState in the tickets list after starting', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine` });
     const tickets = (await app.inject({ method: 'GET', url: `${base}/tickets` })).json() as {
       id: number;
@@ -596,11 +613,11 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
   const base = '/api/widgets/task-monitor';
   const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
-  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], pid: number, status = 'backlog') {
+  async function makeTicket(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, pid: number, status = 'backlog') {
     const res = await app.inject({
       method: 'POST',
       url: `${base}/tickets`,
-      payload: { title: 't', body: 'b', projectId: pid, status },
+      payload: { title: 't', body: 'b', projectId: pid, epicId: anEpic(db, pid), status },
     });
     return res.json().id as number;
   }
@@ -612,7 +629,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
 
   it('POST /refine-approve executes a decompose (201) and lineage reflects the split', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
       children: [{ title: 'robot', body: ROBOT_BODY, status: 'queue', assignee: 'robot' }],
@@ -631,7 +648,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
 
   it('POST /refine-approve parks an unshaped robot child instead of rejecting (201, D-057)', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, {
       mode: 'decompose',
       children: [{ title: 'bad', body: 'no sections', status: 'queue', assignee: 'robot' }],
@@ -643,7 +660,7 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
 
   it('POST /refine-approve { queue: true } dispatches a refine_in_place into queue (201)', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, { mode: 'refine_in_place', body: ROBOT_BODY, status: 'backlog' });
     const res = await app.inject({
       method: 'POST',
@@ -676,14 +693,14 @@ describe('Refine commit endpoints (D-044, PD-269)', () => {
 
   it('POST /refine-approve 409s with no proposal', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` });
     expect(res.statusCode).toBe(409);
   });
 
   it('POST /refine-reject 201s and drops the proposal', async () => {
     const { app, db } = freshSetup();
-    const id = await makeTicket(app, projectId(db, 'personal-dashboard'));
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
     seedProposal(db, id, { mode: 'refine_in_place', body: 'x' });
     expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reject` })).statusCode).toBe(201);
     expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-approve` })).statusCode).toBe(409);
@@ -733,16 +750,16 @@ describe('Ticket Audit routes (PD-283)', () => {
 
 describe('ticket relations endpoints (D-048, PD-321)', () => {
   const B = '/api/widgets/task-monitor';
-  async function mk(app: ReturnType<typeof freshSetup>['app'], pid: number, title: string) {
-    const res = await app.inject({ method: 'POST', url: `${B}/tickets`, payload: { title, projectId: pid } });
+  async function mk(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, pid: number, title: string) {
+    const res = await app.inject({ method: 'POST', url: `${B}/tickets`, payload: { title, projectId: pid, epicId: anEpic(db, pid) } });
     return res.json();
   }
 
   it('POST creates a human relation; GET /relations returns it resolved with origin', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
-    const a = await mk(app, pid, 'a');
-    const b = await mk(app, pid, 'b');
+    const a = await mk(app, db, pid, 'a');
+    const b = await mk(app, db, pid, 'b');
     // "a blocked by b" → from=b (blocker), to=a (blocked)
     const created = await app.inject({
       method: 'POST',
@@ -765,8 +782,8 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
   it('POST rejects self-relation (400) and cycle (409)', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
-    const a = await mk(app, pid, 'a');
-    const b = await mk(app, pid, 'b');
+    const a = await mk(app, db, pid, 'a');
+    const b = await mk(app, db, pid, 'b');
     const self = await app.inject({
       method: 'POST',
       url: `${B}/tickets/${a.id}/relations`,
@@ -793,8 +810,8 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
   it('POST validates type, id membership, and ticket existence', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
-    const a = await mk(app, pid, 'a');
-    const b = await mk(app, pid, 'b');
+    const a = await mk(app, db, pid, 'a');
+    const b = await mk(app, db, pid, 'b');
     const badType = await app.inject({
       method: 'POST',
       url: `${B}/tickets/${a.id}/relations`,
@@ -819,8 +836,8 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
   it('DELETE removes a relation by id (204) then 404', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
-    const a = await mk(app, pid, 'a');
-    const b = await mk(app, pid, 'b');
+    const a = await mk(app, db, pid, 'a');
+    const b = await mk(app, db, pid, 'b');
     const created = await app.inject({
       method: 'POST',
       url: `${B}/tickets/${a.id}/relations`,
@@ -836,8 +853,8 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
   it('PATCH to queue succeeds even while blocked (D-051 amended, PD-408 — loop skips at selection)', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
-    const a = await mk(app, pid, 'a');
-    const blocker = await mk(app, pid, 'blocker');
+    const a = await mk(app, db, pid, 'a');
+    const blocker = await mk(app, db, pid, 'blocker');
     await app.inject({
       method: 'POST',
       url: `${B}/tickets/${a.id}/relations`,
@@ -856,8 +873,8 @@ describe('ticket relations endpoints (D-048, PD-321)', () => {
   it('GET /relations returns the full resolved list including split (PD-269 lineage derivable)', async () => {
     const { app, db } = freshSetup();
     const pid = projectId(db, 'personal-dashboard');
-    const parent = await mk(app, pid, 'parent');
-    const child = await mk(app, pid, 'child');
+    const parent = await mk(app, db, pid, 'parent');
+    const child = await mk(app, db, pid, 'child');
     await app.inject({
       method: 'POST',
       url: `${B}/tickets/${parent.id}/relations`,
@@ -900,7 +917,7 @@ describe('PD-542 — queue-model invariants at the HTTP boundary', () => {
     return { pid, epicId, memberId: member.json().id as number };
   }
 
-  it('refuses a create with no Epic once the project uses Epics', async () => {
+  it('refuses a create with no Epic, in every project', async () => {
     const { app, db } = freshSetup();
     const { pid } = await withEpic(app, db);
     const res = await app.inject({
