@@ -53,12 +53,12 @@ const PRIORITY_UNSET = 'none';
  *  on hand-off, both of which drop it out of this set.
  *
  *  Ordered by **priority, then the Epic's rank, then the member's drag order, then id** (PD-294;
- *  D-TMP-PD383a). 'P0'…'P5' compare correctly under plain lexical ASC, so no mapping table is needed.
+ *  D-080). 'P0'…'P5' compare correctly under plain lexical ASC, so no mapping table is needed.
  *  Unset priority sorts *last* via the CASE — absent priority means "unclassified", not "most
  *  urgent". Previously this was `ORDER BY t.id ASC`, which dispatched purely oldest-first: a P0
  *  queued today waited behind a P5 queued last month.
  *
- *  **D-TMP-PD383a adds the two middle keys, and they are load-bearing.** Priority is now an Epic property
+ *  **D-080 adds the two middle keys, and they are load-bearing.** Priority is now an Epic property
  *  cascaded to its members, so `t.priority` already *is* the Epic's priority — no join is needed to
  *  rank Epics against each other. But that also means every member of an Epic ties on priority, and
  *  without a further key the only discriminator left would be `t.id`, i.e. the order the tickets

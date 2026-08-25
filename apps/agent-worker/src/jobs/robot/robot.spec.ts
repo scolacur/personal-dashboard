@@ -24,7 +24,7 @@ function boardDb(): Database.Database {
       priority TEXT NOT NULL DEFAULT 'none',
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
-      -- D-TMP-PD383a: the dispatch order joins the Epic and reads both drag orders.
+      -- D-080: the dispatch order joins the Epic and reads both drag orders.
       epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
