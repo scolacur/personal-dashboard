@@ -14,7 +14,7 @@ import type { RefineProposal } from '@dashboard/shared';
  * ## Out of scope, PD-177) so they are Ready the moment they're queued (D-058).
  */
 
-// The retired `prioritized` lane (D-TMP-PD383a) is no longer accepted here. It used to be kept in
+// The retired `prioritized` lane (D-080) is no longer accepted here. It used to be kept in
 // the input enum so an un-redeployed worker's proposal wasn't lost over a lane name — but PD-510
 // makes the approval ignore `status` entirely, so there is nothing left for the tolerance to save.
 // A stale agent that emits it now gets an immediate, self-correcting tool error instead of a value
@@ -34,7 +34,7 @@ const ASSIGNEE = z.enum(['steve', 'robot']).nullable();
 // is rejected while the agent can still see the error and re-propose, rather than at approval time.
 const MAX_TURNS = z.number().int().min(1).max(ROBOT_MAX_TURNS_LIMIT).nullable();
 
-// D-TMP-PD383a: no `priority` field, on a child or on the parent. Priority is an Epic property that
+// D-080: no `priority` field, on a child or on the parent. Priority is an Epic property that
 // cascades to members, so a Ticket-level priority has nowhere to land — the write path overrides it
 // from the Epic. Offering the field would have the agent spend turns on a value that is discarded
 // without telling it, which is worse than not offering it (PD-510).

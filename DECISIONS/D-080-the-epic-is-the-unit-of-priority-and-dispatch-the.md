@@ -1,4 +1,4 @@
-# D-TMP-PD383a: The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
+# D-080: The Epic is the unit of priority and dispatch; the `prioritized` lane is removed (PD-383; amends D-054, D-057, D-058)
 
 **Decision:** Priority and queueing move from the Ticket to the **Epic**. The board keeps three
 visible lanes — **Backlog / Queue / Completed** (plus the hidden `closed`); `prioritized` is

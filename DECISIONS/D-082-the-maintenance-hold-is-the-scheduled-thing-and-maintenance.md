@@ -1,4 +1,4 @@
-# D-TMP-PD498b: The maintenance hold is the scheduled thing, and maintenance jobs subscribe to it (PD-498; amends D-078)
+# D-082: The maintenance hold is the scheduled thing, and maintenance jobs subscribe to it (PD-498; amends D-078)
 
 **Decision:** invert D-078's arrangement. The **maintenance hold** becomes a first-class recurring
 event with its own cadence, log and lifecycle; a **maintenance job** declares that it runs during
@@ -29,7 +29,7 @@ opened only once in-flight Robot runs have drained.
 - **The window is a ceiling, not a plan.** Thirty minutes is long enough to use and short enough
   that walking away costs one window instead of a day of dispatch. It is enforced twice, on purpose:
   the coordinator closes the hold, and the worker's own hold state lapses independently
-  ([[D-TMP-PD498a]]) so a dead coordinator cannot wedge dispatch shut.
+  ([[D-081]]) so a dead coordinator cannot wedge dispatch shut.
 - **The cadence is measured from the last hold that STARTED, not the last requested.** A hold that
   sat queued for hours because the queue was busy has not done its rounds, and counting it would
   silently skip a day of consolidation.

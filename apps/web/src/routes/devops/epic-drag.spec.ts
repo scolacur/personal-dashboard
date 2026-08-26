@@ -50,7 +50,7 @@ describe('draggable lanes', () => {
     expect(isDraggableEpicLane('in_progress')).toBe(true);
   });
 
-  // Progress stays derived (D-TMP-PD383a): an Epic reads completed/closed only when its members
+  // Progress stays derived (D-080): an Epic reads completed/closed only when its members
   // actually got there, so asserting it by dropping a card would be a lie about the loop's work.
   it('refuses the terminal lanes, which are observations rather than destinations', () => {
     expect(isDraggableEpicLane('completed')).toBe(false);

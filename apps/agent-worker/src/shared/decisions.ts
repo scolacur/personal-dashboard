@@ -67,7 +67,7 @@ export interface ProvisionalDecision {
   letter: string;
   /** First-line heading text, minus the `# D-TMP-…: ` prefix. */
   title: string;
-  /** Path relative to the repo root, e.g. `DECISIONS/incoming/D-TMP-PD383a.md`. */
+  /** Path relative to the repo root, e.g. `DECISIONS/incoming/D-080.md`. */
   file: string;
 }
 
@@ -117,7 +117,7 @@ export function parseDecisionHeading(contents: string): { num: number; title: st
 }
 
 /**
- * `D-TMP-PD383a.md` → `{ id: 'D-TMP-PD383a', ticketPrefix: 'PD', ticketNum: 383, letter: 'a' }`.
+ * `D-080.md` → `{ id: 'D-080', ticketPrefix: 'PD', ticketNum: 383, letter: 'a' }`.
  * Returns null for anything else.
  *
  * No slug, unlike a numbered decision: the id is already unique and the file is short-lived, so a
@@ -130,13 +130,13 @@ export function parseProvisionalId(text: string): Omit<ProvisionalDecision, 'tit
   return { id: text, ticketPrefix: m[1], ticketNum: Number(m[2]), letter: m[3] };
 }
 
-/** `D-TMP-PD383a.md` → the parsed id. Returns null for anything else. */
+/** `D-080.md` → the parsed id. Returns null for anything else. */
 export function parseProvisionalFilename(filename: string): Omit<ProvisionalDecision, 'title' | 'file'> | null {
   if (!filename.endsWith('.md')) return null;
   return parseProvisionalId(filename.slice(0, -'.md'.length));
 }
 
-/** `# D-TMP-PD383a: Title here` → `{ id, title }`. Returns null for anything else. */
+/** `# D-080: Title here` → `{ id, title }`. Returns null for anything else. */
 export function parseProvisionalHeading(
   contents: string,
 ): (Omit<ProvisionalDecision, 'title' | 'file'> & { title: string }) | null {

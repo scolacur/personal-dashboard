@@ -1,9 +1,9 @@
 import type { AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
 
 /**
- * Spinning a Ticket out into its own Epic (D-TMP-PD383a slice C, PD-509).
+ * Spinning a Ticket out into its own Epic (D-080 slice C, PD-509).
  *
- * Under D-TMP-PD383a the Epic is the unit of priority AND dispatch, so a Ticket that needs to be
+ * Under D-080 the Epic is the unit of priority AND dispatch, so a Ticket that needs to be
  * scheduled differently from its siblings cannot simply be re-ranked — it needs its own Epic.
  * That makes spin-off the standard escape hatch rather than a special case, and it is the same
  * move slice B's rollback "bump" makes for a ticket whose run cannot be stopped.
@@ -25,7 +25,7 @@ export interface SpinOffPlan {
 /**
  * Plan a spin-off. `sourceEpic` is the Ticket's current Epic, if it has one.
  *
- * With no source Epic (an orphan — the board still holds pre-D-TMP-PD383a ones) the Ticket's own
+ * With no source Epic (an orphan — the board still holds pre-D-080 ones) the Ticket's own
  * priority and lane are the only signal available, so they are used instead. A terminal ticket
  * lands its new Epic in `backlog`: an Epic's terminal lanes are derived from its members, so
  * asserting one directly would be overruled on the next render.

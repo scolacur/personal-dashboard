@@ -1,4 +1,4 @@
-# D-TMP-PD546a: The maintenance window budgets job STARTS; a running job is never cancelled (PD-546)
+# D-085: The maintenance window budgets job STARTS; a running job is never cancelled (PD-546)
 
 **Decision:** the 30-minute hold window is a bound on when a maintenance job may **begin**, not a
 deadline it will be stopped at. Before each job in the hold, the coordinator checks the window still
@@ -29,6 +29,6 @@ is no rest-of-the-window left to keep open for.
   missing limit; it was a limit that could only be evaluated once it no longer mattered.
 
 **Consequences:** a deferred job waits for the next hold, which is what makes deferral safe — the
-cadence is unconditional (`D-TMP-PD498b`), so "next hold" is at most 24h away and is not contingent
+cadence is unconditional (`D-082`), so "next hold" is at most 24h away and is not contingent
 on anyone noticing. The hold records how many jobs it deferred in its note, so a job that never
 seems to run is diagnosable from the hold log rather than only from worker logs.
