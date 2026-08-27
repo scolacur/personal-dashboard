@@ -31,6 +31,7 @@ import {
   getSessionLimitHold,
   getGithubRateLimit,
   getProjectBySlug,
+  getNeedsHumanTickets,
   getSortieFleet,
   getTicket,
   getTicketIssueRef,
@@ -767,5 +768,6 @@ export function registerRoutes(
     // PD-498: a fourth halt the nav has to be able to see. Without it the header says
     // "Loop on" during a maintenance window, which is true of the killswitch and false of reality.
     maintenanceHold: getMaintenanceHoldStatus(db),
+    needsHuman: getNeedsHumanTickets(db),
   }));
 }

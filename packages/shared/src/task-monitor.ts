@@ -900,6 +900,27 @@ export interface SystemStatus {
    * (also true), which read as nonsense.
    */
   maintenanceHold: MaintenanceHoldStatus | null;
+  /**
+   * The tickets behind the "N needs you" count, newest first and capped (PD-498).
+   *
+   * The count alone sent the reader to the board to hunt for which ticket it meant — the exact trip
+   * the number exists to save. With one parked ticket the nav links straight to it.
+   */
+  needsHuman: NeedsHumanTicket[];
+}
+
+/**
+ * A ticket parked waiting on a human, as the nav needs it (PD-498).
+ *
+ * Carries `id` because that is what the detail-page route takes, and `displayId` because that is
+ * what a human recognises. Both, rather than one and a lookup, because the nav has no ticket list
+ * to look anything up in.
+ */
+export interface NeedsHumanTicket {
+  id: number;
+  displayId: string | null;
+  title: string;
+  agentState: AgentState;
 }
 
 /** The subset of a maintenance hold the status API carries (PD-498). */
