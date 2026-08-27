@@ -1,0 +1,68 @@
+/* The board grid itself (PD-554) — shared by `/devops/task-tracker` and the Epic detail page's
+   kanban view, which render the same `TicketBoard` component.
+
+   In a partial rather than either page's stylesheet because Svelte scopes styles per component:
+   the markup these rules target now lives inside `TicketBoard.svelte`, so a copy in a page
+   stylesheet would no longer reach it. Same reason as `_column-add-btn.scss` and
+   `_assignee-pill.scss`. */
+
+// Two-band board (D-054): explicit grid so the Epic band's cells can span their lanes.
+// Row 1 = lane headers, row 2 = Epic band, row 3 = resize handle (D-058), row 4 = Ticket band.
+// Column-gap separates lanes; no row-gap so cells stack visually.
+.board {
+  display: grid;
+  grid-template-columns: repeat(var(--lanes, 6), minmax(205px, 1fr));
+  grid-template-rows: auto auto 8px minmax(0, 1fr);
+  column-gap: var(--space-md);
+  row-gap: 0;
+  align-items: stretch;
+  overflow-x: auto;
+}
+
+// When the Epic band is hidden, collapse the Epic and handle rows so no gap appears.
+.board.no-epics {
+  grid-template-rows: auto 0px 0px minmax(0, 1fr);
+}
+
+.lane-head {
+  grid-row: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+// With the Epic band hidden, the header joins straight onto the ticket body.
+.board.no-epics .lane-head {
+  border-bottom: none;
+}
+
+.column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-display);
+  border-bottom: 1px solid var(--border);
+
+  .count {
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    background: var(--surface-2);
+    border-radius: 999px;
+    padding: 0 var(--space-sm);
+  }
+}
+
+/* Mobile (≤640px): keep the two-band grid (D-054) but narrow the lanes so a couple show at a
+   time; horizontal scroll handles the rest. */
+@media (max-width: 640px) {
+  .board {
+    grid-template-columns: repeat(var(--lanes, 6), minmax(78vw, 1fr));
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+  }
+}

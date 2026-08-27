@@ -50,6 +50,8 @@
     reorderedMembers,
   } from '../../epic-members';
   import EpicPicker from '../../EpicPicker.svelte';
+  import TicketBoard from '../../task-tracker/TicketBoard.svelte';
+  import MemberCard from '../../MemberCard.svelte';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
   import { ticketMatchesQuery } from '../../filter-logic';
 
@@ -441,6 +443,31 @@
   let draggingMemberId = $state<number | null>(null);
   let memberDropBeforeId = $state<number | null>(null);
 
+/* ── Member board (PD-554) ──────────────────────────────────────────────
+     The kanban half of the list/board toggle. The board component is the task-tracker's, so the
+     two cannot drift; what differs is scope (one Epic's members) and what a move means here. */
+  let memberView = $state<'list' | 'board'>('list');
+
+  const MEMBER_COLUMNS: { status: TicketStatus; label: string }[] = TICKET_STATUSES.map((status) => ({
+    status,
+    label: STATUS_LABELS[status],
+  }));
+
+  function membersByStatus(status: TicketStatus): AgentTicket[] {
+    return epicMembers.filter((m) => m.status === status);
+  }
+
+  /**
+   * Commit a member drag between lanes.
+   *
+   * Lane only — `beforeId` is deliberately ignored. Dispatch order is `sortOrder`, and it is set in
+   * the LIST view; letting a kanban drop rewrite it would make the two views fight over one field,
+   * and the board's vertical position within a lane would silently become the work order.
+   */
+  async function onMemberBoardMove(m: AgentTicket, status: TicketStatus) {
+    await setMemberLane(m, status);
+  }
+
   async function setMemberAssignee(m: AgentTicket, assignee: TicketAssignee | null) {
     if (assignee === m.assignee) return;
     error = null;
@@ -657,6 +684,24 @@
           <div class="epic-members-head">
             <h2>Members</h2>
             <span class="epic-rollup-label">{memberDone}/{memberTotal} done</span>
+            <!-- PD-554: list or kanban. The list is the ORDER view — a member's sortOrder is the
+                 dispatch order — and the kanban is the STATE view. Deliberately two views rather
+                 than one: a kanban lane and a dispatch order are different axes, and reordering
+                 inside a lane would conflate them. -->
+            <div class="member-view-toggle" role="group" aria-label="Member view">
+              <button
+                type="button"
+                class:active={memberView === 'list'}
+                aria-pressed={memberView === 'list'}
+                onclick={() => (memberView = 'list')}>List</button
+              >
+              <button
+                type="button"
+                class:active={memberView === 'board'}
+                aria-pressed={memberView === 'board'}
+                onclick={() => (memberView = 'board')}>Board</button
+              >
+            </div>
             <button class="add-member-btn" type="button" onclick={() => (memberPickerOpen = true)}
               >+ Add member</button
             >
@@ -666,6 +711,18 @@
           </div>
           {#if epicMembers.length === 0}
             <p class="muted">No members yet.</p>
+          {:else if memberView === 'board'}
+            <!-- The same TicketBoard the task-tracker renders, scoped to this Epic's members.
+                 No Epic band (the members of one Epic have no Epic band) and no project filter —
+                 every member is in this Epic's project by construction. -->
+            <TicketBoard
+              columns={MEMBER_COLUMNS}
+              itemsFor={membersByStatus}
+              showEpics={false}
+              canDrag={(t) => ({ ok: canEditMember(t) })}
+              onMove={onMemberBoardMove}
+              card={memberCardSnippet}
+            />
           {:else}
             {#if canReorderMembers}
               <p class="member-order-hint">
@@ -1044,3 +1101,14 @@
 {/if}
 
 <style lang="scss" src="./+page.scss"></style>
+
+{#snippet memberCardSnippet(m: AgentTicket, drag: { dragging: boolean; dropBefore: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
+  <MemberCard
+    ticket={m}
+    dragging={drag.dragging}
+    dropBefore={drag.dropBefore}
+    onDragStart={drag.onDragStart}
+    onDragEnd={drag.onDragEnd}
+    onAssignee={(a) => setMemberAssignee(m, a)}
+  />
+{/snippet}

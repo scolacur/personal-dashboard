@@ -1,0 +1,71 @@
+@use './assignee-pill';
+
+// An Epic member as a board card (PD-554). Lighter than `TicketCard` on purpose — the Epic page
+// already states the project, priority and epic once, so the card only carries what differs
+// between members.
+
+.member-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-xs) var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: grab;
+
+  &.dragging {
+    opacity: 0.45;
+  }
+
+  // Terminal or robot-locked: not draggable, and it should not look draggable either.
+  &.frozen {
+    cursor: default;
+    opacity: 0.75;
+  }
+}
+
+.drop-line {
+  height: 2px;
+  margin: 0 var(--space-sm);
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.member-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.member-card-id {
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+}
+
+.member-card-prio {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.member-card-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.35;
+}
+
+.member-card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.member-card-state {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
