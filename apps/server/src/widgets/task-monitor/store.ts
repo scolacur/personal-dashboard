@@ -655,6 +655,11 @@ export function updateTicket(
         recurInterval: existing.recurInterval,
         source: 'recur',
         status: 'backlog',
+        // PD-542: the next occurrence stays in its Epic. Without this the respawn was a standing
+        // orphan factory — every recurrence produced an Epic-less active Ticket, which under
+        // D-TMP-PD383a is unpriced and undispatchable, and which no create-time guard would ever
+        // catch because the server was creating it itself.
+        epicId: existing.epicId ?? undefined,
       });
       logEvent(db, id, 'recurred', { spawnedId: spawned.id, spawnedDisplayId: spawned.displayId });
     }

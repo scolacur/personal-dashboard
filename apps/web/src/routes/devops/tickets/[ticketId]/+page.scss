@@ -1023,25 +1023,9 @@
   text-transform: capitalize;
 }
 
-.member-remove {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  color: var(--muted);
-  font-size: var(--font-size-lg);
-  line-height: 1;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--status-stuck);
-    border-color: var(--border);
-  }
-}
+/* `.member-remove` deleted with the × it styled (PD-542): un-parenting a member is refused
+   for an active Ticket (D-TMP-PD383a) and for a terminal one (D-TMP-PD539a), so the control could
+   never succeed. */
 
 /* Member picker modal */
 .member-search {

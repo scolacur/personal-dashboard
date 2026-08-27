@@ -72,6 +72,23 @@ export async function updateTicket(id: number, patch: UpdateTicketInput): Promis
   return res.json() as Promise<AgentTicket>;
 }
 
+/**
+ * Reopen a completed/closed Ticket (D-TMP-PD539a, PD-542).
+ *
+ * Its own route rather than a status PATCH, which the server now refuses: reopening carries
+ * obligations — the Ticket must land in an Epic, and its `agent_state` is cleared — and a plain
+ * write is how a caller skips them. Pass `epicId` when the Ticket has none.
+ */
+export async function reopenTicket(id: number, epicId?: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/reopen`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(epicId === undefined ? {} : { epicId }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
 /** Archive a ticket. For an Epic (D-054), `cascadeMembers` archives its members too; otherwise
  *  they're unlinked and survive as free tickets. */
 export async function deleteTicket(id: number, opts: { cascadeMembers?: boolean } = {}): Promise<void> {

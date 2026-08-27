@@ -175,10 +175,10 @@
     error = null;
     reopening = true;
     try {
-      await api.updateTicket(ticket.id, {
-        status: 'backlog',
-        ...(epicId !== undefined ? { epicId } : {}),
-      });
+      // PD-542: reopening goes through its own route now. A plain status PATCH is refused
+      // server-side, so the Reopen obligations (land in an Epic, clear `agent_state`) are the
+      // server's rather than this component's — any other caller gets them too.
+      await api.reopenTicket(ticket.id, epicId);
       await load(ticketId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -735,13 +735,12 @@
                       <option value={a ?? ''}>{assigneeGlyph(a)}</option>
                     {/each}
                   </select>
-                  <button
-                    class="member-remove"
-                    type="button"
-                    title="Remove from epic"
-                    aria-label="Remove from epic"
-                    onclick={() => setMemberEpic(m.id, null)}>×</button
-                  >
+                  <!-- PD-542: the "remove from epic" × is gone. It could not succeed for any
+                       member: un-parenting an ACTIVE Ticket is refused (D-TMP-PD383a — priority and
+                       dispatch both come from the Epic), and a TERMINAL one is read-only
+                       (D-TMP-PD539a). It was the last orphan-creating surface left, after slice B
+                       took the card kebab's "Remove from Epic" and the Archive-Epic unlink.
+                       Re-filing a member means moving it to another Epic from its own page. -->
                 </li>
               {/each}
             </ul>
