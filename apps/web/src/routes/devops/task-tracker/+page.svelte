@@ -14,9 +14,8 @@
   import EpicPicker from '../EpicPicker.svelte';
   import BoardToolbar from './BoardToolbar.svelte';
   import TicketFormModal from './TicketFormModal.svelte';
-  import LaneColumn from './LaneColumn.svelte';
   import EpicLane from './EpicLane.svelte';
-  import LaneHelp from './LaneHelp.svelte';
+  import TicketBoard from './TicketBoard.svelte';
   import ArchiveEpicModal from './ArchiveEpicModal.svelte';
   import QueueBypassModal from './QueueBypassModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
@@ -48,6 +47,7 @@
     computeOrderWithin,
     clampEpicHeight,
   } from '../board-logic';
+  import { moveIsNoop, needsQueueBypass } from '../board-drag';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -176,12 +176,9 @@
   // Free-text filter over ticket title + body (case-insensitive).
   let search = $state('');
 
-  // Lanes group by priority (P0 on top … P5, then unset at the bottom). A card can
-  // only be reordered within its own band and never dragged into another band.
-  const PRIORITY_RANK: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3, P4: 4, P5: 5, none: 6 };
-  function rankOf(p: TicketPriority | null): number {
-    return PRIORITY_RANK[p ?? 'none'];
-  }
+  // Lanes group by priority (P0 on top … P5, then unset at the bottom). A card can only be
+  // reordered within its own band and never dragged into another band — the band rules moved to
+  // `board-drag.ts` with the drag itself (PD-554).
   // Key used for the card's data-priority attribute + band comparisons.
   function bandKey(p: TicketPriority | null): string {
     return p ?? 'none';
@@ -468,9 +465,7 @@
      Native HTML5 DnD. A single dragover handler on each column body computes the
      insertion point by comparing the pointer to each card's vertical midpoint, so
      reordering within a lane and moving between lanes share one code path. */
-  let draggingId = $state<number | null>(null);
   // Where the dragged card would land: `beforeId === null` means append to the end.
-  let dropTarget = $state<{ status: TicketStatus; beforeId: number | null } | null>(null);
 
   // Toast promoted to `$lib/toast.svelte` + `$lib/Toast.svelte` (PD-334) once the shell's
   // membership writes became a second caller. `<Toast />` is mounted in the root layout.
@@ -533,91 +528,23 @@
     }
   }
 
-  function onDragStart(e: DragEvent, ticket: AgentTicket) {
-    // D-TMP-PD539a: terminal is final. Leaving it is one deliberate act on the detail page, not a
-    // drag — `completed` is a record of what happened, and a record you can drag out of is not one.
-    if (isTerminal(ticket)) {
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
-      e.preventDefault();
-      showToast(
-        `${ticket.displayId ?? ticket.title} is ${ticket.status} — open it and use Reopen to bring it back.`,
-      );
-      return;
-    }
-    if (isStatusLocked(ticket)) {
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'none';
-      showToast("This ticket is agent-controlled and can't be moved.");
-      return;
-    }
-    draggingId = ticket.id;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(ticket.id));
-    }
-  }
-
-  function onDragEnd() {
-    draggingId = null;
-    dropTarget = null;
-  }
-
-  function onColumnDragOver(e: DragEvent, status: TicketStatus) {
-    if (draggingId === null) return;
-    const dragged = tickets.find((t) => t.id === draggingId);
-    if (!dragged) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const rank = rankOf(dragged.priority);
-    const cards = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.card')].filter(
-      (el) => Number(el.dataset.id) !== draggingId,
-    );
-    // Find the insertion point among same-priority cards only — the drop is clamped to the band.
-    let beforeId: number | null = null;
-    for (const el of cards) {
-      if (PRIORITY_RANK[el.dataset.priority ?? 'none'] !== rank) continue;
-      const rect = el.getBoundingClientRect();
-      if (e.clientY < rect.top + rect.height / 2) {
-        beforeId = Number(el.dataset.id);
-        break;
-      }
-    }
-    // Past the last same-priority card → land at the end of the band, i.e. just before the
-    // first lower-priority card (or the lane end if this band is last).
-    if (beforeId === null) {
-      const nextBand = cards.find((el) => PRIORITY_RANK[el.dataset.priority ?? 'none'] > rank);
-      beforeId = nextBand ? Number(nextBand.dataset.id) : null;
-    }
-    dropTarget = { status, beforeId };
-  }
-
-  async function onDrop(e: DragEvent, status: TicketStatus) {
-    e.preventDefault();
-    const id = draggingId;
-    const target = dropTarget;
-    draggingId = null;
-    dropTarget = null;
-    if (id === null) return;
-    const ticket = tickets.find((t) => t.id === id);
-    if (!ticket) return;
-    const sortOrder = computeSortOrder(byStatus(status), ticket.priority, target?.beforeId ?? null, id);
-    // Skip the round-trip if nothing actually changed.
-    if (ticket.status === status && ticket.sortOrder === sortOrder) return;
+  /**
+   * Commit a ticket drag (PD-554). `TicketBoard` owns the gesture and the insertion maths; this is
+   * the part that is this page's — what a move MEANS here, including the Ready-bypass confirm.
+   */
+  async function onBoardMove(ticket: AgentTicket, status: TicketStatus, beforeId: number | null) {
+    const sortOrder = computeSortOrder(byStatus(status), ticket.priority, beforeId, ticket.id);
+    if (moveIsNoop(ticket, status, sortOrder)) return;
     // D-058: dragging a not-Ready robot ticket into the Queue needs an explicit bypass ack. Defer
     // the move to the confirm modal; confirming sets `readyBypassed` and completes it.
-    if (
-      status === 'queue' &&
-      ticket.status !== 'queue' &&
-      ticket.assignee === 'robot' &&
-      !ticket.ready &&
-      !ticket.readyBypassed
-    ) {
+    if (needsQueueBypass(ticket, status)) {
       queueConfirm = {
         label: ticket.displayId ?? ticket.title,
-        run: () => applyTicketMove(id, { status, sortOrder, readyBypassed: true }),
+        run: () => applyTicketMove(ticket.id, { status, sortOrder, readyBypassed: true }),
       };
       return;
     }
-    await applyTicketMove(id, { status, sortOrder });
+    await applyTicketMove(ticket.id, { status, sortOrder });
   }
 
   /* ── Epic drag (D-TMP-PD383a) ──────────────────────────────────────────
@@ -991,29 +918,75 @@
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
-  <!-- Two-band board (D-054, amended by D-TMP-PD383a): the Epic band on top, the Ticket band below.
-       Both are drop targets now — dragging the Epic between Backlog and Queue is what dispatches
-       and recalls its members. The Epic band's terminal lanes stay derived and refuse a drop. -->
-  <div class="board" class:no-epics={!showEpics} style="--lanes: {visibleColumns.length}; --epic-area-height: {epicAreaHeight}px">
-    <!-- Row 1: lane headers -->
-    {#each visibleColumns as col, i (col.status)}
-      {@const tItems = byStatus(col.status)}
-      <div class="lane-head" style="grid-column: {i + 1}">
-        <h2 class="column-head">
-          {col.label}<span class="count">{tItems.length}</span>
-          <!-- PD-517: a lane's rules are invisible on the surface, and the header is where the
-               question gets asked. -->
-          <LaneHelp
-            status={col.status}
-            label={col.label}
-            alignEnd={i >= visibleColumns.length - 1}
-          />
-        </h2>
-      </div>
-    {/each}
+  <!-- Two-band board (D-054, amended by D-TMP-PD383a): the Epic band on top, the Ticket band
+       below. Both are drop targets — dragging the Epic between Backlog and Queue is what
+       dispatches and recalls its members. The Epic band's terminal lanes stay derived and refuse
+       a drop.
 
-    <!-- Row 2: Epic band (derived placement; In-Progress sits over the Queue column) -->
-    {#if showEpics}
+       PD-554: the grid, lane headers and ticket drag now live in `TicketBoard`, shared with the
+       Epic detail page. The Epic band stays here — it is this page's alone, and a snippet is
+       styled by the component it is written in, so its rules stay in this stylesheet. -->
+  <TicketBoard
+    columns={visibleColumns}
+    itemsFor={byStatus}
+    lanes={visibleColumns.length}
+    {showEpics}
+    {showTickets}
+    {epicAreaHeight}
+    addDisabled={projects.length === 0}
+    onAdd={(status) => openAdd(status)}
+    canDrag={(t) => {
+      // D-TMP-PD539a: terminal is final. Leaving it is one deliberate act on the detail page, not
+      // a drag — `completed` is a record of what happened, and a record you can drag out of is
+      // not one.
+      if (isTerminal(t)) {
+        showToast(`${t.displayId ?? t.title} is ${t.status} — open it and use Reopen to bring it back.`);
+        return { ok: false };
+      }
+      if (isStatusLocked(t)) {
+        showToast("This ticket is agent-controlled and can't be moved.");
+        return { ok: false };
+      }
+      return { ok: true };
+    }}
+    onMove={onBoardMove}
+    epicBand={epicBandSnippet}
+    card={ticketCardSnippet}
+  />
+{/if}
+</section>
+
+{#snippet ticketCardSnippet(ticket: AgentTicket, drag: { dragging: boolean; dropBefore: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
+  {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
+  <TicketCard
+    {ticket}
+    {project}
+    epic={ticket.epicId !== null ? ticketsById.get(ticket.epicId) : undefined}
+    dragging={drag.dragging}
+    dropBefore={drag.dropBefore}
+    isLocked={isStatusLocked(ticket)}
+    isFrozen={isTerminal(ticket)}
+    badges={badgesById.get(ticket.id) ?? NO_BADGES}
+    onRelationAction={(action) => openRelationPicker(ticket, action)}
+    onAddToEpic={() => openEpicPicker(ticket)}
+    onSpinOff={() => openSpinOff(ticket)}
+    onDragStart={drag.onDragStart}
+    onDragEnd={drag.onDragEnd}
+    onEdit={() => openEdit(ticket)}
+    onDuplicate={() => duplicate(ticket)}
+    onCopy={() => copyIssue(ticket, project)}
+    onDelete={() => remove(ticket)}
+    onRefine={() => refine(ticket)}
+    onOpenStatusLegend={(state) => {
+      glossaryHighlightState = state;
+      glossaryTab = 'robot';
+      glossaryOpen = true;
+    }}
+    onUpdate={() => load(true)}
+  />
+{/snippet}
+
+{#snippet epicBandSnippet()}
       {#each epicBandCells as cell (cell.lane)}
         <EpicLane
           {cell}
@@ -1051,58 +1024,8 @@
         onpointerup={onResizeEnd}
         onpointercancel={onResizeEnd}
       ></div>
-    {/if}
+{/snippet}
 
-    <!-- Row 4: Ticket band (the only drop target) -->
-    {#if showTickets}
-      {#each visibleColumns as col, i (col.status)}
-        {@const items = byStatus(col.status)}
-        <LaneColumn
-          label={col.label}
-          count={items.length}
-          gridColumn={i + 1}
-          dragOver={dropTarget?.status === col.status && draggingId !== null}
-          addDisabled={projects.length === 0}
-          showDropEnd={draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === null}
-          onAdd={() => openAdd(col.status)}
-          onDragOver={(e) => onColumnDragOver(e, col.status)}
-          onDrop={(e) => onDrop(e, col.status)}
-        >
-          {#each items as ticket (ticket.id)}
-            {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
-            <TicketCard
-              {ticket}
-              {project}
-              epic={ticket.epicId !== null ? ticketsById.get(ticket.epicId) : undefined}
-              dragging={draggingId === ticket.id}
-              dropBefore={dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
-              isLocked={isStatusLocked(ticket)}
-              isFrozen={isTerminal(ticket)}
-              badges={badgesById.get(ticket.id) ?? NO_BADGES}
-              onRelationAction={(action) => openRelationPicker(ticket, action)}
-              onAddToEpic={() => openEpicPicker(ticket)}
-              onSpinOff={() => openSpinOff(ticket)}
-              onDragStart={(e) => onDragStart(e, ticket)}
-              {onDragEnd}
-              onEdit={() => openEdit(ticket)}
-              onDuplicate={() => duplicate(ticket)}
-              onCopy={() => copyIssue(ticket, project)}
-              onDelete={() => remove(ticket)}
-              onRefine={() => refine(ticket)}
-              onOpenStatusLegend={(state) => {
-                glossaryHighlightState = state;
-                glossaryTab = 'robot';
-                glossaryOpen = true;
-              }}
-              onUpdate={() => load(true)}
-            />
-          {/each}
-        </LaneColumn>
-      {/each}
-    {/if}
-  </div>
-{/if}
-</section>
 
 <RelationPicker
   open={pickerOpen}
