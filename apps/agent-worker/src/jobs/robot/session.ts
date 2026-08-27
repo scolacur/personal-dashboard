@@ -2,12 +2,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { buildOrientation } from './orientation';
 import { makeCodingSpawn } from './privilege';
 import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from '@dashboard/shared';
 import { buildDocsToolServer } from './docs-tool';
+import { buildDecisionToolServer } from './decision-tool';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 import { OUTPUT_TAIL_MAX } from './runs';
@@ -197,6 +199,11 @@ export async function runRobotSession(
   resume: ResumeContext | undefined = undefined,
   runQuery: RunQuery = query,
   onProgress?: (turns: number) => void,
+  // PD-564: the worker's DB handle, used only to build the decision-id tool. Optional and last so
+  // the existing positional call sites are untouched; the loop always passes it, and
+  // `robot.spec.ts` guards that it does — an absent handle silently costs the Robot its ability to
+  // record a decision, which is the kind of loss nothing else would report.
+  db?: Database.Database,
 ): Promise<RobotSessionResult> {
   const prompt = buildTaskPrompt({
     title: candidate.title,
@@ -207,6 +214,16 @@ export async function runRobotSession(
     proxy: config.httpsProxy,
     resume,
   });
+
+  // PD-564: `db` is optional only so the existing positional call sites keep compiling; the loop
+  // always passes one. Without it the Robot has no way to allocate a decision id, and nothing else
+  // in the run would report that — so say so rather than degrade quietly.
+  if (!db) {
+    logger.warn(
+      { ticketId: candidate.id },
+      'robot: no DB handle passed to the session — mcp__decisions__allocate is NOT available this run',
+    );
+  }
 
   let ok = false;
   let sessionId: string | undefined;
@@ -238,7 +255,15 @@ export async function runRobotSession(
         // registering an in-process MCP server here adds `mcp__docs__fetch` without reopening
         // D-068's allowlist — `WebFetch` remains absent and the agent still cannot reach the
         // network itself. The worker makes the request on its behalf.
-        mcpServers: { docs: buildDocsToolServer(config, candidate.id) },
+        mcpServers: {
+          docs: buildDocsToolServer(config, candidate.id),
+          // PD-564: how the Robot gets a real `D-NNN`. Same division as the docs tool — the agent
+          // supplies intent, the WORKER performs the privileged act — which is what lets a Robot
+          // allocate an id while remaining unable to touch `dashboard.db` (D-055, D-TMP-PD558a).
+          // It is here rather than an HTTP call because the container's egress firewall makes the
+          // PD-557 endpoint unreachable; see `decision-tool.ts`.
+          ...(db ? { decisions: buildDecisionToolServer(db, candidate.id) } : {}),
+        },
         // PD-432: the ticket's override when it has one, else the loop-wide env default. Null is
         // the normal case, so the global stays authoritative for ~every ticket.
         maxTurns: candidate.maxTurns ?? config.robot.maxTurns,

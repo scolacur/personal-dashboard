@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
+import Database from 'better-sqlite3';
 import { appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, ROBOT_TOOLS, type RunQuery } from './session';
 import { OUTPUT_TAIL_MAX } from './runs';
 import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from '@dashboard/shared';
@@ -83,7 +84,7 @@ describe('readHandoff', () => {
 // guards against is the option being dropped or renamed while ROBOT_TOOLS stays innocently correct.
 describe('the Robot tool surface', () => {
   /** Capture the options the session actually hands the SDK. */
-  async function optionsPassedToSdk(): Promise<Record<string, unknown>> {
+  async function optionsPassedToSdk(db?: Database.Database): Promise<Record<string, unknown>> {
     const dir = mkdtempSync(path.join(tmpdir(), 'robot-tools-'));
     let seen: Record<string, unknown> = {};
     const fake: RunQuery = ((args: { options: Record<string, unknown> }) => {
@@ -92,10 +93,27 @@ describe('the Robot tool surface', () => {
         yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 1 } as never;
       })();
     }) as unknown as RunQuery;
-    await runRobotSession(loadConfig({}), candidate, { dir, branch: 'robot/220' }, undefined, fake);
+    await runRobotSession(loadConfig({}), candidate, { dir, branch: 'robot/220' }, undefined, fake, undefined, db);
     rmSync(dir, { recursive: true, force: true });
     return seen;
   }
+
+  // PD-564: the decision-id tool is registered from the DB handle the loop passes in slot 7. A
+  // positional slip there would drop the Robot's only way to record a decision while every other
+  // test stayed green — the same class of silent loss the PD-230 progress-callback guard exists for.
+  it('registers the decision-id MCP server when the loop passes its DB handle (PD-564)', async () => {
+    const db = new Database(':memory:');
+    const opts = await optionsPassedToSdk(db);
+    const servers = opts.mcpServers as Record<string, unknown>;
+    expect(Object.keys(servers).sort()).toEqual(['decisions', 'docs']);
+  });
+
+  it('still registers the docs server when no DB handle is supplied', async () => {
+    // Degraded, not broken: a session built without a handle keeps its documentation path. The
+    // loop always supplies one, so this is the shape of a wiring bug, not a supported mode.
+    const opts = await optionsPassedToSdk();
+    expect(Object.keys(opts.mcpServers as Record<string, unknown>)).toEqual(['docs']);
+  });
 
   it('does NOT give the Robot the Task tool — sub-agent turns are invisible to the cap', async () => {
     expect(ROBOT_TOOLS).not.toContain('Task');

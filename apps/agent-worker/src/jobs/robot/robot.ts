@@ -157,11 +157,14 @@ export async function processRobotQueue(
 
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
-  // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot and `onProgress`
-  // in the 6th, so `deps.runSession` (whose 5th arg IS onProgress) cannot be passed positionally.
+  // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot, `onProgress` in
+  // the 6th and the DB handle in the 7th, so `deps.runSession` (whose 5th arg IS onProgress)
+  // cannot be passed positionally. `db` is closed over from this cycle — PD-564 needs it to build
+  // the decision-id tool, and dropping it costs the Robot its ability to record a decision without
+  // anything else going red.
   const doRun =
     deps.runSession ??
-    ((c, cand, w, resume, onProgress) => runRobotSession(c, cand, w, resume, undefined, onProgress));
+    ((c, cand, w, resume, onProgress) => runRobotSession(c, cand, w, resume, undefined, onProgress, db));
   const policy = faultPolicy(config);
 
   // ── C5 (PD-346): pre-dispatch reconciliation — the four folded-in bridges. These run BEFORE
