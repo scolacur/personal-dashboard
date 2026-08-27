@@ -13,6 +13,8 @@ import { bootstrapMaintenanceJobRequestsSchema } from './lib/maintenance-job-req
 import { registerMaintenanceRoutes } from './lib/maintenance-routes';
 import { bootstrapShellLayoutSchema } from './lib/shell-layout';
 import { registerShellLayoutRoutes } from './lib/shell-layout-routes';
+import { bootstrapDecisionIdsSchema } from './lib/decision-ids';
+import { registerDecisionIdRoutes } from './lib/decision-ids-routes';
 import type { BackendWidget } from './types';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as taskMonitorWidget } from './widgets/task-monitor/index';
@@ -55,6 +57,10 @@ closeStaleHolds(db, HOLD_WINDOW_MS);
 // not a widget, and its one-time seed must land before anything serves a page.
 bootstrapShellLayoutSchema(db);
 
+// Decision-id allocation (PD-557, part of PD-556). Core infrastructure like the two above: the
+// decision log is not a widget, and the counter must exist before anything can ask for an id.
+bootstrapDecisionIdsSchema(db);
+
 for (const widget of widgets) {
   widget.bootstrapSchema?.(db);
 }
@@ -66,6 +72,7 @@ for (const widget of widgets) {
 registerJobRunRoutes(app, db);
 registerMaintenanceRoutes(app, db);
 registerShellLayoutRoutes(app, db);
+registerDecisionIdRoutes(app, db);
 
 // In-process scheduler (PROJECT.md §2). Widgets register jobs via registerCron;
 // core jobs (DB backups) register directly. Uses Fastify's pino logger.
