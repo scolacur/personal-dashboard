@@ -45,7 +45,18 @@ interface Harness {
 }
 
 function harness(
-  opts: { inFlight?: number; ci?: 'pass' | 'fail' | 'pending'; addTimes?: Record<string, number>; checksOutput?: string } = {},
+  opts: {
+    inFlight?: number;
+    ci?: 'pass' | 'fail' | 'pending';
+    addTimes?: Record<string, number>;
+    checksOutput?: string;
+    /** Non-zero exit from `gh pr checks` — its normal exit whenever anything is not green. */
+    checksThrows?: string;
+    /** What `gh pr view --json state` reports. Defaults to OPEN, the healthy case. */
+    prState?: string;
+    /** Rows for `gh pr list`, i.e. an already-open numbering PR. */
+    openPrs?: { number: number; headRefName: string }[];
+  } = {},
 ): Harness {
   const calls: { cmd: string; args: string[] }[] = [];
   let inFlight = opts.inFlight ?? 0;
@@ -64,8 +75,17 @@ function harness(
         return { stdout: 'https://github.com/scolacur/personal-dashboard/pull/412\n' };
       }
       if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'checks') {
+        // `gh pr checks` exits non-zero whenever anything is failing, pending or absent, so the
+        // throwing path is the normal one and has to be exercisable.
+        if (opts?.checksThrows !== undefined) throw new Error(opts.checksThrows);
         if (opts?.checksOutput !== undefined) return { stdout: opts.checksOutput };
         return { stdout: `verify\t${ci}\t2m\turl\n` };
+      }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') {
+        return { stdout: `${opts?.prState ?? 'OPEN'}\n` };
+      }
+      if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'list') {
+        return { stdout: JSON.stringify(opts?.openPrs ?? []) };
       }
       return { stdout: '' };
     },
@@ -399,5 +419,92 @@ describe('the merge gate', () => {
   it('waits while verify is still queued or in progress', async () => {
     const { outcome } = await run('verify\tpending\t0\turl\n');
     expect(outcome).toMatchObject({ status: 'ci-timeout' });
+  });
+});
+
+// The live failures of 2026-08-23/25. All three are the same shape: the cycle treating a routine
+// GitHub condition as an exception, or as a condition it could not see at all.
+describe('surviving GitHub (PD-498)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeDb();
+  });
+
+  const config = (repoRoot: string, over: Partial<CycleConfig> = {}): CycleConfig => ({
+    ...CONFIG_BASE,
+    repoRoot,
+    ...over,
+  });
+
+  // `gh pr checks` exits NON-ZERO whenever anything is failing, pending, or absent — so the throw is
+  // the normal case. The "no checks reported" text goes to stderr with stdout empty, which is the
+  // one path the runner rethrows on, so the check for it could never run. Steve saw the raw
+  // "Command failed: gh pr checks 361 … no checks reported" surface as a job error.
+  it('reads "no checks reported" out of a non-zero exit, not just out of stdout', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const h = harness({
+      checksThrows: "Command failed: gh pr checks 361\nno checks reported on the 'numbering/x' branch",
+    });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+    // Pending until the deadline — never merged, and never a thrown job.
+    expect(outcome.status).toBe('ci-timeout');
+  });
+
+  it('does not merge on an unreadable checks failure', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const h = harness({ checksThrows: 'something else entirely' });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+    expect(outcome.status).not.toBe('merged');
+    expect(h.calls.some((c) => c.args.includes('--admin'))).toBe(false);
+  });
+
+  // A PR closed while the cycle polls reports NO checks, which is indistinguishable from "opened a
+  // second ago". Without the state probe the cycle reads that as pending and spins for the whole
+  // two-hour timeout, then reports that checks never finished — which is not what happened.
+  it('stops when the PR is closed out from under it, instead of waiting out the deadline', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const h = harness({ ci: 'pending', prState: 'CLOSED' });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+    expect(outcome.status).toBe('ci-red');
+    const titles = (db.prepare('SELECT title FROM agent_notifications').all() as { title: string }[]).map((r) => r.title);
+    expect(titles.some((t) => t.includes('no longer open'))).toBe(true);
+  });
+
+  it('keeps waiting while the PR is still open', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const outcome = await runNumberingCycle(db, config(root), harness({ ci: 'pending', prState: 'OPEN' }).deps);
+    expect(outcome.status).toBe('ci-timeout');
+  });
+
+  it('assumes still-open when the state cannot be read — an API blip must not abandon a healthy PR', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const outcome = await runNumberingCycle(db, config(root), harness({ ci: 'pending', prState: '' }).deps);
+    expect(outcome.status).toBe('ci-timeout');
+  });
+
+  // The branch is date-stamped, so a cycle that fails CI leaves its PR open and the NEXT day's run
+  // opens a second one with the same title and the same red verify. Three piled up.
+  it('does not open a second numbering PR while one is already open', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const h = harness({ openPrs: [{ number: 362, headRefName: 'numbering/2026-08-24-d-080' }] });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+
+    // Narrowed by status first: `prNumber` lives on some CycleOutcome variants, not all.
+    expect(outcome).toMatchObject({ status: 'ci-red', prNumber: 362 });
+    expect(h.calls.some((c) => c.cmd === 'gh' && c.args[1] === 'create')).toBe(false);
+    // And it must not have pushed a branch either — the whole attempt stops before any write.
+    expect(h.calls.some((c) => c.args.includes('push'))).toBe(false);
+  });
+
+  it('ignores an unrelated open PR — the guard keys on the branch, not the author', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    const h = harness({ openPrs: [{ number: 400, headRefName: 'robot/512' }] });
+    const outcome = await runNumberingCycle(db, config(root), h.deps);
+    expect(outcome.status).toBe('merged');
+  });
+
+  it('proceeds when nothing is open', async () => {
+    const root = makeRepo([{ id: 'D-TMP-EG383a', title: 'x' }]);
+    expect((await runNumberingCycle(db, config(root), harness({ openPrs: [] }).deps)).status).toBe('merged');
   });
 });

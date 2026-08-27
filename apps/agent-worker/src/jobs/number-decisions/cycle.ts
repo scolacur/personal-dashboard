@@ -176,10 +176,79 @@ function checkRows(stdout: string): { name: string; state: string }[] {
     .map((parts) => ({ name: parts[0], state: parts[1] }));
 }
 
+/**
+ * Text of a failed command, wherever the runner put it.
+ *
+ * `gh pr checks` exits NON-ZERO whenever any check is failing OR pending OR absent, so a throw from
+ * it is the normal case rather than the exceptional one. The runner returns stdout when there is
+ * any, and otherwise rethrows a redacted message — and "no checks reported" goes to **stderr**, so
+ * the empty-stdout path is the one that carries it.
+ */
+function failureText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Whether the PR is still open.
+ *
+ * A PR closed by a human while the cycle was polling reports **no checks**, which is
+ * indistinguishable from "opened one second ago" by the check output alone. Without this the cycle
+ * reads that as pending and spins until `ciTimeoutMs` — two hours of holding nothing, then a
+ * notification that says the checks never finished, which is not what happened. Steve closed #361
+ * mid-poll and got exactly that.
+ */
+async function prIsOpen(deps: CycleDeps, config: CycleConfig, prNumber: number): Promise<boolean> {
+  try {
+    const { stdout } = await deps.run(
+      'gh',
+      ['pr', 'view', String(prNumber), '--repo', config.githubRepo, '--json', 'state', '--jq', '.state'],
+      { cwd: config.repoRoot },
+    );
+    // Only an EXPLICIT terminal state counts as gone. Anything else — empty output, an unrecognised
+    // word, a shape change in `gh` — is uninformative, and uninformative must not be read as
+    // "closed": that would abandon a healthy PR on a blip. The deadline is the backstop.
+    const state = stdout.trim().toUpperCase();
+    return state !== 'CLOSED' && state !== 'MERGED';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The number of an already-open numbering PR, or null.
+ *
+ * Deliberately looks for the cycle's own branch prefix rather than its author: the bot account also
+ * opens Robot PRs, and closing in on "a numbering PR" by branch is what makes this safe to act on.
+ *
+ * Returns null on any error — an unreadable list must not stop the cycle running. The worst case is
+ * the behaviour that existed before this check.
+ */
+async function openNumberingPr(deps: CycleDeps, config: CycleConfig): Promise<number | null> {
+  try {
+    const { stdout } = await deps.run(
+      'gh',
+      ['pr', 'list', '--repo', config.githubRepo, '--state', 'open', '--json', 'number,headRefName'],
+      { cwd: config.repoRoot },
+    );
+    const rows = JSON.parse(stdout) as { number: number; headRefName: string }[];
+    const hit = rows.find((r) => r.headRefName.startsWith('numbering/'));
+    return hit ? hit.number : null;
+  } catch {
+    return null;
+  }
+}
+
 async function ciState(deps: CycleDeps, config: CycleConfig, prNumber: number): Promise<'pass' | 'fail' | 'pending'> {
-  const { stdout } = await deps.run('gh', ['pr', 'checks', String(prNumber), '--repo', config.githubRepo], {
-    cwd: config.repoRoot,
-  });
+  let stdout: string;
+  try {
+    ({ stdout } = await deps.run('gh', ['pr', 'checks', String(prNumber), '--repo', config.githubRepo], {
+      cwd: config.repoRoot,
+    }));
+  } catch (err) {
+    // Routine, not exceptional — see failureText. The exit code carries no information the text
+    // does not, so the text is what gets parsed either way.
+    stdout = failureText(err);
+  }
 
   // GitHub has not registered any check runs yet — normal for the first seconds after a PR opens,
   // and it is what killed the third live run. It means "too early to tell", not "failed".
@@ -270,6 +339,16 @@ export async function runNumberingCycle(
       );
     }
 
+    // One numbering PR at a time. The branch name is date-stamped, so a cycle that fails CI leaves
+    // its PR open and the NEXT day's run opens a second one against the same inbox — same title,
+    // same assignments, same red verify. Three had piled up before this was noticed (#361, #362,
+    // #366). A second PR also cannot fix the first: whatever made verify red is still there.
+    const existing = await openNumberingPr(deps, config);
+    if (existing !== null) {
+      logger.warn({ prNumber: existing }, 'numbering: a numbering PR is already open — not opening another');
+      return { status: 'ci-red', prNumber: existing, assignments };
+    }
+
     const branchName = `numbering/${new Date(deps.now()).toISOString().slice(0, 10)}-${assignments[0].id.toLowerCase()}`;
     const title = `chore(decisions): number ${assignments.map((a) => a.id).join(', ')}`;
     const body = [
@@ -313,6 +392,19 @@ export async function runNumberingCycle(
           'agent_needs_human',
           `Decision numbering PR #${prNumber} is red`,
           'The renumbering PR failed `verify` and was NOT merged. It is open for review. Decisions stay provisional until it lands.',
+          deps.now(),
+        );
+        return { status: 'ci-red', prNumber, assignments };
+      }
+      // Pending with the PR gone is not pending. Checked only on the pending path, so the healthy
+      // case costs no extra API call.
+      if (!(await prIsOpen(deps, config, prNumber))) {
+        logger.warn({ prNumber }, 'numbering: the PR was closed or merged out from under the cycle — stopping');
+        notifyLoop(
+          db,
+          'agent_needs_human',
+          `Decision numbering PR #${prNumber} is no longer open`,
+          'The cycle was waiting on its checks when the PR was closed or merged by someone else. Nothing was merged by the cycle; decisions stay provisional until a numbering PR lands.',
           deps.now(),
         );
         return { status: 'ci-red', prNumber, assignments };
