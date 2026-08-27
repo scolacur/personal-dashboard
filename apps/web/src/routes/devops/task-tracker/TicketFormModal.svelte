@@ -45,7 +45,7 @@
     onSubmit: () => void;
   } = $props();
 
-  // D-TMP-PD383a: a member's priority comes from its Epic. An unclassified Epic (`null`) leaves the
+  // D-080: a member's priority comes from its Epic. An unclassified Epic (`null`) leaves the
   // member's own value alone — matching the server — so there is still something to set in that case.
   const parentEpic = $derived(
     form.isEpic || form.epicId === null
@@ -111,7 +111,7 @@
     <label>
       <span>Priority</span>
       {#if inheritsPriority}
-        <!-- D-TMP-PD383a: priority is an Epic property. The server overrides whatever a member's
+        <!-- D-080: priority is an Epic property. The server overrides whatever a member's
              patch carries, so an editable control here would silently not take. -->
         <input type="text" value={priorityDisplay} readonly />
         <small class="field-note">

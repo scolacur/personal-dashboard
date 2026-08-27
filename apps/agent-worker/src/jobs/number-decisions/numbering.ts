@@ -88,7 +88,7 @@ export function assignNumbers(
  * Safe as a blind whole-repo pass because the namespaces cannot overlap: `D-TMP-` can never match
  * `D-\d{3}`, which is the property D-078 chose the prefix for.
  *
- * Ids are not prefix-free (`D-TMP-PD38a` is a prefix of `D-TMP-PD383a` as plain text), so the match
+ * Ids are not prefix-free (`D-TMP-PD38a` is a prefix of `D-080` as plain text), so the match
  * must not be a per-id search-and-replace. Matching the whole `[A-Za-z0-9]+` tail greedily and
  * looking the result up is what keeps the shorter id from corrupting the longer one.
  *

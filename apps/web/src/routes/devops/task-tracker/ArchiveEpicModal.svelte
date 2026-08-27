@@ -20,7 +20,7 @@
     onArchive: (cascadeMembers: boolean) => void;
   } = $props();
 
-  // D-TMP-PD383a slice C: a Ticket may be moved between Epics, never out of one — and "Epic only"
+  // D-080 slice C: a Ticket may be moved between Epics, never out of one — and "Epic only"
   // orphans every member at once, which is the same act at scale. Terminal members are exempt for
   // the same reason the edit form exempts them: they are history, not work.
   const canUnlink = $derived(activeMemberCount === 0);

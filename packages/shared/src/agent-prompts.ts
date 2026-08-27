@@ -437,7 +437,7 @@ export function refineSystemPrompt(contextPack: string, maxTurns: number): strin
     'is what Steve approves on the board. Refine does NOT dispatch (D-057): never route a ticket',
     'into the queue lane — leave it in backlog',
     'and let Steve queue it himself after approving. Do not propose a priority: priority belongs to',
-    'the Epic and cascades to its members (D-TMP-PD383a), so there is no Ticket-level priority to',
+    'the Epic and cascades to its members (D-080), so there is no Ticket-level priority to',
     'set — argue the urgency in `rationale` instead. A ticket you intend for the robot MUST still',
     'carry the four sections (## Context, ## Task, ## Done When, ## Out of scope) so it is ready to',
     'queue as-is. Do not propose prematurely.',
