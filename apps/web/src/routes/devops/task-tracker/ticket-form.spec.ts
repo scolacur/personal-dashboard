@@ -41,7 +41,7 @@ describe('ticketFormError', () => {
     expect(ticketFormError(form({ projectId: null }), creating)).toMatch(/project/i);
   });
 
-  // D-TMP-PD383a slice C: every Ticket belongs to an Epic.
+  // D-080 slice C: every Ticket belongs to an Epic.
   it('refuses to CREATE a Ticket with no Epic', () => {
     expect(ticketFormError(form({ epicId: null }), creating)).toMatch(/belongs to an Epic/i);
     expect(ticketFormError(form({ epicId: 7 }), creating)).toBeNull();

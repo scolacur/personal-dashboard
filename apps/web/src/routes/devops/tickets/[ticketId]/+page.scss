@@ -328,7 +328,7 @@
   }
 }
 
-// D-TMP-PD539a: terminal tickets are read-only; this states it and carries the one way out.
+// D-083: terminal tickets are read-only; this states it and carries the one way out.
 .frozen-banner {
   display: flex;
   align-items: center;
@@ -382,7 +382,7 @@
   color: var(--muted);
 }
 
-// A field the Epic owns (D-TMP-PD383a): shown in place of the select, with a link to the Epic that
+// A field the Epic owns (D-080): shown in place of the select, with a link to the Epic that
 // sets it. Deliberately not a disabled <select> — this is not a control you lack permission for,
 // it is a value that lives somewhere else.
 .field-inherited {
@@ -1024,7 +1024,7 @@
 }
 
 /* `.member-remove` deleted with the × it styled (PD-542): un-parenting a member is refused
-   for an active Ticket (D-TMP-PD383a) and for a terminal one (D-TMP-PD539a), so the control could
+   for an active Ticket (D-080) and for a terminal one (D-083), so the control could
    never succeed. */
 
 /* Member picker modal */

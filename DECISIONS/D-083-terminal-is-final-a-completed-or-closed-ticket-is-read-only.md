@@ -1,4 +1,4 @@
-# D-TMP-PD539a: Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
+# D-083: Terminal is final — a completed or closed Ticket is read-only, and leaving it is one deliberate act (PD-539; amends D-036, D-040)
 
 ## Decision
 
@@ -9,7 +9,7 @@ the ticket detail page, which returns it to `backlog`.
 Reopen is not a plain status write. It must:
 
 - **attach the Ticket to an Epic**, picking one if it has none — an Epic-less active Ticket is
-  unpriced and undispatchable by construction (D-TMP-PD383a), so reopening into that state would
+  unpriced and undispatchable by construction (D-080), so reopening into that state would
   create exactly the invisible dead end this decision exists to prevent;
 - **clear `agent_state`**, server-side, on any transition out of a terminal lane.
 
@@ -53,7 +53,7 @@ confirm dialog on a drag only looks like it has that property.
 
 ## Deliberately not done here
 
-- ~~**No server-side refusal of terminal edits.**~~ **Superseded by D-TMP-PD542a (PD-542).** The
+- ~~**No server-side refusal of terminal edits.**~~ **Superseded by D-086 (PD-542).** The
   reasoning here was wrong on its facts: it assumed a server guard would have to distinguish the loop
   from a human. It does not, because **the loop never goes through the server** — `apps/agent-worker`
   makes no HTTP calls and never imports `store.ts`; it opens `dashboard.db` directly with its own

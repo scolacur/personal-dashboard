@@ -293,15 +293,15 @@ export function bootstrapSchema(db: Database.Database): void {
     }
   });
 
-  // D-TMP-PD383a part 1: the `prioritized` lane is retired and folds into `backlog`. The lane was never
-  // carrying priority — it was carrying *commitment*, which D-TMP-PD383a re-expresses by queueing the
+  // D-080 part 1: the `prioritized` lane is retired and folds into `backlog`. The lane was never
+  // carrying priority — it was carrying *commitment*, which D-080 re-expresses by queueing the
   // Epic. Naturally idempotent; runs after the D-040 collapse above, which is what created
   // `prioritized` rows in the first place.
   migrate(db, 'agent_tickets_retire_prioritized_lane', (d) => {
     d.prepare("UPDATE agent_tickets SET status = 'backlog' WHERE status = 'prioritized'").run();
   });
 
-  // D-TMP-PD383a part 2: priority becomes an Epic property, cascaded to its members. Back-fills every
+  // D-080 part 2: priority becomes an Epic property, cascaded to its members. Back-fills every
   // member's priority from its Epic so the column stops carrying two different meanings — a global
   // rank on some rows, an in-Epic rank on others (62 of 211 active members outranked their own
   // Epic when this was written).
