@@ -49,7 +49,7 @@
 >
   <div class="member-card-head">
     <a class="member-card-id" href="/devops/tickets/{ticket.displayId}">{ticket.displayId}</a>
-    <!-- Priority is the Epic's and cascades (D-TMP-PD383a), so it is a read-out, never a control. -->
+    <!-- Priority is the Epic's and cascades (D-080), so it is a read-out, never a control. -->
     <span class="member-card-prio">{ticket.priority ?? '—'}</span>
   </div>
   <p class="member-card-title">{ticket.title}</p>

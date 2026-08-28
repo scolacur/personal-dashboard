@@ -139,9 +139,14 @@ export function activeSessionLimitHold(db: Database.Database, now: number = Date
   return null;
 }
 
-/* ── Maintenance hold (PD-498, D-078) ──────────────────────────────────────────
- * The hold the decision-numbering cycle takes so it can rewrite `D-TMP-` citations repo-wide
- * without racing a Robot that is mid-run against the same files.
+/* ── Maintenance hold (D-081, D-082) ───────────────────────────────────────────
+ * The hold a maintenance job takes so it can work on shared files without racing a Robot that is
+ * mid-run against the same tree.
+ *
+ * Its original subscriber was the decision-numbering cycle, deleted by PD-560 when ids became
+ * allocated at authoring time (D-088). The hold itself is deliberately kept: it is the general
+ * machinery for that problem, and the hard parts — draining, bounding the window, releasing safely
+ * on every exit path — are not worth re-deriving the next time something needs it.
  *
  * ## Why this is a SEPARATE key, and not a third `kind` on the session-limit hold
  *

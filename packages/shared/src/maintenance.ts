@@ -74,15 +74,19 @@ export interface MaintenanceJob {
  * One entry today. It lives in `shared` rather than in the worker so the Dev Ops page can render
  * the section without duplicating the list — the same reason the decision index has one parser.
  */
-export const MAINTENANCE_JOBS: MaintenanceJob[] = [
-  {
-    jobName: 'decisions:consolidation',
-    name: 'Decision Consolidation',
-    description:
-      'Assigns a D-NNN to every decision in DECISIONS/incoming/ in merge order, rewrites their ' +
-      'D-TMP- citations repo-wide, regenerates DECISIONS.md, and merges the result (D-078).',
-  },
-];
+/**
+ * Jobs the UI offers to run inside an open hold. **Empty since PD-560.**
+ *
+ * Decision Consolidation was the only entry, and the allocation counter retired it — an id is now
+ * correct the moment it is written, so there is nothing to convert and no citations to rewrite.
+ *
+ * The list stays rather than being deleted along with its one member. The hold is the general
+ * machinery for running anything that must touch shared files with no Robot working, and it is the
+ * only safe way to do that; re-deriving draining, window-bounding and safe release later would be
+ * the expensive part (D-081, D-082, D-085). An empty list renders as "no jobs registered", which is
+ * an honest state, not a broken one.
+ */
+export const MAINTENANCE_JOBS: MaintenanceJob[] = [];
 
 /** Whether a hold is holding dispatch right now. */
 export function isHoldActive(hold: MaintenanceHold | null): boolean {

@@ -259,7 +259,7 @@ export async function runRobotSession(
           docs: buildDocsToolServer(config, candidate.id),
           // PD-564: how the Robot gets a real `D-NNN`. Same division as the docs tool — the agent
           // supplies intent, the WORKER performs the privileged act — which is what lets a Robot
-          // allocate an id while remaining unable to touch `dashboard.db` (D-055, D-TMP-PD558a).
+          // allocate an id while remaining unable to touch `dashboard.db` (D-055, D-087).
           // It is here rather than an HTTP call because the container's egress firewall makes the
           // PD-557 endpoint unreachable; see `decision-tool.ts`.
           ...(db ? { decisions: buildDecisionToolServer(db, candidate.id) } : {}),

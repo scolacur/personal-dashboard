@@ -13,25 +13,15 @@
  */
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import {
-  DECISIONS_INDEX,
-  findRepoRoot,
-  loadDecisions,
-  loadProvisionalDecisions,
-  renderDecisionsIndex,
-} from './shared/decisions';
+import { DECISIONS_INDEX, findRepoRoot, loadDecisions, renderDecisionsIndex } from './shared/decisions';
 
 const repoRoot = findRepoRoot();
 
 const decisions = loadDecisions(repoRoot);
-const provisional = loadProvisionalDecisions(repoRoot);
 writeFileSync(path.join(repoRoot, DECISIONS_INDEX), renderDecisionsIndex(decisions), 'utf8');
 
-// No "next free id" any more: nobody allocates one at authoring time (D-078). Printing one here is
-// what would keep the obsolete habit alive — the numbering cycle is the only caller that needs it.
-// The provisional count is reported but NOT written: they are deliberately absent from the
-// committed file (PD-551). Saying so here stops the next reader thinking the write dropped them.
-console.log(
-  `${DECISIONS_INDEX}: ${decisions.length} numbered. ` +
-    `${provisional.length} awaiting a number in DECISIONS/incoming/ (not written to the index — injected at read time).`,
-);
+// No "next free id" printed here, for the reason PD-560 made structural: this script must not be a
+// second allocator. The counter behind `POST /api/decisions/allocate` is the only one, and a number
+// computed from the filesystem is exactly the `max + 1` that produced the D-056 and D-065
+// collisions. Nothing left to report but the count.
+console.log(`${DECISIONS_INDEX}: ${decisions.length} numbered decisions.`);

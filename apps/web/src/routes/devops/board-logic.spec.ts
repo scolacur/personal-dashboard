@@ -130,7 +130,7 @@ describe('clampEpicHeight', () => {
 });
 
 
-describe('isTerminal / isReadOnly (D-TMP-PD539a)', () => {
+describe('isTerminal / isReadOnly (D-083)', () => {
   it('treats completed and closed as terminal', () => {
     expect(isTerminal(makeTicket({ status: 'completed' }))).toBe(true);
     expect(isTerminal(makeTicket({ status: 'closed' }))).toBe(true);

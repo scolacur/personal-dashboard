@@ -1,4 +1,4 @@
-# D-TMP-PD558a: A Robot asks the server for a decision id; it still cannot touch the board DB (PD-558; clarifies D-055, D-039)
+# D-087: A Robot asks the server for a decision id; it still cannot touch the board DB (PD-558; clarifies D-055, D-039)
 
 **Decision:** The Robot's DB-blindness is **unchanged**. `dashboard.db` stays mode-600 and
 unreadable to the coding uid, exactly as [[D-055]]'s privilege split established. Decision-id

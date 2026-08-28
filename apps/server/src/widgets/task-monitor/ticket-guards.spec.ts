@@ -6,7 +6,7 @@ function existing(over: Partial<{ status: TicketStatus; isEpic: boolean; epicId:
   return { status: 'backlog' as TicketStatus, isEpic: false, epicId: 7, ...over };
 }
 
-describe('patchGuardFailure — terminal is final (D-TMP-PD539a)', () => {
+describe('patchGuardFailure — terminal is final (D-083)', () => {
   it('refuses a plain status write out of terminal, and names the way out', () => {
     for (const status of ['completed', 'closed'] as const) {
       const fail = patchGuardFailure(existing({ status }), { status: 'backlog' });
@@ -49,7 +49,7 @@ describe('patchGuardFailure — terminal is final (D-TMP-PD539a)', () => {
   });
 });
 
-describe('patchGuardFailure — a Ticket never leaves its Epic (D-TMP-PD383a)', () => {
+describe('patchGuardFailure — a Ticket never leaves its Epic (D-080)', () => {
   it('refuses un-parenting an active Ticket', () => {
     const fail = patchGuardFailure(existing({ status: 'backlog', epicId: 7 }), { epicId: null });
     expect(fail?.code).toBe('EPIC_REQUIRED');

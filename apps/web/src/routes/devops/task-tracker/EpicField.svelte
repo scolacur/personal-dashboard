@@ -5,7 +5,7 @@
   import type { TicketFormState } from './ticket-form';
 
   /**
-   * The create/edit modal's Epic field (D-TMP-PD383a slice C).
+   * The create/edit modal's Epic field (D-080 slice C).
    *
    * A plain `<select>` was fine at a dozen Epics and is unusable at seventy, which is where the
    * board landed after slice 0 — so this filters as you type. It also mints an Epic inline,
@@ -20,7 +20,7 @@
     form: TicketFormState;
     /** Epics selectable as a parent — same project, excluding the ticket being edited. */
     epicOptions: AgentTicket[];
-    /** Enforced on create only; editing a pre-D-TMP-PD383a orphan must stay possible. */
+    /** Enforced on create only; editing a pre-D-080 orphan must stay possible. */
     required?: boolean;
   } = $props();
 

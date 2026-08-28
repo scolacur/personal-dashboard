@@ -55,9 +55,20 @@ export const DEFAULT_COORDINATOR_CONFIG: CoordinatorConfig = {
  *
  * Cadence is measured from the last hold that actually **started**, not from the last one
  * requested: a hold that sat queued for hours because Robots were busy has not done its rounds, and
- * counting it would skip a day of consolidation.
+ * counting it would skip a day of work.
+ *
+ * **No jobs means nothing to schedule** (PD-560). Since the allocation counter retired decision
+ * consolidation the job map is empty, and a scheduled hold would drain dispatch, run nothing and
+ * release — on a timer, forever. Manual holds are unaffected: a human asking for a window is asking
+ * for the window itself, and `tick` services those regardless.
  */
-export function ensureScheduledHold(db: Database.Database, config: CoordinatorConfig, now: number): void {
+export function ensureScheduledHold(
+  db: Database.Database,
+  config: CoordinatorConfig,
+  now: number,
+  jobCount = 1,
+): void {
+  if (jobCount === 0) return;
   if (activeHold(db) || nextQueuedHold(db)) return;
   const last = lastHoldStartedAt(db);
   if (last !== null && now - last < config.cadenceMs) return;
@@ -101,7 +112,7 @@ export async function tick(db: Database.Database, config: CoordinatorConfig, dep
     return;
   }
 
-  ensureScheduledHold(db, config, now);
+  ensureScheduledHold(db, config, now, deps.jobs.size);
 
   const queued = nextQueuedHold(db);
   if (!queued) return;

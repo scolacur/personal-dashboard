@@ -73,7 +73,7 @@ export async function updateTicket(id: number, patch: UpdateTicketInput): Promis
 }
 
 /**
- * Reopen a completed/closed Ticket (D-TMP-PD539a, PD-542).
+ * Reopen a completed/closed Ticket (D-083, PD-542).
  *
  * Its own route rather than a status PATCH, which the server now refuses: reopening carries
  * obligations — the Ticket must land in an Epic, and its `agent_state` is cleared — and a plain
