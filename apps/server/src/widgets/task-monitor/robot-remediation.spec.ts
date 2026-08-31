@@ -50,6 +50,43 @@ describe('resetRobotRuns (C4 remediation)', () => {
   it('returns null for a missing ticket', () => {
     expect(resetRobotRuns(db, 9999, 'reset')).toBeNull();
   });
+
+  /**
+   * PD-606. `queued` is a Queue state; off the Queue there is no run to re-arm.
+   *
+   * This wrote `'queued'` unconditionally, so resetting a Backlog ticket armed it — leaving a
+   * Backlog card that reported a live run and inflating the nav's fleet counts with work that did
+   * not exist. PD-464 got there exactly this way.
+   */
+  describe('off the Queue, reset clears rather than arms', () => {
+    function seedParkedInBacklog(db: Database.Database): number {
+      const p = getProjectBySlug(db, 'personal-dashboard');
+      if (!p) throw new Error('no PD project');
+      const t = createTicket(db, { title: 'dragged back out', projectId: p.id });
+      db.prepare(
+        "UPDATE agent_tickets SET status = 'backlog', assignee = 'robot', agent_state = 'stuck' WHERE id = ?",
+      ).run(t.id);
+      return t.id;
+    }
+
+    it('clears the agent state on a backlog ticket', () => {
+      for (const kind of ['reset', 'unstick'] as const) {
+        const id = seedParkedInBacklog(db);
+        expect(resetRobotRuns(db, id, kind)?.agentState).toBeNull();
+      }
+    });
+
+    it('still logs the event, so the remediation is on the record either way', () => {
+      const id = seedParkedInBacklog(db);
+      resetRobotRuns(db, id, 'reset');
+      expect(listTicketEvents(db, id).map((e) => e.type)).toContain('robot_reset');
+    });
+
+    it('leaves the Queue behaviour alone', () => {
+      const id = seedStuck(db);
+      expect(resetRobotRuns(db, id, 'reset')?.agentState).toBe('queued');
+    });
+  });
 });
 
 describe('setDispatchPaused (C4 pause/resume)', () => {

@@ -377,6 +377,42 @@ describe('ready (computed on body write, D-058)', () => {
     expect(bypassed?.readyBypassed).toBe(true);
     expect(bypassed?.ready).toBe(false); // body still unshaped → ready stays false
   });
+
+  /**
+   * PD-606. The bypass is an acknowledgement about *this trip through the Queue*, so it does not
+   * survive leaving it.
+   *
+   * It used to. `needsQueueBypass` gates on `!ready && !readyBypassed`, so a ticket that had been
+   * overridden once never asked again — the ticket most in need of the prompt was the one that had
+   * stopped giving it. PD-464 sat in Backlog wearing a "formatting bypassed" pill whose glossary
+   * entry said it was in the Queue.
+   */
+  describe('leaving the Queue clears the formatting bypass (PD-606)', () => {
+    function queuedWithBypass(): number {
+      const t = createTicket(db, { title: 'unshaped', projectId: pd, body: 'loose' });
+      updateTicket(db, t.id, { status: 'queue', readyBypassed: true });
+      return t.id;
+    }
+
+    it('clears it on the way back to Backlog, so the next queue re-asks', () => {
+      const id = queuedWithBypass();
+      const out = updateTicket(db, id, { status: 'backlog' });
+      expect(out?.readyBypassed).toBe(false);
+      expect(out?.agentState).toBeNull();
+    });
+
+    it('keeps it while the ticket stays in the Queue', () => {
+      const id = queuedWithBypass();
+      expect(updateTicket(db, id, { title: 'renamed' })?.readyBypassed).toBe(true);
+    });
+
+    // The record that this WAS queued with an override is history worth keeping, and terminal
+    // tickets are read-only for that reason (D-083).
+    it('preserves it on a ticket that finishes', () => {
+      const id = queuedWithBypass();
+      expect(updateTicket(db, id, { status: 'completed' })?.readyBypassed).toBe(true);
+    });
+  });
 });
 
 describe('closed status', () => {

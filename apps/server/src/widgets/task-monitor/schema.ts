@@ -329,6 +329,28 @@ export function bootstrapSchema(db: Database.Database): void {
     addColumn(d, 'agent_tickets', 'max_turns', 'INTEGER');
   });
 
+  // PD-606: heal the rows that were left claiming a run they are not in.
+  //
+  // Three separate faults put tickets here, and the two write-side fixes (in `store.ts`) only stop
+  // it happening again — neither reaches back. `reset` armed tickets that were not in the Queue;
+  // `ready_bypassed` was never cleared on the way out; and PD-590's leaving-queue clear only ever
+  // applied going forward, so anything already sitting in Backlog stayed that way permanently. On
+  // 2026-08-31 that was PD-377 and PD-464, both reporting as live work for weeks.
+  //
+  // Scoped to `backlog` deliberately. It is the only non-Queue lane where these values are
+  // meaningless: `completed` legitimately carries `agent_state = 'done'`, and a terminal ticket's
+  // `ready_bypassed` is a true record that it WAS queued with an override — history, not a stale
+  // flag. Terminal rows are read-only for exactly that reason (D-083).
+  migrate(db, 'agent_tickets_clear_stale_run_state_in_backlog', (d) => {
+    d.prepare(
+      `UPDATE agent_tickets
+          SET agent_state = NULL, ready_bypassed = 0
+        WHERE status = 'backlog'
+          AND archived_at IS NULL
+          AND (agent_state IS NOT NULL OR ready_bypassed = 1)`,
+    ).run();
+  });
+
   // Seed the known projects once (with display-id keys). Idempotent, and backfills
   // the key on any project a prior seed created before `key` existed.
   migrate(db, 'seed_projects', (d) => {
