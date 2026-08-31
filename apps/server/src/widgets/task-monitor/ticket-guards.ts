@@ -6,9 +6,9 @@ import type { AgentTicket, TicketStatus } from '@dashboard/shared';
  * Two rules were previously enforced **only by the board**, so Refine, a stale client, or a `curl`
  * could still produce states the UI prevents:
  *
- *  - **D-TMP-PD539a** — a terminal Ticket is read-only, and leaving terminal happens only via an
+ *  - **D-083** — a terminal Ticket is read-only, and leaving terminal happens only via an
  *    explicit Reopen.
- *  - **D-TMP-PD383a / PD-509** — a Ticket belongs to an Epic, and never leaves one.
+ *  - **D-080 / PD-509** — a Ticket belongs to an Epic, and never leaves one.
  *
  * **These run at the route layer, not inside `updateTicket`.** That placement is the decision, and
  * it is deliberate:
@@ -43,7 +43,7 @@ function isTerminal(status: TicketStatus): boolean {
  * Terminal is read-only for *content* — title, body, priority, epic, assignee. What remains
  * permitted is bookkeeping the record is allowed to gain after the fact: the GitHub issue link
  * (backfilled by the sync), and archiving. None of it changes what the ticket says was done, which
- * is the thing D-TMP-PD539a exists to protect.
+ * is the thing D-083 exists to protect.
  */
 const TERMINAL_WRITABLE = new Set(['githubIssueNumber', 'archivedAt']);
 
@@ -58,7 +58,7 @@ export function patchGuardFailure(
 ): GuardFailure | null {
   const keys = Object.keys(patch);
 
-  // ── D-TMP-PD539a: terminal is final ───────────────────────────────────────
+  // ── D-083: terminal is final ───────────────────────────────────────
   // Epics are exempt, and deliberately so: an Epic's lane is *derived* from its members, so an Epic
   // reading `completed` is a summary of them rather than a state of its own. Freezing it would
   // freeze a value nothing wrote, and un-completing a member already un-completes its Epic.
@@ -80,7 +80,7 @@ export function patchGuardFailure(
     }
   }
 
-  // ── D-TMP-PD383a / PD-509: a Ticket never leaves its Epic ─────────────────
+  // ── D-080 / PD-509: a Ticket never leaves its Epic ─────────────────
   // Only *un-parenting* is refused, not "has no Epic". Moving between Epics stays free, and a
   // legacy Ticket that never had one is left editable — requiring an Epic on every edit would
   // enforce the model retroactively against history, and would break Core outright, which has 23
@@ -116,7 +116,7 @@ export function createGuardFailure(input: {
   if (input.epicId === undefined || input.epicId === null) {
     return {
       message:
-        'Every Ticket belongs to an Epic — supply `epicId`, or create the Epic first. Priority and dispatch both come from the Epic (D-TMP-PD383a).',
+        'Every Ticket belongs to an Epic — supply `epicId`, or create the Epic first. Priority and dispatch both come from the Epic (D-080).',
       code: 'EPIC_REQUIRED',
     };
   }
@@ -124,7 +124,7 @@ export function createGuardFailure(input: {
 }
 
 /**
- * The patch a Reopen applies (D-TMP-PD539a).
+ * The patch a Reopen applies (D-083).
  *
  * Reopen is not a plain status write, and this is where that stops being a client convention. It
  * returns the Ticket to `backlog`, and the caller must supply an Epic when it has none — reopening
@@ -148,7 +148,7 @@ export function reopenGuardFailure(
   if ((epicId ?? existing.epicId) === null) {
     return {
       message:
-        'Reopening needs an Epic: supply `epicId`. An Epic-less active Ticket is unpriced and undispatchable (D-TMP-PD383a).',
+        'Reopening needs an Epic: supply `epicId`. An Epic-less active Ticket is unpriced and undispatchable (D-080).',
       code: 'EPIC_REQUIRED',
     };
   }

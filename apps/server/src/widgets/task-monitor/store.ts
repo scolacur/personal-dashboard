@@ -329,7 +329,7 @@ function validMaxTurns(value: number | null): number | null {
 export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
   const insert = db.transaction((): number => {
     const now = Date.now();
-    // New tickets default to unset priority (the user assigns it deliberately). D-TMP-PD383a may override
+    // New tickets default to unset priority (the user assigns it deliberately). D-080 may override
     // both of these below, once the target Epic is known.
     let priority = toDbPriority(input.priority ?? null);
     // D-058/PD-417: normalize legacy queue statuses + reject anything invalid at the write boundary.
@@ -357,14 +357,14 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     // D-058: `ready` is computed from the body on every write and persisted (server-authoritative,
     // never client-set). A create always writes a body (possibly null), so always recompute.
     const readyFlag = isReady(input.body ?? null) ? 1 : 0;
-    // D-054/D-058/D-TMP-PD383a: an Epic never nests (its own epic_id stays null); a member's epic_id is
-    // validated against the target Epic. D-TMP-PD383a drops the "an Epic cannot be created into `queue`"
+    // D-054/D-058/D-080: an Epic never nests (its own epic_id stays null); a member's epic_id is
+    // validated against the target Epic. D-080 drops the "an Epic cannot be created into `queue`"
     // guard along with its update-path twin — an Epic in `queue` now means *active*.
     const isEpic = input.isEpic === true;
     const epicId = isEpic ? null : (input.epicId ?? null);
     validateEpicMembership(db, { epicId, projectId: input.projectId });
 
-    // D-TMP-PD383a: a Ticket created into a queued Epic lands in `backlog`, never the active set. Without
+    // D-080: a Ticket created into a queued Epic lands in `backlog`, never the active set. Without
     // this, anything able to add a member to a live Epic could create a dispatch — which would
     // reduce D-039 ("an autonomous agent may create into backlog only") from a structural guarantee
     // to a convention, recursively. Joining an in-flight Epic's work stays an explicit act.
@@ -372,7 +372,7 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
       status = 'backlog';
     }
 
-    // D-TMP-PD383a: a member's priority is its Epic's. An unclassified Epic leaves the supplied value
+    // D-080: a member's priority is its Epic's. An unclassified Epic leaves the supplied value
     // alone, matching the back-fill migration and the update path.
     if (!isEpic && epicId !== null) {
       const inherited = epicPriorityOf(db, epicId);
@@ -452,10 +452,10 @@ export function updateTicket(
     next.ready = isReady(next.body);
   }
 
-  // D-054/D-058/D-TMP-PD383a epic invariants. An Epic never nests (its own epic_id is forced null); a
+  // D-054/D-058/D-080 epic invariants. An Epic never nests (its own epic_id is forced null); a
   // member's epic_id is validated against the target Epic.
   //
-  // **D-TMP-PD383a removes the "an Epic can never enter `queue`" guard.** Queueing the Epic *is* how work
+  // **D-080 removes the "an Epic can never enter `queue`" guard.** Queueing the Epic *is* how work
   // is now dispatched — the Epic is the unit a human moves, and its members follow via the cascade
   // in the transaction below. The guard existed because only member Tickets are ever dispatched,
   // which is still true: an Epic in `queue` means *active*, not *dispatchable*, and the loop's
@@ -472,7 +472,7 @@ export function updateTicket(
   // D-058: assignee is a free axis — the lane no longer forces it (reverses D-044/D-055).
   // `next.assignee` is whatever the caller set (or the existing value); left untouched here.
 
-  // D-TMP-PD383a: priority is an Epic property. A member's priority is not independently settable, so a
+  // D-080: priority is an Epic property. A member's priority is not independently settable, so a
   // client-supplied value is silently overridden rather than rejected — the board sends whole-ticket
   // patches, and 400-ing them would break every edit that merely echoes the current priority back.
   // An unclassified Epic (`null`) leaves the member's value alone, matching the back-fill migration:
@@ -502,7 +502,7 @@ export function updateTicket(
     next.refineState = null;
   }
 
-  // D-TMP-PD539a: the mirror image. `completeTicket` writes `agent_state = 'done'` alongside the
+  // D-083: the mirror image. `completeTicket` writes `agent_state = 'done'` alongside the
   // status, and `UpdateTicketInput` has no `agentState` field for a caller to clear — so a reopened
   // robot ticket would sit in Backlog still wearing a green "done" pill, and `robotQueueCandidates`
   // (which selects on `agent_state IS NULL OR 'queued'`) would never pick it up again. Leaving a
@@ -561,7 +561,7 @@ export function updateTicket(
       logEvent(db, id, 'status_changed', { from: existing.status, to: next.status });
     }
 
-    // ── D-TMP-PD383a: the Epic cascades to its members ──────────────────────────────
+    // ── D-080: the Epic cascades to its members ──────────────────────────────
     // Both cascades run inside this transaction so a member can never be seen half-updated.
     if (next.isEpic) {
       // Priority. This is the whole point of Epic-owned priority: re-prioritise one Epic, not its
@@ -593,7 +593,7 @@ export function updateTicket(
         ).run(next.updatedAt, id);
       }
     }
-    // D-TMP-PD539a: clear the stale agent state on the way OUT of a terminal lane. `agent_state` is
+    // D-083: clear the stale agent state on the way OUT of a terminal lane. `agent_state` is
     // not in the UPDATE above (it is loop-owned and absent from UpdateTicketInput), so — exactly
     // like the entering-terminal teardown below — it takes its own statement inside this
     // transaction rather than riding along on the main write.
@@ -658,7 +658,7 @@ export function updateTicket(
         status: 'backlog',
         // PD-542: the next occurrence stays in its Epic. Without this the respawn was a standing
         // orphan factory — every recurrence produced an Epic-less active Ticket, which under
-        // D-TMP-PD383a is unpriced and undispatchable, and which no create-time guard would ever
+        // D-080 is unpriced and undispatchable, and which no create-time guard would ever
         // catch because the server was creating it itself.
         epicId: existing.epicId ?? undefined,
       });
@@ -893,7 +893,7 @@ export function epicMemberCount(db: Database.Database, epicId: number): number {
   return r.n;
 }
 
-/** An Epic's priority, or `null` when the Epic is unclassified or the id is not an Epic (D-TMP-PD383a).
+/** An Epic's priority, or `null` when the Epic is unclassified or the id is not an Epic (D-080).
  *  Members inherit this; `null` deliberately leaves a member's own priority alone rather than
  *  wiping it, which is the same rule the back-fill migration follows. */
 function epicPriorityOf(db: Database.Database, epicId: number): TicketPriority | null {
@@ -916,9 +916,9 @@ export function listEpicMembers(db: Database.Database, epicId: number): AgentTic
   return rows.map(rowToTicket);
 }
 
-/** An Epic's board lane (D-054, as amended by D-TMP-PD383a).
+/** An Epic's board lane (D-054, as amended by D-080).
  *
- *  **D-TMP-PD383a splits this by direction.** The Epic's *own* status is now authoritative for the pending
+ *  **D-080 splits this by direction.** The Epic's *own* status is now authoritative for the pending
  *  lanes — a human queues the Epic and its members follow — so a hand-set `queue` is honoured
  *  rather than treated as impossible. Progress stays derived: an Epic reads `completed`/`closed`
  *  only when its members actually got there, because that is an observation of what the loop did
@@ -938,7 +938,7 @@ function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus)
   }
   const allDone = memberStatuses.every((s) => s === 'completed' || s === 'closed');
   if (allDone) return memberStatuses.some((s) => s === 'completed') ? 'completed' : 'closed';
-  // D-TMP-PD383a: not all done, so the Epic is pending. A member still in `queue` means work is live;
+  // D-080: not all done, so the Epic is pending. A member still in `queue` means work is live;
   // otherwise the Epic's own lane decides, which is what makes queueing an Epic with nothing yet
   // dispatchable (every member blocked, say) still read as active rather than snapping back.
   if (memberStatuses.some((s) => s === 'queue')) return 'in_progress';
@@ -1380,7 +1380,7 @@ export function approveRefine(
 
     // PD-510, the stronger form of D-057: **an approval never moves a Ticket between lanes.** The
     // proposal's `status` is not read at all — not honoured, not parked, not coerced. Earlier this
-    // parked an agent-proposed `queue` in `prioritized`, then in `backlog` once D-TMP-PD383a retired
+    // parked an agent-proposed `queue` in `prioritized`, then in `backlog` once D-080 retired
     // that lane; both were still a lane write derived from what the agent asked for, and a proposal
     // that says "backlog" on a Ticket already in Queue would have quietly pulled it back out.
     // The one exception is Steve's own explicit "Approve & queue" (`opts.queue`) — that is a human
@@ -1428,12 +1428,12 @@ export function approveRefine(
       // `status` is not read — which makes D-039 ("an autonomous agent may create into backlog
       // only") structural here rather than a lane-coercion chain that had to grow a new case each
       // time a lane was retired (`robot_queue`/`steve_queue` in PD-417, `prioritized` in
-      // D-TMP-PD383a). It also closes the quieter half: a child proposed as `completed`/`closed`
+      // D-080). It also closes the quieter half: a child proposed as `completed`/`closed`
       // used to be created already terminal, i.e. work asserted as finished before it existed.
       // The shaped body is preserved either way, so a child stays one drag from dispatch.
       //
       // Populate into a queued Epic lands in `backlog` too — `createTicket` enforces that
-      // independently (D-TMP-PD383a), so joining an in-flight Epic stays an explicit act.
+      // independently (D-080), so joining an in-flight Epic stays an explicit act.
       const child = createTicket(db, {
         title: c.title,
         body: c.body,

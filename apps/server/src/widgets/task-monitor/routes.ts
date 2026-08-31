@@ -180,7 +180,7 @@ export function registerRoutes(
       isEpic: body.isEpic === true,
       epicId: body.epicId === undefined ? undefined : (body.epicId as number | null),
     };
-    // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-TMP-PD383a / PD-509),
+    // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-080 / PD-509),
     // which until now only the board's form enforced.
     const createFail = createGuardFailure(input);
     if (createFail) {
@@ -359,7 +359,7 @@ export function registerRoutes(
     return updated;
   });
 
-  // The one sanctioned way out of a terminal lane (D-TMP-PD539a, PD-542). A plain PATCH now refuses
+  // The one sanctioned way out of a terminal lane (D-083, PD-542). A plain PATCH now refuses
   // it, so that this is not a status write dressed up as one: reopening carries obligations — the
   // Ticket must land in an Epic, and its `agent_state` must be cleared — and those were previously
   // implemented by the board, which meant any other caller simply skipped them.

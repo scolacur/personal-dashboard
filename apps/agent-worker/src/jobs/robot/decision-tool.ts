@@ -9,7 +9,7 @@ import { allocateDecisionId } from './decision-ids-db';
  *
  * **The agent does not touch the database; the worker allocates for it.** Same division as
  * `mcp__docs__fetch`: the agent supplies an intent, the worker performs the privileged act. That is
- * not a convenience here — it is the whole design, recorded in `D-TMP-PD558a`. The coding uid
+ * not a convenience here — it is the whole design, recorded in `D-087`. The coding uid
  * cannot read `dashboard.db` at all ([[D-055]]'s privilege split, mode-600), and this tool does not
  * relax that. It runs in the worker process, which already holds the handle.
  *

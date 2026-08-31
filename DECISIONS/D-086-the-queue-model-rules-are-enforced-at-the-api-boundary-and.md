@@ -1,18 +1,18 @@
-# D-TMP-PD542a: The queue-model rules are enforced at the API boundary, and Reopen is a route (PD-542; amends D-TMP-PD539a, implements D-TMP-PD383a)
+# D-086: The queue-model rules are enforced at the API boundary, and Reopen is a route (PD-542; amends D-083, implements D-080)
 
 ## Decision
 
 The two rules that only the board enforced now hold against any HTTP caller:
 
-- **Terminal is final** (D-TMP-PD539a). A `PATCH` on a `completed`/`closed` Ticket refuses content
+- **Terminal is final** (D-083). A `PATCH` on a `completed`/`closed` Ticket refuses content
   edits and refuses to move it out of a terminal lane. Only `githubIssueNumber` and `archivedAt`
   remain writable — bookkeeping the record may gain after the fact, which changes nothing about what
   it says was done.
-- **A Ticket never leaves its Epic** (D-TMP-PD383a / PD-509). `PATCH` refuses to clear `epic_id` on
+- **A Ticket never leaves its Epic** (D-080 / PD-509). `PATCH` refuses to clear `epic_id` on
   a Ticket that has one, and `POST` requires an Epic on create.
 
 **Reopen becomes its own route** — `POST /tickets/:id/reopen` — and is the only sanctioned way out of
-terminal. It enforces the obligations D-TMP-PD539a gave it: the Ticket must land in an Epic, and its
+terminal. It enforces the obligations D-083 gave it: the Ticket must land in an Epic, and its
 `agent_state` is cleared.
 
 **The guards live at the route layer, not inside `updateTicket`.**
@@ -29,7 +29,7 @@ and by the recurrence respawn. Guarding the store would refuse the server's own 
 force an exemption flag onto every internal call, which is a worse trade than guarding the door.
 
 **The Robot loop is unaffected either way, and the original reasoning against this was wrong.**
-D-TMP-PD539a declined server enforcement because "a server guard would have to distinguish the loop
+D-083 declined server enforcement because "a server guard would have to distinguish the loop
 from a human, which the API has no notion of." It does not have to: `apps/agent-worker` makes zero
 HTTP calls and never imports `store.ts` — it opens `dashboard.db` directly and carries its own SQL.
 The loop and the server are two independent writers on one table. Verified, not assumed: the

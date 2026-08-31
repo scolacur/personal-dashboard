@@ -32,35 +32,30 @@ export interface AgentWorkerConfig {
   /** The Evaluator (PD-487, D-076) — post-hand-off PR review. Off by default. */
   evaluator: EvaluatorConfig;
   /** The decision-numbering cycle (PD-498, D-078) — deterministic, no LLM. Off by default. */
-  numbering: NumberingConfig;
+  maintenance: MaintenanceConfig;
 }
 
 /**
- * Config for the decision-numbering cycle (PD-498, D-078).
+ * Config for the maintenance-hold coordinator (D-081, D-082, D-085).
  *
- * Off by default like the Robot loop and the Evaluator: this job rewrites citations across the whole
- * repo and admin-merges its own PR, which is not something an image should start doing merely by
- * being deployed.
+ * Renamed from `NumberingConfig` by PD-560, along with its env vars: the flag used to be
+ * `DECISION_CONSOLIDATION_JOB_ENABLED` because consolidation was the only job, and that job is gone.
+ * What it actually gates — and always did — is the coordinator that opens holds.
+ *
+ * Off by default, like the Robot loop and the Evaluator. A hold suspends dispatch, which is not
+ * something an image should start doing merely by being deployed.
  */
-export interface NumberingConfig {
+export interface MaintenanceConfig {
   enabled: boolean;
   /** How often the coordinator advances the hold state machine. Not the hold cadence — that is
    *  HOLD_CADENCE_MS in shared, because the UI has to state it too. */
   pollMs: number;
-  /** How long to wait for CI on the cycle's own PR before leaving it open for a human. */
-  ciTimeoutMs: number;
-  ciPollMs: number;
-  /** The branch the grounding checkout must be returned to after a cycle. */
-  baseBranch: string;
 }
 
-export function loadNumberingConfig(env: NodeJS.ProcessEnv): NumberingConfig {
+export function loadMaintenanceConfig(env: NodeJS.ProcessEnv): MaintenanceConfig {
   return {
-    enabled: env.DECISION_CONSOLIDATION_JOB_ENABLED === '1' || env.DECISION_CONSOLIDATION_JOB_ENABLED === 'true',
-    pollMs: Number(env.DECISION_CONSOLIDATION_POLL_MS ?? 60_000),
-    ciTimeoutMs: Number(env.DECISION_CONSOLIDATION_CI_TIMEOUT_MS ?? 20 * 60_000),
-    ciPollMs: Number(env.DECISION_CONSOLIDATION_CI_POLL_MS ?? 30_000),
-    baseBranch: env.DECISION_CONSOLIDATION_BASE_BRANCH ?? 'main',
+    enabled: env.MAINTENANCE_HOLD_ENABLED === '1' || env.MAINTENANCE_HOLD_ENABLED === 'true',
+    pollMs: Number(env.MAINTENANCE_HOLD_POLL_MS ?? 60_000),
   };
 }
 
@@ -245,7 +240,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
     robot: loadRobotConfig(env),
     evaluator: loadEvaluatorConfig(env),
-    numbering: loadNumberingConfig(env),
+    maintenance: loadMaintenanceConfig(env),
   };
 }
 

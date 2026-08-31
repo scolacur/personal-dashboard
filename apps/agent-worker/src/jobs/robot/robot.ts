@@ -143,9 +143,10 @@ export async function processRobotQueue(
     return 0;
   }
 
-  // Maintenance hold (PD-498, D-078): the decision-numbering cycle is rewriting `D-TMP-` citations
-  // repo-wide and must not race a Robot editing the same files. Its own slot, not a `kind` on the
-  // hold above — see the block comment in `state.ts` for why sharing one silently breaks both.
+  // Maintenance hold (D-081, D-082): a maintenance job needs the tree to itself, so dispatch is
+  // held while one runs. Its own slot, not a `kind` on the hold above — see the block comment in
+  // `state.ts` for why sharing one silently breaks both. No jobs are registered since PD-560, so
+  // in practice this only fires for a hold a human opened from Dev Ops.
   const maintenance = activeMaintenanceHold(db, now());
   if (maintenance) {
     logger.info(

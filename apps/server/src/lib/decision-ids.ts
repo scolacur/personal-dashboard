@@ -54,12 +54,16 @@ import type Database from 'better-sqlite3';
  * (see `docker/Dockerfile` — the runtime stage copies only `dist`, `build` and `node_modules`), so
  * there is nothing on disk in production to scan. The derivation happens in CI instead.
  *
- * **This counts numbered decisions only.** The seven provisional decisions still in
- * `DECISIONS/incoming/` are not reflected here, and must not be: the cutover (PD-560) numbers them
- * by *allocating from this counter*, so that there is exactly one allocator and no reservation
- * arithmetic to get wrong.
+ * **Raised by the PD-560 cutover.** It seeded at 79 — the highest number that existed when
+ * the counter shipped — and the cutover then allocated `D-080` through `D-087` from this very
+ * counter to number the eight decisions left in `DECISIONS/incoming/`, plus `D-088` for the
+ * decision recording the change itself. Deliberately allocated rather
+ * than reserved in advance: a reservation is wrong the moment one more decision is authored before
+ * the cutover, and it would have meant two places computing the next free number. Now there is one.
+ *
+ * The inbox is gone, so nothing else can ever need reconciling against this value again.
  */
-export const HIGHEST_DECISION_AT_SEED = 79;
+export const HIGHEST_DECISION_AT_SEED = 88;
 
 /** `80` → `D-080`. Zero-padded to three digits, matching every existing decision filename. */
 export function formatDecisionId(num: number): string {

@@ -20,7 +20,7 @@ export function isTerminal(t: { status: TicketStatus }): boolean {
 }
 
 /**
- * A ticket that no board surface may change (D-TMP-PD539a).
+ * A ticket that no board surface may change (D-083).
  *
  * Two independent reasons, deliberately combined here so every surface asks one question:
  *  - **terminal** — the work is over, and `completed` should be a record rather than a lane you can

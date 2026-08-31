@@ -54,7 +54,7 @@
      * Whether this ticket may be dragged, and what to say when it may not.
      *
      * The caller decides, because the reasons are its own: the board refuses terminal
-     * (D-TMP-PD539a) and robot-locked (D-058) cards and toasts an explanation.
+     * (D-083) and robot-locked (D-058) cards and toasts an explanation.
      */
     canDrag?: (t: AgentTicket) => { ok: boolean; reason?: string };
     /** Commit a move. `beforeId` is the card to insert before, or null to append to the band. */
