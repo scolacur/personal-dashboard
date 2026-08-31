@@ -44,8 +44,14 @@ function isTerminal(status: TicketStatus): boolean {
  * permitted is bookkeeping the record is allowed to gain after the fact: the GitHub issue link
  * (backfilled by the sync), and archiving. None of it changes what the ticket says was done, which
  * is the thing D-083 exists to protect.
+ *
+ * **`sortOrder` is here too (PD-590).** It was refused at first, which broke reordering an Epic's
+ * member list whenever a completed ticket sat in it — the whole list, not just that row. That was
+ * over-reach: `sortOrder` is *where a card sits*, not a claim about what happened. A completed
+ * member still occupies a position among its siblings, and moving it rewrites no history. The test
+ * for this set is "would changing it alter the record of the work?", and position does not.
  */
-const TERMINAL_WRITABLE = new Set(['githubIssueNumber', 'archivedAt']);
+const TERMINAL_WRITABLE = new Set(['githubIssueNumber', 'archivedAt', 'sortOrder']);
 
 /**
  * Why this PATCH must be refused, or null when it may proceed.
@@ -53,7 +59,7 @@ const TERMINAL_WRITABLE = new Set(['githubIssueNumber', 'archivedAt']);
  * `patch` is the already-validated field set; `existing` is the ticket as stored.
  */
 export function patchGuardFailure(
-  existing: Pick<AgentTicket, 'status' | 'isEpic' | 'epicId'>,
+  existing: Pick<AgentTicket, 'status' | 'isEpic' | 'epicId' | 'agentState'>,
   patch: Record<string, unknown>,
 ): GuardFailure | null {
   const keys = Object.keys(patch);
@@ -76,6 +82,28 @@ export function patchGuardFailure(
       return {
         message: `A completed or closed Ticket is read-only; refused changes to ${blocked.join(', ')}. Reopen it first if it genuinely is not finished.`,
         code: 'TERMINAL_IS_READ_ONLY',
+      };
+    }
+  }
+
+  // ── PD-590: a live run is never silently detached ─────────────────────────
+  // The loop's PR watcher selects `status = 'queue' AND agent_state = 'in-review'` (pr-state.ts),
+  // and a dispatched run is tracked the same way. Moving the ticket out of the Queue mid-flight
+  // therefore orphans it: the run keeps going (D-046 — an in-flight Robot is never interrupted),
+  // finishes, opens a PR, and nothing is watching to complete the ticket when it merges. PD-464
+  // reached exactly this state, with an open PR nobody was tracking.
+  //
+  // PD-536 already refuses to strand in-flight members during an Epic rollback. This is the same
+  // rule for the gesture that had no guard at all: a single ticket dragged out of the Queue.
+  if (existing.status === 'queue' && 'status' in patch && patch.status !== 'queue') {
+    const state: string | null | undefined = existing.agentState;
+    if (state === 'working' || state === 'in-review') {
+      return {
+        message:
+          state === 'working'
+            ? 'A Robot is working on this ticket right now. Moving it out of the Queue would leave the run with nothing tracking it — the run cannot be interrupted (D-046), so wait for it to hand off a PR.'
+            : 'This ticket has a Robot PR awaiting review. Moving it out of the Queue would stop anything watching that PR, so nothing would complete the ticket when it merges — review or close the PR first.',
+        code: 'RUN_IN_FLIGHT',
       };
     }
   }

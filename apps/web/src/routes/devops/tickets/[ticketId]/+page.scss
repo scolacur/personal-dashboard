@@ -963,8 +963,12 @@
     opacity: 0.45;
   }
 
+  // PD-590: a visible insertion line, matching the board's. A 1px tint on an element that already
+  // has a border read as nothing at all — the indicator has to be unmistakable mid-drag, because
+  // it is the only feedback about where the row will actually land.
   &.drop-before {
     border-top-color: var(--accent);
+    box-shadow: inset 0 2px 0 0 var(--accent);
   }
 }
 
@@ -1124,4 +1128,30 @@
       color: var(--bg);
     }
   }
+}
+
+
+/* An action that failed, shown above content that is still valid (PD-590). Distinct from the
+   fatal load error, which replaces the page — a failed drag must not take the ticket down. */
+.action-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-stuck, var(--border));
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.action-error-x {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  cursor: pointer;
 }

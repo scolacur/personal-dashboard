@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import type { TicketStatus } from '@dashboard/shared';
+import type { AgentState, TicketStatus } from '@dashboard/shared';
 import { createGuardFailure, patchGuardFailure, reopenGuardFailure } from './ticket-guards';
 
-function existing(over: Partial<{ status: TicketStatus; isEpic: boolean; epicId: number | null }> = {}) {
-  return { status: 'backlog' as TicketStatus, isEpic: false, epicId: 7, ...over };
+function existing(
+  over: Partial<{
+    status: TicketStatus;
+    isEpic: boolean;
+    epicId: number | null;
+    agentState: AgentState | null;
+  }> = {},
+) {
+  return { status: 'backlog' as TicketStatus, isEpic: false, epicId: 7, agentState: null as AgentState | null, ...over };
 }
 
 describe('patchGuardFailure — terminal is final (D-083)', () => {
@@ -30,6 +37,21 @@ describe('patchGuardFailure — terminal is final (D-083)', () => {
   it('still allows the issue link and archiving', () => {
     expect(patchGuardFailure(existing({ status: 'completed' }), { githubIssueNumber: 42 })).toBeNull();
     expect(patchGuardFailure(existing({ status: 'closed' }), { archivedAt: 'now' })).toBeNull();
+  });
+
+  // PD-590: refusing this broke reordering any Epic member list containing a completed ticket.
+  // Position is not part of the record — a completed member still sits somewhere among its
+  // siblings, and moving it there rewrites nothing about what was done.
+  it('allows reordering a terminal Ticket within its Epic', () => {
+    expect(patchGuardFailure(existing({ status: 'completed' }), { sortOrder: 42 })).toBeNull();
+    expect(patchGuardFailure(existing({ status: 'closed' }), { sortOrder: 1.5 })).toBeNull();
+  });
+
+  it('still refuses content edits sent alongside a reorder', () => {
+    const fail = patchGuardFailure(existing({ status: 'completed' }), { sortOrder: 42, title: 'x' });
+    expect(fail?.code).toBe('TERMINAL_IS_READ_ONLY');
+    expect(fail?.message).toContain('title');
+    expect(fail?.message).not.toContain('sortOrder');
   });
 
   it('lets a terminal Ticket move between terminal lanes', () => {
@@ -77,6 +99,44 @@ describe('patchGuardFailure — a Ticket never leaves its Epic (D-080)', () => {
 
   it('allows promoting a Ticket to an Epic, which clears the parent by definition', () => {
     expect(patchGuardFailure(existing({ epicId: 7 }), { isEpic: true, epicId: null })).toBeNull();
+  });
+});
+
+// PD-590. The loop tracks a dispatched run by `status = 'queue'` + `agent_state`; moving the
+// ticket out mid-flight orphans the run, which keeps going regardless (D-046) and completes
+// nothing. PD-536 already refuses this for Epic rollback; this is the single-ticket gesture.
+describe('patchGuardFailure — a live run is never silently detached', () => {
+  it('refuses moving a working or in-review ticket out of the queue', () => {
+    for (const state of ['working', 'in-review'] as const) {
+      const fail = patchGuardFailure(
+        existing({ status: 'queue', agentState: state }),
+        { status: 'backlog' },
+      );
+      expect(fail?.code).toBe('RUN_IN_FLIGHT');
+    }
+  });
+
+  it('explains what to do, differently for each state', () => {
+    const working = patchGuardFailure(existing({ status: 'queue', agentState: 'working' }), { status: 'backlog' })!;
+    expect(working.message).toMatch(/hand off|cannot be interrupted/i);
+    const review = patchGuardFailure(existing({ status: 'queue', agentState: 'in-review' }), { status: 'backlog' })!;
+    expect(review.message).toMatch(/pr/i);
+  });
+
+  it('allows moving a ticket that is merely waiting, or not running at all', () => {
+    expect(patchGuardFailure(existing({ status: 'queue', agentState: 'queued' }), { status: 'backlog' })).toBeNull();
+    expect(patchGuardFailure(existing({ status: 'queue', agentState: null }), { status: 'backlog' })).toBeNull();
+  });
+
+  // Parked states are exactly the ones a human needs to be able to pull back.
+  it('allows pulling back a parked ticket', () => {
+    for (const state of ['stuck', 'needs-human', 'awaiting-human'] as const) {
+      expect(patchGuardFailure(existing({ status: 'queue', agentState: state }), { status: 'backlog' })).toBeNull();
+    }
+  });
+
+  it('does not block edits that leave the ticket in the queue', () => {
+    expect(patchGuardFailure(existing({ status: 'queue', agentState: 'working' }), { title: 'retitle' })).toBeNull();
   });
 });
 
