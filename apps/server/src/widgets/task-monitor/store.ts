@@ -534,9 +534,23 @@ export function updateTicket(
   // (RUN_IN_FLIGHT): by the time we get here the run is not in flight, so there is no live
   // bookkeeping to destroy. `awaiting-human` is cleared too — the question was asked about a queued
   // run that is no longer queued, and `resumeAskHuman` re-establishes it if it comes back.
+  //
+  // PD-606: `ready_bypassed` goes with it. D-058's bypass is an acknowledgement about *this trip
+  // through the Queue* — "I know it isn't formatted, run it anyway". Leaving it set meant
+  // `needsQueueBypass` returned false forever after, so the warning never appeared again and the
+  // one ticket that had already been overridden once was the one that stopped asking. PD-464 sat in
+  // exactly that state, in Backlog, wearing a "formatting bypassed" pill that claimed it was queued.
   const leavingQueue = existing.status === 'queue' && next.status !== 'queue';
   if (leavingQueue) {
     next.agentState = null;
+    // ...but NOT on the way to a terminal lane. Clearing it there would rewrite the record of how
+    // the work was actually run — "this was dispatched without being formatted" is part of what
+    // happened, and D-083 exists to protect exactly that. It also gates nothing on a finished
+    // ticket: `needsQueueBypass` can only fire on a ticket that is going back into the Queue, which
+    // a terminal one is not. So the clear is scoped to the case that motivated it.
+    if (next.status !== 'completed' && next.status !== 'closed') {
+      next.readyBypassed = false;
+    }
   }
 
   const parkedOnQueueEntry =
@@ -1615,9 +1629,15 @@ interface WorkerHeartbeatRow {
 export function getSortieFleet(db: Database.Database): Partial<Record<AgentState, number>> {
   const rows = db
     .prepare(
+      // PD-606: scoped to the Queue. Grouping over every row meant a stale `agent_state` on a
+      // Backlog ticket was counted as live work: the nav read "2 queued" while the Queue column was
+      // empty, and the two rows behind it (PD-377, PD-464) had been sitting in Backlog for weeks.
+      // The counts describe the Robot's fleet, and nothing outside the Queue is in it — so this
+      // reports the truth regardless of how a stale row got there, which the write-side fixes above
+      // cannot promise on their own.
       `SELECT agent_state AS state, COUNT(*) AS n
          FROM agent_tickets
-        WHERE archived_at IS NULL AND agent_state IS NOT NULL
+        WHERE archived_at IS NULL AND agent_state IS NOT NULL AND status = 'queue'
         GROUP BY agent_state`,
     )
     .all() as { state: string; n: number }[];
@@ -1821,7 +1841,15 @@ export function resetRobotRuns(
   if (!ticket) return null;
   const type = kind === 'unstick' ? ROBOT_EVENT.unstick : ROBOT_EVENT.reset;
   logEvent(db, ticketId, type, { reason: kind === 'unstick' ? 'unstuck by human' : 'reset by human' });
-  db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run('queued', now, ticketId);
+  // PD-606: `queued` only makes sense inside the Queue. This wrote it unconditionally, with no check
+  // on `status`, so resetting a Backlog ticket ARMED it — producing a Backlog card that reported a
+  // live run, and inflating the nav's "queued" count with work that was not there. PD-464 reached
+  // its state this way, from a reset issued while it sat in Backlog.
+  //
+  // Off the Queue there is no run to re-arm, so the honest reset is to clear: the ticket goes back
+  // to having no agent state at all, which is what a Backlog ticket is.
+  const nextState = ticket.status === 'queue' ? 'queued' : null;
+  db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run(nextState, now, ticketId);
   return getTicket(db, ticketId);
 }
 

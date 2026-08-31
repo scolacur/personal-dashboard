@@ -25,12 +25,22 @@ function pdId(db: Database.Database): number {
   return p.id;
 }
 
-/** Seed a ticket in a given Robot loop agent_state (the loop normally sets this). */
-function seedTicket(db: Database.Database, title: string, agentState: string | null): number {
+/**
+ * Seed a ticket in a given Robot loop agent_state (the loop normally sets this).
+ *
+ * Seeds into the **Queue**, which is where a ticket carrying an agent state actually lives — the
+ * loop only ever writes one to a ticket it has dispatched. These fixtures previously left the
+ * status at its `backlog` default, which no real dispatched ticket ever has, and PD-606's scoping
+ * made that divergence visible.
+ */
+function seedTicket(
+  db: Database.Database,
+  title: string,
+  agentState: string | null,
+  status: string = 'queue',
+): number {
   const t = createTicket(db, { title, projectId: pdId(db) });
-  if (agentState !== null) {
-    db.prepare('UPDATE agent_tickets SET agent_state = ? WHERE id = ?').run(agentState, t.id);
-  }
+  db.prepare('UPDATE agent_tickets SET agent_state = ?, status = ? WHERE id = ?').run(agentState, status, t.id);
   return t.id;
 }
 
@@ -56,6 +66,23 @@ describe('getSortieFleet', () => {
     const db = freshDb();
     seedTicket(db, 'a', null);
     expect(getSortieFleet(db)).toEqual({});
+  });
+
+  /**
+   * PD-606. These counts describe the Robot's fleet, and nothing outside the Queue is in it.
+   *
+   * Counting every row meant a stale `agent_state` on a Backlog ticket read as live work: the nav
+   * said "2 queued" while the Queue column was empty, and the two rows behind it (PD-377, PD-464)
+   * had been sitting in Backlog for weeks. Scoping the query makes the count true regardless of how
+   * a stale row got there — which the write-side fixes cannot promise on their own, because they
+   * only ever apply going forward.
+   */
+  it('ignores a stale agent_state on a ticket that is not in the Queue', () => {
+    const db = freshDb();
+    seedTicket(db, 'genuinely queued', 'working');
+    seedTicket(db, 'dragged back to backlog', 'queued', 'backlog');
+    seedTicket(db, 'finished', 'done', 'completed');
+    expect(getSortieFleet(db)).toEqual({ working: 1 });
   });
 });
 
