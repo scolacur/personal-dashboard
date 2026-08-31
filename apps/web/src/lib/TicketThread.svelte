@@ -239,7 +239,7 @@
                 >
                   Approve &amp; queue
                 </button>
-                {#if notReady}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">not ready</span>{/if}
+                {#if notReady}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">not formatted</span>{/if}
               {/if}
               <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
             </div>

@@ -28,10 +28,14 @@ describe('laneHelp', () => {
     }
   });
 
-  it('says the Queue arms rather than launches, which is the surprising part', () => {
+  // The Epic is the unit of dispatch (D-TMP-PD383a): you move the Epic, its tickets follow. And
+  // being queued is not the same as being picked up — the concurrency cap is the reason a queued
+  // ticket can sit still, which is the question the lane header gets asked.
+  it('says you move the Epic, and that the concurrency cap gates pickup', () => {
     const text = laneHelpText('queue').toLowerCase();
-    expect(text).toMatch(/armed|arms/);
-    expect(text).toContain('concurrency');
+    expect(text).toContain('epic');
+    expect(text).toMatch(/queued automatically|its tickets/);
+    expect(text).toContain('concurrent');
   });
 
   it('gives the dispatch order, including both drag orders', () => {
@@ -41,11 +45,14 @@ describe('laneHelp', () => {
     expect(text).toContain('drag order');
   });
 
-  // D-080: a Ticket is not queued on its own; its Epic is what moves.
-  it('tells Backlog readers that the Epic is what gets queued', () => {
+  // D-039 is the load-bearing claim: an autonomous agent may only ever create into Backlog. The
+  // other half is where things ARRIVE — a member added to a live Epic, and a reopened ticket.
+  it('states the agent-create rule and what lands here', () => {
     const text = laneHelpText('backlog').toLowerCase();
+    expect(text).toContain('autonomous agents');
+    expect(text).toMatch(/only ever create/);
+    expect(text).toContain('reopened');
     expect(text).toContain('epic');
-    expect(text).toMatch(/not by being dragged|on its own/);
   });
 
   // D-083: terminal is final.

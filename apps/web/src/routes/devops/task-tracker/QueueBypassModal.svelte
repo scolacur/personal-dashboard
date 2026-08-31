@@ -3,8 +3,12 @@
   import Button from '$lib/Button.svelte';
 
   /**
-   * D-058 / PD-399: queueing a not-Ready robot ticket needs an explicit acknowledgement. Confirming
-   * sets `readyBypassed` — an honest override that never fakes `ready`.
+   * D-058 / PD-399: queueing an unformatted robot ticket needs an explicit acknowledgement.
+   * Confirming sets `readyBypassed` — an honest override that never fakes `ready`.
+   *
+   * PD-591: the copy says "formatted", not "Ready". The flag is about the body carrying the four
+   * sections; "Ready" reads as "ready to be worked on", which is a different claim and the one a
+   * reader assumes.
    */
   let {
     label,
@@ -18,11 +22,11 @@
   } = $props();
 </script>
 
-<Modal open={label !== null} title="Queue a not-Ready ticket?" onClose={onCancel}>
+<Modal open={label !== null} title="Queue an unformatted ticket?" onClose={onCancel}>
   {#if label !== null}
     <p class="queue-confirm-msg">
-      <strong>{label}</strong> isn't in Ready shape — its body is missing the four sections
-      (## Context / ## Task / ## Done When / ## Out of scope). The Robot works best from a shaped
+      <strong>{label}</strong> isn't formatted — its body is missing the four sections
+      (## Context / ## Task / ## Done When / ## Out of scope). The Robot works best from a formatted
       ticket, so <strong>output may be suboptimal</strong>. Queue it anyway?
     </p>
     <div class="queue-confirm-actions">

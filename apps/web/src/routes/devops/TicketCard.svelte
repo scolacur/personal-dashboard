@@ -62,9 +62,12 @@
     onUpdate: () => void;
   } = $props();
 
-  // Readiness badges (D-058, PD-399). A robot-assigned ticket that isn't Ready (missing the four
-  // sections) shows a soft "not ready" hint; once a human queues it past the confirm modal it
-  // carries an honest "⚠ bypassed" badge instead (readyBypassed never fakes `ready`). Both are moot
+  // Formatting badges (D-058, PD-399). A robot-assigned ticket that isn't formatted (missing the four
+  // sections) shows a soft "not formatted" hint; once a human queues it past the confirm modal it
+  // carries an honest "⚠ formatting bypassed" badge instead (readyBypassed never fakes `ready`).
+  // PD-591: the LABEL is about formatting, because "ready" reads as "ready to work on", which is
+  // not what the flag means — it means the body carries the four sections. The field keeps its
+  // name; only what a human reads changed. Both are moot
   // on terminal tickets.
   const isActive = $derived(ticket.status !== 'completed' && ticket.status !== 'closed');
   const notReady = $derived(
@@ -199,13 +202,13 @@
       {#if ticket.readyBypassed}
         <span
           class="ready-badge bypassed"
-          title="Queued without the four Ready sections (## Context / ## Task / ## Done When / ## Out of scope) — Robot output may be suboptimal."
-        >⚠ bypassed</span>
+          title="Queued without the four sections (## Context / ## Task / ## Done When / ## Out of scope) — Robot output may be suboptimal."
+        >⚠ formatting bypassed</span>
       {:else}
         <span
           class="ready-badge not-ready"
-          title="Body is missing the four Ready sections (## Context / ## Task / ## Done When / ## Out of scope). Refine it to shape it for the Robot."
-        >not ready</span>
+          title="Body is missing the four sections (## Context / ## Task / ## Done When / ## Out of scope). Refine it to shape it for the Robot."
+        >not formatted</span>
       {/if}
     </div>
   {/if}

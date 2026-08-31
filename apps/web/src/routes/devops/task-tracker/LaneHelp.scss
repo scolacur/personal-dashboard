@@ -21,8 +21,7 @@
   cursor: help;
 
   &:hover,
-  &:focus-visible,
-  &.pinned {
+  &:focus-visible {
     color: var(--fg);
     border-color: var(--accent);
   }
@@ -62,11 +61,6 @@
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.12s ease;
-
-  &.pinned {
-    opacity: 1;
-    visibility: visible;
-  }
 }
 
 // Reveal on hover of the whole control, and on keyboard focus of the button. `:focus-within`
