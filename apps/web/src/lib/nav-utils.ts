@@ -44,6 +44,18 @@ export function arrangeablePageId(pathname: string): string | undefined {
 }
 
 /**
+ * Whether tapping a top-level nav link should close the mobile drawer.
+ *
+ * A link to a page **with children** (e.g. Dev Ops) doesn't navigate away — it drills the nav
+ * into that page's sub-panel, which slides into view *inside* the still-open drawer. Closing the
+ * drawer there hides the very panel the tap just revealed. So only a **leaf** tap (no children)
+ * closes the drawer.
+ */
+export function navTapClosesDrawer(hasChildren: boolean): boolean {
+  return !hasChildren;
+}
+
+/**
  * Whether `pathname` is anywhere under Dev Ops. Drives the deploy/commit readout in the top
  * nav (PD-414), which belongs on the whole section.
  *

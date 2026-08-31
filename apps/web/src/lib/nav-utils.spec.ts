@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from './nav-utils';
+import {
+  arrangeablePageId,
+  isDevOpsRoute,
+  navTapClosesDrawer,
+  resolvePageTitle,
+} from './nav-utils';
 
 describe('resolvePageTitle', () => {
   it('returns "Home" for the root path', () => {
@@ -77,6 +82,19 @@ describe('isDevOpsRoute', () => {
     // Deploy state is section-wide context; Arrange applies only to the actual widget grid.
     expect(isDevOpsRoute('/devops/task-tracker')).toBe(true);
     expect(arrangeablePageId('/devops/task-tracker')).toBeUndefined();
+  });
+});
+
+describe('navTapClosesDrawer', () => {
+  it('keeps the mobile drawer open when tapping a parent with children', () => {
+    // Dev Ops drills into a sub-panel that slides in within the drawer — closing it would
+    // hide that panel (the bug this fixes).
+    expect(navTapClosesDrawer(true)).toBe(false);
+  });
+
+  it('closes the mobile drawer when tapping a leaf link', () => {
+    // A leaf navigates away, so the drawer should close behind it.
+    expect(navTapClosesDrawer(false)).toBe(true);
   });
 });
 

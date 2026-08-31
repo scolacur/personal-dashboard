@@ -3,7 +3,7 @@
   import { fly } from 'svelte/transition';
   import { ChevronLeft, ChevronRight, LayoutGrid } from 'lucide-svelte';
   import { pages } from '$lib/pages';
-  import { LIBRARY_ROUTE, LIBRARY_TITLE } from '$lib/nav-utils';
+  import { LIBRARY_ROUTE, LIBRARY_TITLE, navTapClosesDrawer } from '$lib/nav-utils';
   import YinYang from '$lib/icons/YinYang.svelte';
 
   // Called after a nav link is chosen — the layout uses it to close the
@@ -44,7 +44,9 @@
     // choosing Dev Ops while already on /devops (i.e. right after Back) would leave the
     // panel closed, since no navigation occurs to reset it.
     if (hasChildren) showRoot = false;
-    onNavigate?.();
+    // A parent tap drills into a sub-panel that slides in *within* the drawer; closing the
+    // drawer would hide it. Only a leaf tap closes the mobile drawer.
+    if (navTapClosesDrawer(hasChildren)) onNavigate?.();
   }
 </script>
 
