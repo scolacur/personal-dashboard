@@ -525,6 +525,20 @@ export function updateTicket(
   // `awaiting-human` is deliberately NOT cleared: it means an unanswered question, and clearing it
   // would re-dispatch the Robot to ask the same question again (the PD-393 failure). It is owned by
   // the reply → `resumeAskHuman` path; the loop's PD-467 warn log covers it if it ever sticks.
+  // PD-590: leaving the Queue clears the agent state. Without this a ticket dragged back to
+  // Backlog kept rendering as a live run — `in-review` on a Backlog card — and re-queueing it later
+  // hit the PD-467 trap from the other side, because the dispatch query wants
+  // `agent_state IS NULL OR 'queued'` and PD-467 only clears `stuck`/`needs-human` on entry.
+  //
+  // Safe precisely because the route guard refuses this move while `working`/`in-review`
+  // (RUN_IN_FLIGHT): by the time we get here the run is not in flight, so there is no live
+  // bookkeeping to destroy. `awaiting-human` is cleared too — the question was asked about a queued
+  // run that is no longer queued, and `resumeAskHuman` re-establishes it if it comes back.
+  const leavingQueue = existing.status === 'queue' && next.status !== 'queue';
+  if (leavingQueue) {
+    next.agentState = null;
+  }
+
   const parkedOnQueueEntry =
     next.status === 'queue' &&
     existing.status !== 'queue' &&
@@ -597,7 +611,7 @@ export function updateTicket(
     // not in the UPDATE above (it is loop-owned and absent from UpdateTicketInput), so — exactly
     // like the entering-terminal teardown below — it takes its own statement inside this
     // transaction rather than riding along on the main write.
-    if (leavingTerminal && existing.agentState !== null) {
+    if ((leavingTerminal || leavingQueue) && existing.agentState !== null) {
       db.prepare('UPDATE agent_tickets SET agent_state = NULL WHERE id = ?').run(id);
     }
 

@@ -1,7 +1,13 @@
 @use './column-add-btn';
 
+// PD-590: the cell is a column so `.column-body` can stretch. The drop handlers live on
+// `.column-body`, which used to size to its content — so the empty space below the last card was
+// not a drop target, and a drag from a long lane into a short one had nowhere to land. The drop
+// never fired, which also left the card stuck in its dragging state.
 .ticket-cell {
   grid-row: 4;
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-top: none;
@@ -20,6 +26,9 @@
   flex-direction: column;
   gap: var(--space-sm);
   padding: var(--space-sm);
+  // Fill whatever the cell has left, so the whole lane accepts a drop.
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .empty {

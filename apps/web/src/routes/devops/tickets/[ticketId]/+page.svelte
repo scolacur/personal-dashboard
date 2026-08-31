@@ -75,7 +75,11 @@
   // (ActivityTimeline fetches its own copy for the timeline render; this is the page's own slice.)
   let events = $state<TicketEvent[]>([]);
   let loading = $state(true);
+  // PD-590: two kinds of failure, and conflating them took the page down. `loadError` means the
+  // page could not be built and replaces it; `error` means an action failed and shows as a banner
+  // above content that is still perfectly valid. A failed drag used to blank the whole ticket.
   let error = $state<string | null>(null);
+  let loadError = $state<string | null>(null);
   let notFound = $state(false);
 
   // Option C layout (PD-345). Desktop: Overview is the always-on left column; the right column
@@ -96,6 +100,7 @@
   async function load(id: string) {
     loading = true;
     error = null;
+    loadError = null;
     notFound = false;
     ticket = null;
     project = null;
@@ -122,9 +127,29 @@
         epicSummary = null;
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      loadError = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
+    }
+
+  }
+
+  /**
+   * Refresh just this Epic's members (PD-590).
+   *
+   * A member reorder used to call `load()`, which refetches every project, every ticket, the
+   * relations, the events and the members — a full page rebuild after moving one row, which reads
+   * as the page reloading under you. The row has already moved optimistically; the only thing worth
+   * re-reading is the server's ordering.
+   */
+  async function reloadMembers() {
+    if (!ticket?.isEpic) return;
+    try {
+      const m = await api.fetchEpicMembers(ticket.id);
+      epicMembers = m.members;
+      epicSummary = m.summary;
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -473,7 +498,7 @@
     error = null;
     try {
       await api.updateTicket(m.id, { assignee });
-      if (ticketId) await load(ticketId);
+      await reloadMembers();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -484,7 +509,7 @@
     error = null;
     try {
       await api.updateTicket(m.id, { status });
-      if (ticketId) await load(ticketId);
+      await reloadMembers();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
@@ -496,9 +521,18 @@
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
   }
 
+  /**
+   * Track where the dragged row would land.
+   *
+   * **`stopPropagation` is load-bearing (PD-590).** A row's handler sets `beforeId` to that row,
+   * then the event bubbles to the `<ul>`, whose handler sets it back to null ("append"). The list
+   * handler always ran last and always won, so the insertion line never appeared on a row and every
+   * drop went to the end. The `<ul>` is only meant to catch the empty space *below* the rows.
+   */
   function onMemberDragOver(e: DragEvent, overId: number | null) {
     if (draggingMemberId === null) return;
     e.preventDefault();
+    if (overId !== null) e.stopPropagation();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     memberDropBeforeId = overId;
   }
@@ -519,7 +553,7 @@
     error = null;
     try {
       await api.updateTicket(draggedId, { sortOrder });
-      if (ticketId) await load(ticketId);
+      await reloadMembers();
     } catch (err) {
       epicMembers = previous; // put it back rather than leave the list lying about the order
       error = err instanceof Error ? err.message : String(err);
@@ -533,8 +567,8 @@
 
 {#if loading}
   <p class="muted">Loading…</p>
-{:else if error}
-  <p class="error" role="alert">{error}</p>
+{:else if loadError}
+  <p class="error" role="alert">{loadError}</p>
 {:else if notFound}
   <div class="not-found">
     <h1>Ticket not found</h1>
@@ -542,6 +576,13 @@
   </div>
 {:else if ticket}
   <article class="ticket-detail" data-rt={rightTab} data-pane={mobilePane}>
+    {#if error}
+      <!-- An action failed; the ticket below is still valid, so it stays on screen. -->
+      <p class="action-error" role="alert">
+        {error}
+        <button type="button" class="action-error-x" aria-label="Dismiss" onclick={() => (error = null)}>×</button>
+      </p>
+    {/if}
     <!-- Header: full width, above the columns. -->
     <header class="detail-head">
       <div class="head-badges">
