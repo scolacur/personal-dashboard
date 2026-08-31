@@ -26,36 +26,32 @@ export interface LaneHelp {
 }
 
 const BACKLOG: LaneHelp = {
-  summary: 'The default lane. Everything starts here, and nothing is dispatched from here.',
+  summary: 'Lane for newly created and unrefined tickets.',
   bullets: [
-    'A Ticket leaves Backlog when its Epic is queued — not by being dragged on its own.',
-    'A new member of an already-queued Epic lands here deliberately, so joining live work stays an explicit act.',
+    'Tickets added to an already-queued Epic are put here, as are reopened terminal tickets.',
+    'Autonomous agents may only ever create into the Backlog.',
   ],
-  footnote: 'Autonomous agents may only ever create into Backlog.',
 };
 
 // Read from `robotQueueCandidates` in agent-worker/src/jobs/robot/select.ts, in the query's order.
 const QUEUE: LaneHelp = {
   summary:
-    'Armed, not launched. A card here is a candidate the Robot loop considers — every condition below must also hold before it runs.',
+    'Move an Epic here when you are ready to work on it, and its tickets get queued automatically.',
   bullets: [
-    'Assigned to the Robot. A queued ticket assigned to Steve is a personal to-do and is never dispatched; unassigned is never dispatched either.',
-    'Ready — the four-section body check — or explicitly Ready-bypassed.',
-    'Not blocked by an open `blocks` relation. A blocked card is skipped at selection, not refused entry to the lane.',
-    'Its project is Robot-enabled and has a GitHub repo.',
-    'Its agent state is empty or "waiting". Anything already in progress or in review is in flight, not a candidate.',
-    'Not archived.',
+    'Queued tickets are picked up by a Robot when they are assigned to the Robot;',
+    'formatted, or marked formatting-bypassed;',
+    'not blocked by an open `blocks` relation;',
+    'in a Robot-enabled project with a GitHub repo;',
+    'not archived;',
+    'and the agent state is empty or "waiting" — i.e. the number of Robots currently working is below the max concurrent Robots.',
   ],
   footnote:
-    'Order: priority (unset last), then the Epic\'s drag order, then the member\'s drag order within its Epic, then id. Queueing an Epic arms all of its members; the concurrency cap means they start one at a time, not all at once.',
+    'Order: priority (unset last), then the Epic\'s drag order, then the ticket\'s drag order within its Epic, then id.',
 };
 
 const COMPLETED: LaneHelp = {
-  summary: 'Finished work. Set by the loop when a PR merges, or by hand for anything not robot-run.',
-  bullets: [
-    'Completed and closed tickets are read-only — leaving either is a deliberate Reopen on the ticket itself.',
-    "An Epic's lane is derived from its members, so an Epic lands here once they all have.",
-  ],
+  summary: 'Finished work. Set by the loop when a PR merges, or by hand for anything done manually.',
+  bullets: ['Completed and closed tickets are read-only — reopen one from its own page.'],
 };
 
 const CLOSED: LaneHelp = {

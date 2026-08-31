@@ -356,7 +356,7 @@
   async function submitForm() {
     const title = form.title.trim();
     if (!title || form.projectId === null) return;
-    // D-058: editing/creating a not-Ready robot ticket into the Queue needs an explicit bypass ack.
+    // D-058: editing/creating an unformatted robot ticket into the Queue needs an explicit bypass ack.
     // Skip the prompt for a ticket that's already bypassed (editing it shouldn't re-ask) and for an
     // agent-locked ticket (its status isn't sent). Confirm sets `readyBypassed`; cancel aborts.
     const existing = editingId !== null ? tickets.find((t) => t.id === editingId) : undefined;
@@ -413,7 +413,7 @@
           maxTurns,
         });
         // CreateTicketInput carries no `readyBypassed` (backend enum/guards are ticket A's scope) —
-        // set it in a follow-up patch when the human bypassed the not-Ready gate at create time.
+        // set it in a follow-up patch when the human bypassed the formatting gate at create time.
         if (bypass) await api.updateTicket(created.id, { readyBypassed: true });
       } else {
         await api.updateTicket(editingId, {
@@ -476,7 +476,7 @@
   // an option once it is gone.
   const HOLD_TOAST_MS = 12_000;
 
-  // Queue-bypass confirm (D-058, PD-399): queueing a not-Ready robot ticket pops this modal —
+  // Queue-bypass confirm (D-058, PD-399): queueing an unformatted robot ticket pops this modal —
   // confirm sets `readyBypassed` (honest override, never fakes `ready`) and completes the move;
   // cancel aborts, leaving the card where it was (no optimistic move happened).
   let queueConfirm = $state<{ label: string; run: () => Promise<void> } | null>(null);
@@ -535,7 +535,7 @@
   async function onBoardMove(ticket: AgentTicket, status: TicketStatus, beforeId: number | null) {
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, beforeId, ticket.id);
     if (moveIsNoop(ticket, status, sortOrder)) return;
-    // D-058: dragging a not-Ready robot ticket into the Queue needs an explicit bypass ack. Defer
+    // D-058: dragging an unformatted robot ticket into the Queue needs an explicit bypass ack. Defer
     // the move to the confirm modal; confirming sets `readyBypassed` and completes it.
     if (needsQueueBypass(ticket, status)) {
       queueConfirm = {
@@ -664,7 +664,9 @@
     const lines = [
       `Epic ${label} queued. Contains:`,
       `${count(plan.dispatchable.length)} ready for dispatch`,
-      `${count(plan.notReady.length)} not ready for dispatch`,
+      // PD-591: "not formatted" rather than "not ready" — this count IS the formatting check
+      // (`ready || readyBypassed`), and the badge on the card now says the same word.
+      `${count(plan.notReady.length)} not formatted for dispatch`,
     ];
     // Only when it applies — otherwise the two counts above would silently not add up to what
     // was actually queued.
