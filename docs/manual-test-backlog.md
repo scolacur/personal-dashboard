@@ -92,6 +92,35 @@ verified once is still the record of what the behaviour is supposed to be.
 
 ---
 
+## The loop, under load (one session covers both)
+
+Both of these need the same setup and can be proved in one sitting: **queue the members of PD-530
+(Pomodoro Timer Widget V2 features), let the Robots run, and start a manual maintenance hold
+part-way through.**
+
+### L1 — PD-560: the numbering cycle is gone, and Robots still get real decision ids
+- **Why it needs a live run:** PD-560 deleted `DECISIONS/incoming/`, the consolidation job, and the
+  provisional-id half of `shared/decisions.ts`. Every test of the replacement mocks the allocator.
+  Nothing has yet watched a real Robot, inside the container, reach the counter.
+- **Expect:** a Robot that records a decision calls `mcp__decisions__allocate` (**not** the HTTP
+  endpoint — the container's egress firewall cannot reach the dashboard, D-087), gets a real
+  `D-NNN`, writes `DECISIONS/D-NNN-<slug>.md`, and regenerates `DECISIONS.md` in the same PR.
+- **Watch for:** two Robots running concurrently must not receive the same id. The counter is the
+  only allocator precisely because hand-picking has collided twice before (D-056, D-065).
+
+### L2 — PD-561: a manual hold actually drains in-flight runs
+- **Why it needs a live run:** every hold started in the 2026-08-23/25 testing happened to have no
+  Robot working, so the window opened immediately and the drain was never exercised. The unit tests
+  inject `inFlightRuns`, so none of them touch the real query — and that query has been wrong in
+  production once already.
+- **Steps:** start a manual hold **while a Robot is working**.
+- **Expect, in order:**
+  1. the hold sits `queued`, and the nav reads *Maintenance hold queued* with **no** countdown;
+  2. **no further Robot is dispatched** from the moment it is queued — this is the part that makes
+     the drain terminate instead of being a treadmill;
+  3. the working Robot is allowed to **finish**; it is never killed (D-046);
+  4. the window opens as the last run ends, and the countdown starts *then*, not before.
+
 ## Notes
 
 - The board is an unauthenticated LAN service; all of the above can also be driven with `curl`
