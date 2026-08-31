@@ -23,6 +23,14 @@ import type { AgentTicket, TicketStatus } from '@dashboard/shared';
  *    imports this store — it opens `dashboard.db` directly with its own SQL. Loop and server are two
  *    independent writers on one table.
  *
+ * **The loop does not merely escape these rules; it depends on escaping them.** Its entire
+ * ticket-write surface is two statements in `jobs/robot/board.ts` — `setAgentState`, and
+ * `completeTicket` on a merged PR. That second one moves the ticket from `queue` (`agent_state =
+ * 'in-review'`) to `completed`, which is precisely the transition `RUN_IN_FLIGHT` below refuses. So
+ * "move these into `updateTicket` and make them real invariants" is not the safe hardening it looks
+ * like: it would refuse PR-merge completion and leave every finished ticket in the Queue. The
+ * exemption is structural, not written down, which is why `ticket-guards.spec.ts` pins it.
+ *
  * **So this is a guard, not an invariant.** It stops mistakes made through the API; it cannot stop
  * the loop's own SQL, and it is not a security boundary — the board is an unauthenticated LAN
  * service. Attribution of writes is PD-543, and is a separate concern from refusing them.
