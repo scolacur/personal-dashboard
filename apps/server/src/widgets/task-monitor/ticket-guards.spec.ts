@@ -138,6 +138,29 @@ describe('patchGuardFailure — a live run is never silently detached', () => {
   it('does not block edits that leave the ticket in the queue', () => {
     expect(patchGuardFailure(existing({ status: 'queue', agentState: 'working' }), { title: 'retitle' })).toBeNull();
   });
+
+  /**
+   * The loop's own completion write would be refused by this guard — and that is fine only for as
+   * long as the guard stays at the route layer.
+   *
+   * `completeTicket` (agent-worker `jobs/robot/board.ts`) fires when a PR merges, at which point the
+   * ticket is exactly `status = 'queue'`, `agent_state = 'in-review'` — the state this rule refuses
+   * to move out of the Queue. The loop escapes because it opens `dashboard.db` directly and never
+   * touches this code path, so the exemption is structural rather than written down anywhere.
+   *
+   * That makes the obvious future refactor — "make these real invariants, move them into
+   * `updateTicket`" — a silent breakage: PR-merge completion would start being refused and every
+   * finished ticket would sit in the Queue forever. This test exists so that refactor fails here,
+   * loudly, instead of in production a week later.
+   *
+   * It asserts the CURRENT behaviour. If the loop is ever routed through the store or the API, the
+   * fix is a deliberate carve-out for the merge transition, not deleting this expectation.
+   */
+  it('would refuse the loop’s own merge-completion write — so the loop must not be routed here', () => {
+    const asLoopWouldPatch = { status: 'completed' as const, agentState: 'done' };
+    const fail = patchGuardFailure(existing({ status: 'queue', agentState: 'in-review' }), asLoopWouldPatch);
+    expect(fail?.code).toBe('RUN_IN_FLIGHT');
+  });
 });
 
 describe('createGuardFailure', () => {
