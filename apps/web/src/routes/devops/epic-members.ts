@@ -1,4 +1,5 @@
 import type { AgentTicket, TicketAssignee, TicketStatus } from '@dashboard/shared';
+import { REFINE_STATE_LABELS } from '@dashboard/shared';
 import { isReadOnly, isTerminal } from './board-logic';
 
 /**
@@ -151,4 +152,37 @@ export function dispatchPositions(members: AgentTicket[]): Map<number, number> {
     if (m.status === 'queue' && m.assignee === 'robot') out.set(m.id, ++n);
   }
   return out;
+}
+
+/**
+ * The refinement badge for a member row (PD-598).
+ *
+ * When refining an Epic, "which members still need shaping" is the question being asked, and the
+ * member list could not answer it — you had to open each one. The board's cards have shown this all
+ * along; this is the same three states, in the same order of precedence.
+ *
+ * `cls` matches the board's class names so both surfaces pull from `_refine-badge.scss` rather than
+ * growing separate looks for one concept.
+ *
+ * Returns null for a terminal member: whether finished work was refined first is history, and the
+ * badge would be a permanent decoration on every completed row.
+ */
+export interface RefinementBadge {
+  text: string;
+  cls: string;
+  title: string;
+}
+
+export function refinementBadge(m: AgentTicket): RefinementBadge | null {
+  if (isTerminal(m)) return null;
+  if (m.refined) return { text: '✓ Refined', cls: 'refined-mark', title: 'Refined' };
+  if (m.refineState) {
+    const label = REFINE_STATE_LABELS[m.refineState] ?? m.refineState;
+    return {
+      text: label,
+      cls: `refine-pill refine-${m.refineState}`,
+      title: `Refine session — ${label}`,
+    };
+  }
+  return { text: 'Not refined', cls: 'refine-pill refine-start', title: 'Not refined yet' };
 }

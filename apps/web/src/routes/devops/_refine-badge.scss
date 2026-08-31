@@ -1,0 +1,53 @@
+/* Refinement badges (PD-598) — shared by the board's ticket card and the Epic page's member list
+   and kanban card. Svelte scopes styles per component, so a copy in any one of them would not
+   reach the others; the same badge has to mean the same thing wherever a ticket is shown, which is
+   the whole reason for sharing the file rather than the rules. Pattern matches
+   `_assignee-pill.scss` and `_column-add-btn.scss`. */
+
+.refine-pill {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid;
+  white-space: nowrap;
+  line-height: 1.6;
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+
+  &.refine-refining {
+    color: var(--status-working);
+    border-color: var(--status-working);
+  }
+  // Pink "Needs you": the Refine agent wants your input. Attention-grabbing but
+  // less urgent than a red stuck/needs-human Robot job. Outlined (it's a Refine pill).
+  &.refine-awaiting-human {
+    color: var(--status-refine-needs);
+    border-color: var(--status-refine-needs);
+  }
+  // Idle call-to-action: not yet refined. Muted until hovered, when it invites the click
+  // that starts a Refine session (replaces the old Sparkles action button).
+  &.refine-start {
+    color: var(--muted);
+    border-color: var(--border);
+
+    &:hover,
+    &:focus-visible {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+  }
+}
+
+// Persistent "refined once" marker (D-044, PD-268).
+.refined-mark {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--status-done);
+  color: var(--status-done);
+  white-space: nowrap;
+  line-height: 1.6;
+}

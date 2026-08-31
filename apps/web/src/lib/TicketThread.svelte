@@ -211,10 +211,11 @@
                 {#each proposal.children ?? [] as child, i (i)}
                   <li>
                     <div class="child-head">
-                      <!-- Every child is created in backlog regardless of what was proposed
-                           (PD-510), so the lane is stated as a fact rather than read from the
-                           proposal. Priority is the Epic's and is not shown per-child. -->
-                      <span class="child-lane">backlog</span>
+                      <!-- No lane per child (PD-598). PD-510 stopped reading the proposed lane
+                           and this printed "backlog" as a fact instead — but a value identical on
+                           every row says nothing, and it still read as a lane the agent chose,
+                           which is what PD-510 set out to remove. Where children land is a
+                           property of approval, not of any one child. -->
                       <span class="child-assignee">{child.assignee ?? '—'}</span>
                       <span class="child-title">{child.title}</span>
                     </div>

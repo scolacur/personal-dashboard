@@ -1,7 +1,13 @@
 <script lang="ts">
   import type { AgentTicket, TicketAssignee } from '@dashboard/shared';
   import { AGENT_STATE_LABELS } from '@dashboard/shared';
-  import { MEMBER_ASSIGNEES, assigneeGlyph, canEditMember, memberAssigneeHint } from './epic-members';
+  import {
+    MEMBER_ASSIGNEES,
+    assigneeGlyph,
+    canEditMember,
+    memberAssigneeHint,
+    refinementBadge,
+  } from './epic-members';
 
   /**
    * An Epic member as a board card (PD-554).
@@ -66,6 +72,10 @@
         <option value={a ?? ''}>{assigneeGlyph(a)}</option>
       {/each}
     </select>
+    {#if refinementBadge(ticket)}
+      {@const badge = refinementBadge(ticket)!}
+      <span class={badge.cls} title={badge.title}>{badge.text}</span>
+    {/if}
     {#if ticket.agentState}
       <span class="member-card-state">{AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState}</span>
     {/if}
