@@ -44,10 +44,9 @@
     isReadOnly,
     isTerminal,
     computeSortOrder,
-    computeOrderWithin,
     clampEpicHeight,
   } from '../board-logic';
-  import { moveIsNoop, needsQueueBypass } from '../board-drag';
+  import { moveIsNoop, needsQueueBypass, pickBeforeId, type DropCandidate } from '../board-drag';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -601,18 +600,29 @@
     if (!isDraggableEpicLane(cell.lane)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const cards = [
+    // PD-538: the same insertion maths the Ticket band uses. It used to be a hand-rolled
+    // "first card whose midpoint you are above", which was correct while the band was a flat
+    // hand-ordered list; now that the band is priority-banded, a drop has to be clamped to the
+    // dragged Epic's own band — and falling past the last card of that band means the END OF THE
+    // BAND, not the end of the lane. `pickBeforeId` is that rule, and it is tested.
+    const dragged = tickets.find((t) => t.id === epicDraggingId);
+    if (!dragged) return;
+    const candidates: DropCandidate[] = [
       ...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('.epic-card'),
-    ].filter((el) => Number(el.dataset.id) !== epicDraggingId);
-    let beforeId: number | null = null;
-    for (const el of cards) {
-      const rect = el.getBoundingClientRect();
-      if (e.clientY < rect.top + rect.height / 2) {
-        beforeId = Number(el.dataset.id);
-        break;
-      }
-    }
-    epicDropTarget = { lane: cell.lane, beforeId };
+    ]
+      .filter((el) => Number(el.dataset.id) !== epicDraggingId)
+      .map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          id: Number(el.dataset.id),
+          priority: el.dataset.priority ?? 'none',
+          midpointY: rect.top + rect.height / 2,
+        };
+      });
+    epicDropTarget = {
+      lane: cell.lane,
+      beforeId: pickBeforeId(candidates, dragged.priority, e.clientY),
+    };
   }
 
   async function onEpicDrop(e: DragEvent, cell: EpicBandCell) {
@@ -626,8 +636,12 @@
     if (!epic) return;
 
     // Same lane → reorder among that cell's Epics.
+    // PD-538: `computeSortOrder`, not `computeOrderWithin` — the band is priority-banded now, so
+    // the fractional order must be computed against the dragged Epic's OWN band. `beforeId` can
+    // legitimately point at the first card of the next band (the boundary case), which
+    // `computeSortOrder` already handles by appending to the end of this one.
     if (laneOfEpic(id) === cell.lane) {
-      const sortOrder = computeOrderWithin(cell.epics, target?.beforeId ?? null, id);
+      const sortOrder = computeSortOrder(cell.epics, epic.priority, target?.beforeId ?? null, id);
       if (epic.sortOrder === sortOrder) return;
       await applyEpicPatch(id, { sortOrder });
       return;

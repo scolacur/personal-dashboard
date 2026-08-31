@@ -1,25 +1,16 @@
-import type { AgentTicket, TicketPriority, TicketStatus } from '@dashboard/shared';
+import type { AgentTicket, TicketStatus } from '@dashboard/shared';
+import { PRIORITY_RANK, rankOf } from './sort-logic';
 
 /**
- * Priority as a sortable rank, with unset last.
+ * Priority rank, re-exported from `sort-logic` (PD-538).
  *
- * `'none'` is the key an unset priority uses in the DOM (`data-priority`) and the sentinel the
- * server stores, so the map is keyed by string rather than `TicketPriority` — the lookup happens on
- * values read back out of the DOM.
+ * This module had its own identical copy. Two definitions of the ranking the whole board depends on
+ * is a drift waiting to happen — and the board *had* already drifted on ordering, which is the bug
+ * PD-538 fixes. `sort-logic` owns it now: that is the module about ordering, and the two band
+ * comparators live there together. Re-exported here because `board-drag`'s own API is what the drag
+ * code and its tests import.
  */
-export const PRIORITY_RANK: Record<string, number> = {
-  P0: 0,
-  P1: 1,
-  P2: 2,
-  P3: 3,
-  P4: 4,
-  P5: 5,
-  none: 6,
-};
-
-export function rankOf(p: TicketPriority | null): number {
-  return PRIORITY_RANK[p ?? 'none'];
-}
+export { PRIORITY_RANK, rankOf };
 
 /**
  * The drag maths behind the board's ticket band (PD-554).

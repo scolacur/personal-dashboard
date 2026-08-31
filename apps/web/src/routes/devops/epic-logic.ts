@@ -1,4 +1,5 @@
 import type { AgentTicket, EpicDerivedLane, EpicSummary, TicketStatus } from '@dashboard/shared';
+import { compareEpicsInLane } from './sort-logic';
 
 /** A cell in the board's Epic band (D-054, PD-337): the Epics whose derived lane maps to a
  *  contiguous run of visible ticket columns. `in_progress` sits over the single `queue` column
@@ -52,14 +53,21 @@ export function buildEpicBand(
 ): EpicBandCell[] {
   const colIndex = new Map<TicketStatus, number>(visibleStatuses.map((s, i) => [s, i + 1]));
   const byLane = new Map<EpicDerivedLane, AgentTicket[]>();
-  // Order epics within a cell purely by sortOrder (then id) so hand-reordering (D-054 amended)
-  // is stable — independent of the server list's status-first sort.
-  const ordered = [...epics].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
-  for (const e of ordered) {
+  // Bucket first, then sort each lane — the comparator is per-lane (PD-538), because the terminal
+  // lanes order by recency while the pending ones order by priority. Sorting the flat list up front
+  // could not express that.
+  for (const e of epics) {
     const lane = summaryById.get(e.id)?.derivedLane ?? 'backlog';
     const list = byLane.get(lane);
     if (list) list.push(e);
     else byLane.set(lane, [e]);
+  }
+  // PD-538: priority leads, `sortOrder` ranks Epics of equal priority, `id` makes the order total.
+  // Until now this was `sortOrder` alone — right under D-054, when an Epic's lane was derived and
+  // hand-ordering was the only signal the band carried, and wrong under D-080, which made the Epic
+  // the unit of priority and dispatch. The band was showing an order the loop would not follow.
+  for (const [lane, list] of byLane) {
+    list.sort((a, b) => compareEpicsInLane(lane, a, b));
   }
   const cells: EpicBandCell[] = [];
   for (const lane of EPIC_LANES) {
