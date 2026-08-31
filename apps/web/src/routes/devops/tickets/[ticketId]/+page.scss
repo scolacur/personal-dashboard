@@ -330,6 +330,9 @@
 }
 
 // D-083: terminal tickets are read-only; this states it and carries the one way out.
+// Rendered as the first child of `.detail-head` (PD-601), so it is full-bleed above the badges and
+// title on desktop, and — because the header sits outside the panes — visible on every mobile tab
+// rather than only on Overview.
 .frozen-banner {
   display: flex;
   align-items: center;
