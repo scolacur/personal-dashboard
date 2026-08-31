@@ -68,11 +68,15 @@
   }
 </script>
 
+<!-- `data-priority` (PD-538): the band is priority-ordered, so a drop has to be clamped to the
+     dragged Epic's own band. `pickBeforeId` reads the candidate's priority straight off the DOM,
+     exactly as it already does for a `.card` in the Ticket band. -->
 <article
   class="epic-card"
   class:dragging
   class:drop-before={dropBefore}
   data-id={epic.id}
+  data-priority={epic.priority ?? 'none'}
   draggable={true}
   ondragstart={onDragStart}
   ondragend={onDragEnd}
