@@ -563,53 +563,54 @@ D-067 it is only ever *needed* on a gated PR — Steve's own PRs go green withou
 Definitions for how a decision is authored and identified (D-070, D-078). The decision *record*
 is one file per decision; this covers how it gets its number.
 
-> ⚠️ **STATUS:** D-070 is live. **D-078 is half-built** (PD-498). Live now: the **decision inbox**
-> and the **provisional id** — `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` is where you author a
-> decision, `loadProvisionalDecisions` parses it, and `renderDecisionsIndex` lists it under
-> *Awaiting a number* above the numbered entries, so it reaches every injected agent immediately.
-> **Not built: the numbering cycle and the maintenance hold** — nothing assigns a `D-NNN` or
-> rewrites a `D-TMP-` citation yet, so provisional decisions accumulate in the inbox until that job
-> ships. That is the intended interim state, not a bug: an un-numbered decision is visible and
-> binding, whereas a hand-numbered one can silently collide.
->
-> **Author into the inbox from now on — do not hand-number.** The definitions below are current for
-> everything except the last two entries, which describe the unbuilt half.
+**Allocated id** (`D-NNN`, e.g. `D-088`):
+A decision's permanent identifier, handed out by the **allocation counter** *before* the decision is
+written. There is no provisional stage: you ask for `D-088`, you write `DECISIONS/D-088-<slug>.md`,
+and you cite `D-088` in code in the same commit. The id is real and permanent from the moment it is
+returned.
+_Avoid_: deriving an id by reading `DECISIONS.md` and adding one. That is the `max + 1` that produced
+the duplicate D-056 and D-065 by hand, and it is exactly what the counter exists to make impossible.
 
-**Provisional id** (`D-TMP-<ticket><letter>`, e.g. `D-TMP-PD513a`):
-The identifier a decision carries from authoring until the next **numbering cycle** assigns its
-`D-NNN`. Cited exactly like a real id — in the file's heading, in code comments, in PROJECT.md —
-because at authoring time it is the only id there is. Namespaced so it can never match `D-\d{3}`,
-which is what makes the later rewrite a safe blind `grep`. The trailing letter distinguishes two
-decisions from one ticket.
-_Avoid_: **"draft decision"** and **"pending decision"** — the decision is settled and binding the
-moment it merges; only the *identifier* is provisional. Also avoid citing the bare ticket id
-(`PD-513`) as the decision's id: genuine ticket citations look identical and no rewrite can tell
-them apart.
+**Allocation counter**:
+A single row in `dashboard.db` (`decision_id_counter`), incremented inside one atomic statement. The
+**only** thing that ever issues a decision id (D-088). Reached two ways, both of which end in the
+same `UPDATE … RETURNING`:
 
-**Decision inbox** (`DECISIONS/incoming/`):
-Where every decision is authored, without exception — including by a solo human session. A dual
-path ("hand-number when you know you're alone") reintroduces the collision the inbox removes and
-makes the CI duplicate-id test load-bearing again. Invisible to `loadDecisions`, which skips any
-entry not ending in `.md`, so the parser is unchanged and an authoring PR never touches the
-generated index. Same shape as the **memory inbox** (D-077) — an inbox with a named owner and a
-curation step, not a second store.
+- humans and scripts → **`POST /api/decisions/allocate`** → `{ "id": "D-088" }`
+- Robots → **`mcp__decisions__allocate`**, an in-process tool the worker runs on their behalf
 
-**Numbering cycle**:
-The daily, deterministic `agent-worker` **Job** that turns provisional decisions into numbered ones:
-take a **maintenance hold** → drain in-flight runs → assign `D-NNN` in merge order → rewrite every
-`D-TMP-` citation → regenerate `DECISIONS.md` → open a PR → wait for CI → admin-merge → release the
-hold. No LLM anywhere in it. It admin-merges to skip the *approval* requirement, never a red
-`verify`; on red it leaves the PR open, notifies, and releases the hold.
-_Avoid_: describing it as "resolving conflicts" — there is no conflict to resolve. Two provisional
-decisions never collide, because neither carries a number.
+A `POST`, not a `GET`, precisely because it mutates: two callers reading *next = 88* both get 88,
+which is the collision being removed. Gaps are expected and harmless — an id taken for a PR that is
+abandoned is simply never used, and there is deliberately **no reclaim path**, because reuse is how
+two decisions end up wearing one number.
+_Avoid_: calling the Robot path "reading the DB". The worker holds the handle; the Robot asks
+(D-087). `dashboard.db` remains unreadable to the coding uid.
+
+**Why Robots use a tool and not the endpoint**:
+The agent-worker container sits on an `internal: true` network whose only exit is the squid
+allowlist proxy — `CONNECT` to port 443, by domain. The dashboard is plain HTTP on `:8088` at a bare
+LAN IP, so it fails three separate ways. An in-process tool solves that without moving a security
+boundary, which is why the firewall was left shut (D-087).
+
+> **Retired by D-088 (PD-556):** the **decision inbox** (`DECISIONS/incoming/`), **provisional ids**
+> (`D-TMP-<TICKET><letter>`), the **numbering cycle**, the repo-wide **citation rewrite**, and the
+> reserved **`EG` example namespace**. All existed because an id could not be known at authoring
+> time. They are gone, not deprecated — `DECISIONS/incoming/` does not exist, and a `D-TMP-` file
+> written today would sit uncited forever with nothing to number it. If you find an instruction
+> anywhere telling you to author one, it is stale; fix it.
 
 **Maintenance hold**:
-The **hold** kind the numbering cycle takes on dispatch (alongside `session-limit` and
-`github-rate-limit`, D-063/D-072): tickets stay queued, budget untouched, resumes unattended.
-Bounded by the drain, which is itself bounded by `stallThresholdMs` (~2h) since a hung run is
-parked rather than blocking forever.
-_Avoid_: calling it a **pause** — a pause is sticky and waits for a human (D-072), which is wrong
-for an unattended daily window.
+A **hold** kind on dispatch (alongside `session-limit` and `github-rate-limit`, D-063/D-072) that
+lets a maintenance job work on shared files with no Robot mid-run: tickets stay queued, budget
+untouched, resumes unattended. Bounded by the drain, which is itself bounded by `stallThresholdMs`
+(~2h) since a hung run is parked rather than blocking forever. The window budgets job *starts*; a
+running job is never killed (D-085).
+**It currently has no jobs.** The numbering cycle was its only subscriber. The machinery is kept
+deliberately — draining, bounding and releasing safely took D-081, D-082 and PD-546 to get right —
+and with an empty job map it opens no *scheduled* holds, though a **manual** hold from Dev Ops still
+works. Gated by `MAINTENANCE_HOLD_ENABLED`.
+_Avoid_: calling it a **pause** — a pause is sticky and waits for a human (D-072), which is wrong for
+an unattended window.
 
 ### Ticket relations
 
