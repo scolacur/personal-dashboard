@@ -46,6 +46,7 @@
     dispatchPositions,
     memberAssigneeHint,
     memberLockReason,
+    refinementBadge,
     membersReorderable,
     reorderedMembers,
   } from '../../epic-members';
@@ -766,10 +767,7 @@
             />
           {:else}
             {#if canReorderMembers}
-              <p class="member-order-hint">
-                Drag to set the order these are worked in. Numbered rows are what the Robot picks
-                up next, in that order.
-              </p>
+              <p class="member-order-hint">Drag to set the order these are worked in.</p>
             {/if}
             <ul class="member-list" ondragover={(e) => onMemberDragOver(e, null)} ondrop={onMemberDrop}>
               {#each epicMembers as m (m.id)}
@@ -797,6 +795,12 @@
                   <a class="member-ref" href="/devops/tickets/{m.displayId}"
                     >{m.displayId} — {m.title}</a
                   >
+                  <!-- PD-598: which members still need shaping is the question an Epic page gets
+                       asked; the row could not answer it. -->
+                  {#if refinementBadge(m)}
+                    {@const badge = refinementBadge(m)!}
+                    <span class={badge.cls} title={badge.title}>{badge.text}</span>
+                  {/if}
                   {#if canSetMemberLane(m)}
                     <select
                       class="member-lane"

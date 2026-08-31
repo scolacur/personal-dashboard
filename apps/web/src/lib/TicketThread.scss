@@ -287,9 +287,9 @@
     gap: var(--space-sm);
     font-size: var(--font-size-sm);
   }
-  // `.child-priority` was dropped with the field itself in PD-510 (Refine proposes content, not
-  // placement) — a Refine proposal no longer carries a Ticket priority to display.
-  .child-lane,
+  // `.child-priority` went with the field in PD-510 (Refine proposes content, not placement), and
+  // `.child-lane` in PD-598 — approval does not read a proposed lane, so printing one per child
+  // was decoration that read as a decision.
   .child-assignee {
     font-size: var(--font-size-xs);
     color: var(--muted);

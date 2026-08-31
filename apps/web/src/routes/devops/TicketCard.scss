@@ -1,3 +1,4 @@
+@use './refine-badge';
 @use './assignee-pill';
 /* ── Card ──────────────────────────────────────── */
 .card {
@@ -340,53 +341,8 @@
 // Refine-agent pill on a card (D-044, PD-268). Outlined — visually distinct from the
 // filled Robot badge on the same row. Rendered as an <a> (active session → thread) or a
 // <button> (the "Not refined" call-to-action that starts a Refine session).
-.refine-pill {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  border-radius: 999px;
-  padding: 0 var(--space-sm);
-  border: 1px solid;
-  white-space: nowrap;
-  line-height: 1.6;
-  background: transparent;
-  text-decoration: none;
-  cursor: pointer;
-
-  &.refine-refining {
-    color: var(--status-working);
-    border-color: var(--status-working);
-  }
-  // Pink "Needs you": the Refine agent wants your input. Attention-grabbing but
-  // less urgent than a red stuck/needs-human Robot job. Outlined (it's a Refine pill).
-  &.refine-awaiting-human {
-    color: var(--status-refine-needs);
-    border-color: var(--status-refine-needs);
-  }
-  // Idle call-to-action: not yet refined. Muted until hovered, when it invites the click
-  // that starts a Refine session (replaces the old Sparkles action button).
-  &.refine-start {
-    color: var(--muted);
-    border-color: var(--border);
-
-    &:hover,
-    &:focus-visible {
-      color: var(--accent);
-      border-color: var(--accent);
-    }
-  }
-}
-
-// Persistent "refined once" marker (D-044, PD-268).
-.refined-mark {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  border-radius: 999px;
-  padding: 0 var(--space-sm);
-  border: 1px solid var(--status-done);
-  color: var(--status-done);
-  white-space: nowrap;
-  line-height: 1.6;
-}
+// `.refine-pill` / `.refined-mark` now live in `_refine-badge.scss`, shared with the Epic page
+// (PD-598), so the board and the member list cannot drift apart.
 
 // Priority pill. Used as a <select> on cards.
 .priority {
