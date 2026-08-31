@@ -586,6 +586,24 @@
     {/if}
     <!-- Header: full width, above the columns. -->
     <header class="detail-head">
+      <!-- PD-601: the frozen banner is the FIRST thing on the page, above the badges and title.
+           It sat below the Description before, which put it after everything it qualifies — you
+           read the ticket as editable, then found out it was not. It also changes what every
+           control below it means (they are all inert) and carries the only one that still works,
+           so it belongs where a reader meets it before forming that expectation.
+
+           Living in `.detail-head` rather than `.pane-overview` also makes it full-bleed on
+           desktop: the header is `grid-area: head`, spanning both columns, while the overview pane
+           is the 70% left column. -->
+      {#if frozen}
+        <p class="frozen-banner">
+          <strong>{ticket.status === 'completed' ? 'Completed' : 'Closed'}</strong> — this ticket is a
+          record of work that finished, so it is read-only.
+          <button type="button" class="reopen-btn" disabled={reopening} onclick={() => reopen()}>
+            {reopening ? 'Reopening…' : 'Reopen'}
+          </button>
+        </p>
+      {/if}
       <div class="head-badges">
         <span class="detail-id">{ticket.displayId}</span>
         <span class="priority priority-{ticket.priority ?? 'none'}">{ticket.priority ?? '—'}</span>
@@ -694,16 +712,6 @@
           <p class="muted">No description.</p>
         {/if}
       </Collapsible>
-
-      {#if frozen}
-        <p class="frozen-banner">
-          <strong>{ticket.status === 'completed' ? 'Completed' : 'Closed'}</strong> — this ticket is a
-          record of work that finished, so it is read-only.
-          <button type="button" class="reopen-btn" disabled={reopening} onclick={() => reopen()}>
-            {reopening ? 'Reopening…' : 'Reopen'}
-          </button>
-        </p>
-      {/if}
 
       {#if !ticket.isEpic}
         <p class="belongs-to-epic">
