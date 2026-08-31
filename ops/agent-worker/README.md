@@ -41,7 +41,9 @@ cp ops/agent-worker/agent-worker.env.example /volume1/docker/personal-dashboard/
 #    edit it and fill in ANTHROPIC_API_KEY and GITHUB_READ_TOKEN
 
 # 3. Build the image (build context = repo root)
-sudo docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
+#    --build-arg BUILD_SHA is NOT optional — see "Always pass BUILD_SHA" below.
+sudo docker build --build-arg "BUILD_SHA=$(git rev-parse --short HEAD)" \
+  -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
 
 # 4. Bring it up on the egress-hardened network (proxy sidecar + internal net)
 sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
@@ -98,10 +100,44 @@ with Contents: Read.
 The agent-worker image is a build artifact — merging agent-worker changes to `main` does **not** update
 the running container. Rebuild and recreate:
 
+**Normally just run `robot-refresh`** — the shell helper does all three steps with the right flags.
+The long form, if you need it:
+
 ```bash
 cd /volume1/docker/personal-dashboard/personal-dashboard && git pull --ff-only
-sudo docker build -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
+sudo docker build --build-arg "BUILD_SHA=$(git rev-parse --short HEAD)" \
+  -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
 sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d   # recreates from the new image
+```
+
+Confirm it actually landed — a rebuild that changed nothing looks identical to one that worked:
+
+```bash
+sqlite3 /volume1/docker/personal-dashboard/personal-dashboard/data/dashboard.db \
+  'SELECT worker, build_sha, sha FROM worker_heartbeat;'
+```
+
+`build_sha` must equal the sha you just built. If it is **empty**, the build arg was missed.
+
+### Always pass `BUILD_SHA`
+
+`Dockerfile` declares `ARG BUILD_SHA=""` and bakes it into `AGENT_WORKER_BUILD_SHA`, which is the
+`build_sha` the heartbeat reports (D-079, PD-528). Omit the arg and it defaults to empty, and the
+Dev Ops readout can no longer tell you what code the worker is running — while the `sha` column
+keeps tracking `main` and looks reassuringly current. **This is the whole point of D-079**: the
+checkout sha is not the running version. It has been missed twice; on 2026-08-30 it was missed by
+following the command that used to be written here.
+
+### Check the image tag matches the compose
+
+`robot-refresh` builds to `$PD_IMAGE`; `docker-compose.egress.yml` runs whatever is in its `image:`
+field. They agree today (`agent-worker-dashboard`). If they ever diverge, a rebuild **succeeds and
+changes nothing** — the new image is built under a tag the compose never runs, and `up -d` finds
+nothing to recreate. Nothing errors; `build_sha` simply does not move.
+
+```bash
+bash -lc 'echo "$PD_IMAGE"'                                 # note: a non-login ssh won't have it
+grep 'image:' ops/agent-worker/docker-compose.egress.yml
 ```
 
 ## Troubleshooting

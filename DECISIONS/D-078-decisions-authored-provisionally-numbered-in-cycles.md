@@ -1,5 +1,19 @@
 # D-078: Decisions are authored with a provisional id and numbered in a daily cycle behind a maintenance hold (PD-498)
 
+> ⛔ **SUPERSEDED by [[D-088]] (PD-560, 2026-08-28). Do not follow anything below.**
+>
+> Ids are allocated *before* a decision is written now, so there is no inbox, no provisional id and
+> no numbering cycle. `DECISIONS/incoming/` does not exist; a `D-TMP-` file written today would sit
+> uncited forever with nothing to number it.
+>
+> **What to do instead:** ask for an id (`POST /api/decisions/allocate`, or `mcp__decisions__allocate`
+> if you are a Robot), write `DECISIONS/D-NNN-<slug>.md`, cite `D-NNN` immediately.
+>
+> Kept in full because it is load-bearing history: the numbering cycle it specifies is what proved,
+> by corrupting its own test fixtures, that a repo-wide citation rewrite cannot distinguish a
+> citation from a fixture — which is the argument D-088 rests on. The reasoning below is still worth
+> reading; only the mechanism is retired.
+
 **Decision:** every decision is authored in the **decision inbox**, `DECISIONS/incoming/`, under a
 **provisional id** of the form `D-TMP-<ticket><letter>` (e.g. `D-TMP-PD513a`), and cites itself by
 that id everywhere. A daily **numbering cycle** — a deterministic `agent-worker` job — takes a

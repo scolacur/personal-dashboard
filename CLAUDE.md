@@ -58,8 +58,9 @@ A worktree makes every one of these impossible. It is one command.
   authored four days *after* its PR merged). Squash takes everything on the branch at merge time.
   The habit is still worth keeping — after a merge, verify what you care about actually reached
   `main` with `git show origin/main:<path>` — but for this reason, not that one.
-- **Never allocate a `D-NNN`** — the old "check the highest one on `origin/main` first" habit is
-  obsolete, because you no longer pick a number at all (D-078). See the decisions section below.
+- **Never pick a `D-NNN` yourself** — not by checking the highest one on `origin/main`, not by
+  reading `DECISIONS.md` and adding one. You *ask* for a number (D-088). See the decisions section
+  below.
 
 ---
 
@@ -75,24 +76,28 @@ and archived to `/Users/steve/Documents/Dev/archive/` (see D-020).
 **A merged PR does not complete its ticket.** The Robot loop only completes tickets *it*
 dispatched, so anything built by hand must be `PATCH`ed to `completed` yourself.
 
-**Decisions (D-070, D-078).** Each decision is its own file; `DECISIONS.md` is a **generated** index
+**Decisions (D-070, D-088).** Each decision is its own file; `DECISIONS.md` is a **generated** index
 over them and must never be hand-edited — that edit is lost on the next regeneration.
 
 - If you are ever uncertain about why we are taking a certain design approach, skim the index in
-  `DECISIONS.md` and open the file that looks relevant. **`DECISIONS.md` lists numbered decisions
-  only** — the unnumbered ones are files in `DECISIONS/incoming/`, just as settled and binding, and
-  worth reading alongside it.
-- Whenever we make a significant architectural decision, **write it into the decision inbox** as
-  `DECISIONS/incoming/D-TMP-<TICKET><letter>.md` — e.g. `DECISIONS/incoming/D-TMP-PD513a.md`, first
-  line `# D-TMP-PD513a: Title`. Use `b`, `c`, … if one ticket produces more than one. Cite it by
-  that provisional id everywhere. **That one file is the whole change** — do not run
-  `npm run decisions:index` and do not touch `DECISIONS.md`: provisional decisions are deliberately
-  not listed there, so authoring collides with nobody (PD-551). Agents are still shown your decision
-  immediately; the index they read is composed at run time from `DECISIONS/incoming/`.
-- **Never write `DECISIONS/D-NNN-slug.md` by hand, and never pick a number** — not even in a solo
-  session where you are sure nothing else is running. That check is exactly the hand-check this
-  replaces, and it has been wrong here twice (D-056, D-065). A daily numbering cycle assigns the
-  `D-NNN` in merge order and rewrites every `D-TMP-` citation for you.
-- Writing a file rather than appending to the index is what lets parallel sessions each log a
-  decision without touching the same lines; leaving the number to the cycle is what stops them
-  claiming the same one.
+  `DECISIONS.md` and open the file that looks relevant. Everything settled is listed there; ids are
+  allocated when a decision is written, so there is no second place to look.
+- Whenever we make a significant architectural decision, **ask for an id first**:
+
+  ```sh
+  curl -s -X POST http://192.168.68.50:8088/api/decisions/allocate   # -> {"id":"D-089"}
+  ```
+
+  Then write `DECISIONS/D-089-<slug>.md` with `# D-089: Title` as its first line, cite `D-089`
+  directly in code, run `npm run decisions:index`, and commit the regenerated `DECISIONS.md`
+  alongside it. A stale index is a test failure.
+- **Never pick a number yourself** — not even in a solo session where you are sure nothing else is
+  running. That check is exactly the hand-check the counter replaces, and it has been wrong here
+  twice (D-056, D-065). The counter is the only allocator.
+- Allocate **once per decision, at the moment you write it**. Two decisions in one session means two
+  calls. An id you end up not using just leaves a gap, which costs nothing — far cheaper than
+  reusing one.
+- **Robots do not use the endpoint**; they call `mcp__decisions__allocate`, which the worker runs for
+  them, because the container's egress firewall cannot reach the dashboard (D-087).
+- Two people authoring on the same day will both regenerate `DECISIONS.md` and may hit a git
+  conflict on it. Don't hand-resolve it — take either side and re-run `npm run decisions:index`.

@@ -44,20 +44,24 @@ here.
 
 ### Step 3 — Log any decision this session made
 
-A durable architectural decision goes in its own file in the **decision inbox** —
-**`DECISIONS/incoming/D-TMP-<TICKET><letter>.md`**, first line `# D-TMP-<TICKET><letter>: Title`
-(D-070, D-078). For a session on PD-513 that is `DECISIONS/incoming/D-TMP-PD513a.md`; use `b`, `c`, …
-for a second decision from the same ticket. **That file is the entire change** — do not run
-`npm run decisions:index` and do not touch `DECISIONS.md`. It lists numbered decisions only, so
-authoring one conflicts with nobody (PD-551). Never hand-edit `DECISIONS.md`; it is generated.
+A durable architectural decision goes in its own file, under a **real id you ask for first**
+(D-070, D-088):
+
+```sh
+curl -s -X POST http://192.168.68.50:8088/api/decisions/allocate   # -> {"id":"D-089"}
+```
+
+Write `DECISIONS/D-089-<slug>.md` with `# D-089: Title` as its first line, cite `D-089` directly
+everywhere you reference it, then run `npm run decisions:index` and commit the regenerated
+`DECISIONS.md` alongside it — a stale index is a test failure. Never hand-edit `DECISIONS.md`; it is
+generated. Two decisions from one session means **two** allocate calls, one per decision.
 
 **Do not pick a `D-NNN`, even when you are certain no other session is running.** That certainty is
-the hand-check D-078 removes, and it has been wrong here twice. A daily numbering cycle assigns the
-number in merge order and rewrites your `D-TMP-` citations.
+the hand-check the counter replaces, and it has been wrong here twice (D-056, D-065). An id you
+allocate and then don't use just leaves a gap, which costs nothing.
 
-Then the day-file entry for it is SHORT and links to the decision by its **provisional** id (per the
-global wrap-up Step 3) — the decision file is canonical, MEMORY does not re-narrate it. The cycle
-rewrites that citation along with the others.
+Then the day-file entry for it is SHORT and links to the decision by its id (per the global wrap-up
+Step 3) — the decision file is canonical, MEMORY does not re-narrate it.
 
 ### Step 4 — Project-specific steps
 
