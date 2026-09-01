@@ -19,10 +19,11 @@
   }
 }
 
+// PD-608: its own line above the search row, so it reads as the page's name rather than as the
+// first item in a row of controls. No longer a flex child of `.section-head`.
 .section-title {
-  margin: 0;
+  margin: 0 0 var(--space-sm);
   font-size: var(--font-size-lg);
-  flex: 0 0 auto;
 }
 
 // Row 2: all filters (Type / Project / Priority / Assignee / Refinement), wrapping.
@@ -122,9 +123,10 @@
   }
 }
 
+// PD-608: `.assignee-filter` is no longer here — it holds a `SegmentedToggle`, not a `<select>`,
+// and leaving it in this list would have been a rule matching nothing.
 .priority-filter,
 .refinement-filter,
-.assignee-filter,
 .project-filter,
 .type-filter {
   select {
@@ -182,18 +184,13 @@
 }
 
 /* ── Mobile responsive (≤640px) ─────────────────── */
-// The header reflows into rows via flex order: title + Add on row 1, then search, project,
-// priority/assignee, refinement.
+// The header reflows into rows via flex order. PD-608: the title is no longer part of this — it is
+// a block above the row now — so row 1 is Add, then search, project, priority/assignee, refinement.
 @media (max-width: 640px) {
   .section-head {
     flex-wrap: wrap;
     gap: var(--space-xs);
     align-items: center;
-  }
-
-  .section-title {
-    order: 1;
-    margin-right: auto;
   }
 
   .add-ticket-wrap {
@@ -230,14 +227,12 @@
     }
   }
 
+  // The assignee toggle (PD-608). Its own appearance is the component's; only its place in the
+  // wrapping filters row is this toolbar's business. Given a full row on mobile because four
+  // segments do not fit beside the priority select.
   .assignee-filter {
     order: 6;
-    flex: 1 1 auto;
-    min-width: 0;
-
-    select {
-      width: 100%;
-    }
+    flex: 0 0 100%;
   }
 
   .refinement-filter {

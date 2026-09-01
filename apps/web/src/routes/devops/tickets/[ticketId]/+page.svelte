@@ -53,6 +53,7 @@
   import EpicPicker from '../../EpicPicker.svelte';
   import TicketBoard from '../../task-tracker/TicketBoard.svelte';
   import MemberCard from '../../MemberCard.svelte';
+  import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
   import { ticketMatchesQuery } from '../../filter-logic';
 
@@ -738,20 +739,15 @@
                  dispatch order — and the kanban is the STATE view. Deliberately two views rather
                  than one: a kanban lane and a dispatch order are different axes, and reordering
                  inside a lane would conflate them. -->
-            <div class="member-view-toggle" role="group" aria-label="Member view">
-              <button
-                type="button"
-                class:active={memberView === 'list'}
-                aria-pressed={memberView === 'list'}
-                onclick={() => (memberView = 'list')}>List</button
-              >
-              <button
-                type="button"
-                class:active={memberView === 'board'}
-                aria-pressed={memberView === 'board'}
-                onclick={() => (memberView = 'board')}>Board</button
-              >
-            </div>
+            <SegmentedToggle
+              label="Member view"
+              value={memberView}
+              onChange={(v) => (memberView = v)}
+              options={[
+                { value: 'list', label: 'List', title: 'Dispatch order' },
+                { value: 'board', label: 'Board', title: 'Lane state' },
+              ]}
+            />
             <button class="add-member-btn" type="button" onclick={() => (memberPickerOpen = true)}
               >+ Add member</button
             >

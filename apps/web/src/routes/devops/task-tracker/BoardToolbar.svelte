@@ -3,6 +3,7 @@
   import { TICKET_PRIORITIES, PRIORITY_LABELS } from '@dashboard/shared';
   import type { SvelteSet } from 'svelte/reactivity';
   import Button from '$lib/Button.svelte';
+  import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import type { AssigneeFilter, RefineFilter } from '../filter-logic';
 
   /**
@@ -73,11 +74,16 @@
 
 <svelte:window onclick={onWindowClick} onkeydown={onWindowKeydown} />
 
+<!-- PD-608: the page's name is a heading, not a filter label, so it gets its own line rather than
+     sitting inline with the search field and the action buttons. -->
+<h2 class="section-title">Task Tracker</h2>
+
 <div class="section-head">
-  <h2 class="section-title">Tickets</h2>
   <label class="ticket-search" class:has-text={search !== ''}>
+    <!-- The visible placeholder is just "Search…" — the heading above already says what is being
+         searched. The screen-reader label stays specific, because it is read without that context. -->
     <span class="sr-label">Search tickets</span>
-    <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search tickets…" />
+    <input type="search" bind:value={search} bind:this={searchInputRef} placeholder="Search…" />
     {#if search}
       <button
         type="button"
@@ -121,15 +127,8 @@
 
 <!-- Second toolbar row: all filters (D-054 adds Ticket Type). Search + buttons stay on row 1. -->
 <div class="filters-row">
-  <label class="type-filter">
-    <span class="sr-label">Type</span>
-    <select bind:value={filterType}>
-      <option value="all">Epics &amp; Tickets</option>
-      <option value="epics-lone">Epics &amp; Lone Tickets</option>
-      <option value="epics">Epics only</option>
-      <option value="tickets">Tickets only</option>
-    </select>
-  </label>
+  <!-- PD-608: Project leads. It is the widest cut on the board, and it changes what every filter
+       after it is filtering. -->
   <label class="project-filter">
     <span class="sr-label">Project</span>
     <select
@@ -145,6 +144,15 @@
       {/each}
     </select>
   </label>
+  <label class="type-filter">
+    <span class="sr-label">Type</span>
+    <select bind:value={filterType}>
+      <option value="all">Epics &amp; Tickets</option>
+      <option value="epics-lone">Epics &amp; Lone Tickets</option>
+      <option value="epics">Epics only</option>
+      <option value="tickets">Tickets only</option>
+    </select>
+  </label>
   <label class="priority-filter">
     <span class="sr-label">Priority</span>
     <select bind:value={filterPriority}>
@@ -155,18 +163,23 @@
       <option value="none">— None</option>
     </select>
   </label>
-  <label class="assignee-filter">
-    <span class="sr-label">Assignee</span>
-    <select
+  <!-- PD-608: a toggle, not a select. Four fixed options is a segmented control wearing a
+       dropdown — and this is the filter reached for most often, so hiding three of its four
+       states behind a click costs more than the row width it saves. Shares `SegmentedToggle`
+       with the Epic page's list/board switch so the two cannot drift. -->
+  <div class="assignee-filter">
+    <SegmentedToggle
+      label="Assignee"
       value={filterAssignee}
-      onchange={(e) => onAssigneeFilter(e.currentTarget.value as AssigneeFilter)}
-    >
-      <option value="all">All assignees</option>
-      <option value="robot">🤖 Robot</option>
-      <option value="steve">S Steve</option>
-      <option value="none">— Unassigned</option>
-    </select>
-  </label>
+      onChange={onAssigneeFilter}
+      options={[
+        { value: 'all', label: 'All', title: 'All assignees' },
+        { value: 'robot', label: '🤖 Robot', title: 'Assigned to the Robot' },
+        { value: 'steve', label: 'Steve', title: 'Assigned to Steve' },
+        { value: 'none', label: 'Unassigned', title: 'Nobody assigned' },
+      ]}
+    />
+  </div>
   <label class="refinement-filter">
     <span class="sr-label">Refinement</span>
     <select bind:value={filterRefine}>
