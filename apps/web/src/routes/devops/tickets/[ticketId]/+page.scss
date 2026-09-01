@@ -1113,26 +1113,9 @@
 }
 
 /* List/kanban toggle in the members header (PD-554). */
-.member-view-toggle {
-  display: inline-flex;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-
-  button {
-    padding: 2px var(--space-sm);
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-
-    &.active {
-      background: var(--accent);
-      color: var(--bg);
-    }
-  }
-}
+// `.member-view-toggle` is now `$lib/SegmentedToggle.svelte` (PD-608), shared with the board's
+// assignee filter. This was the original of that control; the board had been about to grow a
+// second one that looked almost like it.
 
 
 /* An action that failed, shown above content that is still valid (PD-590). Distinct from the
