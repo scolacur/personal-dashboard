@@ -27,12 +27,10 @@
   }
 }
 
-.drop-line {
-  height: 2px;
-  margin: 0 var(--space-sm);
-  background: var(--accent);
-  border-radius: 2px;
-}
+// `.drop-line` moved to `_drop-line.scss` and is now rendered by `TicketBoard` (PD-602). This
+// component was the only one already doing it as an element rather than a border, which is why it
+// became the shared version — but the card is the wrong owner: it cannot know what is about to land
+// in front of it, and the board that tracks the drag can.
 
 .member-card-head {
   display: flex;

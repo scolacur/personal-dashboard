@@ -1,5 +1,6 @@
 @use '../../refine-badge';
 @use '../../assignee-pill';
+@use '../../drop-line';
 
 .detail-nav {
   margin-bottom: var(--space-lg);
@@ -948,6 +949,11 @@
   list-style: none;
   margin: var(--space-sm) 0 0;
   padding: 0;
+
+  // The rows sit flush against each other, so the indicator has no gap to hide in. At zero the
+  // shared rule's compensation resolves to -1px a side, which makes the 2px line cost exactly
+  // nothing in height and land on the divider between two rows.
+  --drop-line-gap: 0;
 }
 
 // PD-384: the member list is the dispatch-order control for its Epic, so the rows carry a grip,
@@ -960,20 +966,14 @@
   padding: var(--space-xs) 0;
   font-size: var(--font-size-sm);
   border-bottom: 1px solid var(--border);
-  // The 2px is the drop indicator's slot, held open so rows never shift as it appears.
-  border-top: 2px solid transparent;
 
   &.dragging {
     opacity: 0.45;
   }
 
-  // PD-590: a visible insertion line, matching the board's. A 1px tint on an element that already
-  // has a border read as nothing at all — the indicator has to be unmistakable mid-drag, because
-  // it is the only feedback about where the row will actually land.
-  &.drop-before {
-    border-top-color: var(--accent);
-    box-shadow: inset 0 2px 0 0 var(--accent);
-  }
+  // PD-602: no `.drop-before`, and no transparent 2px `border-top` reserving a slot for it. Both
+  // existed because the indicator was drawn ON the row; it is now a `.drop-line` element between
+  // rows, which carries its own no-shift compensation and looks identical on every drag surface.
 }
 
 .member-order-hint {

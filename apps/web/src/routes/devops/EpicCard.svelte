@@ -11,7 +11,6 @@
     project,
     summary,
     dragging = false,
-    dropBefore = false,
     onDragStart,
     onDragEnd,
     onEdit,
@@ -22,7 +21,6 @@
     project: AgentProject | undefined;
     summary: EpicSummary | undefined;
     dragging?: boolean;
-    dropBefore?: boolean;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
     onEdit: () => void;
@@ -74,7 +72,6 @@
 <article
   class="epic-card"
   class:dragging
-  class:drop-before={dropBefore}
   data-id={epic.id}
   data-priority={epic.priority ?? 'none'}
   draggable={true}

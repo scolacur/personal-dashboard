@@ -1,1 +1,4 @@
 @use './board-grid';
+// The between-cards insertion indicator. Rendered by TicketBoard (which owns the drag state), so
+// the rule has to be in TicketBoard's scope even though the element sits inside a LaneColumn.
+@use '../drop-line';

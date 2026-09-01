@@ -1,0 +1,36 @@
+// The insertion indicator, shared by every drag surface on the board (PD-602).
+//
+// There were five of these, and no two agreed: a `box-shadow` on the top border of a `.card`, a
+// different `box-shadow` on an `.epic-card`, an `inset` shadow on a member list row, a zero-height
+// `.drop-end` element, and a 2px `.drop-line` element in `MemberCard`. Same gesture, five answers.
+//
+// **A line drawn on a card is ambiguous by construction.** A line on the top edge of card B is
+// pixel-identical to a line on the bottom edge of card A, so the affordance names one of the two
+// cards rather than the gap between them — which is what an insertion actually is. And there is no
+// card to draw on when the drop would append, so the one drop most in need of confirming had no
+// feedback at all.
+//
+// So the indicator is its own element, living in the gap. Rendered by the container that owns the
+// drag state, never by a card: the card does not know whether something is about to land in front
+// of it, and asking it to render that was the reason this drifted five ways.
+.drop-line {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+
+  // Sit INSIDE the gap instead of adding to it.
+  //
+  // These containers are flex columns with `gap`, so inserting an element between two cards would
+  // otherwise add a whole extra gap — the list visibly jumps the moment you drag over it, and every
+  // card below the cursor shifts. Pulling half a gap (plus half the line) off each side keeps the
+  // total spacing identical to the un-hovered list and centres the line in the existing gap.
+  //
+  // `--drop-line-gap` lets a container with a different gap opt in to the right value; the default
+  // matches `--space-sm`, which is what the board's lanes and member lists use.
+  margin-block: calc(-1px - var(--drop-line-gap, var(--space-sm)) / 2);
+
+  // An empty lane has no gap to sit in, so the compensation would pull it into the padding.
+  &:only-child {
+    margin-block: 0;
+  }
+}

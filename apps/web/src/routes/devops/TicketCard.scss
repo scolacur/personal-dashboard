@@ -29,10 +29,10 @@
     opacity: 0.4;
   }
 
-  // Insertion line drawn above the card the drop would land before.
-  &.drop-before {
-    box-shadow: 0 -2px 0 0 var(--accent);
-  }
+  // The insertion line is no longer drawn on the card (PD-602). It is a `.drop-line` element
+  // rendered in the gap by `TicketBoard`, which owns the drag state — a line on this card's top
+  // edge was pixel-identical to one on the previous card's bottom edge, so it named a card rather
+  // than the gap the drop actually lands in.
 
   // Agent-controlled tickets can't be dragged or reassigned.
   &.locked {

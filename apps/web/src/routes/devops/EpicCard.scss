@@ -13,10 +13,8 @@
     opacity: 0.4;
   }
 
-  // Insertion indicator when another epic will drop above this one.
-  &.drop-before {
-    box-shadow: 0 -2px 0 var(--accent);
-  }
+  // The insertion indicator is no longer drawn on the card (PD-602) — it is a `.drop-line`
+  // element rendered in the gap by the board page, shared with every other drag surface.
 }
 
 .epic-top {

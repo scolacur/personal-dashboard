@@ -972,14 +972,13 @@
 {/if}
 </section>
 
-{#snippet ticketCardSnippet(ticket: AgentTicket, drag: { dragging: boolean; dropBefore: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
+{#snippet ticketCardSnippet(ticket: AgentTicket, drag: { dragging: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
   {@const project = ticket.projectId !== null ? projectsById.get(ticket.projectId) : undefined}
   <TicketCard
     {ticket}
     {project}
     epic={ticket.epicId !== null ? ticketsById.get(ticket.epicId) : undefined}
     dragging={drag.dragging}
-    dropBefore={drag.dropBefore}
     isLocked={isStatusLocked(ticket)}
     isFrozen={isTerminal(ticket)}
     badges={badgesById.get(ticket.id) ?? NO_BADGES}
@@ -1014,12 +1013,15 @@
         >
           {#each cell.epics as epic (epic.id)}
             {@const project = epic.projectId !== null ? projectsById.get(epic.projectId) : undefined}
+            <!-- PD-602: the indicator is an element in the gap, matching the Ticket band. -->
+            {#if epicDraggingId !== null && epicDropTarget?.lane === cell.lane && epicDropTarget?.beforeId === epic.id}
+              <div class="drop-line"></div>
+            {/if}
             <EpicCard
               {epic}
               {project}
               summary={epicSummaryById.get(epic.id)}
               dragging={epicDraggingId === epic.id}
-              dropBefore={epicDropTarget?.lane === cell.lane && epicDropTarget?.beforeId === epic.id}
               onDragStart={(e) => onEpicDragStart(e, epic)}
               onDragEnd={onEpicDragEnd}
               onEdit={() => openEdit(epic)}
@@ -1027,6 +1029,12 @@
               onUpdate={() => load(true)}
             />
           {/each}
+          <!-- The append target. The Epic band had none at all: dragging below the last Epic showed
+               nothing, so the only drop with no feedback was the one that moves an Epic to the
+               bottom of its priority band. -->
+          {#if epicDraggingId !== null && epicDropTarget?.lane === cell.lane && epicDropTarget?.beforeId === null}
+            <div class="drop-line"></div>
+          {/if}
         </EpicLane>
       {/each}
       <!-- Row 3: Resize handle — drag up/down to adjust the Epic area height (D-058) -->
