@@ -29,6 +29,7 @@ function epic(o: Partial<AgentTicket> = {}): AgentTicket {
     agentTurns: null,
     refineState: null,
     refined: false,
+    refineStale: false,
     isEpic: true,
     epicId: null,
     ready: false,

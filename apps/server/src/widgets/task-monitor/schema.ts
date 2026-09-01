@@ -75,6 +75,7 @@ export function bootstrapSchema(db: Database.Database): void {
       github_issue_url    TEXT,
       agent_state         TEXT,                     -- Robot loop agent state (D-055); NULL = none
       refined             INTEGER NOT NULL DEFAULT 0, -- 1 once refined to completion (D-044, PD-268)
+      refine_stale        INTEGER NOT NULL DEFAULT 0, -- 1 when an Epic WAS refined and its members changed since (PD-610)
       ready               INTEGER NOT NULL DEFAULT 0, -- 1 iff body is 4-section Ready (D-058); recomputed on body write
       ready_bypassed      INTEGER NOT NULL DEFAULT 0, -- 1 when a human queued a not-Ready robot ticket via confirm modal (D-058)
       max_turns           INTEGER,                  -- per-ticket run ceiling (PD-432); NULL = the loop's env default
@@ -327,6 +328,14 @@ export function bootstrapSchema(db: Database.Database): void {
   // default", so the global stays authoritative for the ~all tickets that never need an override.
   migrate(db, 'agent_tickets_add_max_turns', (d) => {
     addColumn(d, 'agent_tickets', 'max_turns', 'INTEGER');
+  });
+
+  // PD-610: the third refinement state. `refined = 0` otherwise means two different things — "never
+  // refined", which is the ordinary condition of 78 of 80 Epics and must raise nothing, and "was
+  // refined and its member set has changed since", which needs a warning. Existing rows default to
+  // 0: nothing on the board has been through the new rule, so nothing is retroactively stale.
+  migrate(db, 'agent_tickets_add_refine_stale', (d) => {
+    addColumn(d, 'agent_tickets', 'refine_stale', 'INTEGER NOT NULL DEFAULT 0');
   });
 
   // PD-606: heal the rows that were left claiming a run they are not in.

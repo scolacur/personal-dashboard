@@ -18,6 +18,7 @@ import {
   appendRefineReply,
   appendRobotReply,
   approveRefine,
+  markTicketRefined,
   type ApproveRefineResult,
   archiveTicket,
   computeEpicSummary,
@@ -597,6 +598,19 @@ export function registerRoutes(
     return reply.status(201).send(event);
   });
 
+  // ✓ Mark refined (PD-610). Its own route, not a `PATCH { refined: true }`, because it carries
+  // obligations that a generic field write cannot express: clear `refine_stale`, and re-arm the
+  // members a stale-pause un-armed. Approving a Refine proposal must NOT re-arm (D-057), and both
+  // used to arrive through the same update — so the server could not tell a human's assertion from
+  // an agent's proposal being accepted. Same reasoning that gave Reopen its own route in PD-542.
+  app.post(`${base}/tickets/:id/mark-refined`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const ticket = markTicketRefined(db, id);
+    if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    return ticket;
+  });
+
   /* ── Refine commit step (D-044, PD-269) ──────────────────────────────── */
 
   // Approve the latest actionable commit proposal. The server (not the agent-worker) does the
@@ -609,10 +623,15 @@ export function registerRoutes(
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
-    const queue = (request.body as { queue?: boolean } | undefined)?.queue === true;
+    const body = request.body as { queue?: boolean; resume?: boolean } | undefined;
+    const queue = body?.queue === true;
+    // PD-610: the Epic counterpart of `queue`. Plain approve clears an Epic's staleness; only
+    // `resume` re-arms the members a stale-pause un-armed, because D-057 reserves dispatch to an
+    // explicit human act rather than to approving what an agent proposed.
+    const resume = body?.resume === true;
     let result: ApproveRefineResult;
     try {
-      result = approveRefine(db, id, { queue });
+      result = approveRefine(db, id, { queue, resume });
     } catch (e) {
       // Defensive backstop: approveRefine pre-checks the Epic/blocker invariants, but if any
       // store-level guard escapes we map it to a clean 4xx rather than a 500 (same as POST/PATCH).

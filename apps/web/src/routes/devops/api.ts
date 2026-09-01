@@ -79,6 +79,21 @@ export async function updateTicket(id: number, patch: UpdateTicketInput): Promis
  * obligations — the Ticket must land in an Epic, and its `agent_state` is cleared — and a plain
  * write is how a caller skips them. Pass `epicId` when the Ticket has none.
  */
+/**
+ * ✓ Mark refined (PD-610). Its own endpoint rather than `updateTicket({ refined: true })`, because
+ * it carries obligations a generic field write cannot express — clear the staleness, and re-arm the
+ * members a stale-pause un-armed. Approving an agent's proposal must not do the second thing.
+ */
+export async function markRefined(id: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/mark-refined`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
 export async function reopenTicket(id: number, epicId?: number): Promise<AgentTicket> {
   const res = await fetch(`${BASE}/${id}/reopen`, {
     method: 'POST',

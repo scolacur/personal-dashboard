@@ -35,6 +35,7 @@ import {
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
   REFINE_PROPOSAL_EVENT,
+  REFINE_STATE_EVENT,
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
 } from '@dashboard/shared';
@@ -57,6 +58,7 @@ interface TicketRow {
   github_issue_url: string | null;
   agent_state: string | null;
   refined: number;
+  refine_stale: number;
   ready: number;
   ready_bypassed: number;
   max_turns: number | null;
@@ -120,6 +122,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
         ? null
         : refineStateFromLatestType(row.latest_refine_type),
     refined: row.refined === 1,
+    refineStale: row.refine_stale === 1,
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
     maxTurns: row.max_turns,
@@ -388,6 +391,11 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
       .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, maxTurns, isEpic ? 1 : 0, epicId, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
+    // PD-610: a new member changes the Epic's set, so the Epic's claim that its members are the
+    // agreed breakdown no longer holds. Covers every create path at once — Populate, the board's
+    // + button, the API, and the Add-member modal's "new ticket" option (PD-465) — because they all
+    // land here rather than each remembering to do it.
+    invalidateEpicRefinement(db, epicId, { addedTicketId: id, via: 'created' }, now);
     return id;
   });
   const created = getTicket(db, insert());
@@ -621,6 +629,29 @@ export function updateTicket(
         ).run(next.updatedAt, id);
       }
     }
+    // PD-610: re-parenting changes TWO Epics' member sets, so both claims are falsified — the one
+    // that lost a member and the one that gained it. Only invalidating the destination would leave
+    // the source asserting a breakdown that still lists work it no longer owns.
+    //
+    // A member going TERMINAL is deliberately not a membership change and is not handled here: that
+    // is the Epic's plan succeeding, not its plan changing, and treating it as invalidation would
+    // un-refine every Epic the moment it started making progress.
+    if (next.epicId !== existing.epicId) {
+      invalidateEpicRefinement(db, existing.epicId, { removedTicketId: id, via: 'reparented_out' }, next.updatedAt);
+      invalidateEpicRefinement(db, next.epicId, { addedTicketId: id, via: 'reparented_in' }, next.updatedAt);
+    }
+
+    // PD-610: re-refining through a plain update clears the staleness but NEVER re-arms. That is
+    // the path `approveRefine` takes, and D-057 reserves dispatch to a human — an agent's proposal,
+    // approved in one click, must not put members back in the Queue. Re-arming lives behind
+    // `markTicketRefined`, which is a human pressing ✓ Mark refined.
+    if (next.refined && !existing.refined) {
+      if (existing.refineStale) {
+        db.prepare('UPDATE agent_tickets SET refine_stale = 0 WHERE id = ?').run(id);
+      }
+      logEvent(db, id, REFINE_STATE_EVENT.marked, { wasStale: existing.refineStale, via: 'update' });
+    }
+
     // D-083: clear the stale agent state on the way OUT of a terminal lane. `agent_state` is
     // not in the UPDATE above (it is loop-owned and absent from UpdateTicketInput), so — exactly
     // like the entering-terminal teardown below — it takes its own statement inside this
@@ -865,6 +896,12 @@ export function archiveTicket(
     }
     db.prepare('UPDATE agent_tickets SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
     logEvent(db, id, 'archived');
+    // PD-610: archiving a member removes it from the set. Archiving an EPIC does not invalidate
+    // anything — it has no parent, and its own members are either archived with it or unlinked
+    // above, both of which are the Epic ceasing to exist rather than its breakdown changing.
+    if (!existing.isEpic) {
+      invalidateEpicRefinement(db, existing.epicId, { removedTicketId: id, via: 'archived' }, now);
+    }
   });
   apply();
   return true;
@@ -997,6 +1034,115 @@ export function listEpicSummaries(db: Database.Database): EpicSummary[] {
     .prepare('SELECT id FROM agent_tickets WHERE is_epic = 1 AND archived_at IS NULL')
     .all() as { id: number }[];
   return epics.map((e) => computeEpicSummary(db, e.id));
+}
+
+/* ── Epic refinement staleness (PD-610) ───────────────────────────────── */
+
+/**
+ * D-089. An Epic's `refined` flag asserts two things: that its description frames the work, **and** that
+ * its current member set is the agreed breakdown of it. Changing which tickets belong falsifies the
+ * second half, so it clears the flag and raises `refine_stale`.
+ *
+ * **Automatic, with no prompt — deliberately.** The two ways of being wrong are not symmetric:
+ * un-refining wrongly costs one click of ✓ Mark refined and is visible (the flag moved, and the
+ * move is itself the record), while leaving something refined wrongly is silent, permanent, and
+ * never raised again. A prompt would trade a cheap self-correcting error for an invisible one.
+ *
+ * This does NOT contradict PD-396, which keeps a prompt for a body edit. One rule, two triggers
+ * that differ in kind: **automate where the trigger is precise, ask where it is not.** A membership
+ * change is exactly checkable; a body edit ranges from a typo to a rewrite and nothing can tell
+ * which.
+ *
+ * The known false positives are accepted for the same reason: moving a member OUT can leave the
+ * Epic more accurate than before, and an Epic whose body invites further members (PD-530 says so
+ * outright) is not contradicted by gaining one. Each costs a single click to re-assert.
+ */
+function invalidateEpicRefinement(
+  db: Database.Database,
+  epicId: number | null,
+  detail: Record<string, unknown>,
+  now: number,
+): void {
+  if (epicId === null) return;
+  const epic = db
+    .prepare('SELECT id, is_epic, refined, status FROM agent_tickets WHERE id = ? AND archived_at IS NULL')
+    .get(epicId) as { id: number; is_epic: number; refined: number; status: string } | undefined;
+  // Only an Epic that currently CLAIMS to be refined has anything to invalidate. The other 78 of 80
+  // have never been refined, and must not gain a warning they were never eligible for.
+  if (!epic || epic.is_epic !== 1 || epic.refined !== 1) return;
+
+  db.prepare('UPDATE agent_tickets SET refined = 0, refine_stale = 1, updated_at = ? WHERE id = ?').run(now, epicId);
+  logEvent(db, epicId, REFINE_STATE_EVENT.invalidated, { cause: 'members', ...detail });
+
+  // The pause. An Epic reading `in_progress` is actively dispatching, and its description no longer
+  // covers its members — so stop arming new work while leaving what is already running alone.
+  //
+  // Un-arming rather than a new dispatch state, deliberately: `robotQueueCandidates` in the loop's
+  // `select.ts` is the single query deciding what the Robot picks up, and a bug there stops every
+  // Epic rather than this one. Un-arming reaches the same outcome with the cascade that already
+  // exists, and it never leaves a card sitting in the Queue that will not be picked — the PD-467
+  // trap the lane help warns about.
+  if (computeEpicSummary(db, epicId).derivedLane !== 'in_progress') return;
+  const paused = db
+    .prepare(
+      `UPDATE agent_tickets SET status = 'backlog', agent_state = NULL, ready_bypassed = 0, updated_at = ?
+        WHERE epic_id = ? AND status = 'queue' AND archived_at IS NULL
+          AND (agent_state IS NULL OR agent_state NOT IN ('working', 'in-review'))`,
+    )
+    .run(now, epicId);
+  // In-flight members (`working` / `in-review`) are excluded above and keep running: a run cannot be
+  // interrupted (D-046), and pulling an `in-review` ticket out of the Queue would strand the open PR
+  // its watcher is scoped to — the PD-464 failure exactly.
+  if (paused.changes > 0) {
+    logEvent(db, epicId, 'epic_paused', { unarmed: paused.changes, reason: 'refine_stale' });
+  }
+}
+
+/**
+ * Re-arm the members an invalidation un-armed.
+ *
+ * Arms every `backlog` member, which is the same cascade queueing the Epic runs — and correct here
+ * for the same reason: the Epic is in `queue`, so any member sitting in `backlog` either was
+ * un-armed by the pause, or arrived after the Epic was queued (`createTicket` forces that, D-080).
+ * Re-refining says the whole current set is agreed, so the whole current set is armed.
+ */
+function resumeEpicMembers(db: Database.Database, epicId: number, now: number): number {
+  const epic = db.prepare('SELECT status, is_epic FROM agent_tickets WHERE id = ?').get(epicId) as
+    | { status: string; is_epic: number }
+    | undefined;
+  if (!epic || epic.is_epic !== 1 || epic.status !== 'queue') return 0;
+  const armed = db
+    .prepare(
+      `UPDATE agent_tickets SET status = 'queue', updated_at = ?
+        WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL`,
+    )
+    .run(now, epicId);
+  return armed.changes;
+}
+
+/**
+ * ✓ Mark refined — its own operation, not a status write dressed up as one.
+ *
+ * It carries obligations a plain `PATCH { refined: true }` cannot express: clear the staleness, and
+ * re-arm the members the pause un-armed. Approving a Refine proposal must NOT re-arm (D-057 —
+ * approval never dispatches, and no agent may cause work to be queued), and both used to arrive
+ * through the same generic update, so the server could not tell them apart. Same reasoning that
+ * gave Reopen its own route in PD-542.
+ */
+export function markTicketRefined(db: Database.Database, id: number, now: number = Date.now()): AgentTicket | null {
+  const existing = getTicket(db, id);
+  if (!existing) return null;
+  const wasStale = existing.refineStale;
+  const apply = db.transaction(() => {
+    db.prepare('UPDATE agent_tickets SET refined = 1, refine_stale = 0, updated_at = ? WHERE id = ?').run(now, id);
+    logEvent(db, id, REFINE_STATE_EVENT.marked, { wasStale, via: 'mark' });
+    if (wasStale && existing.isEpic) {
+      const armed = resumeEpicMembers(db, id, now);
+      if (armed > 0) logEvent(db, id, 'epic_resumed', { armed });
+    }
+  });
+  apply();
+  return getTicket(db, id);
 }
 
 /* ── Ticket activity log + Refine thread (D-044, PD-267) ─────────────── */
@@ -1383,7 +1529,7 @@ export type ApproveRefineResult =
 export function approveRefine(
   db: Database.Database,
   ticketId: number,
-  opts: { queue?: boolean } = {},
+  opts: { queue?: boolean; resume?: boolean } = {},
 ): ApproveRefineResult {
   const parent = getTicket(db, ticketId);
   if (!parent) return { ok: false, reason: 'not_found' };
@@ -1429,6 +1575,14 @@ export function approveRefine(
         maxTurns: p.maxTurns === undefined ? parent.maxTurns : p.maxTurns,
         refined: true,
       });
+      // PD-610: "Approve & resume" — the Epic counterpart of "Approve & queue", and human dispatch
+      // for the same reason. Plain Approve clears the staleness (updateTicket does that above) and
+      // stops there; only this puts the paused members back in the Queue, because D-057 reserves
+      // dispatch to an explicit human act rather than to approving what an agent proposed.
+      if (opts.resume === true && parent.isEpic) {
+        const armed = resumeEpicMembers(db, ticketId, Date.now());
+        if (armed > 0) logEvent(db, ticketId, 'epic_resumed', { armed, via: 'approve_resume' });
+      }
       logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, queued });
     });
     run();
