@@ -3,6 +3,10 @@
    resize handle). Everything with its own component owns its own styles: the toolbar, the two
    lane cells, the ticket form, and the confirm modals — Svelte scopes styles per component, so a
    rule left here would no longer reach markup that moved out. */
+// The Epic band's insertion indicator is rendered by this page (it owns the Epic drag state), so
+// the rule must be in this page's scope even though the element sits inside an `EpicLane`.
+@use '../drop-line';
+
 .tickets-section {
   margin-top: var(--space-xl);
 }

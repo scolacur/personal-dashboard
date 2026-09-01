@@ -44,8 +44,10 @@
   >+</button>
   <div class="column-body" role="list" ondragover={onDragOver} ondrop={onDrop}>
     {@render children()}
+    <!-- The append target. Same element and same look as the between-cards indicator (PD-602) —
+         "it lands here" should not be drawn two different ways depending on where "here" is. -->
     {#if showDropEnd}
-      <div class="drop-end"></div>
+      <div class="drop-line"></div>
     {/if}
     {#if count === 0}
       <p class="empty">—</p>

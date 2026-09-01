@@ -20,7 +20,6 @@
     project,
     epic,
     dragging,
-    dropBefore,
     isLocked,
     isFrozen = false,
     badges,
@@ -42,7 +41,6 @@
     /** The Epic this ticket belongs to, for attributing its inherited priority (D-080). */
     epic: AgentTicket | undefined;
     dragging: boolean;
-    dropBefore: boolean;
     isLocked: boolean;
     /** D-083: terminal — the work is over, so nothing here may change it. */
     isFrozen?: boolean;
@@ -140,7 +138,6 @@
   class="card"
   class:done={ticket.status === 'completed'}
   class:dragging={dragging}
-  class:drop-before={dropBefore}
   class:locked={isLocked}
   class:queued-blocked={queuedBlocked}
   class:shimmer={ticket.agentState === 'working'}

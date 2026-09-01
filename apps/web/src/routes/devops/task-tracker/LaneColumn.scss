@@ -1,4 +1,5 @@
 @use './column-add-btn';
+@use '../drop-line';
 
 // PD-590: the cell is a column so `.column-body` can stretch. The drop handlers live on
 // `.column-body`, which used to size to its content — so the empty space below the last card was
@@ -37,11 +38,9 @@
   margin: var(--space-sm) 0;
 }
 
-// Insertion line at the end of a lane (append target).
-.drop-end {
-  height: 0;
-  box-shadow: 0 -2px 0 0 var(--accent);
-}
+// `.drop-line` (the append target here) now lives in `_drop-line.scss`, shared with every other
+// drag surface on the board (PD-602). It was a zero-height box-shadow that did not match the
+// between-cards indicator on either side of it.
 
 @media (max-width: 640px) {
   .ticket-cell {

@@ -61,7 +61,15 @@
     onMove: (ticket: AgentTicket, status: TicketStatus, beforeId: number | null) => void;
     /** The Epic band's cells and resize handle, rendered inside the grid by the caller. */
     epicBand?: Snippet;
-    card: Snippet<[AgentTicket, { dragging: boolean; dropBefore: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void }]>;
+    /**
+     * A card, given its drag props.
+     *
+     * PD-602: no `dropBefore`. The insertion indicator is a real element rendered by this component
+     * in the gap, not a border on a card — a card cannot know whether something is about to land in
+     * front of it, and asking each one to draw that is why five surfaces ended up with five
+     * different-looking lines.
+     */
+    card: Snippet<[AgentTicket, { dragging: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void }]>;
   } = $props();
 
   let draggingId = $state<number | null>(null);
@@ -167,9 +175,12 @@
         onDrop={(e) => onDrop(e, col.status)}
       >
         {#each items as ticket (ticket.id)}
+          <!-- The indicator sits between the cards, so it is rendered between them. -->
+          {#if draggingId !== null && dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id}
+            <div class="drop-line"></div>
+          {/if}
           {@render card(ticket, {
             dragging: draggingId === ticket.id,
-            dropBefore: dropTarget?.status === col.status && dropTarget?.beforeId === ticket.id,
             onDragStart: (e: DragEvent) => onDragStart(e, ticket),
             onDragEnd,
           })}

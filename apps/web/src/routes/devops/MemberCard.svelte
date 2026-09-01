@@ -25,14 +25,12 @@
   let {
     ticket,
     dragging,
-    dropBefore,
     onDragStart,
     onDragEnd,
     onAssignee,
   }: {
     ticket: AgentTicket;
     dragging: boolean;
-    dropBefore: boolean;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
     onAssignee: (assignee: TicketAssignee | null) => void;
@@ -41,7 +39,6 @@
   const editable = $derived(canEditMember(ticket));
 </script>
 
-{#if dropBefore}<div class="drop-line"></div>{/if}
 <article
   class="card member-card"
   class:dragging

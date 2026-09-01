@@ -780,10 +780,15 @@
             <ul class="member-list" ondragover={(e) => onMemberDragOver(e, null)} ondrop={onMemberDrop}>
               {#each epicMembers as m (m.id)}
                 {@const lockedBecause = memberLockReason(m)}
+                <!-- PD-602: an element in the gap, not a tint on the row's own border. A `<li>`
+                     because a bare `<div>` is not valid inside a `<ul>`; `aria-hidden` because it
+                     is a drag affordance, not a list item anyone should hear about. -->
+                {#if memberDropBeforeId === m.id && draggingMemberId !== null}
+                  <li class="drop-line" aria-hidden="true"></li>
+                {/if}
                 <li
                   class="member-row"
                   class:dragging={draggingMemberId === m.id}
-                  class:drop-before={memberDropBeforeId === m.id && draggingMemberId !== null}
                   draggable={canReorderMembers}
                   ondragstart={(e) => onMemberDragStart(e, m)}
                   ondragover={(e) => onMemberDragOver(e, m.id)}
@@ -853,6 +858,11 @@
                        Re-filing a member means moving it to another Epic from its own page. -->
                 </li>
               {/each}
+              <!-- The append target (PD-602). Dropping past the last row is how you send a member
+                   to the end of the dispatch order, and it previously showed nothing at all. -->
+              {#if draggingMemberId !== null && memberDropBeforeId === null}
+                <li class="drop-line" aria-hidden="true"></li>
+              {/if}
             </ul>
           {/if}
         </section>
@@ -1155,11 +1165,10 @@
 
 <style lang="scss" src="./+page.scss"></style>
 
-{#snippet memberCardSnippet(m: AgentTicket, drag: { dragging: boolean; dropBefore: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
+{#snippet memberCardSnippet(m: AgentTicket, drag: { dragging: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
   <MemberCard
     ticket={m}
     dragging={drag.dragging}
-    dropBefore={drag.dropBefore}
     onDragStart={drag.onDragStart}
     onDragEnd={drag.onDragEnd}
     onAssignee={(a) => setMemberAssignee(m, a)}
