@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-089](DECISIONS/D-089-epic-refined-means-the-decomposition-holds.md)** — On an Epic, `refined` means the decomposition holds — and a membership change clears it automatically
 - **[D-088](DECISIONS/D-088-decision-ids-are-allocated-at-authoring-time-by-a.md)** — Decision ids are allocated at authoring time by a counter in the DB; the decision itself stays in git (PD-556; supersedes D-078)
 - **[D-087](DECISIONS/D-087-a-robot-asks-the-server-for-a-decision-id-it-still-cannot.md)** — A Robot asks the server for a decision id; it still cannot touch the board DB (PD-558; clarifies D-055, D-039)
 - **[D-086](DECISIONS/D-086-the-queue-model-rules-are-enforced-at-the-api-boundary-and.md)** — The queue-model rules are enforced at the API boundary, and Reopen is a route (PD-542; amends D-083, implements D-080)

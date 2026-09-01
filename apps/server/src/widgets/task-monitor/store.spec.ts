@@ -26,6 +26,7 @@ import {
   listProjects,
   listTicketEvents,
   listTickets,
+  markTicketRefined,
   markAllNotificationsRead,
   markNotificationRead,
   rejectRefine,
@@ -35,7 +36,7 @@ import {
   ValidationError,
 } from './store';
 import type { RefineProposal, TicketStatus } from '@dashboard/shared';
-import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
+import { REFINE_STATE_EVENT, ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 
 const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
@@ -1687,5 +1688,212 @@ describe('agentTurns (PD-230)', () => {
     const t = createTicket(db, { title: 'never dispatched', projectId: pd });
     createRunsTable(db);
     expect(getTicket(db, t.id)!.agentTurns).toBeNull();
+  });
+});
+
+
+/**
+ * PD-610. An Epic's `refined` asserts two things — that the description frames the work, and that
+ * the current member set is the agreed breakdown of it. These pin the second half: which changes
+ * falsify it, which deliberately do not, and what happens to an Epic that was mid-flight.
+ */
+describe('epic refinement staleness (PD-610)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    bootstrapSchema(db);
+    const p = getProjectBySlug(db, 'personal-dashboard');
+    if (!p) throw new Error('no PD project');
+    pd = p.id;
+  });
+
+  /** A refined Epic, optionally already queued, with `members` members already in it. */
+  function refinedEpic(opts: { queued?: boolean; members?: number } = {}) {
+    const epic = createTicket(db, { title: 'An epic', projectId: pd, isEpic: true, priority: 'P1' });
+    const members: number[] = [];
+    for (let i = 0; i < (opts.members ?? 0); i += 1) {
+      members.push(createTicket(db, { title: `m${i}`, projectId: pd, epicId: epic.id }).id);
+    }
+    if (opts.queued) updateTicket(db, epic.id, { status: 'queue' });
+    // Mark refined LAST: creating members is itself an invalidation, so refining first would be
+    // undone by the setup.
+    markTicketRefined(db, epic.id);
+    return { epicId: epic.id, members };
+  }
+
+  const stateOf = (id: number) => {
+    const t = getTicket(db, id)!;
+    return { refined: t.refined, stale: t.refineStale };
+  };
+  const eventTypes = (id: number) => listTicketEvents(db, id).map((e) => e.type);
+
+  describe('what invalidates it', () => {
+    it('a member created into it', () => {
+      const { epicId } = refinedEpic();
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+      createTicket(db, { title: 'new member', projectId: pd, epicId });
+      expect(stateOf(epicId)).toEqual({ refined: false, stale: true });
+      expect(eventTypes(epicId)).toContain(REFINE_STATE_EVENT.invalidated);
+    });
+
+    it('a member re-parented IN', () => {
+      const { epicId } = refinedEpic();
+      const other = createTicket(db, { title: 'elsewhere', projectId: pd, isEpic: true });
+      const t = createTicket(db, { title: 'roamer', projectId: pd, epicId: other.id });
+      updateTicket(db, t.id, { epicId });
+      expect(stateOf(epicId)).toEqual({ refined: false, stale: true });
+    });
+
+    // Both claims break: the one that lost a member still lists work it no longer owns.
+    it('a member re-parented OUT — and the destination too', () => {
+      const from = refinedEpic({ members: 1 });
+      const to = refinedEpic();
+      updateTicket(db, from.members[0], { epicId: to.epicId });
+      expect(stateOf(from.epicId)).toEqual({ refined: false, stale: true });
+      expect(stateOf(to.epicId)).toEqual({ refined: false, stale: true });
+    });
+
+    it('a member archived', () => {
+      const { epicId, members } = refinedEpic({ members: 1 });
+      archiveTicket(db, members[0]);
+      expect(stateOf(epicId)).toEqual({ refined: false, stale: true });
+    });
+  });
+
+  describe('what does not', () => {
+    /**
+     * The load-bearing exclusion. A member finishing is the Epic's plan SUCCEEDING, not changing —
+     * treating it as invalidation would un-refine every Epic the moment it made progress.
+     */
+    it('a member reaching a terminal lane', () => {
+      const { epicId, members } = refinedEpic({ members: 2 });
+      updateTicket(db, members[0], { status: 'completed' });
+      updateTicket(db, members[1], { status: 'closed' });
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+    });
+
+    it('an ordinary edit to a member', () => {
+      const { epicId, members } = refinedEpic({ members: 1 });
+      updateTicket(db, members[0], { title: 'renamed', assignee: 'robot' });
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+    });
+
+    // 78 of 80 Epics have never been refined. They must not gain a warning they were never
+    // eligible for — `stale` means "made a claim and had it invalidated", not "has no claim".
+    it('membership changes on an Epic that was never refined', () => {
+      const epic = createTicket(db, { title: 'unrefined', projectId: pd, isEpic: true });
+      createTicket(db, { title: 'm', projectId: pd, epicId: epic.id });
+      expect(stateOf(epic.id)).toEqual({ refined: false, stale: false });
+      expect(eventTypes(epic.id)).not.toContain(REFINE_STATE_EVENT.invalidated);
+    });
+  });
+
+  describe('the pause', () => {
+    it('un-arms the queued members of an in-progress Epic, and keeps the Epic in the Queue', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 2 });
+      for (const m of members) expect(getTicket(db, m)!.status).toBe('queue');
+
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+
+      for (const m of members) expect(getTicket(db, m)!.status).toBe('backlog');
+      expect(getTicket(db, epicId)!.status).toBe('queue');
+      expect(computeEpicSummary(db, epicId).derivedLane).toBe('in_progress');
+    });
+
+    // D-046: a run cannot be interrupted, and pulling an `in-review` ticket out of the Queue would
+    // strand the open PR its watcher is scoped to — the PD-464 failure exactly.
+    it('leaves in-flight members alone', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 2 });
+      db.prepare("UPDATE agent_tickets SET agent_state = 'working' WHERE id = ?").run(members[0]);
+      db.prepare("UPDATE agent_tickets SET agent_state = 'in-review' WHERE id = ?").run(members[1]);
+
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+
+      expect(getTicket(db, members[0])!.status).toBe('queue');
+      expect(getTicket(db, members[1])!.status).toBe('queue');
+    });
+
+    it('does nothing to an Epic still in Backlog', () => {
+      const { epicId, members } = refinedEpic({ members: 1 });
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      expect(getTicket(db, members[0])!.status).toBe('backlog');
+      expect(getTicket(db, epicId)!.status).toBe('backlog');
+    });
+  });
+
+  describe('resuming', () => {
+    it('✓ Mark refined clears the staleness and re-arms', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 2 });
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      for (const m of members) expect(getTicket(db, m)!.status).toBe('backlog');
+
+      markTicketRefined(db, epicId);
+
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+      for (const m of members) expect(getTicket(db, m)!.status).toBe('queue');
+    });
+
+    /**
+     * D-057: approval never dispatches. An agent's proposal, accepted in one click, must not put
+     * members back in the Queue — that is what `{ resume: true }` is for, and it is a human act.
+     */
+    it('a plain approve clears the staleness but re-arms nothing', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      seedProposal(db, epicId, { mode: 'refine_in_place', body: 'rewritten' });
+
+      expect(approveRefine(db, epicId).ok).toBe(true);
+
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+      expect(getTicket(db, members[0])!.status).toBe('backlog');
+    });
+
+    it('approve with resume does both', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      seedProposal(db, epicId, { mode: 'refine_in_place', body: 'rewritten' });
+
+      expect(approveRefine(db, epicId, { resume: true }).ok).toBe(true);
+
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+      expect(getTicket(db, members[0])!.status).toBe('queue');
+    });
+  });
+
+  /**
+   * Nothing about `refined` was logged before, so there was no way to tell whether the mechanism
+   * was earning its keep. `wasStale` is the load-bearing field: it separates a FIRST refinement
+   * from a re-assert after an automatic invalidation, and a re-assert landing straight after an
+   * invalidation IS the false positive this needs to be able to count.
+   */
+  describe('events, so the mechanism is measurable', () => {
+    const detailsOf = (id: number, type: string) =>
+      listTicketEvents(db, id)
+        .filter((e) => e.type === type)
+        .map((e) => (e.detail ?? {}) as Record<string, unknown>);
+
+    it('records the cause of an invalidation and which ticket moved', () => {
+      const { epicId } = refinedEpic();
+      const added = createTicket(db, { title: 'new member', projectId: pd, epicId });
+      const [detail] = detailsOf(epicId, REFINE_STATE_EVENT.invalidated);
+      expect(detail.cause).toBe('members');
+      expect(detail.addedTicketId).toBe(added.id);
+    });
+
+    it('marks a FIRST refinement as not stale', () => {
+      const epic = createTicket(db, { title: 'e', projectId: pd, isEpic: true });
+      markTicketRefined(db, epic.id);
+      expect(detailsOf(epic.id, REFINE_STATE_EVENT.marked)).toEqual([{ wasStale: false, via: 'mark' }]);
+    });
+
+    it('marks a re-assert after an invalidation as stale — the false-positive signal', () => {
+      const { epicId } = refinedEpic();
+      createTicket(db, { title: 'new member', projectId: pd, epicId });
+      markTicketRefined(db, epicId);
+      const marks = detailsOf(epicId, REFINE_STATE_EVENT.marked);
+      expect(marks[marks.length - 1]).toEqual({ wasStale: true, via: 'mark' });
+    });
   });
 });

@@ -318,6 +318,18 @@ export interface AgentTicket {
    *  Persistent marker: gates the Refine button (hidden once true) and shows a ✓. Flipped
    *  by the commit/approval step (PD-269) or the manual "Mark refined" control. */
   refined: boolean;
+  /**
+   * Set when this Epic WAS refined and its member set has changed since (D-089, PD-610).
+   *
+   * The third state `refined` alone cannot express. `refined = 0` otherwise means "never refined",
+   * which is the ordinary condition of almost every Epic and must not raise a warning; this
+   * distinguishes the one that made a claim and had it invalidated.
+   *
+   * Only ever set on an Epic — on an Epic, `refined` asserts both that the description frames the
+   * work AND that the current member set is the agreed breakdown of it, and this marks the second
+   * half going stale. Cleared by re-refining.
+   */
+  refineStale: boolean;
   /** Whether the body is Robot-ready — the mechanical 4-section shape check (`isReady`),
    *  recomputed on every body write and persisted (D-058). Server-computed, NOT client-settable
    *  (absent from Create/UpdateTicketInput). The one hard dispatch gate for the robot loop. */
@@ -612,6 +624,34 @@ export const REFINE_PROPOSAL_EVENT = {
   committed: 'refine_committed',
   rejected: 'refine_rejected',
 } as const;
+
+/**
+ * Lifecycle events for the `refined` flag itself (PD-610 / PD-396).
+ *
+ * Nothing about `refined` was logged before — `updateTicket` logged only `status_changed` — so
+ * there was no way to tell whether either invalidation mechanism was earning its keep. These make
+ * the choices measurable, which is what lets "automate it if the same option is always chosen" be
+ * a decision rather than a guess.
+ */
+export const REFINE_STATE_EVENT = {
+  /** `refined` was cleared. `cause` says which rule fired. */
+  invalidated: 'refine_invalidated',
+  /** The body-edit prompt was DECLINED and `refined` left set (PD-396 only — the membership rule
+   *  does not prompt, so it can never produce this). The ratio of these to
+   *  `invalidated { cause: 'body' }` is the decline rate, and a near-zero rate is the signal that
+   *  the prompt is asking a question with one real answer. */
+  kept: 'refine_kept',
+  /** ✓ Mark refined was clicked. `wasStale` separates a FIRST refinement from a re-assert after an
+   *  automatic invalidation — without it the two are indistinguishable and the measurement is
+   *  worthless, because a re-assert landing straight after an `invalidated` IS a false positive. */
+  marked: 'refine_marked',
+} as const;
+
+export type RefineStateEventType = (typeof REFINE_STATE_EVENT)[keyof typeof REFINE_STATE_EVENT];
+
+/** Why `refined` was cleared. `members` never prompts (the trigger is exact); `body` always does
+ *  (a typo and a rewrite are indistinguishable) — one rule, two triggers that differ in kind. */
+export type RefineInvalidationCause = 'members' | 'body';
 
 export type RefineCommitMode = 'refine_in_place' | 'decompose';
 

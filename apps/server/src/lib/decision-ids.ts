@@ -62,8 +62,12 @@ import type Database from 'better-sqlite3';
  * the cutover, and it would have meant two places computing the next free number. Now there is one.
  *
  * The inbox is gone, so nothing else can ever need reconciling against this value again.
+ *
+ * **Raised to 89 by PD-610**, which authored [[D-089]]. Routine: every new decision file trips the
+ * spec above, and the fix is always to raise this to match. Never lower it — the counter has
+ * already handed out ids above the old value in production.
  */
-export const HIGHEST_DECISION_AT_SEED = 88;
+export const HIGHEST_DECISION_AT_SEED = 89;
 
 /** `80` → `D-080`. Zero-padded to three digits, matching every existing decision filename. */
 export function formatDecisionId(num: number): string {

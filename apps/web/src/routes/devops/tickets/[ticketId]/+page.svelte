@@ -368,7 +368,9 @@
     markingRefined = true;
     error = null;
     try {
-      await api.updateTicket(ticket.id, { refined: true });
+      // PD-610: the dedicated route, not a `refined: true` patch — it also clears the staleness
+      // and re-arms a paused Epic's members, which a generic update deliberately does not.
+      await api.markRefined(ticket.id);
       await load(ticketId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
