@@ -155,6 +155,78 @@ export function dispatchPositions(members: AgentTicket[]): Map<number, number> {
 }
 
 /**
+ * What adding a member to `epic` is about to do (PD-611) — the read-side model of the server's
+ * `invalidateEpicRefinement`, so the UI can say it *before* it happens.
+ *
+ * Returns null when there is nothing to warn about, which is the overwhelmingly common case: an
+ * Epic that has never been refined has no claim to invalidate (D-089 — 78 of 80), and neither does
+ * a non-Epic. Only an Epic currently reading ✓ Refined produces a plan.
+ *
+ * `needsConfirm` is the interesting field, and it is deliberately narrower than "the Epic is
+ * running". The modal exists because **other tickets visibly leave the Queue** — so it asks only
+ * when at least one member would actually be un-armed. An Epic whose only queued member is
+ * mid-run has nothing to move (D-046 leaves it alone), so it gets the toast, not a modal offering
+ * a choice between two identical outcomes.
+ */
+export interface StaleInvalidationPlan {
+  /** Members that would return to Backlog if the pause proceeds. */
+  unarmed: AgentTicket[];
+  /** Members left running because a run cannot be interrupted (D-046). */
+  inFlight: AgentTicket[];
+  /** Whether to ask (Queue, work moves) rather than tell (Backlog, or nothing moves). */
+  needsConfirm: boolean;
+}
+
+export function planStaleInvalidation(
+  epic: Pick<AgentTicket, 'isEpic' | 'refined'>,
+  members: AgentTicket[],
+): StaleInvalidationPlan | null {
+  if (!epic.isEpic || !epic.refined) return null;
+  const queued = members.filter((m) => !isTerminal(m) && m.status === 'queue');
+  const inFlight = queued.filter((m) => IN_FLIGHT_MEMBER_STATES.includes(m.agentState ?? ''));
+  const unarmed = queued.filter((m) => !IN_FLIGHT_MEMBER_STATES.includes(m.agentState ?? ''));
+  return { unarmed, inFlight, needsConfirm: unarmed.length > 0 };
+}
+
+/**
+ * Why this Epic's members are sitting in Backlog while the Epic itself is in the Queue (PD-611).
+ *
+ * Without this the members section reads as a bug: an Epic in the Queue whose active set is empty,
+ * and nothing on the page connecting that to the staleness banner at the top. The pause
+ * (`invalidateEpicRefinement`) is what put them there, and it is silent by design (D-089 §3) — so
+ * the explanation has to be reconstructed from the state it left behind.
+ *
+ * Returns null unless the Epic is *actually* in the paused shape: stale, still in the Queue lane,
+ * and holding at least one member it could arm. An Epic that is stale in Backlog has nothing to
+ * explain — nothing moved.
+ *
+ * `inFlight` is counted separately and is not a defect: D-046 keeps a running member running, so a
+ * paused Epic legitimately has work still finishing. Saying "3 returned to Backlog" while one row
+ * shows `working` would otherwise read as the pause having failed.
+ */
+export interface StalePauseNotice {
+  /** Members the pause returned to Backlog (or that arrived after, which D-080 also lands there). */
+  unarmed: number;
+  /** Members left running because a run cannot be interrupted (D-046). */
+  inFlight: number;
+}
+
+export function stalePauseNotice(epic: AgentTicket, members: AgentTicket[]): StalePauseNotice | null {
+  if (!epic.isEpic || !epic.refineStale || epic.status !== 'queue') return null;
+  const live = members.filter((m) => !isTerminal(m));
+  const unarmed = live.filter((m) => m.status === 'backlog').length;
+  if (unarmed === 0) return null;
+  return {
+    unarmed,
+    inFlight: live.filter((m) => m.status === 'queue' && IN_FLIGHT_MEMBER_STATES.includes(m.agentState ?? ''))
+      .length,
+  };
+}
+
+/** Mirrors `IN_FLIGHT_AGENT_STATES` in `epic-drag.ts` — the states the pause deliberately skips. */
+const IN_FLIGHT_MEMBER_STATES: readonly string[] = ['working', 'in-review'] as const;
+
+/**
  * The refinement badge for a member row (PD-598).
  *
  * When refining an Epic, "which members still need shaping" is the question being asked, and the
@@ -175,6 +247,18 @@ export interface RefinementBadge {
 
 export function refinementBadge(m: AgentTicket): RefinementBadge | null {
   if (isTerminal(m)) return null;
+  // PD-611/D-089: the third state, and it must not read as either of the other two. Checked FIRST
+  // because it is the only one that is a warning — `refined` is already 0 whenever `refineStale` is
+  // 1 (the invalidation clears it), so the order is about precedence over `refineState`: an Epic
+  // that went stale and then had a session opened on it is still stale, and that is the fact worth
+  // showing. Only ever true on an Epic.
+  if (m.refineStale) {
+    return {
+      text: '⚠ Stale',
+      cls: 'refine-pill refine-stale',
+      title: 'Was refined, but its members changed since — needs re-refinement',
+    };
+  }
   if (m.refined) return { text: '✓ Refined', cls: 'refined-mark', title: 'Refined' };
   if (m.refineState) {
     const label = REFINE_STATE_LABELS[m.refineState] ?? m.refineState;

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { AgentTicket } from '@dashboard/shared';
-import { moveIsNoop, needsQueueBypass, pickBeforeId, rankOf, type DropCandidate } from './board-drag';
+import type { AgentTicket, TicketStatus } from '@dashboard/shared';
+import { moveIsNoop, needsQueueBypass, pickBeforeId, rankOf, staleQueueRefusal, type DropCandidate } from './board-drag';
 
 /** Cards at 100px intervals: midpoints 50, 150, 250, … in visual order. */
 function lane(priorities: string[]): DropCandidate[] {
@@ -93,5 +93,56 @@ describe('needsQueueBypass', () => {
   it('does not ask for Steve’s own work', () => {
     expect(needsQueueBypass({ ...base, assignee: 'steve' }, 'queue')).toBe(false);
     expect(needsQueueBypass({ ...base, assignee: null }, 'queue')).toBe(false);
+  });
+});
+
+// ── PD-611: a stale Epic cannot be quietly re-queued ─────────────────────────
+
+describe('staleQueueRefusal', () => {
+  const epic = { id: 10, refineStale: true, displayId: 'PD-10', title: '[Epic] Stale one' };
+  const memberOf = (over: Record<string, unknown> = {}) => ({
+    id: 2,
+    status: 'backlog' as TicketStatus,
+    isEpic: false,
+    refineStale: false,
+    displayId: 'PD-2',
+    title: 't2',
+    epicId: 10,
+    ...over,
+  }) as Parameters<typeof staleQueueRefusal>[0];
+
+  it('refuses a member of a stale Epic', () => {
+    const r = staleQueueRefusal(memberOf(), epic, 'queue')!;
+    expect(r.epicId).toBe(10);
+    expect(r.bulk).toBe(false);
+  });
+
+  it('refuses the stale Epic itself, and says so — the bulk version of the same act', () => {
+    const asEpic = memberOf({ id: 10, isEpic: true, refineStale: true, epicId: null });
+    const r = staleQueueRefusal(asEpic, null, 'queue')!;
+    expect(r.epicId).toBe(10);
+    expect(r.bulk).toBe(true);
+  });
+
+  it('allows a member whose Epic is fine', () => {
+    expect(staleQueueRefusal(memberOf(), { ...epic, refineStale: false }, 'queue')).toBeNull();
+  });
+
+  it('allows an Epic-less ticket', () => {
+    expect(staleQueueRefusal(memberOf({ epicId: null }), null, 'queue')).toBeNull();
+  });
+
+  it('does not refuse a move that is not into the Queue', () => {
+    expect(staleQueueRefusal(memberOf(), epic, 'backlog')).toBeNull();
+  });
+
+  it('does not re-refuse a ticket already in the Queue', () => {
+    // A reorder within the Queue column arrives here too; refusing it would block drags the
+    // pause is not concerned with. Removing it from the Queue is the pause's job, not this one's.
+    expect(staleQueueRefusal(memberOf({ status: 'queue' }), epic, 'queue')).toBeNull();
+  });
+
+  it('ignores a mismatched Epic rather than trusting the caller', () => {
+    expect(staleQueueRefusal(memberOf({ epicId: 99 }), epic, 'queue')).toBeNull();
   });
 });

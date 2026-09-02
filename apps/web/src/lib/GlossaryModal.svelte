@@ -133,7 +133,34 @@
       </li>
       <li>
         <span class="refined-mark">✓ Refined</span>
-        <span class="legend-desc">This ticket has been fully refined and is ready for dispatch.</span>
+        <span class="legend-desc">
+          This ticket has been fully refined and is ready for dispatch. On an <strong>Epic</strong> it
+          claims two things: the description frames the work, <em>and</em> the current member set is
+          the agreed breakdown of it.
+        </span>
+      </li>
+      <!-- PD-611/D-089: the third state. Listed last because it is the one a reader arrives here
+           to look up — it appears without anyone having done anything to the Epic itself, so
+           "why does this say Stale when I only added a ticket?" is the question being asked. -->
+      <li>
+        <span class="refine-pill refine-stale">⚠ Stale</span>
+        <span class="legend-desc">
+          <strong>Epics only.</strong> It was refined, but its members have changed since — so the
+          second half of that claim no longer holds and the flag was cleared automatically. Joining,
+          leaving, re-parenting and archiving a member all trigger it; a member simply
+          <em>finishing</em> does not, because that is the plan succeeding rather than changing.
+          Re-refine, or press <strong>✓ Mark refined</strong> if you have read it and the breakdown
+          still stands. A stale Epic and its members cannot be queued until then.
+        </span>
+      </li>
+      <li>
+        <span class="legend-label">Paused</span>
+        <span class="legend-desc">
+          What happens when an Epic goes stale <em>while it is running</em>: its armed members return
+          to Backlog so no new work is dispatched against a description that no longer covers it. A
+          member already mid-run is left to finish — a run cannot be interrupted. The Epic itself
+          stays in the Queue. Marking it refined re-arms everything.
+        </span>
       </li>
     </ul>
   {:else if activeTab === 'robot'}

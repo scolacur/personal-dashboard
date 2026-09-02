@@ -348,6 +348,52 @@
   color: var(--muted);
 }
 
+// PD-611: the stale-Epic banner. Same shape as `.frozen-banner` (they stack, and two banners with
+// different geometry read as two unrelated systems) but amber-led rather than muted — frozen is a
+// statement of fact about finished work, stale is a claim that has expired and wants acting on.
+.stale-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--status-warn) 10%, transparent);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.mark-refined-inline {
+  margin-left: auto;
+  padding: 2px var(--space-md);
+  background: transparent;
+  border: 1px solid var(--status-warn);
+  border-radius: var(--radius);
+  color: var(--status-warn);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--status-warn) 14%, transparent);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+// The members-section explanation. Muted, not a second banner: the banner at the top of the page
+// already raised the alarm, and this only answers "so why is the list empty?".
+.stale-members-note {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
 .reopen-btn {
   margin-left: auto;
   padding: 2px var(--space-md);

@@ -26,6 +26,16 @@
     color: var(--status-refine-needs);
     border-color: var(--status-refine-needs);
   }
+  // PD-611/D-089: the third refinement state — WAS refined, membership changed since. Amber and
+  // filled, deliberately unlike its two neighbours: `.refined-mark` is a calm green outline and
+  // `.refine-start` is muted-until-hovered, and a stale Epic must read as neither. Amber rather
+  // than red because nothing is broken — a claim has simply expired, and the remedy is one click.
+  &.refine-stale {
+    color: var(--status-warn);
+    border-color: var(--status-warn);
+    background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  }
+
   // Idle call-to-action: not yet refined. Muted until hovered, when it invites the click
   // that starts a Refine session (replaces the old Sparkles action button).
   &.refine-start {

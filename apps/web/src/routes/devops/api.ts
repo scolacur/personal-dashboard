@@ -52,21 +52,39 @@ export async function fetchTickets(): Promise<AgentTicket[]> {
   return res.json() as Promise<AgentTicket[]>;
 }
 
-export async function createTicket(input: CreateTicketInput): Promise<AgentTicket> {
+/**
+ * PD-611: "Add & keep running" — decline the pause that a membership change would otherwise trigger
+ * on a refined, in-progress Epic. A write modifier, not a ticket field, which is why it rides
+ * alongside the input rather than inside it (the server reads it off the raw body).
+ *
+ * The un-refine is never optional (D-089 §3); only the pause is.
+ */
+export interface EpicPauseOpts {
+  keepEpicRunning?: boolean;
+}
+
+export async function createTicket(
+  input: CreateTicketInput,
+  opts: EpicPauseOpts = {},
+): Promise<AgentTicket> {
   const res = await fetch(BASE, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, ...opts }),
   });
   if (!res.ok) return parseError(res);
   return res.json() as Promise<AgentTicket>;
 }
 
-export async function updateTicket(id: number, patch: UpdateTicketInput): Promise<AgentTicket> {
+export async function updateTicket(
+  id: number,
+  patch: UpdateTicketInput,
+  opts: EpicPauseOpts = {},
+): Promise<AgentTicket> {
   const res = await fetch(`${BASE}/${id}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(patch),
+    body: JSON.stringify({ ...patch, ...opts }),
   });
   if (!res.ok) return parseError(res);
   return res.json() as Promise<AgentTicket>;

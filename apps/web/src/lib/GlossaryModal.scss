@@ -142,6 +142,14 @@
     color: var(--status-needs-human);
     border-color: var(--status-needs-human);
   }
+  // PD-611: matches `_refine-badge.scss`. The glossary keeps its own copy of these rules rather
+  // than `@use`-ing the partial (pre-existing — the legend items are laid out differently), so a
+  // new state has to be added in both places or the legend shows an unstyled badge.
+  &.refine-stale {
+    color: var(--status-warn);
+    border-color: var(--status-warn);
+    background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+  }
 }
 
 .refined-mark {
@@ -149,8 +157,11 @@
   font-size: var(--font-size-xs);
   border-radius: 999px;
   padding: 0 var(--space-sm);
-  border: 1px solid var(--status-working, #16a34a);
-  color: var(--status-working, #16a34a);
+  // PD-611: was `--status-working` (amber) while every real ✓ Refined badge is `--status-done`
+  // (green) — so the legend showed a colour the board never renders, which is the one thing a
+  // legend must not do. Now that amber means "stale" here, the clash was also actively misleading.
+  border: 1px solid var(--status-done);
+  color: var(--status-done);
   white-space: nowrap;
   line-height: 1.6;
   flex-shrink: 0;

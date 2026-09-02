@@ -11,6 +11,9 @@ import {
   memberLockReason,
   membersReorderable,
   reorderedMembers,
+  refinementBadge,
+  planStaleInvalidation,
+  stalePauseNotice,
 } from './epic-members';
 
 function member(over: Partial<AgentTicket> & { id: number }): AgentTicket {
@@ -155,5 +158,119 @@ describe('dispatchPositions', () => {
     ];
     expect(dispatchPositions(list).get(1)).toBe(1);
     expect(dispatchPositions(reorderedMembers(list, 2, 1)).get(2)).toBe(1);
+  });
+});
+
+// ── PD-611: the stale Epic ───────────────────────────────────────────────────
+
+describe('refinementBadge — the stale state', () => {
+  it('marks a stale Epic as its own third state, not as refined or unrefined', () => {
+    const badge = refinementBadge(member({ id: 9, isEpic: true, refined: false, refineStale: true }))!;
+    expect(badge.text).toBe('⚠ Stale');
+    expect(badge.cls).toContain('refine-stale');
+    // The whole point of the third state (D-089 §2): it must not read as either neighbour.
+    expect(badge.cls).not.toContain('refined-mark');
+    expect(badge.cls).not.toContain('refine-start');
+  });
+
+  it('leaves a never-refined Epic exactly as it was — it gains no warning it was never eligible for', () => {
+    const badge = refinementBadge(member({ id: 10, isEpic: true, refined: false, refineStale: false }))!;
+    expect(badge.text).toBe('Not refined');
+  });
+
+  it('shows stale even while a Refine session is open on it', () => {
+    // Precedence over `refineState`: opening a session does not un-stale the Epic, and the
+    // staleness is the fact that gates re-queueing.
+    const m = member({ id: 11, isEpic: true, refineStale: true, refineState: 'refining' });
+    expect(refinementBadge(m)!.text).toBe('⚠ Stale');
+  });
+
+  it('still says nothing about a terminal member', () => {
+    expect(refinementBadge(member({ id: 12, status: 'completed', refineStale: true }))).toBeNull();
+  });
+});
+
+describe('planStaleInvalidation', () => {
+  const epic = { isEpic: true, refined: true } as AgentTicket;
+
+  it('is null for an Epic that was never refined — nothing to invalidate', () => {
+    expect(planStaleInvalidation({ isEpic: true, refined: false } as AgentTicket, [])).toBeNull();
+  });
+
+  it('is null for a Ticket — `refined` has no membership half on one', () => {
+    expect(planStaleInvalidation({ isEpic: false, refined: true } as AgentTicket, [])).toBeNull();
+  });
+
+  it('tells rather than asks when the Epic sits in Backlog', () => {
+    const plan = planStaleInvalidation(epic, [member({ id: 2, status: 'backlog' })])!;
+    expect(plan.needsConfirm).toBe(false);
+    expect(plan.unarmed).toHaveLength(0);
+  });
+
+  it('asks when members would visibly leave the Queue', () => {
+    const plan = planStaleInvalidation(epic, [
+      member({ id: 2, status: 'queue', agentState: 'queued' }),
+      member({ id: 3, status: 'queue', agentState: null }),
+      member({ id: 4, status: 'backlog' }),
+    ])!;
+    expect(plan.needsConfirm).toBe(true);
+    expect(plan.unarmed.map((m) => m.id)).toEqual([2, 3]);
+  });
+
+  it('does NOT ask when the only queued member is mid-run', () => {
+    // D-046 leaves it running, so nothing moves — a modal here would offer a choice between two
+    // identical outcomes.
+    const plan = planStaleInvalidation(epic, [member({ id: 2, status: 'queue', agentState: 'working' })])!;
+    expect(plan.needsConfirm).toBe(false);
+    expect(plan.inFlight.map((m) => m.id)).toEqual([2]);
+    expect(plan.unarmed).toHaveLength(0);
+  });
+
+  it('separates in-flight from un-armed so the modal can name both', () => {
+    const plan = planStaleInvalidation(epic, [
+      member({ id: 2, status: 'queue', agentState: 'in-review' }),
+      member({ id: 3, status: 'queue', agentState: 'queued' }),
+    ])!;
+    expect(plan.inFlight.map((m) => m.id)).toEqual([2]);
+    expect(plan.unarmed.map((m) => m.id)).toEqual([3]);
+  });
+
+  it('ignores terminal members — the Epic making progress is not the Epic changing', () => {
+    const plan = planStaleInvalidation(epic, [
+      member({ id: 2, status: 'completed' }),
+      member({ id: 3, status: 'closed' }),
+    ])!;
+    expect(plan.needsConfirm).toBe(false);
+  });
+});
+
+describe('stalePauseNotice', () => {
+  const stale = (over: Partial<AgentTicket> = {}) =>
+    ({ isEpic: true, refineStale: true, status: 'queue', ...over }) as AgentTicket;
+
+  it('explains a paused Epic whose members are sitting in Backlog', () => {
+    const notice = stalePauseNotice(stale(), [
+      member({ id: 2, status: 'backlog' }),
+      member({ id: 3, status: 'backlog' }),
+      member({ id: 4, status: 'queue', agentState: 'working' }),
+    ])!;
+    expect(notice.unarmed).toBe(2);
+    expect(notice.inFlight).toBe(1);
+  });
+
+  it('says nothing when the Epic is stale but in Backlog — nothing moved', () => {
+    expect(stalePauseNotice(stale({ status: 'backlog' }), [member({ id: 2, status: 'backlog' })])).toBeNull();
+  });
+
+  it('says nothing when the Epic is not stale', () => {
+    expect(stalePauseNotice(stale({ refineStale: false }), [member({ id: 2, status: 'backlog' })])).toBeNull();
+  });
+
+  it('says nothing when every member is still armed', () => {
+    expect(stalePauseNotice(stale(), [member({ id: 2, status: 'queue', agentState: 'queued' })])).toBeNull();
+  });
+
+  it('ignores terminal members when counting what is waiting', () => {
+    expect(stalePauseNotice(stale(), [member({ id: 2, status: 'completed' })])).toBeNull();
   });
 });

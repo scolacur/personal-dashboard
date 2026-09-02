@@ -49,6 +49,7 @@
     refinementBadge,
     membersReorderable,
     reorderedMembers,
+    stalePauseNotice,
   } from '../../epic-members';
   import EpicPicker from '../../EpicPicker.svelte';
   import TicketBoard from '../../task-tracker/TicketBoard.svelte';
@@ -466,6 +467,11 @@
   // ── Member lane + dispatch order (PD-384, slice D of D-080) ────────
   // A member's `sortOrder` IS the order its Epic's work is dispatched in, so this list is the
   // control surface for order-of-operations — see `epic-members.ts`.
+  // PD-611. Only ever true on an Epic — `refine_stale` has no meaning on a Ticket, whose `refined`
+  // flag has no membership half (D-089).
+  const staleEpic = $derived(ticket !== null && ticket.isEpic && ticket.refineStale);
+  const pauseNotice = $derived(ticket === null ? null : stalePauseNotice(ticket, epicMembers));
+
   const canReorderMembers = $derived(membersReorderable(epicMembers));
   const memberPositions = $derived(dispatchPositions(epicMembers));
 
@@ -604,6 +610,20 @@
           record of work that finished, so it is read-only.
           <button type="button" class="reopen-btn" disabled={reopening} onclick={() => reopen()}>
             {reopening ? 'Reopening…' : 'Reopen'}
+          </button>
+        </p>
+      {/if}
+      <!-- PD-611: the stale-Epic banner sits BELOW the frozen banner and ABOVE "Part of epic …"
+           (PD-605 owns that third one). The order is by how completely each changes the reading of
+           everything below it: frozen makes the whole page inert, stale qualifies what the Epic
+           claims, part-of-epic is orientation. Fixed here rather than left to whoever ships last. -->
+      {#if staleEpic}
+        <p class="stale-banner">
+          <strong>Needs re-refinement</strong> — this Epic's members changed since it was refined, so
+          its description no longer covers the work. Re-refine it, or mark it refined if you have read
+          it and the breakdown still holds.
+          <button type="button" class="mark-refined-inline" disabled={markingRefined} onclick={markRefined}>
+            {markingRefined ? 'Marking…' : '✓ Mark refined'}
           </button>
         </p>
       {/if}
@@ -757,6 +777,20 @@
           <div class="epic-members-bar">
             <div class="epic-members-fill" style="width: {memberPct}%"></div>
           </div>
+          <!-- PD-611: an Epic sitting in the Queue with an empty active set reads as a bug. The
+               pause that emptied it is silent by design (D-089 §3), so the explanation has to be
+               reconstructed from the state it left behind and said here, where the empty list is. -->
+          {#if pauseNotice}
+            <p class="stale-members-note">
+              Paused — {pauseNotice.unarmed}
+              {pauseNotice.unarmed === 1 ? 'member is' : 'members are'} back in Backlog because this Epic
+              needs re-refinement.
+              {#if pauseNotice.inFlight}
+                {pauseNotice.inFlight}
+                {pauseNotice.inFlight === 1 ? 'is' : 'are'} still running and will finish.
+              {/if}
+            </p>
+          {/if}
           {#if epicMembers.length === 0}
             <p class="muted">No members yet.</p>
           {:else if memberView === 'board'}

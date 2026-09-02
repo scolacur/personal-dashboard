@@ -93,3 +93,58 @@ export function needsQueueBypass(
     !ticket.readyBypassed
   );
 }
+
+/**
+ * Whether this drop must be **refused** because it would re-arm work under a stale Epic (PD-611).
+ *
+ * This is the half of PD-610 that makes the pause mean anything. Un-arming a stale Epic's members
+ * returns them to Backlog — and if they can simply be dragged back, the pause lasts exactly as long
+ * as it takes to drag them, and the whole mechanism is decorative. Dragging the stale Epic itself is
+ * the bulk version of the same act.
+ *
+ * **A refusal, not an acknowledgement.** PD-611 originally specified a bypass modal shaped like
+ * D-058's; that was reversed on 2026-09-02 when refinement became a hard queue precondition. Unlike
+ * "run it unformatted anyway", there is no honest reason to dispatch against a description that no
+ * longer covers the work — and the remedy is one click of ✓ Mark refined on the Epic.
+ *
+ * **Interim by design.** PD-632 ([Board] Gate the Queue on refinement: one predicate, enforced at
+ * the guard and the loop) replaces this with `queueBlockers()` in `packages/shared`, which lists
+ * staleness alongside every other criterion and is enforced server-side; PD-633 replaces the modal
+ * with the criteria checklist. Kept narrow and separate from `needsQueueBypass` so that swap is a
+ * deletion rather than an untangling.
+ *
+ * `epic` is the Epic the ticket belongs to, or null. Passing the Epic itself as `ticket` covers the
+ * bulk gesture — an Epic is not its own member, so the two cases are checked separately.
+ */
+export interface StaleQueueRefusal {
+  /** The stale Epic standing in the way — the ticket itself, or the one it belongs to. */
+  epicId: number;
+  epicDisplayId: string | null;
+  epicTitle: string;
+  /** Whether the drag was the Epic itself (bulk) rather than one of its members. */
+  bulk: boolean;
+}
+
+export function staleQueueRefusal(
+  ticket: Pick<AgentTicket, 'id' | 'status' | 'isEpic' | 'refineStale' | 'displayId' | 'title' | 'epicId'>,
+  epic: Pick<AgentTicket, 'id' | 'refineStale' | 'displayId' | 'title'> | null,
+  status: TicketStatus,
+): StaleQueueRefusal | null {
+  // Only entering the Queue. A ticket already there is not re-asked — it is the pause's job to
+  // remove it, and re-refusing a move it is not making would block unrelated drags (a reorder
+  // within the Queue column comes through here too).
+  if (status !== 'queue' || ticket.status === 'queue') return null;
+
+  if (ticket.isEpic) {
+    if (!ticket.refineStale) return null;
+    return {
+      epicId: ticket.id,
+      epicDisplayId: ticket.displayId,
+      epicTitle: ticket.title,
+      bulk: true,
+    };
+  }
+
+  if (epic === null || epic.id !== ticket.epicId || !epic.refineStale) return null;
+  return { epicId: epic.id, epicDisplayId: epic.displayId, epicTitle: epic.title, bulk: false };
+}

@@ -46,7 +46,17 @@
     computeSortOrder,
     clampEpicHeight,
   } from '../board-logic';
-  import { moveIsNoop, needsQueueBypass, pickBeforeId, type DropCandidate } from '../board-drag';
+  import {
+    moveIsNoop,
+    needsQueueBypass,
+    pickBeforeId,
+    staleQueueRefusal,
+    type DropCandidate,
+    type StaleQueueRefusal,
+  } from '../board-drag';
+  import { planStaleInvalidation, type StaleInvalidationPlan } from '../epic-members';
+  import StaleEpicPauseModal from './StaleEpicPauseModal.svelte';
+  import StaleQueueRefusalModal from './StaleQueueRefusalModal.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -254,15 +264,51 @@
     epicPickerOpen = true;
   }
 
-  async function setTicketEpic(ticketId: number, epicId: number | null) {
+  /* ── Joining an Epic (PD-611 / D-089) ────────────────────────────
+     A ticket joining a **refined** Epic falsifies its claim that the current member set is the
+     agreed breakdown, so the server un-refines it. That part is automatic and is not asked about
+     (D-089 §3). What IS asked about is the pause it triggers on a running Epic, because that moves
+     other tickets out of the Queue — a consequence for work the human was not thinking about.
+
+     Tell, don't ask, when nothing moves: an Epic in Backlog just gets a toast. */
+  let staleRefusal = $state<StaleQueueRefusal | null>(null);
+  let stalePause = $state<{
+    plan: StaleInvalidationPlan;
+    epicTitle: string;
+    run: (keepRunning: boolean) => Promise<void>;
+  } | null>(null);
+
+  /** The one-click way back, named wherever an Epic has just gone stale. */
+  function staleToast(epic: AgentTicket): string {
+    const label = epic.displayId ?? epic.title;
+    return `Epic ${label} now needs re-refinement — its members changed. Re-refine it, or press ✓ Mark refined on it if the breakdown still holds.`;
+  }
+
+  async function commitTicketEpic(ticketId: number, epicId: number | null, keepRunning: boolean) {
     error = null;
+    stalePause = null;
     try {
-      await api.updateTicket(ticketId, { epicId });
+      await api.updateTicket(ticketId, { epicId }, keepRunning ? { keepEpicRunning: true } : {});
       await load(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       showToast(msg);
     }
+  }
+
+  async function setTicketEpic(ticketId: number, epicId: number | null) {
+    const target = epicId === null ? null : (tickets.find((t) => t.id === epicId) ?? null);
+    const plan = target === null ? null : planStaleInvalidation(target, membersOf(target.id, tickets));
+    if (plan !== null && plan.needsConfirm && target !== null) {
+      stalePause = {
+        plan,
+        epicTitle: target.displayId ?? target.title,
+        run: (keepRunning) => commitTicketEpic(ticketId, epicId, keepRunning),
+      };
+      return;
+    }
+    await commitTicketEpic(ticketId, epicId, false);
+    if (plan !== null && target !== null) showToast(staleToast(target));
   }
 
   function visibleTickets(): AgentTicket[] {
@@ -534,6 +580,18 @@
   async function onBoardMove(ticket: AgentTicket, status: TicketStatus, beforeId: number | null) {
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, beforeId, ticket.id);
     if (moveIsNoop(ticket, status, sortOrder)) return;
+    // PD-611: refused before anything else, because unlike the bypass below this one has no
+    // "anyway". Checked ahead of `needsQueueBypass` so a ticket that trips both is told the thing
+    // it cannot get past, rather than being offered an override that will not help.
+    const refusal = staleQueueRefusal(
+      ticket,
+      ticket.epicId === null ? null : (tickets.find((t) => t.id === ticket.epicId) ?? null),
+      status,
+    );
+    if (refusal) {
+      staleRefusal = refusal;
+      return;
+    }
     // D-058: dragging an unformatted robot ticket into the Queue needs an explicit bypass ack. Defer
     // the move to the confirm modal; confirming sets `readyBypassed` and completes it.
     if (needsQueueBypass(ticket, status)) {
@@ -650,6 +708,13 @@
     // Across lanes → move the Epic; the server cascades to its members.
     const members = membersOf(id, tickets);
     if (cell.lane === 'in_progress') {
+      // PD-611: dragging a stale Epic into the Queue is the bulk version of dragging its members
+      // back in one at a time — the same refusal, or the pause it undoes is decorative.
+      const refusal = staleQueueRefusal(epic, null, 'queue');
+      if (refusal) {
+        staleRefusal = refusal;
+        return;
+      }
       const plan = planEpicQueue(members);
       await applyEpicPatch(id, { status: 'queue' });
       // Appended rather than shown separately: `toast.show` replaces whatever is current, so a
@@ -1078,6 +1143,18 @@
   activeMemberCount={archiveEpicActiveCount}
   onCancel={() => (archiveEpicTarget = null)}
   onArchive={archiveEpic}
+/>
+
+<!-- PD-611: the refusal has no "anyway" — see StaleQueueRefusalModal. Mounted beside the bypass
+     modal it deliberately does NOT resemble; PD-633 merges both into one criteria checklist. -->
+<StaleQueueRefusalModal refusal={staleRefusal} onClose={() => (staleRefusal = null)} />
+
+<StaleEpicPauseModal
+  plan={stalePause?.plan ?? null}
+  epicTitle={stalePause?.epicTitle ?? ''}
+  onCancel={() => (stalePause = null)}
+  onPause={() => stalePause?.run(false)}
+  onKeepRunning={() => stalePause?.run(true)}
 />
 
 <QueueBypassModal
