@@ -11,6 +11,8 @@ import {
   type OpenSessionInput,
 } from './session';
 import { logger } from '../../shared/logger';
+import { classifyFault, SESSION_LIMIT_FALLBACK_MS, SESSION_LIMIT_SIGNATURE } from '../robot/faults';
+import { activeSessionLimitHold, holdForSessionLimit } from '../robot/state';
 
 /**
  * The agent-worker's Refine loop (D-044, PD-267). Transport between the web app and this
@@ -294,12 +296,61 @@ export class WarmSessions {
   }
 }
 
+/**
+ * Per-ticket retry spacing for failed turns (PD-618).
+ *
+ * A failed turn is left pending so it self-heals on a later poll — right, and the reason this is
+ * spacing rather than an attempt cap. What was wrong is that "a later poll" meant **5 seconds**
+ * (`refineIntervalMs`), with no backoff: on 2026-09-01 a single turn that could not succeed was
+ * retried from 01:55 until the worker was stopped the next morning.
+ *
+ * Exponential from 30s to a 30-minute ceiling: roughly 20 attempts over 8 hours instead of ~6,000,
+ * while still recovering on its own once the cause clears.
+ *
+ * Deliberately NO give-up threshold. The whole point of leaving a turn pending is that the human
+ * should not have to re-send a reply once credits are topped up or a limit rolls over, and a ticket
+ * that stopped retrying forever would need exactly that. Bounding the RATE fixes the incident;
+ * bounding the COUNT would break the recovery.
+ *
+ * In-memory, so a restart retries immediately. That is the desired behaviour — restarting the worker
+ * is a deliberate act and usually means the operator has fixed something.
+ */
+export class RefineBackoff {
+  private readonly failures = new Map<number, { count: number; nextAttemptAt: number }>();
+
+  constructor(
+    private readonly baseMs = 30_000,
+    private readonly maxMs = 30 * 60_000,
+  ) {}
+
+  /** Whether this ticket may be attempted now. */
+  ready(ticketId: number, now: number = Date.now()): boolean {
+    const entry = this.failures.get(ticketId);
+    return entry === undefined || now >= entry.nextAttemptAt;
+  }
+
+  /** Record a failed turn and return when the next attempt is allowed. */
+  recordFailure(ticketId: number, now: number = Date.now()): { attempt: number; waitMs: number } {
+    const count = (this.failures.get(ticketId)?.count ?? 0) + 1;
+    const waitMs = Math.min(this.baseMs * 2 ** (count - 1), this.maxMs);
+    this.failures.set(ticketId, { count, nextAttemptAt: now + waitMs });
+    return { attempt: count, waitMs };
+  }
+
+  /** Forget a ticket's history — called on a clean turn, so recovery is immediate. */
+  clear(ticketId: number): void {
+    this.failures.delete(ticketId);
+  }
+}
+
 // ── Orchestration ────────────────────────────────────────────────────────────
 
 export interface ProcessDeps {
   /** The warm-session pool. Pass a long-lived instance so warmth survives across cycles;
    *  a fresh (cold-every-time) one is created if omitted. */
   sessions?: WarmSessions;
+  /** Per-ticket retry spacing (PD-618). Pass a long-lived instance so backoff survives cycles. */
+  backoff?: RefineBackoff;
   /** Injectable for tests; defaults to reading the grounding checkout. */
   buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
   /** Injectable clock for the written event/notification timestamps (tests want it monotonic). */
@@ -319,10 +370,18 @@ export async function processPendingRefines(
   deps: ProcessDeps = {},
 ): Promise<number> {
   const sessions = deps.sessions ?? new WarmSessions();
+  const backoff = deps.backoff ?? new RefineBackoff();
   const buildContext = deps.buildContext ?? buildContextPack;
   const now = deps.now ?? Date.now;
 
-  const ticketIds = findPendingRefineTicketIds(db);
+  // PD-618: the provider's quota is one quota. A session limit hit by the Robot or by Refine stops
+  // both, using the hold the Robot already maintains (PD-470) rather than a second mechanism — and
+  // `activeSessionLimitHold` self-clears once the stated reset passes, so this resumes with no human
+  // action. Refine had no hold at all, so a limit that parked the Robot left Refine retrying into it.
+  const hold = activeSessionLimitHold(db, now());
+  if (hold) return 0;
+
+  const ticketIds = findPendingRefineTicketIds(db).filter((id) => backoff.ready(id, now()));
   if (ticketIds.length === 0) return 0;
 
   const contextPack = buildContext(config.checkoutDir, (what) =>
@@ -359,14 +418,31 @@ export async function processPendingRefines(
         // An API/agent error (billing, rate limit, auth, max-turns) — NOT the agent's words.
         // Log the real reason and leave the ticket pending so it self-heals on a later poll
         // (e.g. once credits are topped up) without needing a fresh human reply.
-        logger.warn({ ticketId, error: result.text.slice(0, 300) }, 'refine: turn errored — leaving pending, will retry');
+        //
+        // PD-618: what was missing is that "a later poll" was 5 seconds away, forever. Classify the
+        // fault with the Robot's own classifier: a session limit takes the shared hold (stopping
+        // every ticket, since the quota is shared), and anything else backs this ticket off.
+        const fault = classifyFault({ verifyOk: false, error: result.text }, now());
+        if (fault.signature === SESSION_LIMIT_SIGNATURE) {
+          const until = fault.resetAt ?? now() + SESSION_LIMIT_FALLBACK_MS;
+          holdForSessionLimit(db, until, fault.reason, now());
+          logger.warn({ ticketId, until, reason: fault.reason }, 'refine: session limit — holding all refine turns');
+          return handled;
+        }
+        const { attempt, waitMs } = backoff.recordFailure(ticketId, now());
+        logger.warn(
+          { ticketId, attempt, waitMs, error: result.text.slice(0, 300) },
+          'refine: turn errored — backing off, will retry',
+        );
         continue;
       }
       if (result.text.trim() === '') {
-        logger.warn({ ticketId }, 'refine: empty turn — leaving pending, will retry');
+        const { attempt, waitMs } = backoff.recordFailure(ticketId, now());
+        logger.warn({ ticketId, attempt, waitMs }, 'refine: empty turn — backing off, will retry');
         continue;
       }
       const ts = now();
+      backoff.clear(ticketId);
       writeRefineAgentTurn(db, ticketId, result.text, result.sessionId, ts);
       notifyRefinePosted(db, ticketId, result.text, ts);
       handled++;
@@ -375,7 +451,8 @@ export async function processPendingRefines(
         'refine: posted turn',
       );
     } catch (err) {
-      logger.error({ err, ticketId }, 'refine: turn failed — leaving pending');
+      const { attempt, waitMs } = backoff.recordFailure(ticketId, now());
+      logger.error({ err, ticketId, attempt, waitMs }, 'refine: turn failed — backing off');
     }
   }
 

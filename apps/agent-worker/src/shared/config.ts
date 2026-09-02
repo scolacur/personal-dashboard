@@ -23,6 +23,19 @@ export interface AgentWorkerConfig {
   pullIntervalMs: number;
   /** How often to poll the shared DB for pending Refine turns (ms). */
   refineIntervalMs: number;
+  /**
+   * Hard per-turn ceiling for a Refine session (PD-618).
+   *
+   * There was none: `refineOptions` set no `maxTurns` at all, so one turn could run unbounded. The
+   * Robot has had `maxTurns` on every run since PD-432; Refine's only use of `robot.maxTurns` was
+   * feeding it into the system prompt so the agent could ESTIMATE a ticket's ceiling — a different
+   * thing that reads like a cap at a glance.
+   *
+   * Lower than the Robot's default on purpose. A refine turn is one reply to one human message: read
+   * some files, think, answer. It is not a coding run, and a turn that has taken 30 of these is not
+   * converging.
+   */
+  refineMaxTurns: number;
   /** How often to poll the shared DB for `requested` audit runs to claim (ms). */
   auditIntervalMs: number;
   /** Squid proxy URL when egress-hardened; empty in local dev (direct egress). */
@@ -236,6 +249,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     dataDir: env.DATA_DIR ?? path.join(process.cwd(), 'data'),
     pullIntervalMs: Number(env.AGENT_WORKER_PULL_INTERVAL_MS ?? 5 * 60_000),
     refineIntervalMs: Number(env.AGENT_WORKER_REFINE_INTERVAL_MS ?? 5_000),
+    refineMaxTurns: Number(env.AGENT_WORKER_REFINE_MAX_TURNS ?? 30),
     auditIntervalMs: Number(env.AGENT_WORKER_AUDIT_INTERVAL_MS ?? 30_000),
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
     robot: loadRobotConfig(env),

@@ -59,6 +59,13 @@ function refineOptions(
   return {
     model: config.model,
     cwd: config.checkoutDir,
+    // PD-618: a hard ceiling on ONE turn. There was none — the Robot has capped every run since
+    // PD-432, and Refine's use of `robot.maxTurns` below is unrelated: that value goes into the
+    // system prompt so the agent can ESTIMATE a ticket's ceiling, which reads like a cap and is not
+    // one. Without this a single turn is unbounded, and the SDK reports hitting the cap as an error
+    // result — which `resultFrom` already marks `ok: false`, so it lands on the existing failure
+    // path rather than being persisted as the agent's words.
+    maxTurns: config.refineMaxTurns,
     systemPrompt: refineSystemPrompt(contextPack, config.robot.maxTurns),
     allowedTools: onProposal ? [...READ_ONLY_TOOLS, PROPOSE_TOOL_NAME] : READ_ONLY_TOOLS,
     // Headless: deny any tool outside the allowlist without prompting (would hang).
@@ -177,6 +184,10 @@ interface PendingTurn {
 export const openWarmSession: OpenRefineSession = (input) => {
   const input$ = createInputStream();
   let sessionId: string | undefined = input.resumeSessionId;
+  // The idle-evict clock, held here rather than on `session` because the drain loop below stamps it
+  // and is declared first. Exposed through accessors so `RefineSession.lastUsedAt` stays a plain
+  // mutable property to its callers.
+  let lastUsedAt = Date.now();
   // The single in-flight turn (turns are strictly sequential), or null when idle. Consumed
   // via the helpers below so the read happens at the declared union type (TS would otherwise
   // narrow it to `null` inside the drain loop, since `send` reassigns it further down).
@@ -205,6 +216,11 @@ export const openWarmSession: OpenRefineSession = (input) => {
         if (message.type === 'result') {
           const turn = resultFrom(message);
           sessionId = turn.sessionId;
+          // PD-618: re-stamp on COMPLETION. It was only set when a turn was SENT, so it measured
+          // "time since this turn started" — while the idle sweep reads it as "time since this
+          // session was last busy". A turn outliving the idle window was therefore swept *while
+          // running*, which is what made the hang in `close()` reachable.
+          lastUsedAt = Date.now();
           settleTurn(turn);
         }
       }
@@ -217,15 +233,33 @@ export const openWarmSession: OpenRefineSession = (input) => {
     get sessionId() {
       return sessionId;
     },
-    lastUsedAt: Date.now(),
+    get lastUsedAt() {
+      return lastUsedAt;
+    },
+    set lastUsedAt(value: number) {
+      lastUsedAt = value;
+    },
     send(prompt: string): Promise<RefineTurnResult> {
-      session.lastUsedAt = Date.now();
+      lastUsedAt = Date.now();
       return new Promise<RefineTurnResult>((resolve, reject) => {
         pending = { resolve, reject };
         input$.push(userMessage(prompt));
       });
     },
     async close(): Promise<void> {
+      // PD-618: settle any in-flight turn FIRST.
+      //
+      // `close()` ends the input stream and interrupts the query, so the drain loop above exits
+      // without ever seeing a `result` message — meaning neither `settleTurn` nor `failTurn` ran and
+      // the caller's `await session.send(...)` hung forever. In `processPendingRefines` that `await`
+      // is inside the poll cycle's re-entrancy guard, so one hung turn wedged the ENTIRE Refine job
+      // until the worker restarted. The idle sweep calls `close()` on a live session by design, so
+      // this was reachable on any turn that outlived the 15-minute idle window.
+      //
+      // Reported as a failed turn rather than a rejection: it is exactly the shape of every other
+      // unusable turn, so it takes the existing "log it and leave the ticket pending" path instead
+      // of needing its own.
+      settleTurn({ text: 'refine session closed before the turn completed', ok: false, sessionId });
       input$.end();
       try {
         await q.interrupt();
