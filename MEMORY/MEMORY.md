@@ -14,6 +14,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-09-01](2026-09-01.md) — /harness tested under Kilo; made the core harness agent-agnostic (Agents->agent-types, neutral wrap-up/PM), committed on branch harness/agent-agnostic.
 
-- [2026-09-02](2026-09-02.md) — PD-618 deploy unstuck PD-465; `refined` becomes a hard queue gate (PD-632/633/634 filed); PD-611 stale-Epic surfaces shipped (#389).
+- [2026-09-02](2026-09-02.md) — `refined` becomes a hard queue gate; PD-611 shipped (#389); then a blocked-claim audit adding 8 blocker edges, and six tickets filed (PD-642/643/645/646–648).
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
