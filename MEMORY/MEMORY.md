@@ -2,7 +2,7 @@
 
 One line per day. Load today's and yesterday's files at session start.
 
-**Index rule:** one line per day, a single sentence, ≤ ~200 chars, navigational only — points at the day file, never summarizes it. Detail lives in the day file; durable decisions in `DECISIONS.md`. (Governed by `~/.claude/commands/wrap-up.md` Step 5.)
+**Index rule:** one line per day, a single sentence, ≤ ~200 chars, navigational only — points at the day file, never summarizes it. Detail lives in the day file; durable decisions in `DECISIONS.md`. (Governed by the global `/wrap-up` skill, Step 5.)
 
 - [2026-08-21](2026-08-21.md) — PD-468 gate + loop/Evaluator on; D-077/D-078/D-079; ID Tracker (#331/#333); NAS compose incident; plus the PD-498 build, folded in at wrap-up.
 
@@ -11,5 +11,9 @@ One line per day. Load today's and yesterday's files at session start.
 - [2026-08-23](2026-08-23.md) — The off-box restore proven byte-for-byte for the first time (PD-553); three lookalike `data/` dirs; a coincidence read as evidence; PD-317 closed.
 
 - [2026-08-30](2026-08-30.md) — Epic PD-556 shipped end to end (#371/372/373/375/377): decision ids allocated at authoring time, numbering cycle deleted; D-087, D-088.
+
+- [2026-09-01](2026-09-01.md) — /harness tested under Kilo; made the core harness agent-agnostic (Agents->agent-types, neutral wrap-up/PM), committed on branch harness/agent-agnostic.
+
+- [2026-09-02](2026-09-02.md) — PD-618 deploy unstuck PD-465; `refined` becomes a hard queue gate (PD-632/633/634 filed); PD-611 stale-Epic surfaces shipped (#389).
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
