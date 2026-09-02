@@ -88,6 +88,20 @@ const EPIC_ERROR_STATUS: Record<EpicGuardError['code'], number> = {
   EPIC_NOT_QUEUEABLE: 409,
   HAS_MEMBERS: 409,
 };
+/**
+ * PD-611: `keepEpicRunning` — the request-level "Add & keep running" choice.
+ *
+ * A modifier on the write, not a field of the ticket, so it is read off the raw body and never
+ * reaches `CreateTicketInput` / `UpdateTicketInput`. Both routes build their input from an explicit
+ * allowlist, so an unknown key is already ignored — this is the one place it is deliberately read.
+ *
+ * Only ever *weakens* the default (`pause: true`), and only on an explicit `true`: any other value,
+ * including a stray string, leaves the pause on. The un-refine itself is not optional either way.
+ */
+function epicInvalidationOpts(body: Record<string, unknown>): { pause?: boolean } {
+  return body.keepEpicRunning === true ? { pause: false } : {};
+}
+
 function sendEpicError(reply: FastifyReply, e: EpicGuardError) {
   return reply.status(EPIC_ERROR_STATUS[e.code]).send({ error: e.message, code: e.code });
 }
@@ -188,7 +202,7 @@ export function registerRoutes(
       return reply.status(400).send({ error: createFail.message, code: createFail.code });
     }
     try {
-      return reply.status(201).send(createTicket(db, input));
+      return reply.status(201).send(createTicket(db, input, epicInvalidationOpts(body)));
     } catch (e) {
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
       if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
@@ -346,7 +360,7 @@ export function registerRoutes(
 
     let updated;
     try {
-      updated = updateTicket(db, id, patch);
+      updated = updateTicket(db, id, patch, epicInvalidationOpts(body));
     } catch (e) {
       // Epic invariants (D-054). (D-051 blocker gate no longer refuses queue entry — PD-408; a
       // blocked ticket may sit in the queue and the loop skips it at selection.)

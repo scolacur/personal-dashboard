@@ -91,6 +91,19 @@
       >
     {/if}
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
+    <!-- PD-611/D-089: ONLY a stale Epic is marked here. An Epic that has never been refined gets
+         nothing new — 78 of 80 are in that state, and a badge on all of them would be noise that
+         says nothing, while the one thing worth seeing at band level is a claim that has expired.
+         Shares `_refine-badge.scss` with the member rows so the third state looks the same
+         wherever a ticket is shown. -->
+    {#if epic.refineStale}
+      <a
+        class="refine-pill refine-stale"
+        href={detailHref}
+        draggable="false"
+        title="Was refined, but its members changed since — needs re-refinement">⚠ Stale</a
+      >
+    {/if}
     <select
       class="priority priority-{bandKey(epic.priority)}"
       title="Set priority"

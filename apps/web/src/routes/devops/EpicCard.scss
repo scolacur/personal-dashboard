@@ -1,3 +1,8 @@
+// PD-611: the stale marker (`.refine-pill.refine-stale`) is shared with the board card and the
+// Epic page's member rows. Svelte scopes styles per component, so the rules have to be pulled in
+// here rather than assumed present — the same reason TicketCard.scss and MemberCard.scss do.
+@use './refine-badge';
+
 .epic-card {
   display: flex;
   flex-direction: column;

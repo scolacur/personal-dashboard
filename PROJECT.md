@@ -679,6 +679,36 @@ _Avoid_: confusing this with a **Ticket's** hand-dragged workflow status.
 **Epic roll-up**:
 The `done / total` member tally shown on an Epic card (done = `completed` or `closed`).
 
+**Refined** (on an Epic) (D-089):
+A claim with **two halves**: the description frames the work, **and** the current member set is the
+agreed breakdown of it. The second half is what makes it different from `refined` on a Ticket, which
+is only about that ticket's own body — an Epic's flag is partly a claim about *other rows*.
+_Avoid_: reading it as a property of the Epic's prose alone. Under that reading the flag would stay
+true on an Epic whose description does not mention half its members, which is exactly the state
+D-089 was written to end.
+
+**Stale** (`refine_stale`) (D-089, PD-610/PD-611):
+The **third** refinement state: *was* refined, membership has changed since. Distinct from "never
+refined", which is the ordinary condition of most Epics and raises nothing — without the third state
+a staleness warning would fire on every Epic that had simply never been through a session. Set
+**automatically** and with no prompt when a member joins, leaves, is re-parented or is archived,
+because the two ways of being wrong are not symmetric: un-refining wrongly costs one click of
+**✓ Mark refined** and is visible, while leaving something refined wrongly is silent and permanent.
+A member reaching a terminal lane is **not** a membership change — that is the plan succeeding, not
+changing. Only ever set on an Epic.
+_Avoid_: calling a stale Epic "unrefined" — they are different states with different treatments, and
+the whole point of the third one is that they must not read alike.
+
+**Paused** (of an Epic) (PD-610/PD-611):
+What going **stale** does to an Epic that is *already running*: its armed members are returned to
+`backlog` so nothing new dispatches against a description that no longer covers the work. A member
+already in flight (`working` / `in-review`) is left to finish (D-046), and the Epic itself stays in
+the Queue lane. Reversed by ✓ Mark refined, which re-arms. Implemented by **un-arming**, deliberately
+— not by a new dispatch state and not by a change to `robotQueueCandidates`, since a bug in that
+query stops every Epic rather than this one.
+_Avoid_: confusing with a **maintenance hold** or a dispatch **pause** (D-072), which are loop-wide
+and human-released; this one is scoped to a single Epic and released by re-refining it.
+
 ### Dashboard shell
 
 Definitions for the widget-grid shell and its layout affordances.

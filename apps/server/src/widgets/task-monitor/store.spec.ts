@@ -1821,6 +1821,43 @@ describe('epic refinement staleness (PD-610)', () => {
       expect(getTicket(db, members[0])!.status).toBe('backlog');
       expect(getTicket(db, epicId)!.status).toBe('backlog');
     });
+
+    /* PD-611: "Add & keep running" — declining the pause. */
+    describe('declining it', () => {
+      it('leaves the members armed but STILL un-refines the Epic', () => {
+        const { epicId, members } = refinedEpic({ queued: true, members: 2 });
+
+        createTicket(db, { title: 'late arrival', projectId: pd, epicId }, { pause: false });
+
+        for (const m of members) expect(getTicket(db, m)!.status).toBe('queue');
+        // The half that is never optional. D-089 §3: leaving something refined wrongly is the
+        // silent, permanent error — declining the pause must not become a way to keep the badge.
+        expect(stateOf(epicId)).toEqual({ refined: false, stale: true });
+      });
+
+      it('records the decline, so a repeatedly-declined Epic is measurable', () => {
+        // D-089 §8's reasoning applied to this choice: an Epic kept running every time is an Epic
+        // whose invalidation is firing on a false positive, and that is a count, not a hunch.
+        const { epicId } = refinedEpic({ queued: true, members: 1 });
+        createTicket(db, { title: 'late arrival', projectId: pd, epicId }, { pause: false });
+        expect(eventTypes(epicId)).toContain('epic_pause_declined');
+        expect(eventTypes(epicId)).not.toContain('epic_paused');
+      });
+
+      it('applies to a re-parent too, not just a create', () => {
+        const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+        const other = createTicket(db, { title: 'elsewhere', projectId: pd });
+        updateTicket(db, other.id, { epicId }, { pause: false });
+        expect(getTicket(db, members[0])!.status).toBe('queue');
+        expect(stateOf(epicId)).toEqual({ refined: false, stale: true });
+      });
+
+      it('is opt-in — every caller that does not ask for it still gets the pause', () => {
+        const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+        createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+        expect(getTicket(db, members[0])!.status).toBe('backlog');
+      });
+    });
   });
 
   describe('resuming', () => {

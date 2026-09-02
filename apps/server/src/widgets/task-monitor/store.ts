@@ -329,7 +329,11 @@ function validMaxTurns(value: number | null): number | null {
   return value;
 }
 
-export function createTicket(db: Database.Database, input: CreateTicketInput): AgentTicket {
+export function createTicket(
+  db: Database.Database,
+  input: CreateTicketInput,
+  opts: EpicInvalidationOpts = {},
+): AgentTicket {
   const insert = db.transaction((): number => {
     const now = Date.now();
     // New tickets default to unset priority (the user assigns it deliberately). D-080 may override
@@ -395,7 +399,7 @@ export function createTicket(db: Database.Database, input: CreateTicketInput): A
     // agreed breakdown no longer holds. Covers every create path at once — Populate, the board's
     // + button, the API, and the Add-member modal's "new ticket" option (PD-465) — because they all
     // land here rather than each remembering to do it.
-    invalidateEpicRefinement(db, epicId, { addedTicketId: id, via: 'created' }, now);
+    invalidateEpicRefinement(db, epicId, { addedTicketId: id, via: 'created' }, now, opts);
     return id;
   });
   const created = getTicket(db, insert());
@@ -415,6 +419,7 @@ export function updateTicket(
   db: Database.Database,
   id: number,
   patch: UpdateTicketInput,
+  opts: EpicInvalidationOpts = {},
 ): AgentTicket | null {
   const existing = getTicket(db, id);
   if (!existing) return null;
@@ -637,8 +642,8 @@ export function updateTicket(
     // is the Epic's plan succeeding, not its plan changing, and treating it as invalidation would
     // un-refine every Epic the moment it started making progress.
     if (next.epicId !== existing.epicId) {
-      invalidateEpicRefinement(db, existing.epicId, { removedTicketId: id, via: 'reparented_out' }, next.updatedAt);
-      invalidateEpicRefinement(db, next.epicId, { addedTicketId: id, via: 'reparented_in' }, next.updatedAt);
+      invalidateEpicRefinement(db, existing.epicId, { removedTicketId: id, via: 'reparented_out' }, next.updatedAt, opts);
+      invalidateEpicRefinement(db, next.epicId, { addedTicketId: id, via: 'reparented_in' }, next.updatedAt, opts);
     }
 
     // PD-610: re-refining through a plain update clears the staleness but NEVER re-arms. That is
@@ -1057,11 +1062,28 @@ export function listEpicSummaries(db: Database.Database): EpicSummary[] {
  * Epic more accurate than before, and an Epic whose body invites further members (PD-530 says so
  * outright) is not contradicted by gaining one. Each costs a single click to re-assert.
  */
+export interface EpicInvalidationOpts {
+  /**
+   * Whether going stale also **pauses** a running Epic by un-arming its members. Default true.
+   *
+   * PD-611's "Add & keep running": the un-refine itself is never optional (D-089 §3 — leaving
+   * something refined wrongly is the silent, permanent error), but the pause is a separate
+   * consequence that moves *other* tickets out of the Queue, and that is worth being able to
+   * decline. Declining leaves the Epic un-refined, bannered, and still dispatching — an honest
+   * "I know, let it finish", not a way to keep the badge.
+   *
+   * Only the human-facing routes ever pass false. Every internal caller takes the default, so a
+   * new create path cannot accidentally opt out of the pause by omission.
+   */
+  pause?: boolean;
+}
+
 function invalidateEpicRefinement(
   db: Database.Database,
   epicId: number | null,
   detail: Record<string, unknown>,
   now: number,
+  opts: EpicInvalidationOpts = {},
 ): void {
   if (epicId === null) return;
   const epic = db
@@ -1082,6 +1104,14 @@ function invalidateEpicRefinement(
   // Epic rather than this one. Un-arming reaches the same outcome with the cascade that already
   // exists, and it never leaves a card sitting in the Queue that will not be picked — the PD-467
   // trap the lane help warns about.
+  // PD-611: declining the pause stops here — stale, bannered, and still dispatching. Logged so the
+  // decline is measurable the same way D-089 §8 made every other movement of `refined` measurable;
+  // an Epic that is repeatedly kept running is an Epic whose invalidation is firing on a false
+  // positive, and that is the signal, not a hunch.
+  if (opts.pause === false) {
+    logEvent(db, epicId, 'epic_pause_declined', { ...detail });
+    return;
+  }
   if (computeEpicSummary(db, epicId).derivedLane !== 'in_progress') return;
   const paused = db
     .prepare(
