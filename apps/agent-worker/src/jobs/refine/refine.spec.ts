@@ -10,8 +10,10 @@ import {
   listTicketEvents,
   processPendingRefines,
   writeRefineProposal,
+  RefineBackoff,
   WarmSessions,
 } from './refine';
+import { ensureRobotStateTable, sessionLimitHold, holdForSessionLimit } from '../robot/state';
 
 // Minimal slice of the shared dashboard schema the agent-worker touches (the web app owns the
 // canonical schema; the agent-worker only reads/writes these three tables).
@@ -32,6 +34,9 @@ function freshDb(): Database.Database {
       title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL
     );
   `);
+  // PD-618: mirrors `startRefineJob`, which ensures this table because Refine reads the shared
+  // session-limit hold and must not depend on the Robot job having started.
+  ensureRobotStateTable(db);
   return db;
 }
 
@@ -62,6 +67,7 @@ const CONFIG: AgentWorkerConfig = {
   dataDir: '/data',
   pullIntervalMs: 1,
   refineIntervalMs: 1,
+  refineMaxTurns: 30,
   auditIntervalMs: 1,
   httpsProxy: '',
   robot: loadRobotConfig({}),
@@ -395,5 +401,163 @@ describe('propose_commit path (D-044, PD-269)', () => {
     const proposals = listTicketEvents(db, 1).filter((e) => e.type === REFINE_PROPOSAL_EVENT.proposal);
     expect(proposals).toHaveLength(1);
     expect((proposals[0].detail as RefineProposal).body).toBe('tightened');
+  });
+});
+
+
+/**
+ * PD-618. On 2026-09-01 a single refine turn that could not succeed was retried every 5 seconds
+ * from 01:55 until the worker was stopped the next morning — roughly 6,000 attempts. Nothing
+ * capped the rate, nothing recognised a provider limit, and nothing capped a single turn.
+ */
+describe('failed turns are spaced, not hammered (PD-618)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  const run = (clock: () => number, backoff: RefineBackoff, open: OpenRefineSession) =>
+    processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(open),
+      backoff,
+      buildContext: noContext,
+      now: clock,
+    });
+
+  it('skips a ticket that failed moments ago, and retries it once the wait passes', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    let attempts = 0;
+    const counting: OpenRefineSession = () => ({
+      get sessionId() {
+        return 'sess-1';
+      },
+      lastUsedAt: 0,
+      async send(): Promise<RefineTurnResult> {
+        attempts += 1;
+        return { text: 'boom', ok: false, sessionId: 'sess-1' };
+      },
+      async close() {},
+    });
+    const backoff = new RefineBackoff(30_000, 30 * 60_000);
+    let t = 1_000_000;
+
+    await run(() => t, backoff, counting);
+    expect(attempts).toBe(1);
+
+    // The 5-second poll that used to re-fire immediately.
+    t += 5_000;
+    await run(() => t, backoff, counting);
+    expect(attempts).toBe(1);
+
+    t += 30_000; // past the first backoff
+    await run(() => t, backoff, counting);
+    expect(attempts).toBe(2);
+  });
+
+  it('backs off exponentially, capped', () => {
+    const backoff = new RefineBackoff(30_000, 120_000);
+    const waits = [1, 2, 3, 4, 5, 6].map(() => backoff.recordFailure(1, 0).waitMs);
+    expect(waits).toEqual([30_000, 60_000, 120_000, 120_000, 120_000, 120_000]);
+  });
+
+  // The point of leaving a turn pending is that the human never has to re-send a reply. Bounding
+  // the RATE fixes the incident; bounding the COUNT would break the recovery.
+  it('never gives up entirely', () => {
+    const backoff = new RefineBackoff(30_000, 60_000);
+    for (let i = 0; i < 500; i += 1) backoff.recordFailure(1, 0);
+    expect(backoff.ready(1, 10 * 60_000)).toBe(true);
+  });
+
+  it('forgets the history after a clean turn, so recovery is immediate', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const backoff = new RefineBackoff(30_000, 30 * 60_000);
+    backoff.recordFailure(1, 1_000_000);
+    let t = 1_000_000 + 60_000; // past the first backoff window
+    await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fakeSessions('a good reply').open),
+      backoff,
+      buildContext: noContext,
+      now: () => t++,
+    });
+    // Cleared, so the NEXT failure starts from the base wait again rather than compounding.
+    expect(backoff.ready(1, 0)).toBe(true);
+  });
+});
+
+describe('a provider session limit stops every refine turn (PD-618)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+  });
+
+  function limited(): OpenRefineSession {
+    return () => ({
+      get sessionId() {
+        return 'sess-1';
+      },
+      lastUsedAt: 0,
+      async send(): Promise<RefineTurnResult> {
+        // The literal string the worker logged on 2026-09-01, kept verbatim: this test exists
+        // because that text was retried every 5s for eight hours instead of being recognised.
+        return { text: "You've hit your session limit · resets 9am (UTC)", ok: false, sessionId: 'sess-1' };
+      },
+      async close() {},
+    });
+  }
+
+  it('takes the hold rather than retrying into the limit', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(limited()),
+      buildContext: noContext,
+      now: () => 1_000_000,
+    });
+    const hold = sessionLimitHold(db);
+    expect(hold).not.toBeNull();
+    expect(hold!.until).toBeGreaterThan(1_000_000);
+  });
+
+  // The quota is one quota, so the hold the Robot already maintains (PD-470) is the one Refine
+  // reads. A limit parking the Robot used to leave Refine retrying into it.
+  it('does no work at all while a hold set by the Robot is in force', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    holdForSessionLimit(db, 2_000_000, 'robot hit the limit', 1_000_000);
+    let attempts = 0;
+    const counting: OpenRefineSession = () => ({
+      get sessionId() {
+        return 'sess-1';
+      },
+      lastUsedAt: 0,
+      async send(): Promise<RefineTurnResult> {
+        attempts += 1;
+        return { text: 'ok', ok: true, sessionId: 'sess-1' };
+      },
+      async close() {},
+    });
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(counting),
+      buildContext: noContext,
+      now: () => 1_500_000,
+    });
+    expect(handled).toBe(0);
+    expect(attempts).toBe(0);
+    expect(findPendingRefineTicketIds(db)).toEqual([1]); // still pending, nothing lost
+  });
+
+  it('resumes on its own once the hold expires', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    holdForSessionLimit(db, 2_000_000, 'earlier limit', 1_000_000);
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fakeSessions('back in business').open),
+      buildContext: noContext,
+      now: () => 2_500_000, // past `until`
+    });
+    expect(handled).toBe(1);
+    expect(sessionLimitHold(db)).toBeNull(); // self-cleared on read
   });
 });
