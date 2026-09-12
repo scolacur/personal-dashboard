@@ -16,6 +16,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-09-07](2026-09-07.md) — Lookup only: the rename epic PD-582 (→ The Construct) — four-layer naming decided, every mechanical step still unrefined backlog; PD-445 is an unreconciled conflict.
 
-- [2026-09-11](2026-09-11.md) — PD-34 verified genuinely done (a logged-out tailnet client, not missing infra); four sessions' memory audited and committed; C-29 re-filed as PD-699.
+- [2026-09-11](2026-09-11.md) — PD-34 verified done (a logged-out tailnet client); four sessions' memory audited, landed and the inbox backlog cleared; PD-700 (#390) and D-090 (#391) shipped; PD-701 filed.
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
