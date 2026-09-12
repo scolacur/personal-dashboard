@@ -14,4 +14,6 @@ One line per day. Load today's and yesterday's files at session start.
 
 - [2026-09-06](2026-09-06.md) — PD-693 (2025 Daily Log import) filed on a shared store — §5's documented pattern, not an exception; PD-34 found `completed` though off-LAN access fails → PD-698.
 
+- [2026-09-11](2026-09-11.md) — PD-34 verified genuinely done (a logged-out tailnet client, not missing infra); four sessions' memory audited and committed; C-29 re-filed as PD-699.
+
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
