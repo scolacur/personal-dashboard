@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-090](DECISIONS/D-090-the-daily-log-is-one-shared-domain-store.md)** — The daily log is one shared store in `apps/server/src/lib/` — the first shared *domain* table, and still not a firewall
 - **[D-089](DECISIONS/D-089-epic-refined-means-the-decomposition-holds.md)** — On an Epic, `refined` means the decomposition holds — and a membership change clears it automatically
 - **[D-088](DECISIONS/D-088-decision-ids-are-allocated-at-authoring-time-by-a.md)** — Decision ids are allocated at authoring time by a counter in the DB; the decision itself stays in git (PD-556; supersedes D-078)
 - **[D-087](DECISIONS/D-087-a-robot-asks-the-server-for-a-decision-id-it-still-cannot.md)** — A Robot asks the server for a decision id; it still cannot touch the board DB (PD-558; clarifies D-055, D-039)
