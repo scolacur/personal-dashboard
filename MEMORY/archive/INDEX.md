@@ -2,6 +2,12 @@
 
 Day files past the 14-day hot window, rolled out of the main `MEMORY.md`. Still grep-able and in git.
 
+- [2026-08-23](2026-08-23.md) — The off-box restore proven byte-for-byte for the first time (PD-553); three lookalike `data/` dirs; a coincidence read as evidence; PD-317 closed.
+
+- [2026-08-22](2026-08-22.md) — Two DJ tracklists entered, then the backup audit: 5 silent nights, `integrity_check` passes an empty DB → PD-550 shipped (#350); PD-540/541/552 filed.
+
+- [2026-08-21](2026-08-21.md) — PD-468 gate + loop/Evaluator on; D-077/D-078/D-079; ID Tracker (#331/#333); NAS compose incident; plus the PD-498 build, folded in at wrap-up.
+
 - [2026-08-07](2026-08-07.md) — Board hygiene: PD-382 closed, PD-365 split into PD-493/494/495. Earlier, [in the 08-06 file](2026-08-06.md): coverage ~71% (PD-484), BST inbound over RSS (PD-471).
 - [2026-08-06](2026-08-06.md) — Busy: gate 17→9 (PD-463/432/424/482/394, D-064/D-066) then re-scoped to 4 real blockers; path-guard author-scoped (D-067); **PD-475 BST shipped** (D-065 amended).
 - [2026-08-05](2026-08-05.md) — Two sessions: PD-468 gate (PD-393/467/470, D-063) and the BST matcher PD-438 shipped (D-065, already amended by PD-475).

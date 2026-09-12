@@ -4,16 +4,14 @@ One line per day. Load today's and yesterday's files at session start.
 
 **Index rule:** one line per day, a single sentence, ≤ ~200 chars, navigational only — points at the day file, never summarizes it. Detail lives in the day file; durable decisions in `DECISIONS.md`. (Governed by the global `/wrap-up` skill, Step 5.)
 
-- [2026-08-21](2026-08-21.md) — PD-468 gate + loop/Evaluator on; D-077/D-078/D-079; ID Tracker (#331/#333); NAS compose incident; plus the PD-498 build, folded in at wrap-up.
-
-- [2026-08-22](2026-08-22.md) — Two DJ tracklists entered, then the backup audit: 5 silent nights, `integrity_check` passes an empty DB → PD-550 shipped (#350); PD-540/541/552 filed.
-
-- [2026-08-23](2026-08-23.md) — The off-box restore proven byte-for-byte for the first time (PD-553); three lookalike `data/` dirs; a coincidence read as evidence; PD-317 closed.
-
 - [2026-08-30](2026-08-30.md) — Epic PD-556 shipped end to end (#371/372/373/375/377): decision ids allocated at authoring time, numbering cycle deleted; D-087, D-088.
 
 - [2026-09-01](2026-09-01.md) — /harness tested under Kilo; made the core harness agent-agnostic (Agents->agent-types, neutral wrap-up/PM), committed on branch harness/agent-agnostic.
 
-- [2026-09-02](2026-09-02.md) — `refined` becomes a hard queue gate; PD-611 shipped (#389); two blocker sweeps (18 edges); Ticket Audit run 9 — 6 of 7 findings applied, PD-247 rejected.
+- [2026-09-02](2026-09-02.md) — Gating the Queue on `refined` decided and filed, not shipped (PD-632); PD-611 shipped (#389); blocker sweeps; Ticket Audit run 9; a stubbing session — 9 Epics, 34 tickets.
+
+- [2026-09-03](2026-09-03.md) — Board unreachable off-LAN mid-create (nothing written); the outage became a ticket, and the Daily Log epic was reframed from spreadsheet formulas to an import.
+
+- [2026-09-06](2026-09-06.md) — PD-693 (2025 Daily Log import) filed on a shared store — §5's documented pattern, not an exception; PD-34 found `completed` though off-LAN access fails → PD-698.
 
 *(Older days archived — see [archive/INDEX.md](archive/INDEX.md).)*
