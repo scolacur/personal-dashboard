@@ -266,4 +266,6 @@ export {
   TINNITUS_FUTURE_TOLERANCE_MS,
   isValidIntensity,
   normalizeTagName,
+  TINNITUS_RUBRIC,
+  tinnitusLabel,
 } from './tinnitus-tracker';
