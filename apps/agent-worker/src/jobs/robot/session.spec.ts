@@ -41,6 +41,17 @@ describe('codingEnv', () => {
     expect(dropped.LOGNAME).toBe('robot');
   });
 
+  it("does not pass the worker's NODE_ENV to the Robot, so npm ci installs devDependencies", () => {
+    const before = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(codingEnv(loadConfig({})).NODE_ENV).toBeUndefined();
+    } finally {
+      if (before === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = before;
+    }
+  });
+
   it('sets proxy vars only when a proxy is configured', () => {
     expect(codingEnv(loadConfig({})).HTTPS_PROXY).toBeUndefined();
     const env = codingEnv(loadConfig({ HTTPS_PROXY: 'http://egress-proxy:3128' }));
