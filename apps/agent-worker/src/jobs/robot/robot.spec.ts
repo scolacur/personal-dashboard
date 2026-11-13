@@ -77,6 +77,7 @@ function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
   return {
     ensureWorktree: async (_c, branch) => ({ dir: `/wt/${branch.replace('/', '-')}`, branch }),
     removeWorktree: async () => {},
+    pruneWorktrees: () => [],
     runSession: async () => ({ ok: true, sessionId: 'sess-1', verifyOk: true, prNumber: 314, ...sessionResult }),
     now: () => 1000,
   };
@@ -489,6 +490,68 @@ describe('processRobotQueue', () => {
     await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '400', ROBOT_BUDGET_TOKENS: '900' }), deps());
     const row = db.prepare("SELECT value FROM robot_state WHERE key = 'budget_policy'").get() as { value: string };
     expect(JSON.parse(row.value)).toMatchObject({ turns: 400, tokens: 900 });
+  });
+
+  // ── PD-719: the clone outlives a run that did not push ───────────────────────
+
+  /** Deps that record which clones were removed, around a given session result. */
+  function trackingDeps(sessionResult: Partial<RobotSessionResult>) {
+    const removed: string[] = [];
+    const d: RobotDeps = { ...deps(sessionResult), removeWorktree: async (_c, wt) => void removed.push(wt.dir) };
+    return { d, removed };
+  }
+
+  it('removes the clone after a hand-off — the work is on GitHub', async () => {
+    addQueued(db, 1);
+    const { d, removed } = trackingDeps({});
+    await processRobotQueue(db, cfg(), d);
+    expect(removed).toEqual(['/wt/robot-1']);
+  });
+
+  it('keeps the clone when the run parks on a question, so its commits survive the answer', async () => {
+    addQueued(db, 1);
+    const { d, removed } = trackingDeps({ ok: true, verifyOk: false, prNumber: undefined, askHuman: 'Token?' });
+    await processRobotQueue(db, cfg(), d);
+    expect(agentState(db, 1)).toBe('awaiting-human');
+    expect(removed).toEqual([]);
+  });
+
+  it('keeps the clone on a no-verify and on a session error', async () => {
+    addQueued(db, 1);
+    const noVerify = trackingDeps({ ok: true, verifyOk: false, prNumber: undefined });
+    await processRobotQueue(db, cfgNoBackoff(), noVerify.d);
+    expect(noVerify.removed).toEqual([]);
+    const errored = trackingDeps({ ok: false, verifyOk: false, prNumber: undefined, error: 'boom' });
+    await processRobotQueue(db, cfgNoBackoff(), errored.d);
+    expect(errored.removed).toEqual([]);
+  });
+
+  it("prunes every clone except the Robot's own queued tickets, before dispatching", async () => {
+    addQueued(db, 1);
+    addQueued(db, 2, null);
+    // Left the Queue, reassigned, archived: none of these keep a clone.
+    db.prepare(`INSERT INTO agent_tickets (id, title, status, assignee, project_id, github_issue_number) VALUES (3, 'gone', 'completed', 'robot', 1, 3)`).run();
+    db.prepare(`INSERT INTO agent_tickets (id, title, status, assignee, project_id, github_issue_number) VALUES (4, 'human', 'queue', 'steve', 1, 4)`).run();
+    db.prepare(`INSERT INTO agent_tickets (id, title, status, assignee, project_id, github_issue_number, archived_at) VALUES (5, 'arch', 'queue', 'robot', 1, 5, 9)`).run();
+    let kept: string[] = [];
+    let prunedBeforeDispatch = false;
+    let dispatchedYet = false;
+    const config = cfg({ ROBOT_WORKTREES_DIR: '/wt', ROBOT_ALLOWLIST: '' });
+    const d: RobotDeps = {
+      ...deps(),
+      pruneWorktrees: (_c, keep) => {
+        kept = [...keep].sort();
+        prunedBeforeDispatch = !dispatchedYet;
+        return [];
+      },
+      runSession: async () => {
+        dispatchedYet = true;
+        return { ok: true, sessionId: 's', verifyOk: true, prNumber: 1 };
+      },
+    };
+    await processRobotQueue(db, config, d);
+    expect(kept).toEqual(['/wt/robot-1', '/wt/robot-t2']);
+    expect(prunedBeforeDispatch).toBe(true);
   });
 
   it('ask_human parks awaiting-human and is not counted as a failure', async () => {
