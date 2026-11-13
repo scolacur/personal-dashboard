@@ -396,10 +396,15 @@ export async function processPendingRefines(
     const warm = sessions.has(ticketId);
     // The agent calls propose_commit → we persist the proposal for Steve to approve.
     const onProposal = (proposal: RefineProposal) => writeRefineProposal(db, ticketId, proposal, now());
+    // PD-634: lets propose_commit refuse a Populate without the Epic's rewritten body while the agent
+    // can still correct it. The server re-checks at approval, so a stale warm session cannot slip past.
+    const targetIsEpic =
+      (db.prepare('SELECT is_epic FROM agent_tickets WHERE id = ?').get(ticketId) as { is_epic: number } | undefined)
+        ?.is_epic === 1;
     try {
       let result = await sessions.turn(
         ticketId,
-        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal },
+        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal, targetIsEpic },
         work.prompt,
       );
       // Stale resume: the SDK's session store is per-container and not persisted, so a rebuild
@@ -410,7 +415,7 @@ export async function processPendingRefines(
         sessions.reset(ticketId);
         result = await sessions.turn(
           ticketId,
-          { config, contextPack, resumeSessionId: undefined, onProposal },
+          { config, contextPack, resumeSessionId: undefined, onProposal, targetIsEpic },
           fullThreadPrompt(events),
         );
       }

@@ -91,6 +91,27 @@ invalidation the mechanism exists to raise. Steve's first instinct was the auto-
 reversed it on 2026-09-02. (A Populate marking its Epic refined is a different thing — that is the
 Refine session itself, where the claim originates. PD-634.)
 
+### 7. A Refine session's output is born refined — the agent declares, the server verifies (PD-634)
+
+*Added 2026-11-13 by PD-634; decided 2026-09-02 with the rest of this record.*
+
+A gate on `refined` is only livable if the flag is set where the reading actually happens. So:
+
+- **Children are born refined.** The proposal's per-child `refined` defaults to true, because the
+  session *is* the read-through. Re-refining what a session just produced is the churn this gate is
+  meant to avoid. The agent sets `refined: false` only for a placeholder that needs its own session.
+- **The server checks the claim.** A robot-assigned child whose body fails `isReady` lands unrefined
+  whatever the proposal said, so no card reads refined while being undispatchable. A human-assigned
+  child skips that test: `refined` and `ready` are different properties ([[D-058]]).
+- **A Populate rewrites the Epic's body, then marks it refined.** The body is required for a decompose
+  on an Epic (refused by `propose_commit`, re-checked at approval). With it, approving asserts both
+  halves of [[D-089]]'s claim on evidence Steve read in one panel. It is marked **last**, after every
+  member has joined, because each join fires `invalidateEpicRefinement`. It uses a plain update, not
+  ✓ Mark refined, so approval never re-arms a paused Epic ([[D-057]]).
+
+This is not the auto-mark rejected in §6: that one re-refined an Epic when a stray member got
+refined, undoing an invalidation nobody saw. This one is the Refine session, where the claim originates.
+
 ## Consequences
 
 - **The migration window was used.** At ship time the Queue held no robot-assigned ticket, so adding

@@ -1674,6 +1674,17 @@ export function approveRefine(
   if (parent.projectId === null) {
     return { ok: false, reason: 'invalid_proposal', detail: 'parent has no project' };
   }
+  // PD-634: a Populate marks the Epic refined, which is only honest if the proposal rewrote the Epic's
+  // description for these members. `propose_commit` refuses this already; re-checked here because a
+  // warm session predating that check, or a proposal stored before it, would otherwise approve.
+  const epicBody = p.body;
+  if (populate && (epicBody === undefined || epicBody.trim() === '')) {
+    return {
+      ok: false,
+      reason: 'invalid_proposal',
+      detail: "a Populate must carry the Epic's rewritten body — ask the Refine agent to re-propose with it",
+    };
+  }
   const projectId = parent.projectId;
   const childIds: number[] = [];
   const run = db.transaction(() => {
@@ -1702,12 +1713,25 @@ export function approveRefine(
         // (if any), staying under the same umbrella (D-054 split-inheritance).
         epicId: populate ? parent.id : parent.epicId,
       });
+      // PD-634: a Refine session's output is born refined — the session IS the read-through. Two
+      // ways it is not: the agent said so (a placeholder needing its own session), or the child is
+      // robot-assigned and its body fails `isReady`. The second is the server checking the claim, so
+      // no card reads refined while being undispatchable. Human children skip it: `refined` and
+      // `ready` are different properties (D-058), and a ticket for Steve needs no Robot sections.
+      // Through `updateTicket` so the movement is a ticket event like every other (D-089 §8).
+      const bornRefined = (c.refined ?? true) && (c.assignee !== 'robot' || isReady(c.body));
+      if (bornRefined) updateTicket(db, child.id, { refined: true });
       // `split` lineage is a decompose-only relation; Populate links purely by membership.
       if (!populate) addRelation(db, ticketId, child.id, 'split');
       childIds.push(child.id);
     }
     // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
     if (!populate) updateTicket(db, ticketId, { status: 'closed' });
+    // PD-634: a Populate rewrites the Epic's description and marks it refined — both halves of D-089's
+    // claim, on evidence Steve read in one panel. **This must run LAST.** Every `createTicket` above
+    // fires `invalidateEpicRefinement`, so marking first would be undone by the next child. Plain
+    // update, not `markTicketRefined`: approval never re-arms a paused Epic (D-057, D-089 §7).
+    if (populate) updateTicket(db, ticketId, { body: epicBody, refined: true });
     logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, {
       mode: p.mode,
       childIds,

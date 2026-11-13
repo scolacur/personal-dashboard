@@ -44,6 +44,9 @@ const CHILD = z.object({
   status: STATUS,
   assignee: ASSIGNEE.optional(),
   maxTurns: MAX_TURNS.optional(),
+  // PD-634: born refined unless the agent says otherwise. The server still downgrades a robot child
+  // whose body is not Ready-shaped, so this can only ever claim less than the mechanical check.
+  refined: z.boolean().optional(),
 });
 
 // Raw Zod shape (not z.object) — the SDK's tool() wants the shape.
@@ -64,7 +67,11 @@ const DESCRIPTION = [
   'for THIS ticket. mode "decompose": provide `children` (each title/body/status/assignee);',
   'the parent is then closed and linked to them — EXCEPT when the parent is an Epic, where the same',
   'decompose is reinterpreted as Populate (D-058): children become members of the Epic and the Epic',
-  'stays open (no close, no split).',
+  'stays open (no close, no split). A Populate MUST also carry the Epic\'s rewritten `body`: the',
+  'description that frames the members you are proposing. Approving it marks the Epic refined.',
+  'Children are born refined — set `refined: false` on a child ONLY if it is a placeholder that needs',
+  'its own Refine session. The standard: a child is refined if you would hand it to a Robot as-is.',
+  'A robot-assigned child without the four sections lands unrefined whatever you claim.',
   'There is NO priority field: priority belongs to the Epic and cascades to its members, so a',
   'Ticket-level priority has nowhere to land. If the plan implies a different urgency, say so in',
   '`rationale` and let Steve price the Epic.',
@@ -101,10 +108,18 @@ export const PROPOSE_TOOL_NAME = 'mcp__refine__propose_commit';
  *  approval time — surfacing to Steve as a confusing "invalid proposal" instead of to the agent
  *  as an immediate, self-correcting tool error. Enforce the invariant here at the call boundary.
  *  Returns an instructive error string, or null when the proposal is well-formed. */
-export function validateProposalShape(proposal: RefineProposal): string | null {
+export function validateProposalShape(
+  proposal: RefineProposal,
+  opts: { targetIsEpic?: boolean } = {},
+): string | null {
   if (proposal.mode === 'decompose') {
     if (!proposal.children || proposal.children.length === 0) {
       return 'decompose requires a non-empty `children` array — you set mode "decompose" but attached no children. Re-call with each child ticket (title/body/status/assignee).';
+    }
+    // PD-634: approving a Populate marks the Epic refined, which asserts its description frames the
+    // members. That claim is only honest if the description was rewritten for them, in the same panel.
+    if (opts.targetIsEpic && (proposal.body === undefined || proposal.body.trim() === '')) {
+      return 'this ticket is an Epic, so decompose is a Populate — and a Populate requires the Epic\'s rewritten `body` (its description, framing the members you are proposing). Approving marks the Epic refined on the strength of that description, so it cannot be left as it was. Re-call with `body` set to the full rewritten Epic description.';
     }
     for (const c of proposal.children) {
       const err = queueLaneError(`child "${c.title}"`, c.status);
@@ -124,7 +139,10 @@ export function validateProposalShape(proposal: RefineProposal): string | null {
  * Build the in-process MCP server exposing `propose_commit`. `onProposal` runs synchronously
  * in the agent-worker when the agent calls the tool (it persists the proposal to the shared DB).
  */
-export function buildProposeToolServer(onProposal: (proposal: RefineProposal) => void) {
+export function buildProposeToolServer(
+  onProposal: (proposal: RefineProposal) => void,
+  opts: { targetIsEpic?: boolean } = {},
+) {
   const proposeCommit = tool(
     'propose_commit',
     DESCRIPTION,
@@ -157,7 +175,7 @@ export function buildProposeToolServer(onProposal: (proposal: RefineProposal) =>
           : {}),
         ...(args.rationale !== undefined ? { rationale: args.rationale } : {}),
       };
-      const invalid = validateProposalShape(proposal);
+      const invalid = validateProposalShape(proposal, opts);
       if (invalid) {
         return {
           content: [{ type: 'text' as const, text: `Proposal NOT recorded — ${invalid}` }],

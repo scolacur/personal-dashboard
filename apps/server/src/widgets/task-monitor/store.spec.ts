@@ -1218,6 +1218,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     });
     seedProposal(db, epic.id, {
       mode: 'decompose',
+      body: 'The rewritten Epic description.', // PD-634: a Populate must carry it
       children: [{ title: 'member', body: ROBOT_BODY, status: 'backlog', assignee: 'robot', priority: 'P5' }],
     } as unknown as RefineProposal);
     expect(approveRefine(db, epic.id).ok).toBe(true);
@@ -1277,6 +1278,7 @@ describe('relations + Refine commit (D-044, PD-269)', () => {
     const epic = createTicket(db, { title: 'umbrella', status: 'backlog', projectId: pd, isEpic: true });
     seedProposal(db, epic.id, {
       mode: 'decompose',
+      body: 'The rewritten Epic description.', // PD-634: a Populate must carry it
       children: [
         { title: 'member robot', body: ROBOT_BODY, status: 'queue', assignee: 'robot' },
         { title: 'member steve', body: 'loose is fine', status: 'backlog', assignee: 'steve' },
@@ -1582,6 +1584,7 @@ describe('epics (D-054, PD-336)', () => {
     const e = epic();
     seedProposal(db,e, {
       mode: 'decompose',
+      body: 'The rewritten Epic description.', // PD-634: a Populate must carry it
       children: [{ title: 'c', body: '## Context\n## Task\n## Done When\n## Out of scope', status: 'backlog' }],
     });
     const r = approveRefine(db, e);

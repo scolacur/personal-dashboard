@@ -301,6 +301,24 @@
   .child-title {
     font-weight: 600;
   }
+  // PD-634: a child that will NOT be born refined — the exception, so it is the one marked.
+  .child-unrefined {
+    font-size: var(--font-size-xs);
+    color: var(--status-warn);
+    border: 1px solid var(--status-warn);
+    border-radius: 999px;
+    padding: 0 var(--space-sm);
+    white-space: nowrap;
+  }
+}
+
+// PD-634: a Populate shows the rewritten Epic description above its members.
+.proposal-section-label {
+  margin: var(--space-sm) 0 var(--space-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
 }
 
 .proposal-actions {

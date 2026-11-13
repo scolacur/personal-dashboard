@@ -67,3 +67,30 @@ describe('validateProposalShape', () => {
     ).toMatch(/does not queue tickets/);
   });
 });
+
+describe('validateProposalShape — a Populate carries the Epic body (PD-634)', () => {
+  const children = [{ title: 'c', body: ROBOT_BODY, status: 'backlog' as const, assignee: 'robot' as const }];
+
+  it('rejects a decompose on an Epic with no body, telling the agent what to send', () => {
+    expect(validateProposalShape({ mode: 'decompose', children }, { targetIsEpic: true })).toMatch(
+      /Populate requires the Epic's rewritten `body`/,
+    );
+    expect(validateProposalShape({ mode: 'decompose', body: '  ', children }, { targetIsEpic: true })).toMatch(
+      /rewritten `body`/,
+    );
+  });
+
+  it('accepts a decompose on an Epic that carries the rewritten body', () => {
+    expect(validateProposalShape({ mode: 'decompose', body: 'Reframed.', children }, { targetIsEpic: true })).toBeNull();
+  });
+
+  it('does not require a body for a split of an ordinary ticket', () => {
+    expect(validateProposalShape({ mode: 'decompose', children }, { targetIsEpic: false })).toBeNull();
+    expect(validateProposalShape({ mode: 'decompose', children })).toBeNull();
+  });
+
+  it('accepts a child that opts out of being born refined', () => {
+    const p: RefineProposal = { mode: 'decompose', children: [{ ...children[0], refined: false }] };
+    expect(validateProposalShape(p)).toBeNull();
+  });
+});
