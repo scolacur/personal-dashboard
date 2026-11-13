@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-092](DECISIONS/D-092-habits-are-a-second-shared-domain-store.md)** — Habits are a second shared domain store in `apps/server/src/lib/`, beside the daily log — not widget tables, and not daily-log columns
 - **[D-091](DECISIONS/D-091-robot-work-enters-the-queue-only-refined.md)** — Robot work enters the Queue only refined — one predicate, enforced at every door the server owns, with the loop as backstop
 - **[D-090](DECISIONS/D-090-the-daily-log-is-one-shared-domain-store.md)** — The daily log is one shared store in `apps/server/src/lib/` — the first shared *domain* table, and still not a firewall
 - **[D-089](DECISIONS/D-089-epic-refined-means-the-decomposition-holds.md)** — On an Epic, `refined` means the decomposition holds — and a membership change clears it automatically

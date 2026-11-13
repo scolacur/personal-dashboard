@@ -763,3 +763,74 @@ and survive a cache clear, unlike the per-device *layout* override D-053 establi
 _Avoid_: the retired registry field `WidgetMeta.pages` and its `widgetsForPage()` reader — the
 registry no longer declares placement. Also avoid conflating membership with **layout**: membership
 is *which* widgets, layout is *where and how big*.
+
+### Habit Tracker
+
+> ⚠️ **STATUS — designed, not built (grilled 2026-11-13).** These definitions describe the agreed
+> target. Nothing below exists in code yet; do not cite it as current behaviour.
+
+**Habit Tracker**:
+The widget for **recurring** things you mean to do — daily habits and the morning routine alike.
+It absorbs what were once planned as two widgets, the Habit Log and the Morning Routine.
+_Avoid_: "Habit Log" and "Morning Routine" as widget names (retired); "Task Tracker", which is the
+ticket board (pending rename to Project Tracker); "task" or "todo" for a habit — one-off todos with
+deadlines belong to the separate TODO app, not here.
+
+**Habit**:
+A thing that recurs, with at most one completion per day. Habits are ordered by hand among their siblings (see **Set**). Every
+habit has a **schedule** of one of two kinds:
+
+- **Days of week** — due on a chosen set of weekdays (default: all seven). On other days it is not
+  on the list at all.
+- **N times per week** — due every day of the week until it has been done N times; after that it
+  stays on the list shown as done for the week ("✓ 3/3 this week").
+
+A schedule takes effect from the habit day it is set; past days are always judged by the schedule
+that applied then, so changing a schedule never rewrites history. Renaming never does either.
+
+**Archived habit**:
+A habit retired from Today but kept with its full history, still viewable and editable in the Log.
+The normal way to stop a habit. Deleting is the separate, destructive act of erasing it and every
+completion.
+
+**Habit day**:
+The day a completion counts toward. A habit day runs from the **day boundary** (one global setting,
+default 4am) to the next, in a single home timezone — so a check-off at 1:30am belongs to the
+previous day, and every device agrees on what "today" is.
+_Avoid_: "reset time" — nothing is reset; the list for a new habit day is simply a different day.
+
+**Habit week**:
+Monday through Sunday, counted in habit days. The period for an N-times-per-week habit, and the row
+of the By Habit calendar. Fixed, not a setting.
+
+**Extra** (extra completion):
+A completion of a days-of-week habit on a day it was not due. Recorded and shown, but it neither
+extends nor breaks the streak.
+
+**Streak**:
+How many consecutive due periods were met. For a days-of-week habit the period is a due day, and
+days it is not due neither extend nor break the streak (an **extra** does not count). For an N-per-week habit the period is a
+week, met when N is reached.
+
+**Metric**:
+An optional daily value logged from the Habit Tracker beside the habits — never due, no schedule, no
+streak, and never part of set progress. A metric has a **type**: **Time** (a time of day, e.g.
+"Morning Routine Done By"), **Number** (e.g. drinks — 0 is a real value, distinct from not logged),
+or **Choice** (one or more options picked from a list the user edits, e.g. Drugs). Not logged and
+logged-as-zero are different things.
+_Avoid_: calling a metric a habit, or giving habits a value type — a habit is always done-or-not.
+Something to abstain from is a habit phrased positively ("No weed"), not a metric.
+
+**Set**:
+A habit with children — habits, metrics, or further sets, to any depth; each item has at most one
+parent, and siblings keep a manual order. A set is not ticked as a thing in itself: it **is done** on
+a habit day when every child due that day is done, and it is due on any day at least one child is.
+Its streak follows from that. Ticking a set is a shortcut that ticks (or unticks) all its due
+children. Metrics inside a set never count toward it. The **morning routine** is a set ("Morning
+Routine"), as are "Vitamins" and "Meds" within it.
+_Avoid_: "tag" — tags were designed and then dropped in favour of sets; "group" or "routine" as a
+separate concept from a set.
+
+**Set progress**:
+For a set on a given habit day, how many of its due children are done ("2/3"), counting a nested
+set as one child that is done or not.
