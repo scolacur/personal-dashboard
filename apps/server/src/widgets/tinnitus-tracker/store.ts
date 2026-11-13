@@ -173,11 +173,16 @@ export function getEntry(db: Database.Database, id: number): TinnitusEntry | nul
   return row ? rowToEntry(row) : null;
 }
 
-export function listEntries(db: Database.Database, opts: { limit?: number } = {}): TinnitusEntry[] {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 500);
+/**
+ * Newest first. `since` (unix ms, inclusive) is for the Trends tab's range; with it the cap rises
+ * to 10,000, which is years of readings at a few a day.
+ */
+export function listEntries(db: Database.Database, opts: { limit?: number; since?: number } = {}): TinnitusEntry[] {
+  const max = opts.since === undefined ? 500 : 10_000;
+  const limit = Math.min(Math.max(opts.limit ?? (opts.since === undefined ? 50 : max), 1), max);
   const rows = db
-    .prepare(`${ENTRY_SELECT} ORDER BY e.recorded_at DESC, e.id DESC LIMIT ?`)
-    .all(limit) as EntryRow[];
+    .prepare(`${ENTRY_SELECT} WHERE e.recorded_at >= ? ORDER BY e.recorded_at DESC, e.id DESC LIMIT ?`)
+    .all(opts.since ?? 0, limit) as EntryRow[];
   return rows.map(rowToEntry);
 }
 

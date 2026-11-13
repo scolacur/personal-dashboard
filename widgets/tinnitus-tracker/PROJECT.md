@@ -27,6 +27,22 @@ correlations: PD-706 (Chart + correlation views).
   server is reachable, retrying on `online`, on tab focus, and every 20 s. A "N pending sync" line
   shows meanwhile. Off-LAN reach itself is Tailscale (D-030 — off-LAN access via the Tailscale tailnet).
 
+### Trends tab (PD-706)
+
+"Log | Trends" tabs at the top of the page. A 7d / 30d / 90d / All range (default 30d) sits above
+every view, and all views use that same slice.
+
+- **Intensity over time**: every reading as a dot, with a line through each day's average. Tap a dot
+  to see its details. Hand-drawn SVG; there is no chart dependency.
+- **By tag**: for each tag in range, a bar for the average with the tag and a tick for the average
+  without it. A tag counts only if it is on that entry.
+- **By time of day**: Morning 5–12, Afternoon 12–17, Evening 17–22, Night 22–5.
+- Every group shows its reading count. Groups with fewer than 5 readings (`MIN_N`) are faded and
+  marked "too few to tell".
+- All the arithmetic is in `stats.ts`, unit-tested. `GET /entries?since=` serves the range.
+- Not yet: weather, in PD-713 (Weather view at home location), and daily-log correlations, which
+  wait for PD-694 (Import the 2025 Daily Log into a shared daily-log store).
+
 ### Known limits
 
 - The outbox only helps once the page is loaded. Opening the page cold with no signal fails,

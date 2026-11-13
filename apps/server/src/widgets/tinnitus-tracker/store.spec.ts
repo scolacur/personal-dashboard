@@ -128,3 +128,13 @@ describe('listEntries', () => {
     expect(listEntries(db).map((e) => e.clientId)).toEqual(['a', 'c', 'b']);
   });
 });
+
+describe('listEntries since', () => {
+  it('returns only entries at or after `since`, past the default 50 cap', () => {
+    for (let i = 0; i < 60; i++) entry({ clientId: `r${i}`, recordedAt: NOW - i * 1000 });
+    entry({ clientId: 'old', recordedAt: NOW - 10_000_000 });
+    const got = listEntries(db, { since: NOW - 59_000 });
+    expect(got).toHaveLength(60);
+    expect(got.some((e) => e.clientId === 'old')).toBe(false);
+  });
+});
