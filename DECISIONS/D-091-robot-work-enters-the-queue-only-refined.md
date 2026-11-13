@@ -61,6 +61,7 @@ client acknowledgement this decision does not move.
 | `PATCH` an Epic → `queue` that would arm a robot member | refused on the Epic-level criteria; nothing is armed |
 | "Approve & queue" | refused the same way, judged on the ticket *after* approval (so approving satisfies its own `refined`) |
 | ✓ Mark refined / "Approve & resume" re-arming a stale Epic | the mark succeeds; robot members are held in `backlog` if the Epic-level criteria fail, and `epic_resume_held` is logged |
+| `POST` a ticket into `queue` | cannot reach the state: `createTicket` lands a new member in `backlog` (D-080), and `createGuardFailure` requires an Epic, so no create guard is needed (PD-709, closed) |
 
 The guard lives in `ticket-guards.ts` with the other PD-542 HTTP-boundary rules, injected with a
 read context so it stays DB-free; the store reuses it for Approve & queue.
