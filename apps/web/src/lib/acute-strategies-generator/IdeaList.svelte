@@ -14,7 +14,6 @@
 <div class="idea-list">
   <div class="list-header">
     <span class="count">{ideas.length} idea{ideas.length !== 1 ? 's' : ''}</span>
-    <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
   </div>
 
   {#if ideas.length === 0}
@@ -40,6 +39,8 @@
       {/each}
     </ul>
   {/if}
+
+  <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
 </div>
 
 <style lang="scss" src="./IdeaList.scss"></style>

@@ -220,11 +220,20 @@
   padding: var(--space-xs) var(--space-md);
 }
 
+// The add button is the footer's primary affordance (Steve: "large and centered at the bottom"),
+// so the footer stacks — pool size above, full-width button pinned to the bottom of the card.
 .generator-footer {
+  margin-top: auto;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-sm);
+}
+
+// On a dashboard card the frame floats a control in each bottom corner (↺ flip, + ticket), so the
+// button keeps clear of both rather than running underneath them.
+.asg[data-variant='widget'] .generator-footer {
+  padding-inline: calc(var(--space-xl) + var(--space-sm));
 }
 
 .pool-size {
@@ -234,24 +243,20 @@
 }
 
 .add-idea-btn {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  width: 100%;
+  max-width: 24rem;
+  background: var(--accent);
+  border: none;
   border-radius: var(--radius);
-  color: var(--text);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  padding: var(--space-xs) var(--space-md);
+  color: var(--on-accent);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  padding: var(--space-sm) var(--space-lg);
   cursor: pointer;
-  flex-shrink: 0;
 
   &:hover {
-    background: var(--border);
+    opacity: 0.9;
   }
-}
-
-.asg[data-variant='widget'] .add-idea-btn {
-  font-size: var(--font-size-xs);
-  padding: var(--space-xs) var(--space-sm);
 }
 
 /* ── Manage view ───────────────────────────────────────────── */
