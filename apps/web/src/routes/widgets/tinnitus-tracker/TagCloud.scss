@@ -1,0 +1,81 @@
+.cloud {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-sm);
+
+  &.compact {
+    gap: var(--space-xs);
+
+    .chip {
+      min-height: 2rem;
+      padding: 0 var(--space-sm);
+      font-size: var(--font-size-sm);
+    }
+  }
+}
+
+.chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 2.75rem min-height: a comfortable thumb target. */
+.chip {
+  min-height: 2.75rem;
+  padding: 0 var(--space-md);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-base);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+
+  &.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+
+  &.add {
+    border-style: dashed;
+    color: var(--muted);
+  }
+
+  &.draft {
+    width: 8rem;
+    cursor: text;
+    outline: none;
+    border-color: var(--accent);
+  }
+}
+
+.hide {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.4rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.edit-toggle {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: var(--space-sm);
+  cursor: pointer;
+  text-decoration: underline;
+}

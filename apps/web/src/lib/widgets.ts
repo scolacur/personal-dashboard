@@ -2,6 +2,7 @@ import type { Component } from 'svelte';
 import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
 import BuySellTrade from './BuySellTrade.svelte';
 import IdTracker from './IdTracker.svelte';
+import TinnitusTracker from './TinnitusTracker.svelte';
 import MusicTracker from './MusicTracker.svelte';
 import DevOpsAgentWidget from '../routes/devops/AgentWidget.svelte';
 import DevOpsJobsWidget from '../routes/devops/JobsWidget.svelte';
@@ -106,6 +107,17 @@ export const widgets: WidgetMeta[] = [
       component: IdTracker,
       span: { cols: 2, rows: 2 },
       // No `flippable` (D-062): the card is a summary, the page is where mixes are managed.
+    },
+  },
+  {
+    id: 'tinnitus-tracker',
+    title: 'Tinnitus Tracker',
+    description: 'Log tinnitus intensity with tags and notes.',
+    route: '/widgets/tinnitus-tracker',
+    embed: {
+      component: TinnitusTracker,
+      span: { cols: 1, rows: 2 },
+      // No `flippable` (D-062): the card is quick capture; history and editing live on the page.
     },
   },
   {
