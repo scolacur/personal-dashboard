@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { HIGHEST_DECISION_ON_DISK } from './decision-seed.generated';
 
 /**
  * Decision-id allocation (PD-557, part of PD-556 — allocate decision ids at authoring time).
@@ -44,31 +45,28 @@ import type Database from 'better-sqlite3';
  */
 
 /**
- * The highest `D-NNN` on `origin/main` when this counter was introduced.
+ * The number a fresh counter seeds at: the highest `D-NNN` that has a file in `DECISIONS/`.
  *
- * Seeding below a live id would silently re-issue it, so this constant is not trusted on its own:
- * `decision-ids.spec.ts` derives the real highest number from `DECISIONS/` and fails if this value
- * has fallen behind. Bump it when that test says to — it is a checked literal, not a guess.
+ * Seeding below a live id would silently re-issue it, so the value is not trusted on its own:
+ * `decision-ids.spec.ts` derives the real highest number from `DECISIONS/` and fails if this has
+ * fallen behind. The fix for that failure is `npm run decisions:index` — the command every new
+ * decision already requires — which regenerates `decision-seed.generated.ts` (PD-702).
  *
- * It is a literal rather than a runtime scan because the server image does not contain `DECISIONS/`
- * (see `docker/Dockerfile` — the runtime stage copies only `dist`, `build` and `node_modules`), so
- * there is nothing on disk in production to scan. The derivation happens in CI instead.
+ * It is baked into source rather than scanned at runtime because the server image does not contain
+ * `DECISIONS/` (see `docker/Dockerfile` — the runtime stage copies only `dist`, `build` and
+ * `node_modules`), so there is nothing on disk in production to scan.
  *
- * **Raised by the PD-560 cutover.** It seeded at 79 — the highest number that existed when
- * the counter shipped — and the cutover then allocated `D-080` through `D-087` from this very
- * counter to number the eight decisions left in `DECISIONS/incoming/`, plus `D-088` for the
- * decision recording the change itself. Deliberately allocated rather
- * than reserved in advance: a reservation is wrong the moment one more decision is authored before
- * the cutover, and it would have meant two places computing the next free number. Now there is one.
+ * **It only matters for a fresh DB.** The counter row is seeded once, ever (`INSERT OR IGNORE`
+ * below), so production's live counter is unaffected by this value changing.
  *
- * The inbox is gone, so nothing else can ever need reconciling against this value again.
- *
- * **Raised to 89 by PD-610**, which authored [[D-089]], **to 90 by PD-693**, which authored
- * [[D-090]], and **to 91 by PD-632**, which authored [[D-091]]. Routine: every new decision file
- * trips the spec above, and the fix is always to raise this to match. Never lower it — the counter has already handed out ids above the old value in
- * production.
+ * **History.** It began as a hand-maintained literal: 79 when the counter shipped, raised by the
+ * PD-560 cutover (which allocated `D-080`–`D-088` from this very counter), then bumped by hand for
+ * every decision after — PD-610 (D-089), PD-693 (D-090), PD-632 (D-091). Each bump was the same
+ * mechanical edit, and each new decision file broke `npm run verify` until it was made. PD-702
+ * replaced the literal with the generated floor. The old rule "never lower it" is now enforced by
+ * the generator itself (`renderSeedModule` takes the max), not by a comment.
  */
-export const HIGHEST_DECISION_AT_SEED = 91;
+export const HIGHEST_DECISION_AT_SEED = HIGHEST_DECISION_ON_DISK;
 
 /** `80` → `D-080`. Zero-padded to three digits, matching every existing decision filename. */
 export function formatDecisionId(num: number): string {

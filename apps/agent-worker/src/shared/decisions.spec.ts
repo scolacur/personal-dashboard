@@ -3,12 +3,15 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import {
+  DECISION_SEED_MODULE,
   DECISIONS_INDEX,
   findRepoRoot,
   loadDecisions,
   parseDecisionFilename,
   parseDecisionHeading,
+  readSeedFloor,
   renderDecisionsIndex,
+  renderSeedModule,
   type Decision,
 } from './decisions';
 
@@ -78,6 +81,33 @@ describe('renderDecisionsIndex', () => {
   });
 });
 
+describe('the decision-id seed floor (PD-702)', () => {
+  const floorOf = (contents: string) => readSeedFloor(contents);
+
+  it('is the highest decision number on disk', () => {
+    expect(floorOf(renderSeedModule([decision(12, 'a'), decision(40, 'b'), decision(7, 'c')], 0))).toBe(40);
+  });
+
+  it('rises when a new decision file appears', () => {
+    const before = renderSeedModule([decision(90, 'a')], 0);
+    expect(floorOf(renderSeedModule([decision(90, 'a'), decision(91, 'b')], floorOf(before)))).toBe(91);
+  });
+
+  it('never lowers — deleting a decision file leaves the floor where it was', () => {
+    // The production counter has handed out ids above any on-disk value; a lower floor would let a
+    // fresh DB re-issue one. This used to be a comment ("never lower it"), now it is the generator.
+    expect(floorOf(renderSeedModule([decision(85, 'a')], 91))).toBe(91);
+  });
+
+  it('reads a missing module as 0, so the first generation works', () => {
+    expect(readSeedFloor(null)).toBe(0);
+  });
+
+  it('refuses to guess when the module exists but is unreadable', () => {
+    expect(() => readSeedFloor('export const SOMETHING_ELSE = 3;')).toThrow(/refusing to guess/);
+  });
+});
+
 describe('the real decision log', () => {
   // Loaded inside each test, never at describe-time: a throw while collecting takes the whole file
   // down and reports "no tests", which is red but anonymous. Inside a test, the thrown message —
@@ -96,6 +126,11 @@ describe('the real decision log', () => {
   it('DECISIONS.md is in sync — regenerate with `npm run decisions:index`', () => {
     const onDisk = readFileSync(path.join(REPO_ROOT, DECISIONS_INDEX), 'utf8');
     expect(onDisk).toBe(renderDecisionsIndex(loadDecisions(REPO_ROOT)));
+  });
+
+  it('the seed floor module is in sync — regenerate with `npm run decisions:index` (PD-702)', () => {
+    const onDisk = readFileSync(path.join(REPO_ROOT, DECISION_SEED_MODULE), 'utf8');
+    expect(onDisk).toBe(renderSeedModule(loadDecisions(REPO_ROOT), readSeedFloor(onDisk)));
   });
 
   it('has no decision inbox — every decision is numbered when it is written (PD-560)', () => {

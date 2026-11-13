@@ -126,8 +126,8 @@ describe('HIGHEST_DECISION_AT_SEED', () => {
 
     expect(highest).toBeGreaterThan(0); // the scan itself works — an empty result must not pass
 
-    // If this fails, set HIGHEST_DECISION_AT_SEED to `highest` in decision-ids.ts. Do not lower it:
-    // the counter has already handed out ids above the old value in production.
+    // If this fails, run `npm run decisions:index` — it regenerates decision-seed.generated.ts
+    // (PD-702). Never hand-edit that file; the generator is what keeps the floor from ever lowering.
     expect(HIGHEST_DECISION_AT_SEED).toBeGreaterThanOrEqual(highest);
   });
 });
