@@ -1,0 +1,100 @@
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+/* Name above the track, figures below: a phone has no room for a label column beside the bar. */
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  &.thin .bar,
+  &.thin .tick {
+    opacity: 0.35;
+  }
+}
+
+.name {
+  font-size: var(--font-size-sm);
+
+  .sub {
+    margin-left: var(--space-xs);
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+  }
+}
+
+/* Recessive track = the full 0–10 scale. */
+.track {
+  position: relative;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+/* Square at the baseline, 4px rounded data-end. */
+.bar {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background: var(--accent);
+}
+
+.tick {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 24px;
+  border-radius: 1.5px;
+  background: var(--text);
+  transform: translateX(-50%);
+}
+
+.figures {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.few {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.legend {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+}
+
+.key-bar {
+  width: 14px;
+  height: 10px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.key-tick {
+  width: 3px;
+  height: 14px;
+  border-radius: 1.5px;
+  background: var(--text);
+}

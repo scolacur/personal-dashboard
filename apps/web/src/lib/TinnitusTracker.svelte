@@ -14,6 +14,8 @@
   import TagCloud from '../routes/widgets/tinnitus-tracker/TagCloud.svelte';
   import EntryList from '../routes/widgets/tinnitus-tracker/EntryList.svelte';
   import EntryEditModal from '../routes/widgets/tinnitus-tracker/EntryEditModal.svelte';
+  import TrendsView from '../routes/widgets/tinnitus-tracker/TrendsView.svelte';
+  import Tabs from '$lib/Tabs.svelte';
 
   /**
    * Tinnitus Tracker (PD-705). `page` is the mobile-first full screen. `widget` is the dashboard
@@ -28,6 +30,12 @@
 
   let { variant }: Props = $props();
   const compact = $derived(variant === 'widget');
+
+  const TABS = [
+    { id: 'log', label: 'Log' },
+    { id: 'trends', label: 'Trends' },
+  ];
+  let tab = $state('log');
 
   const TAGS_CACHE_KEY = 'tinnitus-tracker:tags';
   const RETRY_MS = 20_000;
@@ -174,6 +182,7 @@
   });
 </script>
 
+{#snippet capture()}
 <div class="tinnitus" class:compact>
   <TagCloud {tags} bind:selected {compact} onAdd={addTag} onHide={removeTag} />
 
@@ -226,5 +235,21 @@
     />
   {/if}
 </div>
+{/snippet}
+
+{#if compact}
+  {@render capture()}
+{:else}
+  <!-- Log | Trends (PD-706). Trends mounts on selection, so it refetches and includes new entries. -->
+  <Tabs tabs={TABS} bind:active={tab} storeKey="tinnitus-tracker" label="Tinnitus Tracker sections">
+    {#snippet panel(id)}
+      {#if id === 'trends'}
+        <TrendsView />
+      {:else}
+        {@render capture()}
+      {/if}
+    {/snippet}
+  </Tabs>
+{/if}
 
 <style lang="scss" src="./TinnitusTracker.scss"></style>

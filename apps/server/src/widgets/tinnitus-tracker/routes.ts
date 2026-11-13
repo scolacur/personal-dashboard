@@ -48,9 +48,11 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
   /* ── Entries ──────────────────────────────── */
 
   app.get(`${BASE}/entries`, async (request) => {
-    const q = request.query as { limit?: string };
+    const q = request.query as { limit?: string; since?: string };
     const limit = q.limit === undefined ? undefined : Number(q.limit) || undefined;
-    return { entries: listEntries(db, { limit }) };
+    const sinceNum = q.since === undefined ? NaN : Number(q.since);
+    const since = Number.isInteger(sinceNum) && sinceNum >= 0 ? sinceNum : undefined;
+    return { entries: listEntries(db, { limit, since }) };
   });
 
   /** Idempotent on `clientId`: 201 for a new entry, 200 for one the offline queue already sent. */

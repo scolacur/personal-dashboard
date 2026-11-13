@@ -51,6 +51,11 @@ export async function fetchEntries(limit = 50): Promise<TinnitusEntry[]> {
   return (await request<{ entries: TinnitusEntry[] }>(`/entries?limit=${limit}`)).entries;
 }
 
+/** Every entry at or after `since` (unix ms), newest first. For the Trends tab. */
+export async function fetchEntriesSince(since: number): Promise<TinnitusEntry[]> {
+  return (await request<{ entries: TinnitusEntry[] }>(`/entries?since=${since}`)).entries;
+}
+
 export function createEntry(input: CreateTinnitusEntryInput): Promise<TinnitusEntry> {
   return request<TinnitusEntry>('/entries', withBody('POST', input));
 }

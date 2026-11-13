@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TinnitusEntry } from '@dashboard/shared';
+  import { tinnitusLabel, type TinnitusEntry } from '@dashboard/shared';
   import type { PendingEntry } from './queue';
   import { formatWhen } from './time';
 
@@ -21,6 +21,7 @@
       <li class="row pending">
         <span class="value">{p.intensity}</span>
         <span class="body">
+          {#if tinnitusLabel(p.intensity)}<span class="label">{tinnitusLabel(p.intensity)}</span>{/if}
           <span class="when">{formatWhen(p.recordedAt)} · <em>pending sync</em></span>
           {#if p.tags.length}<span class="tags">{p.tags.join(' · ')}</span>{/if}
           {#if p.notes}<span class="notes">{p.notes}</span>{/if}
@@ -32,6 +33,7 @@
         <button type="button" class="row" onclick={() => onEdit(e)} aria-label="Edit entry from {formatWhen(e.recordedAt)}">
           <span class="value">{e.intensity}</span>
           <span class="body">
+            {#if tinnitusLabel(e.intensity)}<span class="label">{tinnitusLabel(e.intensity)}</span>{/if}
             <span class="when">{formatWhen(e.recordedAt)}</span>
             {#if e.tags.length}<span class="tags">{e.tags.join(' · ')}</span>{/if}
             {#if e.notes}<span class="notes">{e.notes}</span>{/if}
