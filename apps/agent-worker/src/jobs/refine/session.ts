@@ -17,6 +17,8 @@ export interface RefineTurnInput {
   resumeSessionId?: string;
   /** Called when the agent invokes propose_commit (PD-269); records the commit proposal. */
   onProposal?: (proposal: RefineProposal) => void;
+  /** PD-634: the ticket is an Epic, so a decompose is a Populate and must carry the Epic's body. */
+  targetIsEpic?: boolean;
 }
 
 export interface RefineTurnResult {
@@ -55,6 +57,7 @@ function refineOptions(
   contextPack: string,
   resumeSessionId?: string,
   onProposal?: (proposal: RefineProposal) => void,
+  targetIsEpic?: boolean,
 ) {
   return {
     model: config.model,
@@ -70,7 +73,7 @@ function refineOptions(
     allowedTools: onProposal ? [...READ_ONLY_TOOLS, PROPOSE_TOOL_NAME] : READ_ONLY_TOOLS,
     // Headless: deny any tool outside the allowlist without prompting (would hang).
     permissionMode: 'dontAsk' as const,
-    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal) } } : {}),
+    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic }) } } : {}),
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 }
@@ -91,7 +94,7 @@ export async function runRefineTurn(input: RefineTurnInput): Promise<RefineTurnR
 
   for await (const message of query({
     prompt: input.prompt,
-    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
+    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal, input.targetIsEpic),
   })) {
     if (message.type === 'result') result = resultFrom(message);
   }
@@ -126,6 +129,8 @@ export interface OpenSessionInput {
   resumeSessionId?: string;
   /** Called when the agent invokes propose_commit (PD-269); records the commit proposal. */
   onProposal?: (proposal: RefineProposal) => void;
+  /** PD-634: the ticket is an Epic, so a decompose is a Populate and must carry the Epic's body. */
+  targetIsEpic?: boolean;
 }
 
 /** Factory type so the warm-session manager and its tests can swap the real SDK out. */
@@ -205,7 +210,7 @@ export const openWarmSession: OpenRefineSession = (input) => {
 
   const q = query({
     prompt: input$.stream,
-    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal),
+    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal, input.targetIsEpic),
   });
 
   // Drain the query in the background, routing each completed turn back to its `send` caller.

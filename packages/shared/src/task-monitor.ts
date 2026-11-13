@@ -814,6 +814,10 @@ export interface RefineChildProposal {
    *  decompose further. Omitted/null = the loop default, which is the expected case — decomposing
    *  stays the preferred move, and raising the cap is the escape hatch. */
   maxTurns?: number | null;
+  /** PD-634: whether the child is born refined. Omitted = true — the Refine session IS the read-through.
+   *  The agent sets false only for a placeholder that needs its own session. The server downgrades a
+   *  robot-assigned child whose body fails `isReady`, so the flag never claims more than that check. */
+  refined?: boolean;
 }
 
 /**
@@ -828,7 +832,8 @@ export interface RefineChildProposal {
  */
 export interface RefineProposal {
   mode: RefineCommitMode;
-  /** refine_in_place: the rewritten body + routing for the SAME ticket. */
+  /** refine_in_place: the rewritten body + routing for the SAME ticket. A decompose whose target is
+   *  an Epic (Populate) REQUIRES it: the Epic's rewritten description (PD-634). */
   body?: string;
   status?: TicketStatus;
   assignee?: TicketAssignee | null;

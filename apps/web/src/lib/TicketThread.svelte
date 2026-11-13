@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { applyMarkdown } from '$lib/markdown';
-  import type { RefineMessage, RefineProposal } from '@dashboard/shared';
+  import type { RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
   import { isReady, latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
   import {
     approveRefine,
@@ -71,6 +71,12 @@
   const notReady = $derived(
     proposal?.mode === 'refine_in_place' && !isReady(proposal.body ?? null),
   );
+
+  // PD-634: mirrors `approveRefine` — a child lands refined unless the agent said otherwise, or it is
+  // robot-assigned and fails the Ready check. Shown so the panel displays what approval will write.
+  function childBornRefined(child: RefineChildProposal): boolean {
+    return (child.refined ?? true) && (child.assignee !== 'robot' || isReady(child.body));
+  }
 
   // Scroll the thread to the latest message. Called explicitly on initial load and after
   // sending — NOT on every poll: a reactive $effect on `messages` re-scrolled every 5s (load
@@ -207,6 +213,13 @@
               </dl>
               {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
             {:else}
+              <!-- PD-634: approving a Populate rewrites the Epic's description and marks it refined,
+                   so the new description is shown here — the panel is the evidence the claim rests on. -->
+              {#if isEpic && proposal.body}
+                <p class="proposal-section-label">Epic description (rewritten)</p>
+                <pre class="proposal-body">{proposal.body}</pre>
+                <p class="proposal-section-label">Members</p>
+              {/if}
               <ul class="proposal-children">
                 {#each proposal.children ?? [] as child, i (i)}
                   <li>
@@ -218,6 +231,9 @@
                            property of approval, not of any one child. -->
                       <span class="child-assignee">{child.assignee ?? '—'}</span>
                       <span class="child-title">{child.title}</span>
+                      <!-- PD-634: children are born refined unless the agent opted out, or the
+                           server will downgrade a robot child whose body is not Ready-shaped. -->
+                      {#if !childBornRefined(child)}<span class="child-unrefined">not refined</span>{/if}
                     </div>
                     <pre class="proposal-body">{child.body}</pre>
                   </li>
