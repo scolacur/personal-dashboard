@@ -386,6 +386,21 @@ export interface CreateTicketInput {
   maxTurns?: number | null;
 }
 
+/**
+ * A ticket filed from a widget card's + button (PD-578 front door). Server-side it becomes a
+ * backlog Ticket in the widget triage-inbox Epic, stamped `source = 'widget:<widgetId>'`.
+ */
+export interface WidgetTicketInput {
+  /** Whatever Steve typed. First line becomes the title; all of it goes in the body. */
+  text: string;
+  widgetId: string;
+  widgetTitle: string;
+  /** The widget's own page, e.g. `/widgets/acute-strategies-generator`. */
+  route: string;
+  /** Open a Refine session on the new ticket ("grill me first"). */
+  refine?: boolean;
+}
+
 /** Partial update — any subset of these fields. */
 export interface UpdateTicketInput {
   title?: string;

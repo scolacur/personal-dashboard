@@ -13,6 +13,7 @@ import {
   type UpdateTicketInput,
 } from '@dashboard/shared';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
+import { fileWidgetTicket } from './widget-tickets';
 import {
   addRelation,
   appendRefineReply,
@@ -212,6 +213,18 @@ export function registerRoutes(
       if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
     }
+  });
+
+  // The + on every widget card: free text → a backlog Ticket in the widget triage-inbox Epic, with
+  // the widget as provenance; `refine: true` also opens a Refine session ("grill me first").
+  // Its own route rather than POST /tickets because the server owns the Epic choice and the
+  // title/provenance shape — the client sends only what it knows: the text and which widget.
+  app.post(`${base}/widget-tickets`, async (request, reply) => {
+    const result = fileWidgetTicket(db, (request.body ?? {}) as Record<string, unknown>);
+    if (!result.ok) {
+      return reply.status(result.code === 'NO_PROJECT' ? 500 : 400).send({ error: result.message, code: result.code });
+    }
+    return reply.status(201).send({ ticket: result.ticket, refineStarted: result.refineEvent !== null });
   });
 
   // Every live Epic's roll-up + derived lane (D-054) — the bulk read the board fetches alongside

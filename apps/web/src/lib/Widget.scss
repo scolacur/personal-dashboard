@@ -144,7 +144,9 @@
 .expand-link {
   position: absolute;
   bottom: 0.625rem;
-  left: 0.625rem;
+  // Clear of the bottom-left + (WidgetTicketButton: 28px at the same 0.625rem inset).
+  left: calc(0.625rem + 28px + var(--space-sm));
+  line-height: 28px;
   z-index: 2;
   font-size: var(--font-size-xs);
   color: var(--muted);
