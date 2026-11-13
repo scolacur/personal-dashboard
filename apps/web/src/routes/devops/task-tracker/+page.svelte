@@ -56,8 +56,8 @@
     type TicketWrite,
   } from '../queue-gate';
   import type { QueueCriterion } from '@dashboard/shared';
-  import { planStaleInvalidation, type StaleInvalidationPlan } from '../epic-members';
-  import StaleEpicPauseModal from './StaleEpicPauseModal.svelte';
+  import { joinsEpic, joinWriteOpts, planEpicJoin, unrefinedToast, type EpicJoinChoice, type EpicJoinPlan } from '../epic-join';
+  import EpicJoinModal from '../EpicJoinModal.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -265,52 +265,69 @@
     epicPickerOpen = true;
   }
 
-  /* ── Joining an Epic (PD-611 / D-089) ────────────────────────────
+  /* ── Joining an Epic (PD-611, PD-703 / D-089) ────────────────────────────
      A ticket joining a **refined** Epic falsifies its claim that the current member set is the
-     agreed breakdown, so the server un-refines it. That part is automatic and is not asked about
-     (D-089 §3). What IS asked about is the pause it triggers on a running Epic, because that moves
-     other tickets out of the Queue — a consequence for work the human was not thinking about.
-
-     Tell, don't ask, when nothing moves: an Epic in Backlog just gets a toast. */
-  let stalePause = $state<{
-    plan: StaleInvalidationPlan;
-    epicTitle: string;
-    run: (keepRunning: boolean) => Promise<void>;
+     agreed breakdown, so the server un-refines it, automatically (D-089 §3). PD-703 says so
+     *before* the write, in one modal that also carries PD-611's pause question for a running Epic.
+     Every choice un-refines; Cancel adds nothing. An Epic that is not refined gets no modal. */
+  let joinRequest = $state<{
+    plan: EpicJoinPlan;
+    joining: string;
+    run: (choice: EpicJoinChoice) => Promise<void>;
   } | null>(null);
 
-  /** The one-click way back, named wherever an Epic has just gone stale. */
-  function staleToast(epic: AgentTicket): string {
-    const label = epic.displayId ?? epic.title;
-    return `Epic ${label} now needs re-refinement — its members changed. Re-refine it, or press ✓ Mark refined on it if the breakdown still holds.`;
+  async function chooseJoin(choice: EpicJoinChoice) {
+    const req = joinRequest;
+    joinRequest = null;
+    if (req) await req.run(choice);
   }
 
-  async function commitTicketEpic(ticketId: number, epicId: number | null, keepRunning: boolean) {
-    error = null;
-    stalePause = null;
+  /** After an add has un-refined `epicId`: re-refine it and go there, or say how to. */
+  async function afterJoin(plan: EpicJoinPlan, choice: EpicJoinChoice) {
+    if (!choice.reRefine) {
+      showToast(unrefinedToast(plan.epic));
+      return;
+    }
     try {
-      await api.updateTicket(ticketId, { epicId }, keepRunning ? { keepEpicRunning: true } : {});
+      await api.startRefine(plan.epic.id);
+    } catch (e) {
+      // Most likely a session is already open on the Epic: the add stands, and going to the Epic is
+      // still the right next step.
+      showToast(e instanceof Error ? e.message : String(e));
+    }
+    if (plan.epic.displayId) await goto(`/devops/tickets/${plan.epic.displayId}`);
+  }
+
+  /** Returns whether the write landed. */
+  async function commitTicketEpic(ticketId: number, epicId: number | null, opts: { keepEpicRunning?: boolean }): Promise<boolean> {
+    error = null;
+    try {
+      await api.updateTicket(ticketId, { epicId }, opts);
       await load(true);
+      return true;
     } catch (e) {
       // Re-parenting a queued Robot ticket is a door into the gate too (D-091 §4).
-      if (await openServerGate(e, ticketId, { epicId }, () => commitTicketEpic(ticketId, epicId, keepRunning))) return;
+      if (await openServerGate(e, ticketId, { epicId }, () => commitTicketEpic(ticketId, epicId, opts).then(() => {}))) return false;
       const msg = e instanceof Error ? e.message : String(e);
       showToast(msg);
+      return false;
     }
   }
 
   async function setTicketEpic(ticketId: number, epicId: number | null) {
-    const target = epicId === null ? null : (tickets.find((t) => t.id === epicId) ?? null);
-    const plan = target === null ? null : planStaleInvalidation(target, membersOf(target.id, tickets));
-    if (plan !== null && plan.needsConfirm && target !== null) {
-      stalePause = {
-        plan,
-        epicTitle: target.displayId ?? target.title,
-        run: (keepRunning) => commitTicketEpic(ticketId, epicId, keepRunning),
-      };
+    const ticket = tickets.find((t) => t.id === ticketId) ?? null;
+    const plan = joinsEpic(ticket, epicId) ? planEpicJoin(tickets.find((t) => t.id === epicId), tickets) : null;
+    if (plan === null) {
+      await commitTicketEpic(ticketId, epicId, {});
       return;
     }
-    await commitTicketEpic(ticketId, epicId, false);
-    if (plan !== null && target !== null) showToast(staleToast(target));
+    joinRequest = {
+      plan,
+      joining: ticket?.displayId ?? ticket?.title ?? 'this ticket',
+      run: async (choice) => {
+        if (await commitTicketEpic(ticketId, epicId, joinWriteOpts(plan, choice))) await afterJoin(plan, choice);
+      },
+    };
   }
 
   function visibleTickets(): AgentTicket[] {
@@ -400,9 +417,23 @@
     formOpen = false;
   }
 
-  async function submitForm() {
+  async function submitForm(join: { plan: EpicJoinPlan; choice: EpicJoinChoice } | null = null) {
     const title = form.title.trim();
     if (!title || form.projectId === null) return;
+    // PD-703: joining a refined Epic is asked about first, before the Queue gate below. A drafted
+    // Epic is new and unrefined, so only a picked one can warrant it.
+    if (join === null && !form.isEpic && (form.newEpic === null || !form.newEpic.title.trim())) {
+      const existing = editingId !== null ? (tickets.find((t) => t.id === editingId) ?? null) : null;
+      const plan = joinsEpic(existing, form.epicId) ? planEpicJoin(tickets.find((t) => t.id === form.epicId), tickets) : null;
+      if (plan) {
+        joinRequest = {
+          plan,
+          joining: existing ? (existing.displayId ?? title) : title,
+          run: (choice) => submitForm({ plan, choice }),
+        };
+        return;
+      }
+    }
     // PD-633: creating into the Queue, or setting the Robot on a ticket already there, are two of the
     // doors into the gate. An Epic is gated on the Epic path, not here; an agent-locked ticket's
     // status is not sent, so only the assignee/Epic change is judged.
@@ -427,7 +458,7 @@
         gateRequest = {
           server: null,
           compute: plan,
-          run: (bypass) => writeForm(bypass),
+          run: (bypass) => writeForm(bypass, join),
           // A new ticket is born unrefined, so creating straight into the Queue for the Robot is
           // always refused. Offer the write that does pass rather than a dead end.
           fallback:
@@ -437,7 +468,7 @@
                   run: () => {
                     gateRequest = null;
                     form.status = 'backlog';
-                    void writeForm(false);
+                    void writeForm(false, join);
                   },
                 }
               : null,
@@ -445,10 +476,11 @@
         return;
       }
     }
-    await writeForm(false);
+    await writeForm(false, join);
   }
 
-  async function writeForm(bypass: boolean) {
+  async function writeForm(bypass: boolean, join: { plan: EpicJoinPlan; choice: EpicJoinChoice } | null = null) {
+    const joinOpts = join ? joinWriteOpts(join.plan, join.choice) : {};
     const title = form.title.trim();
     if (!title || form.projectId === null) return;
     error = null;
@@ -488,7 +520,7 @@
           isEpic: form.isEpic,
           epicId,
           maxTurns,
-        });
+        }, joinOpts);
       } else {
         await api.updateTicket(editingId, {
           title,
@@ -502,15 +534,16 @@
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: form.status }),
           ...(bypass ? { readyBypassed: true } : {}),
-        });
+        }, joinOpts);
       }
       formOpen = false;
       await load(true);
       if (minted) showToast(`Created Epic ${minted.displayId} — ${title} is its first member.`);
+      if (join) await afterJoin(join.plan, join.choice);
     } catch (e) {
       if (editingId !== null && minted === null) {
         const id = editingId;
-        if (await openServerGate(e, id, { status: form.status, assignee: form.assignee, epicId: form.epicId }, (b) => writeForm(b)))
+        if (await openServerGate(e, id, { status: form.status, assignee: form.assignee, epicId: form.epicId }, (b) => writeForm(b, join)))
           return;
       }
       error = e instanceof Error ? e.message : String(e);
@@ -1272,12 +1305,12 @@
   onArchive={archiveEpic}
 />
 
-<StaleEpicPauseModal
-  plan={stalePause?.plan ?? null}
-  epicTitle={stalePause?.epicTitle ?? ''}
-  onCancel={() => (stalePause = null)}
-  onPause={() => stalePause?.run(false)}
-  onKeepRunning={() => stalePause?.run(true)}
+<!-- PD-703: one modal for joining a refined Epic, carrying PD-611's pause question too. -->
+<EpicJoinModal
+  plan={joinRequest?.plan ?? null}
+  joining={joinRequest?.joining ?? ''}
+  onCancel={() => (joinRequest = null)}
+  onChoose={chooseJoin}
 />
 
 <!-- PD-633: every door into the Robot's Queue (D-091) — one checklist, one modal. -->

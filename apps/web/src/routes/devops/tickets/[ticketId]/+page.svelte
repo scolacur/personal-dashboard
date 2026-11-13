@@ -52,6 +52,9 @@
     stalePauseNotice,
   } from '../../epic-members';
   import EpicPicker from '../../EpicPicker.svelte';
+  import EpicJoinModal from '../../EpicJoinModal.svelte';
+  import { joinWriteOpts, planEpicJoin, unrefinedToast, type EpicJoinChoice, type EpicJoinPlan } from '../../epic-join';
+  import { toast } from '$lib/toast-store.svelte';
   import TicketBoard from '../../task-tracker/TicketBoard.svelte';
   import MemberCard from '../../MemberCard.svelte';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
@@ -448,20 +451,42 @@
       : [],
   );
 
-  async function setMemberEpic(memberId: number, epicId: number | null) {
+  /** Returns whether the write landed. */
+  async function setMemberEpic(memberId: number, epicId: number | null, opts: { keepEpicRunning?: boolean } = {}): Promise<boolean> {
     error = null;
     try {
-      await api.updateTicket(memberId, { epicId });
+      await api.updateTicket(memberId, { epicId }, opts);
       if (ticketId) await load(ticketId);
+      return true;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+      return false;
     }
   }
+
+  // PD-703 / D-089: adding a member to this Epic while it is refined un-refines it. Say so first,
+  // in one modal that also asks PD-611's pause question when the Epic is running.
+  let joinRequest = $state<{ plan: EpicJoinPlan; member: AgentTicket } | null>(null);
 
   async function addMember(t: AgentTicket) {
     if (!ticket) return;
     memberPickerOpen = false;
+    const plan = planEpicJoin(ticket, epicMembers);
+    if (plan) {
+      joinRequest = { plan, member: t };
+      return;
+    }
     await setMemberEpic(t.id, ticket.id);
+  }
+
+  async function chooseJoin(choice: EpicJoinChoice) {
+    const req = joinRequest;
+    joinRequest = null;
+    if (!req || !ticket) return;
+    if (!(await setMemberEpic(req.member.id, ticket.id, joinWriteOpts(req.plan, choice)))) return;
+    // Already on the Epic's page, so re-refining is just starting the session here.
+    if (choice.reRefine) await startRefine();
+    else toast.show(unrefinedToast(req.plan.epic), 'info');
   }
 
   // ── Member lane + dispatch order (PD-384, slice D of D-080) ────────
@@ -1167,6 +1192,13 @@
       relations={relationRows}
       onClose={() => (pickerOpen = false)}
       onCreated={() => ticketId && load(ticketId)}
+    />
+
+    <EpicJoinModal
+      plan={joinRequest?.plan ?? null}
+      joining={joinRequest ? (joinRequest.member.displayId ?? joinRequest.member.title) : ''}
+      onCancel={() => (joinRequest = null)}
+      onChoose={chooseJoin}
     />
 
     <Modal open={memberPickerOpen} title="Add member to epic" onClose={() => (memberPickerOpen = false)}>
