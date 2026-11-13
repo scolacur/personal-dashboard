@@ -5,6 +5,7 @@ import type {
   CreateTicketInput,
   DispatchPauseState,
   EpicSummary,
+  QueueCriterion,
   RelationType,
   ResolvedRelation,
   SystemStatus,
@@ -29,15 +30,41 @@ export function projectIdColor(project: AgentProject | undefined | null): string
 const BASE = '/api/widgets/task-monitor/tickets';
 const PROJECTS = '/api/widgets/task-monitor/projects';
 
+/**
+ * A failed request, keeping the server's machine-readable `code` and, for a Queue-gate refusal
+ * (`409 QUEUE_GATE`, D-091), the criteria it was judged on, so the board can render the server's
+ * answer instead of just its message (PD-633).
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+    readonly blockers: QueueCriterion[] | null,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/** The server's criteria when `e` is a Queue-gate refusal, otherwise null. */
+export function queueGateBlockers(e: unknown): QueueCriterion[] | null {
+  return e instanceof ApiError && e.code === 'QUEUE_GATE' ? e.blockers : null;
+}
+
 async function parseError(res: Response): Promise<never> {
   let message = `${res.status} ${res.statusText}`;
+  let code: string | null = null;
+  let blockers: QueueCriterion[] | null = null;
   try {
-    const body = (await res.json()) as { error?: string };
+    const body = (await res.json()) as { error?: string; code?: string; blockers?: QueueCriterion[] };
     if (body.error) message = body.error;
+    if (body.code) code = body.code;
+    if (Array.isArray(body.blockers)) blockers = body.blockers;
   } catch {
     // non-JSON error body — keep the status text
   }
-  throw new Error(message);
+  throw new ApiError(message, res.status, code, blockers);
 }
 
 export async function fetchProjects(): Promise<AgentProject[]> {
