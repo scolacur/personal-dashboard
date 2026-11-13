@@ -167,3 +167,24 @@ describe('deleteIdea', () => {
     expect(getIdea(db, created.id)).toBeNull();
   });
 });
+
+describe('asg_draws (PD-70 schema)', () => {
+  it('keeps a draw when its idea is deleted, with the snapshot intact', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'Reverse something', type: 'Acute', tags: [] });
+    db.prepare('INSERT INTO asg_draws (idea_id, idea_text, idea_type, drawn_at) VALUES (?, ?, ?, ?)').run(
+      idea.id,
+      idea.text,
+      idea.type,
+      1000,
+    );
+    deleteIdea(db, idea.id);
+    const row = db.prepare('SELECT idea_id, idea_text, idea_type FROM asg_draws').get();
+    expect(row).toEqual({ idea_id: null, idea_text: 'Reverse something', idea_type: 'Acute' });
+  });
+
+  it('is created idempotently', () => {
+    const db = freshDb();
+    expect(() => bootstrapSchema(db)).not.toThrow();
+  });
+});

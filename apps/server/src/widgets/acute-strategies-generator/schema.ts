@@ -121,6 +121,19 @@ export function bootstrapSchema(db: Database.Database): void {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_asg_ideas_type ON asg_ideas (type);
+
+    /* Draw History (PD-70): one row per card drawn. The idea's text and type are snapshotted at
+       draw time, so the history reads true after the idea is edited, and survives its deletion
+       (idea_id goes NULL; the row stays). Hand-written ahead of PD-70 because the Robot may not
+       edit schema.ts (D-067's Tier 2); PD-70 builds the store, routes and UI on this table. */
+    CREATE TABLE IF NOT EXISTS asg_draws (
+      id        INTEGER PRIMARY KEY,
+      idea_id   INTEGER REFERENCES asg_ideas(id) ON DELETE SET NULL,
+      idea_text TEXT    NOT NULL,
+      idea_type TEXT    NOT NULL,
+      drawn_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_asg_draws_drawn_at ON asg_draws (drawn_at DESC);
   `);
 
   migrate(db, 'asg_seed_initial_ideas', (d) => {
