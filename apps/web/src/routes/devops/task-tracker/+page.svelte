@@ -6,7 +6,6 @@
   import { goto } from '$app/navigation';
   import { SvelteSet } from 'svelte/reactivity';
   import type { AgentProject, AgentState, AgentTicket, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput } from '@dashboard/shared';
-  import { isReady } from '@dashboard/shared';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
   import TicketCard from '../TicketCard.svelte';
   import EpicCard from '../EpicCard.svelte';
@@ -17,7 +16,7 @@
   import EpicLane from './EpicLane.svelte';
   import TicketBoard from './TicketBoard.svelte';
   import ArchiveEpicModal from './ArchiveEpicModal.svelte';
-  import QueueBypassModal from './QueueBypassModal.svelte';
+  import QueueGateModal from './QueueGateModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
   import SpinOffModal from './SpinOffModal.svelte';
   import { emptyTicketForm, epicRequired, ticketToForm, type TicketFormState } from './ticket-form';
@@ -46,17 +45,19 @@
     computeSortOrder,
     clampEpicHeight,
   } from '../board-logic';
+  import { moveIsNoop, pickBeforeId, type DropCandidate } from '../board-drag';
   import {
-    moveIsNoop,
-    needsQueueBypass,
-    pickBeforeId,
-    staleQueueRefusal,
-    type DropCandidate,
-    type StaleQueueRefusal,
-  } from '../board-drag';
+    gateFromServer,
+    gateOutcome,
+    planEpicGate,
+    planTicketGate,
+    type EpicGate,
+    type TicketGate,
+    type TicketWrite,
+  } from '../queue-gate';
+  import type { QueueCriterion } from '@dashboard/shared';
   import { planStaleInvalidation, type StaleInvalidationPlan } from '../epic-members';
   import StaleEpicPauseModal from './StaleEpicPauseModal.svelte';
-  import StaleQueueRefusalModal from './StaleQueueRefusalModal.svelte';
 
   const COLUMNS: { status: TicketStatus; label: string; defaultHidden?: boolean }[] = [
     { status: 'backlog', label: 'Backlog' },
@@ -271,7 +272,6 @@
      other tickets out of the Queue — a consequence for work the human was not thinking about.
 
      Tell, don't ask, when nothing moves: an Epic in Backlog just gets a toast. */
-  let staleRefusal = $state<StaleQueueRefusal | null>(null);
   let stalePause = $state<{
     plan: StaleInvalidationPlan;
     epicTitle: string;
@@ -291,6 +291,8 @@
       await api.updateTicket(ticketId, { epicId }, keepRunning ? { keepEpicRunning: true } : {});
       await load(true);
     } catch (e) {
+      // Re-parenting a queued Robot ticket is a door into the gate too (D-091 §4).
+      if (await openServerGate(e, ticketId, { epicId }, () => commitTicketEpic(ticketId, epicId, keepRunning))) return;
       const msg = e instanceof Error ? e.message : String(e);
       showToast(msg);
     }
@@ -401,19 +403,47 @@
   async function submitForm() {
     const title = form.title.trim();
     if (!title || form.projectId === null) return;
-    // D-058: editing/creating an unformatted robot ticket into the Queue needs an explicit bypass ack.
-    // Skip the prompt for a ticket that's already bypassed (editing it shouldn't re-ask) and for an
-    // agent-locked ticket (its status isn't sent). Confirm sets `readyBypassed`; cancel aborts.
-    const existing = editingId !== null ? tickets.find((t) => t.id === editingId) : undefined;
-    const needsBypass =
-      form.status === 'queue' &&
-      form.assignee === 'robot' &&
-      !isReady(form.body.trim() || null) &&
-      !(existing?.readyBypassed ?? false) &&
-      !(editingId !== null && editingLocked);
-    if (needsBypass) {
-      queueConfirm = { label: title, run: () => writeForm(true) };
-      return;
+    // PD-633: creating into the Queue, or setting the Robot on a ticket already there, are two of the
+    // doors into the gate. An Epic is gated on the Epic path, not here; an agent-locked ticket's
+    // status is not sent, so only the assignee/Epic change is judged.
+    if (!form.isEpic) {
+      const existing = editingId !== null ? (tickets.find((t) => t.id === editingId) ?? null) : null;
+      const write: TicketWrite = {
+        ...(editingId !== null && editingLocked ? {} : { status: form.status }),
+        assignee: form.assignee,
+        epicId: form.epicId,
+        body: form.body.trim() || null,
+      };
+      const plan = () =>
+        planTicketGate({
+          existing: editingId !== null ? (tickets.find((t) => t.id === editingId) ?? null) : null,
+          write,
+          draftTitle: title,
+          tickets,
+          relations,
+        });
+      const first = plan();
+      if (first && gateOutcome(first) !== 'proceed') {
+        gateRequest = {
+          server: null,
+          compute: plan,
+          run: (bypass) => writeForm(bypass),
+          // A new ticket is born unrefined, so creating straight into the Queue for the Robot is
+          // always refused. Offer the write that does pass rather than a dead end.
+          fallback:
+            existing === null
+              ? {
+                  label: 'Create in Backlog',
+                  run: () => {
+                    gateRequest = null;
+                    form.status = 'backlog';
+                    void writeForm(false);
+                  },
+                }
+              : null,
+        };
+        return;
+      }
     }
     await writeForm(false);
   }
@@ -446,7 +476,9 @@
       // type=number and the Save button gates on the modal's `maxTurnsInvalid`.
       const maxTurns = form.maxTurns.trim() === '' ? null : Number(form.maxTurns);
       if (editingId === null) {
-        const created = await api.createTicket({
+        // No `readyBypassed` follow-up after a create any more: a create into the Robot's Queue never
+        // gets past the gate (a new ticket is unrefined), so there is no bypass to record (PD-633).
+        await api.createTicket({
           title,
           projectId: form.projectId,
           body: form.body.trim() || null,
@@ -457,9 +489,6 @@
           epicId,
           maxTurns,
         });
-        // CreateTicketInput carries no `readyBypassed` (backend enum/guards are ticket A's scope) —
-        // set it in a follow-up patch when the human bypassed the formatting gate at create time.
-        if (bypass) await api.updateTicket(created.id, { readyBypassed: true });
       } else {
         await api.updateTicket(editingId, {
           title,
@@ -479,6 +508,11 @@
       await load(true);
       if (minted) showToast(`Created Epic ${minted.displayId} — ${title} is its first member.`);
     } catch (e) {
+      if (editingId !== null && minted === null) {
+        const id = editingId;
+        if (await openServerGate(e, id, { status: form.status, assignee: form.assignee, epicId: form.epicId }, (b) => writeForm(b)))
+          return;
+      }
       error = e instanceof Error ? e.message : String(e);
       // The Epic may have been minted before the Ticket failed. Say so rather than leaving an
       // empty Epic on the board with no explanation for where it came from.
@@ -521,17 +555,93 @@
   // an option once it is gone.
   const HOLD_TOAST_MS = 12_000;
 
-  // Queue-bypass confirm (D-058, PD-399): queueing an unformatted robot ticket pops this modal —
-  // confirm sets `readyBypassed` (honest override, never fakes `ready`) and completes the move;
-  // cancel aborts, leaving the card where it was (no optimistic move happened).
-  let queueConfirm = $state<{ label: string; run: () => Promise<void> } | null>(null);
-  async function acceptQueueConfirm() {
-    const pending = queueConfirm;
-    queueConfirm = null;
-    if (pending) await pending.run();
+  /* ── The Queue gate (D-091, PD-633) ────────────────────────────────
+     Every door into `queue ∧ robot` routes through one modal. A door asks `queue-gate.ts` first and
+     opens the modal when the answer is not "proceed"; a server 409 it did not predict (stale board
+     data) opens the same modal with the server's own criteria. Cancel aborts: no optimistic move
+     happened, so the card stays where it was.
+
+     `compute` re-runs against the live `tickets` / `relations`, so a remedy taken inside the modal
+     (✓ Mark refined) re-judges the same write after the reload. `server` holds a 409's criteria
+     until the first remedy, after which the board's own prediction is current again. */
+  let gateRequest = $state<{
+    server: QueueCriterion[] | null;
+    compute: () => TicketGate | EpicGate | null;
+    run: (bypass: boolean) => Promise<void>;
+    fallback?: { label: string; run: () => void } | null;
+    subjectId?: number;
+  } | null>(null);
+  let gateBusy = $state(false);
+  const gate = $derived.by(() => {
+    const req = gateRequest;
+    if (!req) return null;
+    if (req.server && req.subjectId !== undefined) {
+      const subject = tickets.find((t) => t.id === req.subjectId);
+      return subject ? gateFromServer(req.server, subject, tickets, relations) : null;
+    }
+    return req.compute();
+  });
+
+  async function confirmGate() {
+    const req = gateRequest;
+    const current = gate;
+    if (!req || !current || gateOutcome(current) === 'refuse') return;
+    gateRequest = null;
+    await req.run(gateOutcome(current) === 'bypass');
   }
-  function cancelQueueConfirm() {
-    queueConfirm = null;
+
+  async function gateMarkRefined(id: number) {
+    gateBusy = true;
+    try {
+      await api.markRefined(id);
+      if (gateRequest) gateRequest = { ...gateRequest, server: null };
+      await load(true);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      gateBusy = false;
+    }
+  }
+
+  /** Refine starts a session and goes to it; the queueing it interrupted does not happen. */
+  async function gateRefine(id: number) {
+    gateBusy = true;
+    try {
+      await api.startRefine(id);
+      gateRequest = null;
+      const t = tickets.find((x) => x.id === id);
+      if (t?.displayId) await goto(`/devops/tickets/${t.displayId}`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
+    } finally {
+      gateBusy = false;
+    }
+  }
+
+  /**
+   * If `e` is the server's Queue-gate refusal, open the modal on it and return true. The write is
+   * kept so it can be confirmed once the remedies are taken; `write` lets the board re-judge it.
+   */
+  async function openServerGate(
+    e: unknown,
+    subjectId: number,
+    write: TicketWrite,
+    rerun: (bypass: boolean) => Promise<void>,
+  ): Promise<boolean> {
+    const server = api.queueGateBlockers(e);
+    if (!server) return false;
+    await load(true);
+    gateRequest = {
+      server,
+      subjectId,
+      compute: () => {
+        const t = tickets.find((x) => x.id === subjectId);
+        if (!t) return null;
+        return t.isEpic ? planEpicGate(t, tickets, relations) : planTicketGate({ existing: t, write, tickets, relations });
+      },
+      run: rerun,
+    };
+    return true;
   }
 
   // Shared write path for a drag/drop move. A blocked ticket may now sit in the queue (D-051 amended
@@ -548,6 +658,8 @@
         if (notice) showToast(notice, HOLD_TOAST_MS);
       }
     } catch (err) {
+      const rerun = (bypass: boolean) => applyTicketMove(id, bypass ? { ...patch, readyBypassed: true } : patch);
+      if (await openServerGate(err, id, patch, rerun)) return;
       error = err instanceof Error ? err.message : String(err);
     }
   }
@@ -580,24 +692,15 @@
   async function onBoardMove(ticket: AgentTicket, status: TicketStatus, beforeId: number | null) {
     const sortOrder = computeSortOrder(byStatus(status), ticket.priority, beforeId, ticket.id);
     if (moveIsNoop(ticket, status, sortOrder)) return;
-    // PD-611: refused before anything else, because unlike the bypass below this one has no
-    // "anyway". Checked ahead of `needsQueueBypass` so a ticket that trips both is told the thing
-    // it cannot get past, rather than being offered an override that will not help.
-    const refusal = staleQueueRefusal(
-      ticket,
-      ticket.epicId === null ? null : (tickets.find((t) => t.id === ticket.epicId) ?? null),
-      status,
-    );
-    if (refusal) {
-      staleRefusal = refusal;
-      return;
-    }
-    // D-058: dragging an unformatted robot ticket into the Queue needs an explicit bypass ack. Defer
-    // the move to the confirm modal; confirming sets `readyBypassed` and completes it.
-    if (needsQueueBypass(ticket, status)) {
-      queueConfirm = {
-        label: ticket.displayId ?? ticket.title,
-        run: () => applyTicketMove(ticket.id, { status, sortOrder, readyBypassed: true }),
+    // PD-633: the gate (D-091) — refusal, or D-058's formatting acknowledgement — before the write.
+    const plan = () =>
+      planTicketGate({ existing: tickets.find((t) => t.id === ticket.id) ?? null, write: { status }, tickets, relations });
+    const first = plan();
+    if (first && gateOutcome(first) !== 'proceed') {
+      gateRequest = {
+        server: null,
+        compute: plan,
+        run: (bypass) => applyTicketMove(ticket.id, { status, sortOrder, ...(bypass ? { readyBypassed: true } : {}) }),
       };
       return;
     }
@@ -708,19 +811,7 @@
     // Across lanes → move the Epic; the server cascades to its members.
     const members = membersOf(id, tickets);
     if (cell.lane === 'in_progress') {
-      // PD-611: dragging a stale Epic into the Queue is the bulk version of dragging its members
-      // back in one at a time — the same refusal, or the pause it undoes is decorative.
-      const refusal = staleQueueRefusal(epic, null, 'queue');
-      if (refusal) {
-        staleRefusal = refusal;
-        return;
-      }
-      const plan = planEpicQueue(members);
-      await applyEpicPatch(id, { status: 'queue' });
-      // Appended rather than shown separately: `toast.show` replaces whatever is current, so a
-      // second call would eat the "Epic queued. Contains: …" breakdown the user asked for.
-      const notice = await holdNotice(`Epic ${epic.displayId ?? epic.title}`);
-      showToast(queuedToast(epic, plan) + (notice ? `\n\n${notice}` : ''), notice ? HOLD_TOAST_MS : undefined);
+      await queueEpic(epic);
       return;
     }
 
@@ -753,13 +844,49 @@
     return lines.join('\n');
   }
 
-  async function applyEpicPatch(id: number, patch: UpdateTicketInput) {
+  /**
+   * Queue an Epic through the gate (PD-633). The per-Epic modal opens only on a refusal, since the
+   * server refuses an Epic on its Epic-level criteria alone. A member that is merely unformatted or
+   * blocked still queues and is counted in the toast, as it was before the gate.
+   *
+   * **PD-603's "Queue all members" button must call this**, not `applyEpicPatch`: it is the fifth
+   * door into the gate, and this is how it goes through the same modal.
+   */
+  async function queueEpic(epic: AgentTicket) {
+    const plan = () => {
+      const fresh = tickets.find((t) => t.id === epic.id);
+      return fresh ? planEpicGate(fresh, tickets, relations) : null;
+    };
+    const first = plan();
+    if (first && gateOutcome(first) === 'refuse') {
+      gateRequest = { server: null, compute: plan, run: () => commitEpicQueue(epic.id) };
+      return;
+    }
+    await commitEpicQueue(epic.id);
+  }
+
+  async function commitEpicQueue(id: number) {
+    const epic = tickets.find((t) => t.id === id);
+    if (!epic) return;
+    const queued = planEpicQueue(membersOf(id, tickets));
+    if (!(await applyEpicPatch(id, { status: 'queue' }))) return;
+    // Appended rather than shown separately: `toast.show` replaces whatever is current, so a
+    // second call would eat the "Epic queued. Contains: …" breakdown the user asked for.
+    const notice = await holdNotice(`Epic ${epic.displayId ?? epic.title}`);
+    showToast(queuedToast(epic, queued) + (notice ? `\n\n${notice}` : ''), notice ? HOLD_TOAST_MS : undefined);
+  }
+
+  /** Returns whether the write landed. A Queue-gate refusal opens the modal instead of the banner. */
+  async function applyEpicPatch(id: number, patch: UpdateTicketInput): Promise<boolean> {
     error = null;
     try {
       await api.updateTicket(id, patch);
       await load(true);
+      return true;
     } catch (err) {
+      if (patch.status === 'queue' && (await openServerGate(err, id, patch, () => commitEpicQueue(id)))) return false;
       error = err instanceof Error ? err.message : String(err);
+      return false;
     }
   }
 
@@ -1145,10 +1272,6 @@
   onArchive={archiveEpic}
 />
 
-<!-- PD-611: the refusal has no "anyway" — see StaleQueueRefusalModal. Mounted beside the bypass
-     modal it deliberately does NOT resemble; PD-633 merges both into one criteria checklist. -->
-<StaleQueueRefusalModal refusal={staleRefusal} onClose={() => (staleRefusal = null)} />
-
 <StaleEpicPauseModal
   plan={stalePause?.plan ?? null}
   epicTitle={stalePause?.epicTitle ?? ''}
@@ -1157,10 +1280,15 @@
   onKeepRunning={() => stalePause?.run(true)}
 />
 
-<QueueBypassModal
-  label={queueConfirm?.label ?? null}
-  onCancel={cancelQueueConfirm}
-  onConfirm={acceptQueueConfirm}
+<!-- PD-633: every door into the Robot's Queue (D-091) — one checklist, one modal. -->
+<QueueGateModal
+  {gate}
+  busy={gateBusy}
+  fallback={gateRequest?.fallback ?? null}
+  onCancel={() => (gateRequest = null)}
+  onConfirm={confirmGate}
+  onMarkRefined={gateMarkRefined}
+  onRefine={gateRefine}
 />
 
 <SpinOffModal
