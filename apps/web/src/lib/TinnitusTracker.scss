@@ -20,6 +20,15 @@
     .enter {
       min-height: 2.5rem;
     }
+
+    .when {
+      margin-top: 0;
+    }
+
+    .when input {
+      max-width: 100%;
+      min-width: 0;
+    }
   }
 }
 
@@ -113,11 +122,6 @@
   margin: 0;
   font-size: var(--font-size-sm);
   color: var(--status-warn);
-}
-
-.more {
-  font-size: var(--font-size-sm);
-  color: var(--muted);
 }
 
 .history {

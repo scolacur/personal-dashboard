@@ -10,6 +10,7 @@
   import DeployStatus from './DeployStatus.svelte';
   import DispatchKillswitch from './DispatchKillswitch.svelte';
   import { pageWidgets } from '$lib/page-widgets.svelte';
+  import { widgets } from '$lib/widgets';
   import { clearLegacyLayoutKeys } from '$lib/layout';
   import Toast from '$lib/Toast.svelte';
   import { arrangeMode } from '$lib/arrange.svelte';
@@ -26,7 +27,9 @@
   // where the rail is permanently visible (the toggle button is hidden there).
   let drawerOpen = $state(false);
 
-  const currentPageTitle = $derived(resolvePageTitle(page.url.pathname));
+  // Widget routes as plain {route, title}, so nav-utils stays free of `.svelte` imports (PD-717).
+  const widgetRoutes = widgets.map((w) => ({ route: w.route, title: w.title }));
+  const currentPageTitle = $derived(resolvePageTitle(page.url.pathname, widgetRoutes));
 
   // The pomodoro floats over the whole app, but on the ticket-detail page it overlaps the
   // Refine chat window on mobile — hide it there. Match on route id (exact) not pathname.

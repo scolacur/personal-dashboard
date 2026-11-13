@@ -82,7 +82,7 @@
     </div>
     <p class="label">{tinnitusLabel(intensity) ?? '\u00a0'}</p>
 
-    <TagCloud tags={allTags} bind:selected compact />
+    <TagCloud tags={allTags} bind:selected compact addable={false} />
 
     <label>
       <span>When</span>

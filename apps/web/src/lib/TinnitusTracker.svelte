@@ -19,7 +19,8 @@
 
   /**
    * Tinnitus Tracker (PD-705). `page` is the mobile-first full screen. `widget` is the dashboard
-   * card: the same capture with no notes, backdating, or history.
+   * card: the same capture, including notes, backdating and custom tags (PD-716), without tag
+   * editing or history.
    *
    * Every Enter goes through the offline queue (see `queue.ts`), so a reading taken with no signal
    * keeps its timestamp and syncs when the server is reachable again.
@@ -184,7 +185,7 @@
 
 {#snippet capture()}
 <div class="tinnitus" class:compact>
-  <TagCloud {tags} bind:selected {compact} onAdd={addTag} onHide={removeTag} />
+  <TagCloud {tags} bind:selected {compact} editable={!compact} onAdd={addTag} onHide={removeTag} />
 
   <div class="reading">
     <output class="value-block" aria-live="polite">
@@ -195,18 +196,17 @@
     <IntensitySlider bind:value {compact} />
   </div>
 
-  {#if !compact}
-    <textarea class="notes" rows="2" placeholder="Notes" aria-label="Notes" bind:value={notes}></textarea>
+  <!-- Notes and backdating on the card too (PD-716); only tag editing and history are page-only. -->
+  <textarea class="notes" rows={compact ? 1 : 2} placeholder="Notes" aria-label="Notes" bind:value={notes}></textarea>
 
-    <div class="when">
-      <button type="button" class="when-toggle" aria-expanded={backdating} onclick={toggleBackdate}>
-        {backdating ? 'Use now' : 'Now ▾'}
-      </button>
-      {#if backdating}
-        <input type="datetime-local" aria-label="When" bind:value={when} max={toLocalInput(Date.now())} />
-      {/if}
-    </div>
-  {/if}
+  <div class="when">
+    <button type="button" class="when-toggle" aria-expanded={backdating} onclick={toggleBackdate}>
+      {backdating ? 'Use now' : 'Now ▾'}
+    </button>
+    {#if backdating}
+      <input type="datetime-local" aria-label="When" bind:value={when} max={toLocalInput(Date.now())} />
+    {/if}
+  </div>
 
   <button type="button" class="enter" onclick={submit}>Enter</button>
 
@@ -214,9 +214,8 @@
     <p class="pending" role="status">{pending.length} pending sync</p>
   {/if}
 
-  {#if compact}
-    <a class="more" href="/widgets/tinnitus-tracker">History →</a>
-  {:else}
+  <!-- No "History" link on the card: the card's own title already links to the page. -->
+  {#if !compact}
     <section class="history" aria-label="Recent entries">
       <EntryList {entries} {pending} onEdit={(e) => (editing = e)} />
     </section>

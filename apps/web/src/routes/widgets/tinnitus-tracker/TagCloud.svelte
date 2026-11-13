@@ -4,18 +4,23 @@
   /**
    * Toggleable tag chips plus a "+ custom" chip. Custom tags persist (the parent saves them).
    * "Edit" mode shows a × on each chip to hide it from the cloud. Past entries keep hidden tags.
+   * `compact` only shrinks the chips. `editable` controls the edit toggle, which is page-only (PD-716).
    */
   interface Props {
     /** Tag names shown in the cloud, in display order. */
     tags: string[];
     selected: string[];
-    /** Hide editing controls (the dashboard card). */
+    /** Smaller chips (the dashboard card). */
     compact?: boolean;
+    /** Show the edit toggle for hiding tags. Page-only (PD-716). */
+    editable?: boolean;
+    /** Show the "+ custom" chip. Off in the entry edit dialog. */
+    addable?: boolean;
     onAdd?: (name: string) => void;
     onHide?: (name: string) => void;
   }
 
-  let { tags, selected = $bindable(), compact = false, onAdd, onHide }: Props = $props();
+  let { tags, selected = $bindable(), compact = false, editable = false, addable = true, onAdd, onHide }: Props = $props();
 
   let adding = $state(false);
   let draft = $state('');
@@ -68,7 +73,7 @@
     </span>
   {/each}
 
-  {#if !compact}
+  {#if addable}
     {#if adding}
       <input
         bind:this={input}
@@ -84,6 +89,8 @@
     {:else}
       <button type="button" class="chip add" onclick={() => (adding = true)}>+ custom</button>
     {/if}
+  {/if}
+  {#if editable}
     <button type="button" class="edit-toggle" aria-pressed={editing} onclick={() => (editing = !editing)}>
       {editing ? 'done' : 'edit'}
     </button>
