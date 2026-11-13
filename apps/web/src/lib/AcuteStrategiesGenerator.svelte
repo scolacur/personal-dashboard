@@ -58,6 +58,8 @@
     }
   });
 
+  // Persists + refreshes the list only. Closing the modal is the modal's call
+  // (onCancel) so that "Save and add another" can keep it open (T546).
   async function handleSave(data: { text: string; type: IdeaType; tags: string[] }) {
     if (editingIdea) {
       const updated = await updateIdea(editingIdea.id, data);
@@ -67,7 +69,6 @@
       const created = await createIdea(data);
       ideas = [...ideas, created];
     }
-    editingIdea = undefined;
   }
 
   async function handleDelete(idea: AcuteStrategyIdea) {
@@ -147,9 +148,12 @@
         </div>
       </div>
 
-      <p class="pool-size">
-        {filteredIdeas.length} idea{filteredIdeas.length !== 1 ? 's' : ''} in pool
-      </p>
+      <div class="generator-footer">
+        <p class="pool-size">
+          {filteredIdeas.length} idea{filteredIdeas.length !== 1 ? 's' : ''} in pool
+        </p>
+        <button class="add-idea-btn" onclick={() => (editingIdea = null)}>+ New idea</button>
+      </div>
     </div>
   {:else}
     <div class="manage-view">

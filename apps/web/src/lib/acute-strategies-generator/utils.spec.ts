@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveAllTags, filterIdeas, pickRandom } from './utils';
+import { deriveAllTags, filterIdeas, pickRandom, parseIdeaForm } from './utils';
 import type { AcuteStrategyIdea } from '@dashboard/shared';
 
 const ideas: AcuteStrategyIdea[] = [
@@ -76,5 +76,35 @@ describe('pickRandom', () => {
   it('returns an element that exists in the pool', () => {
     const result = pickRandom(ideas);
     expect(ideas).toContain(result);
+  });
+});
+
+describe('parseIdeaForm', () => {
+  it('rejects empty text', () => {
+    const result = parseIdeaForm('', 'Acute', '');
+    expect(result).toEqual({ ok: false, error: 'Text is required.' });
+  });
+
+  it('rejects whitespace-only text', () => {
+    const result = parseIdeaForm('   ', 'Acute', 'synth');
+    expect(result.ok).toBe(false);
+  });
+
+  it('trims text and returns the payload', () => {
+    const result = parseIdeaForm('  layer a drone  ', 'Oblique', '');
+    expect(result).toEqual({ ok: true, data: { text: 'layer a drone', type: 'Oblique', tags: [] } });
+  });
+
+  it('splits, trims and drops empty tags', () => {
+    const result = parseIdeaForm('idea', 'Acute', ' synth , , ambient ,');
+    expect(result).toEqual({
+      ok: true,
+      data: { text: 'idea', type: 'Acute', tags: ['synth', 'ambient'] },
+    });
+  });
+
+  it('carries the chosen type through unchanged', () => {
+    const result = parseIdeaForm('idea', 'Inspiration', 'x');
+    expect(result.ok && result.data.type).toBe('Inspiration');
   });
 });
