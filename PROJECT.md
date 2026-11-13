@@ -273,9 +273,10 @@ sections `## Context` / `## Task` / `## Done When` / `## Out of scope`; the chec
 called `isSortieReady`). **Recomputed on every body edit**, so it always reflects the
 *current* body — editing a Ready ticket keeps it Ready as long as the formatting survives,
 and breaks it the moment a section is lost. Persisted so the loop reads a cheap flag that
-can't drift (it's a pure function of the body). It is the **robot loop's hard dispatch
-gate** (dispatch a robot-assigned queued ticket only if `ready || ready_bypassed`) and a
-**soft gate for Steve** (he may queue a not-Ready robot ticket past a confirm modal).
+can't drift (it's a pure function of the body). It is **one of the robot loop's dispatch
+gates** (dispatch a robot-assigned queued ticket only if `ready || ready_bypassed`) and a
+**soft gate for Steve** (he may queue a not-Ready robot ticket past a confirm modal). Since
+D-091 it is no longer *the* gate: **refinement** is the hard one, and Ready is the bypassable one.
 Distinct from **Refine**: a Refine session *produces* Ready tickets, but a hand-formatted
 ticket is equally Ready — "Ready" is about the body's shape, not about a session having run.
 _Avoid_: "isSortieReady" (renamed `ready`); calling a ticket "refined" (that named a session
@@ -686,6 +687,16 @@ is only about that ticket's own body — an Epic's flag is partly a claim about 
 _Avoid_: reading it as a property of the Epic's prose alone. Under that reading the flag would stay
 true on an Epic whose description does not mention half its members, which is exactly the state
 D-089 was written to end.
+
+**Queue gate** (`queueBlockers`, D-091, PD-632):
+What a **robot-assigned** ticket must satisfy to enter the Queue: it is refined, its Epic is refined
+and not stale, and every open member of its Epic is refined — all hard, no bypass. `ready` and
+`unblocked` are in the same criteria list but do not refuse entry (Ready is bypassable, D-058; a
+blocked ticket may wait in the Queue and is skipped at dispatch, D-051/PD-408). One pure function in
+`packages/shared` returns the ordered list; the server refuses with it (`409 QUEUE_GATE`) at every
+door into the Queue — PATCH, the Epic cascade, Approve & queue — and the loop's `refined = 1` is the
+backstop for a ticket un-refined after it was queued. Human-assigned work is never gated.
+_Avoid_: "members-refined" as a stored state — it is derived on demand, never persisted.
 
 **Stale** (`refine_stale`) (D-089, PD-610/PD-611):
 The **third** refinement state: *was* refined, membership has changed since. Distinct from "never

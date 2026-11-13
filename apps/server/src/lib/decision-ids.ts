@@ -63,12 +63,12 @@ import type Database from 'better-sqlite3';
  *
  * The inbox is gone, so nothing else can ever need reconciling against this value again.
  *
- * **Raised to 89 by PD-610**, which authored [[D-089]], and **to 90 by PD-693**, which authored
- * [[D-090]]. Routine: every new decision file trips the spec above, and the fix is always to raise
- * this to match. Never lower it — the counter has already handed out ids above the old value in
+ * **Raised to 89 by PD-610**, which authored [[D-089]], **to 90 by PD-693**, which authored
+ * [[D-090]], and **to 91 by PD-632**, which authored [[D-091]]. Routine: every new decision file
+ * trips the spec above, and the fix is always to raise this to match. Never lower it — the counter has already handed out ids above the old value in
  * production.
  */
-export const HIGHEST_DECISION_AT_SEED = 90;
+export const HIGHEST_DECISION_AT_SEED = 91;
 
 /** `80` → `D-080`. Zero-padded to three digits, matching every existing decision filename. */
 export function formatDecisionId(num: number): string {

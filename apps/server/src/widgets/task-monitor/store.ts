@@ -30,7 +30,9 @@ import type {
 } from '@dashboard/shared';
 import {
   coerceTicketStatus,
+  epicQueueCriteria,
   isReady,
+  queueEntryRefusals,
   latestActionableProposal,
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
@@ -39,6 +41,8 @@ import {
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
 } from '@dashboard/shared';
+import type { QueueCriterion } from '@dashboard/shared';
+import { queueGuardFailure, type QueueGateContext } from './ticket-guards';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
 // never see snake_case (PROJECT.md §5: typed helpers, no raw SQL in routes).
@@ -1141,12 +1145,29 @@ function resumeEpicMembers(db: Database.Database, epicId: number, now: number): 
     | { status: string; is_epic: number }
     | undefined;
   if (!epic || epic.is_epic !== 1 || epic.status !== 'queue') return 0;
+  // D-091: re-arming is a way into the Queue, so robot members pass the same gate as everywhere
+  // else. The Epic-level criteria are one answer for every member, so this is all-or-none for robot
+  // work; human members are armed regardless. Holding robot members back — rather than refusing the
+  // ✓ Mark refined that triggered this — keeps the mark doing what it says, and never leaves a
+  // queued card the loop will not pick (the PD-467 trap D-089 §6 avoids).
+  const epicNow = getTicket(db, epicId);
+  const robotOk = queueEntryRefusals(epicQueueCriteria(epicNow, listEpicMembers(db, epicId))).length === 0;
   const armed = db
     .prepare(
       `UPDATE agent_tickets SET status = 'queue', updated_at = ?
-        WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL`,
+        WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL
+          AND (? = 1 OR assignee IS NULL OR assignee <> 'robot')`,
     )
-    .run(now, epicId);
+    .run(now, epicId, robotOk ? 1 : 0);
+  if (!robotOk) {
+    const held = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM agent_tickets
+          WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL AND assignee = 'robot'`,
+      )
+      .get(epicId) as { n: number };
+    if (held.n > 0) logEvent(db, epicId, 'epic_resume_held', { held: held.n, reason: 'queue_gate' });
+  }
   return armed.changes;
 }
 
@@ -1314,6 +1335,15 @@ export class SelfRelationError extends Error {
  *  (D-048). The four active lanes still block. Used by the gate and by `unresolvedBlockers`. */
 const UNRESOLVED_BLOCKER_SQL =
   "t.status NOT IN ('completed', 'closed') AND t.archived_at IS NULL";
+
+/** The reads the Queue gate needs (D-091), bound to this DB. See `queueGuardFailure`. */
+export function queueGateContext(db: Database.Database): QueueGateContext {
+  return {
+    getTicket: (id) => getTicket(db, id),
+    listEpicMembers: (epicId) => listEpicMembers(db, epicId),
+    openBlockerIds: (ticketId) => unresolvedBlockers(db, ticketId).map((b) => b.ticketId),
+  };
+}
 
 /** The ticket's incoming `blocks` relations whose blocker is not yet resolved. Empty ⇒ the
  *  blocker gate is clear. */
@@ -1536,8 +1566,11 @@ export type ApproveRefineResult =
         | 'not_found'
         | 'no_proposal'
         | 'invalid_proposal'
-        | 'epic_not_queueable';
+        | 'epic_not_queueable'
+        | 'queue_gate';
       detail?: string;
+      /** `queue_gate` only: the full criteria list (D-091), for the refusal modal. */
+      blockers?: QueueCriterion[];
     };
 
 /**
@@ -1580,6 +1613,15 @@ export function approveRefine(
       if (parent.isEpic) {
         return { ok: false, reason: 'epic_not_queueable', detail: parent.displayId ?? String(ticketId) };
       }
+      // D-091: "Approve & queue" is a door into the Queue like any other. Judged on the ticket as it
+      // will be after approval — refined, with the proposal's body and assignee — so approving is
+      // what satisfies the ticket's own criterion; its Epic still has to be refined.
+      const gate = queueGuardFailure(
+        parent,
+        { status: 'queue', assignee: p.assignee === undefined ? parent.assignee : p.assignee, refined: true, body },
+        queueGateContext(db),
+      );
+      if (gate) return { ok: false, reason: 'queue_gate', detail: gate.message, blockers: gate.blockers };
     }
 
     // PD-510, the stronger form of D-057: **an approval never moves a Ticket between lanes.** The

@@ -22,7 +22,7 @@ function boardDb(): Database.Database {
     CREATE TABLE agent_tickets (
       id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
       priority TEXT NOT NULL DEFAULT 'none',
-      ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
+      ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0, refined INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
       -- D-080: the dispatch order joins the Epic and reads both drag orders.
       epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0,
@@ -48,8 +48,8 @@ function eventTypes(db: Database.Database, ticketId: number): string[] {
 
 function addQueued(db: Database.Database, id: number, issue: number | null = id): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, project_id, github_issue_number, agent_state)
-     VALUES (?, ?, ?, 'queue', 'robot', 1, 1, ?, NULL)`,
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, refined, project_id, github_issue_number, agent_state)
+     VALUES (?, ?, ?, 'queue', 'robot', 1, 1, 1, ?, NULL)`,
   ).run(id, `T${id}`, READY, issue);
 }
 

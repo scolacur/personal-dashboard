@@ -332,7 +332,8 @@ export interface AgentTicket {
   refineStale: boolean;
   /** Whether the body is Robot-ready — the mechanical 4-section shape check (`isReady`),
    *  recomputed on every body write and persisted (D-058). Server-computed, NOT client-settable
-   *  (absent from Create/UpdateTicketInput). The one hard dispatch gate for the robot loop. */
+   *  (absent from Create/UpdateTicketInput). A bypassable dispatch gate; refinement is the hard one
+   *  (D-091, `queueBlockers`). */
   ready: boolean;
   /** Set when a human queued a not-Ready robot ticket through the confirm modal (D-058, PD-399).
    *  The loop gate is `ready || readyBypassed`; goes moot once the body is fixed (recompute makes
@@ -454,6 +455,153 @@ const REQUIRED_HEADERS = [
 export function isReady(body: string | null): boolean {
   if (!body) return false;
   return REQUIRED_HEADERS.every((re) => re.test(body));
+}
+
+// ── Queue gate (D-091, PD-632) ───────────────────────────────────────────────
+// A robot-assigned ticket may not enter the Queue unless it and its Epic are refined. One pure
+// predicate answers "may this be queued?" for every door that queues work — the PATCH guard, the
+// Epic cascade, Approve & queue, the resume paths — and for the board's refusal modal (PD-633),
+// so the client renders the server's answer instead of re-deriving it.
+
+export type QueueCriterionId =
+  | 'refined'
+  | 'epic-refined'
+  | 'epic-not-stale'
+  | 'members-refined'
+  | 'ready'
+  | 'unblocked';
+
+/** Where an unmet criterion is satisfied. `ticketId` is the ticket to open. */
+export type QueueRemedyKind = 'mark-refined' | 'refine-epic' | 'open-epic' | 'edit-body' | 'resolve-blocker';
+
+export interface QueueCriterion {
+  id: QueueCriterionId;
+  label: string;
+  met: boolean;
+  /** An unmet bypassable criterion can be acknowledged and queued anyway (only `ready`, D-058). */
+  bypassable: boolean;
+  /**
+   * Whether an unmet criterion refuses Queue *entry*. False for `ready` (bypassable, and the server
+   * has never refused on it) and for `unblocked`, which D-051 as amended by PD-408 enforces at
+   * dispatch time instead — a blocked ticket may sit in the Queue and the loop skips it.
+   */
+  refusesEntry: boolean;
+  remedy: { kind: QueueRemedyKind; ticketId?: number };
+}
+
+type GateTicket = Pick<AgentTicket, 'id' | 'refined' | 'ready' | 'readyBypassed'>;
+type GateEpic = Pick<AgentTicket, 'id' | 'refined' | 'refineStale'>;
+type GateMember = Pick<AgentTicket, 'id' | 'refined' | 'status'>;
+
+/**
+ * The Epic-level criteria — identical for every member of one Epic, so the Epic cascade evaluates
+ * them once. `members-refined` is **derived** here and never stored: D-089's three Epic states stand
+ * unchanged. Terminal members are excluded (finished work needs no read-through), and so is
+ * `exceptId` — the ticket being queued, which its own `refined` criterion already reports.
+ */
+export function epicQueueCriteria(
+  epic: GateEpic | null,
+  members: readonly GateMember[],
+  exceptId?: number,
+): QueueCriterion[] {
+  if (!epic) {
+    return [
+      { id: 'epic-refined', label: 'No Epic', met: true, bypassable: false, refusesEntry: true, remedy: { kind: 'open-epic' } },
+      { id: 'epic-not-stale', label: 'No Epic', met: true, bypassable: false, refusesEntry: true, remedy: { kind: 'open-epic' } },
+      { id: 'members-refined', label: 'No Epic', met: true, bypassable: false, refusesEntry: true, remedy: { kind: 'open-epic' } },
+    ];
+  }
+  const unrefined = members.filter(
+    (m) => m.id !== exceptId && !m.refined && m.status !== 'completed' && m.status !== 'closed',
+  );
+  return [
+    {
+      id: 'epic-refined',
+      label: epic.refined ? 'Its Epic is refined' : 'Its Epic is not refined',
+      met: epic.refined,
+      bypassable: false,
+      refusesEntry: true,
+      remedy: { kind: 'mark-refined', ticketId: epic.id },
+    },
+    {
+      id: 'epic-not-stale',
+      label: epic.refineStale
+        ? "Its Epic's member set changed since it was refined — re-refine it"
+        : "Its Epic's refinement is current",
+      met: !epic.refineStale,
+      bypassable: false,
+      refusesEntry: true,
+      remedy: { kind: 'refine-epic', ticketId: epic.id },
+    },
+    {
+      id: 'members-refined',
+      label:
+        unrefined.length === 0
+          ? 'Every open member of its Epic is refined'
+          : `${unrefined.length} open member${unrefined.length === 1 ? '' : 's'} of its Epic ${unrefined.length === 1 ? 'is' : 'are'} not refined`,
+      met: unrefined.length === 0,
+      bypassable: false,
+      refusesEntry: true,
+      remedy: { kind: 'open-epic', ticketId: epic.id },
+    },
+  ];
+}
+
+/**
+ * Every criterion for a robot-assigned ticket entering the Queue, in display order. Pass the
+ * ticket as it WOULD be after the write (so `PATCH { status: 'queue', refined: true }` is judged on
+ * the refined value), its Epic or `null`, the Epic's live members, and the ids of open `blocks`
+ * blockers.
+ */
+export function queueBlockers(input: {
+  ticket: GateTicket;
+  epic: GateEpic | null;
+  members: readonly GateMember[];
+  openBlockerIds: readonly number[];
+}): QueueCriterion[] {
+  const { ticket, epic, members, openBlockerIds } = input;
+  const [epicRefined, epicNotStale, membersRefined] = epicQueueCriteria(epic, members, ticket.id);
+  return [
+    {
+      id: 'refined',
+      label: ticket.refined ? 'This ticket is refined' : 'This ticket is not refined',
+      met: ticket.refined,
+      bypassable: false,
+      refusesEntry: true,
+      remedy: { kind: 'mark-refined', ticketId: ticket.id },
+    },
+    epicRefined,
+    epicNotStale,
+    membersRefined,
+    {
+      id: 'ready',
+      label: ticket.ready
+        ? 'The body has all four Ready sections'
+        : ticket.readyBypassed
+          ? 'The body is not Ready — bypassed'
+          : 'The body is missing a Ready section',
+      met: ticket.ready || ticket.readyBypassed,
+      bypassable: true,
+      refusesEntry: false,
+      remedy: { kind: 'edit-body', ticketId: ticket.id },
+    },
+    {
+      id: 'unblocked',
+      label:
+        openBlockerIds.length === 0
+          ? 'Nothing blocks it'
+          : `Blocked by ${openBlockerIds.length} open ticket${openBlockerIds.length === 1 ? '' : 's'} — it can wait in the Queue, but will not dispatch`,
+      met: openBlockerIds.length === 0,
+      bypassable: false,
+      refusesEntry: false,
+      remedy: { kind: 'resolve-blocker', ticketId: openBlockerIds[0] },
+    },
+  ];
+}
+
+/** The criteria that refuse Queue entry right now — empty means the write may proceed. */
+export function queueEntryRefusals(criteria: readonly QueueCriterion[]): QueueCriterion[] {
+  return criteria.filter((c) => !c.met && c.refusesEntry);
 }
 
 // ── Notification Center (D-040) ──────────────────────────────────────────────

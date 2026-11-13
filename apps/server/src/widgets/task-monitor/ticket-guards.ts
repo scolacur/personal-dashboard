@@ -1,4 +1,5 @@
-import type { AgentTicket, TicketStatus } from '@dashboard/shared';
+import type { AgentTicket, QueueCriterion, TicketStatus } from '@dashboard/shared';
+import { epicQueueCriteria, isReady, queueBlockers, queueEntryRefusals } from '@dashboard/shared';
 
 /**
  * The queue-model invariants, enforced at the HTTP boundary (PD-542).
@@ -189,4 +190,97 @@ export function reopenGuardFailure(
     };
   }
   return null;
+}
+
+// ── D-091 (PD-632): the Queue gate ───────────────────────────────────────────
+
+/** What the gate needs to read, injected so this module stays free of the DB (the store builds it). */
+export interface QueueGateContext {
+  getTicket(id: number): AgentTicket | null;
+  /** An Epic's live (non-archived) members. */
+  listEpicMembers(epicId: number): AgentTicket[];
+  /** Ids of the ticket's unresolved `blocks` blockers (D-048). */
+  openBlockerIds(ticketId: number): number[];
+}
+
+export interface QueueGuardFailure extends GuardFailure {
+  code: 'QUEUE_GATE';
+  /** The full ordered criteria list, met and unmet, so the client renders rather than re-derives. */
+  blockers: QueueCriterion[];
+}
+
+/** The patchable fields that decide whether a write puts a ticket into the robot's Queue. */
+type QueuePatch = Partial<Pick<AgentTicket, 'status' | 'assignee' | 'refined' | 'readyBypassed' | 'epicId'>> & {
+  body?: string | null;
+};
+
+function refusal(criteria: QueueCriterion[], subject: string): QueueGuardFailure | null {
+  const unmet = queueEntryRefusals(criteria);
+  if (unmet.length === 0) return null;
+  return {
+    message: `${subject} cannot enter the Queue for the Robot until it is refined (D-091): ${unmet
+      .map((c) => c.label)
+      .join('; ')}.`,
+    code: 'QUEUE_GATE',
+    blockers: criteria,
+  };
+}
+
+/**
+ * Why this write may not put robot work into the Queue, or null when it may proceed (D-091).
+ *
+ * **A state invariant, enforced on every edge into the state.** The guarded state is
+ * `status = 'queue' ∧ assignee = 'robot'`; it is checked when a write *enters* it — moving a robot
+ * ticket into the Queue, assigning a queued ticket to `robot`, or moving a queued robot ticket into
+ * another Epic. A write that keeps a ticket in the state without changing what gates it (a title
+ * edit, a drag) is not re-judged, and un-refining a queued ticket is allowed: the loop's selection
+ * query is the backstop for that case, and warns about it.
+ *
+ * **An Epic entering the Queue is judged by its members.** Queueing an Epic cascades every `backlog`
+ * member into the Queue (D-080), so it is refused when that would arm a robot member under an
+ * unmet Epic-level criterion. An Epic with no robot members to arm is not gated at all.
+ *
+ * **`assignee = 'steve'` is never gated.** The harness claim (`{assignee:'steve', status:'queue'}`)
+ * depends on that, and so does a human's own work: nothing dispatches it.
+ */
+export function queueGuardFailure(
+  existing: AgentTicket,
+  patch: QueuePatch,
+  ctx: QueueGateContext,
+): QueueGuardFailure | null {
+  if (existing.isEpic) {
+    const entering = patch.status === 'queue' && existing.status !== 'queue';
+    if (!entering) return null;
+    const members = ctx.listEpicMembers(existing.id);
+    const armsRobot = members.some((m) => m.status === 'backlog' && m.assignee === 'robot');
+    if (!armsRobot) return null;
+    const refined = patch.refined ?? existing.refined;
+    // A plain update that sets `refined` also clears the staleness (`updateTicket`, PD-610).
+    const epicAfter = { id: existing.id, refined, refineStale: refined && !existing.refined ? false : existing.refineStale };
+    return refusal(epicQueueCriteria(epicAfter, members), 'This Epic has robot members, and it');
+  }
+
+  const after = {
+    status: patch.status ?? existing.status,
+    assignee: patch.assignee === undefined ? existing.assignee : patch.assignee,
+    epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
+  };
+  if (after.status !== 'queue' || after.assignee !== 'robot') return null;
+  const wasInState = existing.status === 'queue' && existing.assignee === 'robot';
+  if (wasInState && after.epicId === existing.epicId) return null;
+
+  const ticket = {
+    id: existing.id,
+    refined: patch.refined ?? existing.refined,
+    ready: patch.body === undefined ? existing.ready : isReady(patch.body),
+    readyBypassed: patch.readyBypassed ?? existing.readyBypassed,
+  };
+  const epic = after.epicId === null ? null : ctx.getTicket(after.epicId);
+  const criteria = queueBlockers({
+    ticket,
+    epic,
+    members: epic ? ctx.listEpicMembers(epic.id) : [],
+    openBlockerIds: ctx.openBlockerIds(existing.id),
+  });
+  return refusal(criteria, 'This ticket is assigned to the Robot, and it');
 }

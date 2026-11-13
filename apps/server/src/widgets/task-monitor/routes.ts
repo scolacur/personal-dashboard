@@ -19,6 +19,7 @@ import {
   appendRobotReply,
   approveRefine,
   markTicketRefined,
+  queueGateContext,
   type ApproveRefineResult,
   archiveTicket,
   computeEpicSummary,
@@ -57,7 +58,7 @@ import {
   updateTicket,
   ValidationError,
 } from './store';
-import { createGuardFailure, patchGuardFailure, reopenGuardFailure } from './ticket-guards';
+import { createGuardFailure, patchGuardFailure, queueGuardFailure, reopenGuardFailure } from './ticket-guards';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
@@ -356,6 +357,14 @@ export function registerRoutes(
     const patchFail = patchGuardFailure(existingForGuard, patch as Record<string, unknown>);
     if (patchFail) {
       return reply.status(409).send({ error: patchFail.message, code: patchFail.code });
+    }
+    // D-091 (PD-632): robot work enters the Queue only refined. The blocker list goes back in full so
+    // the board renders the server's answer rather than re-deriving it (PD-633).
+    const queueFail = queueGuardFailure(existingForGuard, patch, queueGateContext(db));
+    if (queueFail) {
+      return reply
+        .status(409)
+        .send({ error: queueFail.message, code: queueFail.code, blockers: queueFail.blockers });
     }
 
     let updated;
@@ -663,6 +672,8 @@ export function registerRoutes(
           error: `an Epic cannot enter the queue: ${result.detail}`,
           code: 'EPIC_NOT_QUEUEABLE',
         });
+      case 'queue_gate':
+        return reply.status(409).send({ error: result.detail, code: 'QUEUE_GATE', blockers: result.blockers });
       default:
         return reply
           .status(422)
