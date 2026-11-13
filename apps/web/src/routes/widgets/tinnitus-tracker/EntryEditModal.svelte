@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { TINNITUS_MAX, TINNITUS_MIN, type TinnitusEntry } from '@dashboard/shared';
+  import { TINNITUS_MAX, TINNITUS_MIN, tinnitusLabel, type TinnitusEntry } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import TagCloud from './TagCloud.svelte';
   import { deleteEntry, updateEntry } from './api';
@@ -80,6 +80,7 @@
       <span class="value" aria-live="polite">{intensity}</span>
       <button type="button" aria-label="Raise" disabled={intensity >= TINNITUS_MAX} onclick={() => intensity++}>+</button>
     </div>
+    <p class="label">{tinnitusLabel(intensity) ?? '\u00a0'}</p>
 
     <TagCloud tags={allTags} bind:selected compact />
 

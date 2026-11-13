@@ -13,6 +13,10 @@ correlations: PD-706 (Chart + correlation views).
 - **Capture**, at `/widgets/tinnitus-tracker`, top to bottom: tag cloud → large value label →
   large vertical slider (whole numbers 0–10, drag up to raise, **always starts at 0**) → notes →
   optional "Now ▾" time override to backdate → **Enter**.
+- **Rubric label** (PD-711) sits under the value and updates as the slider moves:
+  1–2 Faint · 3 Noticeable & maskable · 4 Noticeable & not maskable · 5 Distracting ·
+  6 Very Distracting · 7 Painful · 8 Very Painful · 9 Debilitating · 10 Unbearable. 0 has no label.
+  The rubric lives in `@dashboard/shared` (`TINNITUS_RUBRIC`) so charts can reuse it.
 - **Tags** toggle on/off per entry; there are no quantities (put amounts in notes). Custom tags
   persist in the cloud. "edit" mode hides a tag; past entries keep it, and naming it again brings
   it back.

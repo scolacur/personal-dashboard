@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { TINNITUS_DEFAULT_TAGS, TINNITUS_FUTURE_TOLERANCE_MS, type TinnitusEntry } from '@dashboard/shared';
+  import {
+    TINNITUS_DEFAULT_TAGS,
+    TINNITUS_FUTURE_TOLERANCE_MS,
+    tinnitusLabel,
+    type TinnitusEntry,
+  } from '@dashboard/shared';
   import { toast } from '$lib/toast-store.svelte';
   import { createEntry, createTag, fetchEntries, fetchTags, hideTag } from '../routes/widgets/tinnitus-tracker/api';
   import { flushPending, loadPending, newClientId, savePending, type PendingEntry } from '../routes/widgets/tinnitus-tracker/queue';
@@ -173,7 +178,11 @@
   <TagCloud {tags} bind:selected {compact} onAdd={addTag} onHide={removeTag} />
 
   <div class="reading">
-    <output class="value" aria-live="polite">{value}</output>
+    <output class="value-block" aria-live="polite">
+      <span class="value">{value}</span>
+      <!-- Always rendered, so the slider doesn't jump when 0 (no label) is reached. -->
+      <span class="label">{tinnitusLabel(value) ?? '\u00a0'}</span>
+    </output>
     <IntensitySlider bind:value {compact} />
   </div>
 

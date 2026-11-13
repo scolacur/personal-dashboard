@@ -35,6 +35,12 @@
   }
 }
 
+.label {
+  margin: calc(var(--space-sm) * -1) 0 0;
+  text-align: center;
+  color: var(--muted);
+}
+
 label {
   display: flex;
   flex-direction: column;

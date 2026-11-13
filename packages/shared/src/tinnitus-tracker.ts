@@ -67,3 +67,25 @@ export function isValidIntensity(v: unknown): v is number {
 export function normalizeTagName(raw: string): string {
   return raw.trim().replace(/\s+/g, ' ').toLowerCase();
 }
+
+/**
+ * Steve's intensity rubric (PD-711). Index = intensity. 0 has no label: "no tinnitus" needs no
+ * description.
+ */
+export const TINNITUS_RUBRIC: readonly (string | null)[] = [
+  null,
+  'Faint',
+  'Faint',
+  'Noticeable & maskable',
+  'Noticeable & not maskable',
+  'Distracting',
+  'Very Distracting',
+  'Painful',
+  'Very Painful',
+  'Debilitating',
+  'Unbearable',
+];
+
+export function tinnitusLabel(intensity: number): string | null {
+  return TINNITUS_RUBRIC[intensity] ?? null;
+}
