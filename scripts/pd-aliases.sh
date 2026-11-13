@@ -20,6 +20,10 @@ PD_API="${PD_API:-http://192.168.68.50:8088/api/widgets/task-monitor}"
 PD_WORKER="${PD_WORKER:-agent-worker}"
 PD_COMPOSE="${PD_COMPOSE:-ops/agent-worker/docker-compose.egress.yml}"
 PD_IMAGE="${PD_IMAGE:-agent-worker-dashboard}"
+# The worker's env file (secrets — outside the repo, never committed). Set PD_BOT_LOGIN to the bot
+# account's GitHub login to make `robot-token` refuse any other account; unset, it asks instead.
+PD_WORKER_ENV="${PD_WORKER_ENV:-/volume1/docker/personal-dashboard/agent-worker.env}"
+PD_BOT_LOGIN="${PD_BOT_LOGIN:-}"
 
 # ── Robot loop / agent-worker operator helpers (PD-391) ──────────────────────
 #
@@ -101,6 +105,75 @@ robot-refresh() {
   )
 }
 
+robot-token() {
+  # Rotate the Robot's GitHub WRITE token (ROBOT_GITHUB_TOKEN) in the worker's env file, then
+  # recreate the worker so it takes effect. An env change needs no image rebuild.
+  #
+  # The token is read at a hidden prompt, so it never reaches the screen, the shell history, or a
+  # command line in `ps` (curl and the file rewrite both read it from stdin, never argv). It is checked against
+  # GitHub BEFORE the file is touched: a wrong or under-scoped token is refused, and the old one
+  # stays in place. Found necessary 2026-11-13, when the bot's token had expired and PD-714's run
+  # could verify green but not push.
+  local _tok _login _push _ok
+  if [ ! -f "$PD_WORKER_ENV" ] && ! sudo test -f "$PD_WORKER_ENV"; then
+    echo "robot-token: env file not found: $PD_WORKER_ENV" >&2; return 1
+  fi
+  # printf + read -rs rather than `read -p`: in zsh `-p` means a coprocess, not a prompt.
+  printf 'New ROBOT_GITHUB_TOKEN (the bot account'"'"'s write token): '; read -rs _tok; echo
+  if [ -z "$_tok" ]; then echo "robot-token: empty token — nothing changed" >&2; return 2; fi
+  case "$_tok" in *[!A-Za-z0-9_]*) echo "robot-token: unexpected characters in token — nothing changed" >&2; return 2 ;; esac
+
+  # 1. Who is it? Must be the bot, or the Robot would push as someone else.
+  # The auth header goes in on stdin (`-H @-`), never as an argument, so it is not visible in `ps`.
+  _login=$(printf 'Authorization: token %s\n' "$_tok" | curl -fsS -H @- https://api.github.com/user 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("login",""))' 2>/dev/null)
+  if [ -z "$_login" ]; then
+    echo "robot-token: GitHub rejected the token (bad or expired) — nothing changed" >&2; return 1
+  fi
+  if [ -n "$PD_BOT_LOGIN" ]; then
+    if [ "$_login" != "$PD_BOT_LOGIN" ]; then
+      echo "robot-token: token belongs to '$_login', not '$PD_BOT_LOGIN' — nothing changed" >&2; return 1
+    fi
+  else
+    printf 'Token belongs to GitHub user %s. The Robot will push as them. Use it? [y/N] ' "$_login"
+    read -r _ok
+    case "$_ok" in y|Y|yes) ;; *) echo "robot-token: not confirmed — nothing changed" >&2; return 1 ;; esac
+  fi
+  # 2. Can it push to the repo? (`permissions.push` reflects both classic and fine-grained scopes.)
+  _push=$(printf 'Authorization: token %s\n' "$_tok" | curl -fsS -H @- "https://api.github.com/repos/$PD_GH_REPO" 2>/dev/null \
+    | python3 -c 'import sys,json; print(json.load(sys.stdin).get("permissions",{}).get("push",False))' 2>/dev/null)
+  if [ "$_push" != "True" ]; then
+    echo "robot-token: $_login's token cannot push to $PD_GH_REPO (needs Contents + Pull requests: write, or public_repo) — nothing changed" >&2
+    return 1
+  fi
+
+  # 3. Back up, then replace the line (or append it if missing). Python rather than `sed -i`, whose
+  #    flags differ between GNU and BSD; the token goes in on stdin, and writing in place keeps the
+  #    file's owner and mode (it is a secrets file).
+  sudo cp -p "$PD_WORKER_ENV" "$PD_WORKER_ENV.bak.$(date +%Y%m%d-%H%M%S)" || return 1
+  printf '%s\n' "$_tok" | sudo python3 -c '
+import sys
+path, tok = sys.argv[1], sys.stdin.readline().strip()
+lines = open(path).read().splitlines()
+hits = [i for i, l in enumerate(lines) if l.startswith("ROBOT_GITHUB_TOKEN=")]
+for i in hits:
+    lines[i] = "ROBOT_GITHUB_TOKEN=" + tok
+if not hits:
+    lines.append("ROBOT_GITHUB_TOKEN=" + tok)
+with open(path, "w") as f:
+    f.write("\n".join(lines) + "\n")
+' "$PD_WORKER_ENV" || { unset _tok; return 1; }
+  unset _tok
+  echo "robot-token: verified as $_login with push on $PD_GH_REPO; $(sudo grep -c '^ROBOT_GITHUB_TOKEN=' "$PD_WORKER_ENV") line set (backup kept beside it)"
+
+  # 4. Recreate the worker so it reads the new env. Forced, because an env_file edit alone does not
+  #    always register as a config change to compose.
+  ( cd "$PD_REPO_ROOT" || return 1
+    sudo docker-compose -f "$PD_COMPOSE" up -d --force-recreate "$PD_WORKER" || return 1
+    sudo docker ps --filter "name=$PD_WORKER" --format 'table {{.Names}}\t{{.Status}}'
+  )
+}
+
 pd-runs() {
   # List recent GitHub Actions runs (newest first). Works from any host with gh.
   #   pd-runs                     recent runs across all workflows
@@ -140,6 +213,7 @@ pd-help() {
   printf '%-28s %-40s %s\n' 'robot-pause [reason]'    'Stop the NEXT dispatch (not in-flight)'  'POST /robot/pause'
   printf '%-28s %-40s %s\n' 'robot-resume'            'Re-arm dispatch (clears fault pause too)' 'POST /robot/resume'
   printf '%-28s %-40s %s\n' 'robot-refresh'           'THE DEPLOY: pull, build image, recreate' 'git pull && docker build && up -d'
+  printf '%-28s %-40s %s\n' 'robot-token'             'Rotate the bot write token, recreate'    'verify on GitHub, edit env, up -d'
   printf '\n'
   printf 'Source: %s\n' "$PD_REPO_ROOT/scripts/pd-aliases.sh"
 }
