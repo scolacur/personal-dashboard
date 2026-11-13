@@ -6,6 +6,14 @@
   import IdeaList from './acute-strategies-generator/IdeaList.svelte';
   import IdeaEditModal from './acute-strategies-generator/IdeaEditModal.svelte';
   import { deriveAllTags, filterIdeas, pickRandom } from './acute-strategies-generator/utils';
+  import {
+    drawFromDeck,
+    deckProgress,
+    loadDeckMode,
+    saveDeckMode,
+    loadDeckSeen,
+    saveDeckSeen,
+  } from './acute-strategies-generator/deck';
 
   interface Props {
     variant: 'widget' | 'page';
@@ -35,8 +43,30 @@
   let allTags = $derived(deriveAllTags(ideas));
   let filteredIdeas = $derived(filterIdeas(ideas, typeFilter, tagFilter));
 
+  // ── Deck Mode (T67): no repeats until the current pool has been seen ──
+  let deckMode = $state(loadDeckMode());
+  let deckSeen = $state<number[]>(loadDeckSeen());
+  let deckStatus = $derived(deckProgress(filteredIdeas, deckSeen));
+
   function shuffle() {
-    currentIdea = pickRandom(filteredIdeas);
+    if (deckMode) {
+      const { idea, seenIds } = drawFromDeck(filteredIdeas, deckSeen, currentIdea?.id ?? null);
+      deckSeen = seenIds;
+      saveDeckSeen(deckSeen);
+      currentIdea = idea;
+    } else {
+      currentIdea = pickRandom(filteredIdeas);
+    }
+  }
+
+  function toggleDeckMode() {
+    deckMode = !deckMode;
+    saveDeckMode(deckMode);
+  }
+
+  function resetDeck() {
+    deckSeen = [];
+    saveDeckSeen(deckSeen);
   }
 
   $effect(() => {
@@ -146,6 +176,17 @@
             {/each}
           </datalist>
         </div>
+      </div>
+
+      <div class="deck-controls">
+        <label class="deck-toggle">
+          <input type="checkbox" checked={deckMode} onchange={toggleDeckMode} />
+          Deck mode
+        </label>
+        {#if deckMode}
+          <span class="deck-progress">{deckStatus.seen} of {deckStatus.total} seen</span>
+          <button class="reset-deck-btn" onclick={resetDeck}>Reset deck</button>
+        {/if}
       </div>
 
       <div class="generator-footer">
