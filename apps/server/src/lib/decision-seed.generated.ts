@@ -2,4 +2,4 @@
 //
 // The highest D-NNN that has a file in DECISIONS/, and never lower than any value it has held.
 // The decision-id counter seeds from it on a fresh DB; see `decision-ids.ts`.
-export const HIGHEST_DECISION_ON_DISK = 91;
+export const HIGHEST_DECISION_ON_DISK = 92;
