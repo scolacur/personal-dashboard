@@ -1,0 +1,103 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-lg);
+
+  button {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: var(--font-size-lg);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+  }
+
+  .value {
+    min-width: 3ch;
+    text-align: center;
+    font-family: var(--font-display);
+    font-size: 2.5rem;
+    font-weight: 600;
+  }
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+input,
+textarea {
+  font: inherit;
+  font-size: var(--font-size-base); /* 16px keeps iOS from zooming on focus */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+}
+
+textarea {
+  resize: vertical;
+}
+
+.error {
+  margin: 0;
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+
+  button {
+    min-height: 2.75rem;
+    padding: 0 var(--space-lg);
+    border-radius: var(--radius);
+    font: inherit;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}
+
+.delete {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--status-stuck);
+
+  &.confirm {
+    background: var(--status-stuck);
+    border-color: var(--status-stuck);
+    color: var(--surface);
+  }
+}
+
+.save {
+  border: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}

@@ -22,6 +22,7 @@ import { widget as pomodoroWidget } from './widgets/pomodoro/index';
 import { widget as acuteStrategiesWidget } from './widgets/acute-strategies-generator/index';
 import { widget as buySellTradeWidget } from './widgets/buy-sell-trade/index';
 import { widget as idTrackerWidget } from './widgets/id-tracker/index';
+import { widget as tinnitusTrackerWidget } from './widgets/tinnitus-tracker/index';
 import { initDeployStatus, getDeployInfo } from './deploy-status';
 
 const widgets: BackendWidget[] = [
@@ -31,6 +32,7 @@ const widgets: BackendWidget[] = [
   acuteStrategiesWidget,
   buySellTradeWidget,
   idTrackerWidget,
+  tinnitusTrackerWidget,
 ];
 
 // Structured JSON in prod (log aggregation); human-readable pretty logs in dev.

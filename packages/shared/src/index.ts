@@ -251,3 +251,19 @@ export type { HoldTrigger, HoldStatus, MaintenanceHold, MaintenanceHoldRun, Main
 export type { MaintenanceHoldStatus } from './task-monitor';
 export type { NeedsHumanTicket } from './task-monitor';
 export { HOLD_WINDOW_MS, HOLD_CADENCE_MS, MAINTENANCE_JOBS, isHoldActive } from './maintenance';
+export type {
+  TinnitusTag,
+  TinnitusEntry,
+  CreateTinnitusEntryInput,
+  UpdateTinnitusEntryInput,
+} from './tinnitus-tracker';
+export {
+  TINNITUS_MIN,
+  TINNITUS_MAX,
+  TINNITUS_DEFAULT_TAGS,
+  TINNITUS_TAG_MAX_LENGTH,
+  TINNITUS_NOTES_MAX_LENGTH,
+  TINNITUS_FUTURE_TOLERANCE_MS,
+  isValidIntensity,
+  normalizeTagName,
+} from './tinnitus-tracker';
