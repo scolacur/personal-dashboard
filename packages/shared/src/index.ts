@@ -151,6 +151,9 @@ export type {
   RobotEventType,
   RobotEventDetail,
   TurnProgress,
+  QueueCriterion,
+  QueueCriterionId,
+  QueueRemedyKind,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,
@@ -173,6 +176,9 @@ export {
   turnProgress,
   showsTurnProgress,
   isReady,
+  queueBlockers,
+  epicQueueCriteria,
+  queueEntryRefusals,
   NOTIFICATION_KINDS,
   HUMAN_REPLY_MARKER,
   REFINE_EVENT_TYPE,

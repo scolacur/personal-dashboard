@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { loadRobotConfig, type RobotConfig } from '../../shared/config';
 import {
   queuedBlockedByAgentState,
+  queuedButUnrefined,
   robotQueueCandidates,
   selectDispatchable,
   type RobotCandidate,
@@ -20,7 +21,7 @@ function boardDb(): Database.Database {
       -- Prod is \`TEXT NOT NULL DEFAULT 'none'\`; left nullable here only so the defensive
       -- SQL-NULL ordering case is testable. addTicket defaults to 'none' like a real insert.
       priority TEXT,
-      ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0,
+      ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0, refined INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
       -- D-080: the dispatch order joins the Epic and reads both drag orders.
       epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0
@@ -50,6 +51,8 @@ function addTicket(
     ready?: 0 | 1;
     /** Persisted ready-bypass flag (D-058). Defaults to 0. */
     readyBypassed?: 0 | 1;
+    /** Refined flag (D-091). Defaults to 1 so a queue ticket is dispatchable. */
+    refined?: 0 | 1;
     /** Per-ticket run ceiling (PD-432). Defaults to null = inherit the loop default. */
     maxTurns?: number | null;
     /** P0–P5, or the `'none'` sentinel for unset — matching how the column actually stores it.
@@ -58,8 +61,8 @@ function addTicket(
   },
 ): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, assignee, priority, ready, ready_bypassed, project_id, github_issue_number, agent_state, max_turns, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, priority, ready, ready_bypassed, refined, project_id, github_issue_number, agent_state, max_turns, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
     `T${t.id}`,
@@ -69,6 +72,7 @@ function addTicket(
     t.priority === undefined ? 'none' : t.priority,
     t.ready ?? 1,
     t.readyBypassed ?? 0,
+    t.refined ?? 1,
     t.projectId ?? 1,
     t.issue ?? null,
     t.agentState ?? null,
@@ -238,6 +242,43 @@ describe('robotQueueCandidates — per-ticket turn ceiling (PD-432)', () => {
 
 // PD-467: the counterpart to the agent_state gate above — the tickets it drops that a human would
 // read as dispatchable. This set is what the loop logs, so nothing is skipped in silence.
+describe('robotQueueCandidates — refinement backstop (D-091, PD-632)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  it('excludes a queued robot ticket once it is un-refined, and includes it again when re-refined', () => {
+    addTicket(db, { id: 1, status: 'queue' });
+    expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([1]);
+    db.prepare('UPDATE agent_tickets SET refined = 0 WHERE id = 1').run();
+    expect(robotQueueCandidates(db)).toEqual([]);
+    db.prepare('UPDATE agent_tickets SET refined = 1 WHERE id = 1').run();
+    expect(robotQueueCandidates(db).map((x) => x.id)).toEqual([1]);
+  });
+});
+
+describe('queuedButUnrefined (D-091)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  it('names the queued robot ticket the backstop skipped, so the skip is not silent', () => {
+    addTicket(db, { id: 1, status: 'queue', refined: 0 });
+    addTicket(db, { id: 2, status: 'queue' }); // refined — dispatchable, not reported
+    expect(queuedButUnrefined(db)).toEqual([{ id: 1 }]);
+  });
+
+  it('stays quiet for human work, other lanes, in-flight runs and robot-disabled projects', () => {
+    addTicket(db, { id: 1, status: 'queue', refined: 0, assignee: 'steve' });
+    addTicket(db, { id: 2, status: 'backlog', refined: 0 });
+    addTicket(db, { id: 3, status: 'queue', refined: 0, agentState: 'working' });
+    addTicket(db, { id: 4, status: 'queue', refined: 0, projectId: 2 });
+    expect(queuedButUnrefined(db)).toEqual([]);
+  });
+});
+
 describe('queuedBlockedByAgentState', () => {
   let db: Database.Database;
   beforeEach(() => {

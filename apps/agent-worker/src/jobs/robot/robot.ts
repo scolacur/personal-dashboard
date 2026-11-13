@@ -4,6 +4,7 @@ import { dbPathFor } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import {
   queuedBlockedByAgentState,
+  queuedButUnrefined,
   robotQueueCandidates,
   selectDispatchable,
   type RobotCandidate,
@@ -183,6 +184,13 @@ export async function processRobotQueue(
     logger.warn(
       { ticketId: t.id, agentState: t.agentState },
       'robot: queued + robot-assigned + Ready but NOT dispatchable — parked agent_state; Unstick to clear',
+    );
+  }
+  // D-091: the refinement backstop's skip, named for the same reason.
+  for (const t of queuedButUnrefined(db)) {
+    logger.warn(
+      { ticketId: t.id },
+      'robot: queued + robot-assigned but NOT dispatchable — un-refined after it was queued; ✓ Mark refined or move it out',
     );
   }
 

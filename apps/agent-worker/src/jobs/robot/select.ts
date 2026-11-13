@@ -6,7 +6,7 @@ import type { RobotConfig } from '../../shared/config';
  * Dispatch selection for the Robot loop (D-055, PD-342; D-058 queue model). The board DB is the
  * queue: a ticket is dispatchable when it sits in the single `queue` lane, is assigned to `robot`,
  * is Ready or ready-bypassed (`ready = 1 OR ready_bypassed = 1` — read from the persisted flags,
- * D-058: a flag read instead of a body parse), belongs to a robot-enabled project with a repo, and
+ * D-058: a flag read instead of a body parse), is refined (`refined = 1`, D-091), belongs to a robot-enabled project with a repo, and
  * is not blocked by an open `blocks` relation (dogfooding D-051 — the same gate the board enforces
  * on lane entry).
  *
@@ -72,7 +72,14 @@ const PRIORITY_UNSET = 'none';
  *  'none' ↔ `null` at the API boundary; this query reads the raw column, so it must test the
  *  sentinel — a `priority IS NULL` check would silently never fire, and ~⅓ of the board is unset.
  *  We map the sentinel back to `null` on the way out so `RobotCandidate.priority` matches the
- *  domain type. */
+ *  domain type.
+ *
+ *  **`t.refined = 1` is a backstop, not the gate (D-091).** The server refuses robot work entering
+ *  the Queue unrefined at every door it owns; this catches the one case it cannot — a ticket
+ *  un-refined *after* it was queued. It deliberately checks only the ticket's own flag: the Epic-level
+ *  criteria are enforced on entry, and a going-stale Epic already un-arms its members (D-089 §6), so
+ *  repeating them here would only widen the query D-089 asked to keep narrow. A ticket this skips is
+ *  named every cycle by `queuedButUnrefined`, so the skip is never silent. */
 export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   const rows = db
     .prepare(
@@ -85,6 +92,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
           AND t.status = 'queue'
           AND t.assignee = 'robot'
           AND (t.ready = 1 OR t.ready_bypassed = 1)
+          AND t.refined = 1
           AND (t.agent_state IS NULL OR t.agent_state = 'queued')
           AND p.robot_enabled = 1
           AND p.github_repo IS NOT NULL
@@ -143,6 +151,7 @@ export function queuedBlockedByAgentState(db: Database.Database): BlockedByAgent
           AND t.status = 'queue'
           AND t.assignee = 'robot'
           AND (t.ready = 1 OR t.ready_bypassed = 1)
+          AND t.refined = 1
           AND t.agent_state IS NOT NULL
           AND t.agent_state NOT IN ('queued', 'working', 'in-review')
           AND p.robot_enabled = 1
@@ -159,6 +168,32 @@ export function queuedBlockedByAgentState(db: Database.Database): BlockedByAgent
         ORDER BY t.id ASC`,
     )
     .all() as BlockedByAgentState[];
+}
+
+/**
+ * Queued robot tickets the selection query skips purely because they are no longer refined (D-091).
+ *
+ * Reachable only by un-refining a ticket after it entered the Queue — the server refuses it on the
+ * way in. Same idea as `queuedBlockedByAgentState`: a skipped card looks exactly like an idle loop,
+ * so it is named rather than left to be noticed. Not Ready / blocked / parked tickets are left to
+ * their own gates and diagnostics, so each skip is reported for one reason only.
+ */
+export function queuedButUnrefined(db: Database.Database): { id: number }[] {
+  return db
+    .prepare(
+      `SELECT t.id AS id
+         FROM agent_tickets t
+         JOIN agent_projects p ON p.id = t.project_id
+        WHERE t.archived_at IS NULL
+          AND t.status = 'queue'
+          AND t.assignee = 'robot'
+          AND t.refined = 0
+          AND (t.agent_state IS NULL OR t.agent_state = 'queued')
+          AND p.robot_enabled = 1
+          AND p.github_repo IS NOT NULL
+        ORDER BY t.id ASC`,
+    )
+    .all() as { id: number }[];
 }
 
 /**
