@@ -23,3 +23,27 @@ export function pickRandom<T>(pool: T[]): T | null {
   if (pool.length === 0) return null;
   return pool[Math.floor(Math.random() * pool.length)];
 }
+
+export type ParseIdeaFormResult =
+  | { ok: true; data: { text: string; type: IdeaType; tags: string[] } }
+  | { ok: false; error: string };
+
+/**
+ * Validate and normalise the raw IdeaEditModal form fields into the payload the
+ * create/update API expects. Kept here (not inline in the component) so the one
+ * creation path is unit-testable — shared by both "Save" and "Save and add
+ * another" (T546).
+ */
+export function parseIdeaForm(
+  rawText: string,
+  type: IdeaType,
+  rawTags: string,
+): ParseIdeaFormResult {
+  const text = rawText.trim();
+  if (!text) return { ok: false, error: 'Text is required.' };
+  const tags = rawTags
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  return { ok: true, data: { text, type, tags } };
+}
