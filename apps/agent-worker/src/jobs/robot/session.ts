@@ -100,7 +100,8 @@ export function extractMessageText(message: unknown): string {
   return text ? `${role} ${text}` : '';
 }
 
-/** The env handed to the coding subprocess. Inherits the loop env for PATH/ANTHROPIC_API_KEY,
+/** The env handed to the coding subprocess. Inherits the loop env for PATH/ANTHROPIC_API_KEY
+ *  (minus the worker's own NODE_ENV),
  *  then injects the WRITE token as GH_TOKEN and the proxy so git/gh/npm reach GitHub + the registry
  *  through squid. The read token is intentionally NOT forwarded — a Robot pushes with the write
  *  token or not at all. When the uid is dropped, HOME/USER are repointed at the coding user's
@@ -116,6 +117,11 @@ export function codingEnv(config: AgentWorkerConfig): Record<string, string | un
   return {
     ...process.env,
     GITHUB_READ_TOKEN: undefined,
+    // The image sets NODE_ENV=production for the WORKER, and it leaked into the Robot's shell:
+    // `npm ci` then omits devDependencies (vite, vitest, svelte-check), so the prompt's plain
+    // `npm ci && npm run verify` could not build, and the Robot spent turns working around it
+    // (found on PD-714's run, 2026-11-13). The Robot is a developer running a dev verify.
+    NODE_ENV: undefined,
     ...proxyVars,
     ...homeVars,
     ...(writeToken ? { GH_TOKEN: writeToken, GITHUB_TOKEN: writeToken } : {}),

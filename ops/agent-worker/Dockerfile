@@ -51,8 +51,11 @@ WORKDIR /app
 # github.com is already what everything else here reaches. Arch string (amd64/arm64) from
 # dpkg matches gh's asset naming. Bump GH_VERSION to update.
 ARG GH_VERSION=2.63.2
+# python3: the Robot runs the repo's full `npm run verify`, and ops-helpers.spec.ts drives the
+# robot-* helpers' Python formatter. Without it here (it was only in the build stage) 10 tests fail
+# with `spawnSync python3 ENOENT` and no Robot run can go green (found on PD-714, 2026-11-13).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates curl \
+  && apt-get install -y --no-install-recommends git ca-certificates curl python3 \
   && rm -rf /var/lib/apt/lists/* \
   && arch="$(dpkg --print-architecture)" \
   && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" -o /tmp/gh.tgz \

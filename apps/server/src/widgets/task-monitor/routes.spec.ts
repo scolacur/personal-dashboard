@@ -1005,3 +1005,31 @@ describe('PD-542 — queue-model invariants at the HTTP boundary', () => {
     expect(res.json().code).toBe('NOT_TERMINAL');
   });
 });
+
+describe('maxTurns over HTTP (PD-432)', () => {
+  it('saves a per-ticket turn budget on create and on PATCH, and clears it with null', async () => {
+    const { app, db } = freshSetup();
+    const pid = getProjectBySlug(db, 'personal-dashboard')!.id;
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 't', projectId: pid, epicId: anEpic(db, pid), maxTurns: 60 },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().maxTurns).toBe(60);
+    const id = created.json().id;
+    const patched = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { maxTurns: 80 } });
+    expect(patched.json().maxTurns).toBe(80);
+    const cleared = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { maxTurns: null } });
+    expect(cleared.json().maxTurns).toBeNull();
+  });
+
+  it('rejects an invalid budget with 400', async () => {
+    const { app, db } = freshSetup();
+    const pid = getProjectBySlug(db, 'personal-dashboard')!.id;
+    const t = createTicket(db, { title: 't', projectId: pid, epicId: anEpic(db, pid) });
+    const res = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${t.id}`, payload: { maxTurns: 0 } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_MAX_TURNS');
+  });
+});

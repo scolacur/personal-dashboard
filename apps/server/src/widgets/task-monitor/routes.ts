@@ -195,6 +195,9 @@ export function registerRoutes(
       status: isStatus(body.status) ? body.status : undefined,
       isEpic: body.isEpic === true,
       epicId: body.epicId === undefined ? undefined : (body.epicId as number | null),
+      // The store validates it (`validMaxTurns`) and throws ValidationError → 400 below. It was
+      // never copied here, so a per-ticket turn budget sent on create was silently dropped.
+      maxTurns: body.maxTurns === undefined ? undefined : (body.maxTurns as number | null),
     };
     // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-080 / PD-509),
     // which until now only the board's form enforced.
@@ -345,6 +348,12 @@ export function registerRoutes(
         return reply.status(400).send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
       }
       patch.epicId = body.epicId as number | null;
+    }
+    // PD-432's per-ticket turn budget. Validated by the store (→ 400 INVALID_MAX_TURNS). Until
+    // 2026-11-13 this route never copied it, so every edit to it, the board form's included, was
+    // silently dropped and the ticket kept the loop default.
+    if (body.maxTurns !== undefined) {
+      patch.maxTurns = body.maxTurns as number | null;
     }
 
     // PD-542: terminal is read-only and a Ticket never leaves its Epic — enforced here rather than
