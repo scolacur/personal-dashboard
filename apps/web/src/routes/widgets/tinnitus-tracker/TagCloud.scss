@@ -8,6 +8,10 @@
   &.compact {
     gap: var(--space-xs);
 
+    .chip.draft {
+      width: 6.5rem;
+    }
+
     .chip {
       min-height: 2rem;
       padding: 0 var(--space-sm);

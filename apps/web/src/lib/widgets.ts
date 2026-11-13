@@ -116,8 +116,9 @@ export const widgets: WidgetMeta[] = [
     route: '/widgets/tinnitus-tracker',
     embed: {
       component: TinnitusTracker,
-      span: { cols: 1, rows: 2 },
-      // No `flippable` (D-062): the card is quick capture; history and editing live on the page.
+      // 3 rows: the card carries notes and backdating as well as the slider (PD-716).
+      span: { cols: 1, rows: 3 },
+      // No `flippable` (D-062): the card is capture; history and tag editing live on the page.
     },
   },
   {

@@ -24,9 +24,10 @@
     cursor: grabbing;
   }
 
+  /* Shorter on the card, which also carries notes and backdating (PD-716). */
   &.compact {
     width: 4rem;
-    height: 11rem;
+    height: 9.5rem;
   }
 }
 

@@ -22,6 +22,18 @@ describe('resolvePageTitle', () => {
     expect(resolvePageTitle('/unknown')).toBe('Dashboard');
   });
 
+  it('names a widget page after the widget when given widget routes (PD-717)', () => {
+    const routes = [
+      { route: '/widgets/tinnitus-tracker', title: 'Tinnitus Tracker' },
+      { route: '/widgets/id-tracker', title: 'ID Tracker' },
+    ];
+    expect(resolvePageTitle('/widgets/tinnitus-tracker', routes)).toBe('Tinnitus Tracker');
+    expect(resolvePageTitle('/widgets/id-tracker/123', routes)).toBe('ID Tracker');
+    expect(resolvePageTitle('/widgets/unknown', routes)).toBe('Dashboard');
+    // A nav page still wins over a widget route.
+    expect(resolvePageTitle('/productivity', routes)).toBe('Productivity');
+  });
+
   it('does not match "/" as a prefix for other routes', () => {
     // The root route should only match exactly "/", not "/productivity".
     expect(resolvePageTitle('/productivity')).not.toBe('Home');

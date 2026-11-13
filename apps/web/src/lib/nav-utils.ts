@@ -12,8 +12,21 @@ import { pages } from './pages';
 export const LIBRARY_ROUTE = '/library';
 export const LIBRARY_TITLE = 'All Widgets';
 
-/** Returns the title of the nav page that best matches `pathname`, or "Dashboard" if none. */
-export function resolvePageTitle(pathname: string): string {
+/** A route the top bar can name. Widget routes are passed in this shape (PD-717). */
+export interface TitledRoute {
+  route: string;
+  title: string;
+}
+
+/**
+ * Returns the title of the nav page that best matches `pathname`. Failing that, it returns the
+ * title of the widget whose route it is (or a sub-path of), and otherwise "Dashboard".
+ *
+ * Widget routes are a parameter, not an import of `widgets.ts`, so this module stays pure TS.
+ * `widgets.ts` pulls in `.svelte` components and the web vitest config has no Svelte plugin. Without
+ * them every `/widgets/<id>` page fell through to "Dashboard" (PD-717).
+ */
+export function resolvePageTitle(pathname: string, widgetRoutes: TitledRoute[] = []): string {
   if (pathname === LIBRARY_ROUTE) return LIBRARY_TITLE;
 
   // Sort longest route first so /devops/tickets/... matches /devops before /.
@@ -23,7 +36,9 @@ export function resolvePageTitle(pathname: string): string {
       ? pathname === '/'
       : pathname === p.route || pathname.startsWith(p.route + '/'),
   );
-  return match?.title ?? 'Dashboard';
+  if (match) return match.title;
+  const widget = widgetRoutes.find((w) => pathname === w.route || pathname.startsWith(w.route + '/'));
+  return widget?.title ?? 'Dashboard';
 }
 
 /**
