@@ -10,7 +10,7 @@ import {
   type RobotCandidate,
 } from './select';
 import { checkDbLockedFromCoder } from './privilege';
-import { ensureWorktree, removeWorktree, type Worktree } from './workspace';
+import { ensureWorktree, pruneWorktrees, removeWorktree, worktreeDirFor, type Worktree } from './workspace';
 import { runRobotSession, type RobotSessionResult } from './session';
 import type { ResumeContext } from '@dashboard/shared';
 import {
@@ -74,6 +74,8 @@ export interface RobotDeps {
   /** Injectable so orchestration tests never open a real worktree. */
   ensureWorktree?: (config: AgentWorkerConfig, branch: string) => Promise<Worktree>;
   removeWorktree?: (config: AgentWorkerConfig, wt: Worktree) => Promise<void>;
+  /** PD-719: injectable so tests can observe pruning without touching a real worktrees dir. */
+  pruneWorktrees?: (config: AgentWorkerConfig, keepDirs: ReadonlySet<string>) => string[];
   /** Injectable so tests never spawn a real coding session. Receives the resume context (C5) the
    *  loop derived for this dispatch (ask_human answer to inject), or undefined for a fresh run. */
   runSession?: (
@@ -159,6 +161,7 @@ export async function processRobotQueue(
 
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
+  const doPrune = deps.pruneWorktrees ?? ((c, keep) => pruneWorktrees(c, keep));
   // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot, `onProgress` in
   // the 6th and the DB handle in the 7th, so `deps.runSession` (whose 5th arg IS onProgress)
   // cannot be passed positionally. `db` is closed over from this cycle — PD-564 needs it to build
@@ -193,6 +196,11 @@ export async function processRobotQueue(
       'robot: queued + robot-assigned but NOT dispatchable — un-refined after it was queued; ✓ Mark refined or move it out',
     );
   }
+
+  // PD-719: a run that did not hand off keeps its clone so the next dispatch can reuse its commits.
+  // Drop the clones of tickets the Robot no longer has. Before any dispatch, and cycles never
+  // overlap, so no clone here is in use.
+  doPrune(config, new Set(robotClaimedBranches(db).map((b) => worktreeDirFor(config, b))));
 
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
   const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);
@@ -343,6 +351,9 @@ export async function processRobotQueue(
     };
 
     let worktree: Worktree | undefined;
+    // PD-719: only a hand-off (the work is on GitHub) deletes the clone. A park, a fault or a
+    // no-verify keeps it, so the commits survive into the next dispatch of this ticket.
+    let handedOff = false;
     try {
       worktree = await doEnsure(config, branch);
       // PD-230: persist live turn progress so the board shows a working run closing on the cap.
@@ -366,6 +377,7 @@ export async function processRobotQueue(
       } else if (result.ok && result.verifyOk && result.prNumber !== undefined) {
         const prUrl = `https://github.com/${candidate.repo}/pull/${result.prNumber}`;
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
+        handedOff = true;
         setAgentState(db, candidate.id, 'in-review', now());
         dispatched++;
         logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
@@ -381,9 +393,26 @@ export async function processRobotQueue(
       logger.error({ err, ticketId: candidate.id }, 'robot: dispatch failed');
       handleFailure('error', undefined, msg);
     } finally {
-      if (worktree) await doRemove(config, worktree);
+      if (worktree && handedOff) await doRemove(config, worktree);
+      else if (worktree) logger.info({ ticketId: candidate.id, dir: worktree.dir }, 'robot: keeping the clone for the next dispatch (no hand-off)');
     }
   }
 
   return dispatched;
 }
+
+/**
+ * Branches of every ticket the Robot still has (`queue ∧ robot`, not archived), whatever its agent
+ * state. Their clones are kept; every other clone is pruned (PD-719). Uses `branchFor`, so the
+ * naming can never drift from the dispatch path.
+ */
+export function robotClaimedBranches(db: Database.Database): string[] {
+  const rows = db
+    .prepare(
+      `SELECT id, github_issue_number AS issueNumber FROM agent_tickets
+        WHERE archived_at IS NULL AND status = 'queue' AND assignee = 'robot'`,
+    )
+    .all() as { id: number; issueNumber: number | null }[];
+  return rows.map((r) => branchFor({ id: r.id, issueNumber: r.issueNumber } as Parameters<typeof branchFor>[0]));
+}
+
