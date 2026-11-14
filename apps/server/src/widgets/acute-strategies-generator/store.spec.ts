@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { createIdea, deleteIdea, getIdea, isIdeaType, listIdeas, updateIdea } from './store';
+import {
+  createIdea,
+  deleteIdea,
+  getIdea,
+  importIdeas,
+  isIdeaType,
+  listIdeas,
+  updateIdea,
+} from './store';
 
 function freshDb() {
   const db = new Database(':memory:');
@@ -165,6 +173,83 @@ describe('deleteIdea', () => {
     const created = createIdea(db, { text: 'Delete me', type: 'Acute', tags: [] });
     expect(deleteIdea(db, created.id)).toBe(true);
     expect(getIdea(db, created.id)).toBeNull();
+  });
+});
+
+describe('importIdeas', () => {
+  function emptyDb() {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS asg_ideas (
+        id INTEGER PRIMARY KEY,
+        text TEXT NOT NULL,
+        type TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    return db;
+  }
+
+  it('creates one idea per line with the chosen type and tags', () => {
+    const db = emptyDb();
+    const result = importIdeas(db, ['one', 'two', 'three'], 'Oblique', ['batch']);
+    expect(result.created).toHaveLength(3);
+    expect(result.skipped).toBe(0);
+    expect(result.created.every((i) => i.type === 'Oblique')).toBe(true);
+    expect(result.created.every((i) => i.tags.join() === 'batch')).toBe(true);
+    expect(listIdeas(db).map((i) => i.text)).toEqual(['one', 'two', 'three']);
+  });
+
+  it('trims lines and skips blank ones', () => {
+    const db = emptyDb();
+    const result = importIdeas(db, ['  spaced  ', '', '   ', 'kept'], 'Acute', []);
+    expect(result.created.map((i) => i.text)).toEqual(['spaced', 'kept']);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('skips lines matching an existing idea (case-insensitive, trimmed)', () => {
+    const db = emptyDb();
+    createIdea(db, { text: 'Existing', type: 'Acute', tags: [] });
+    const result = importIdeas(db, [' existing ', 'new'], 'Acute', []);
+    expect(result.created.map((i) => i.text)).toEqual(['new']);
+    expect(result.skipped).toBe(1);
+  });
+
+  it('skips a line matching an earlier line in the same batch', () => {
+    const db = emptyDb();
+    const result = importIdeas(db, ['dup', 'DUP', 'other'], 'Acute', []);
+    expect(result.created.map((i) => i.text)).toEqual(['dup', 'other']);
+    expect(result.skipped).toBe(1);
+  });
+
+  it('re-importing an exported list adds nothing', () => {
+    const db = emptyDb();
+    importIdeas(db, ['alpha', 'beta'], 'Acute', []);
+    const again = importIdeas(db, ['alpha', 'beta'], 'Acute', []);
+    expect(again.created).toHaveLength(0);
+    expect(again.skipped).toBe(2);
+    expect(listIdeas(db)).toHaveLength(2);
+  });
+
+  it('is all-or-nothing: a DB error rolls back the whole batch', () => {
+    const db = emptyDb();
+    db.prepare('DROP TABLE asg_ideas').run();
+    db.exec(`
+      CREATE TABLE asg_ideas (
+        id INTEGER PRIMARY KEY,
+        text TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('Acute')),
+        tags TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+    // 'Oblique' violates the CHECK constraint, so the transaction aborts.
+    expect(() => importIdeas(db, ['a', 'b'], 'Oblique', [])).toThrow();
+    expect(listIdeas(db)).toHaveLength(0);
   });
 });
 

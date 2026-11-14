@@ -5,6 +5,8 @@ export type {
   AcuteStrategyIdea,
   CreateIdeaInput,
   UpdateIdeaInput,
+  ImportIdeasInput,
+  ImportIdeasResult,
 } from './acute-strategies-generator';
 export { IDEA_TYPES } from './acute-strategies-generator';
 export type { TrackStatus, Track, CreateManualTrackInput } from './music-tracker';
