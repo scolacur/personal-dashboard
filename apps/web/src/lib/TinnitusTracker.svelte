@@ -7,8 +7,9 @@
     type TinnitusEntry,
   } from '@dashboard/shared';
   import { toast } from '$lib/toast-store.svelte';
-  import { createEntry, createTag, fetchEntries, fetchTags, hideTag } from '../routes/widgets/tinnitus-tracker/api';
-  import { flushPending, loadPending, newClientId, savePending, type PendingEntry } from '../routes/widgets/tinnitus-tracker/queue';
+  import { createOutbox } from '$lib/outbox';
+  import { RejectedError, createEntry, createTag, fetchEntries, fetchTags, hideTag } from '../routes/widgets/tinnitus-tracker/api';
+  import { newClientId, QUEUE_KEY, type PendingEntry } from '../routes/widgets/tinnitus-tracker/queue';
   import { fromLocalInput, toLocalInput } from '../routes/widgets/tinnitus-tracker/time';
   import IntensitySlider from '../routes/widgets/tinnitus-tracker/IntensitySlider.svelte';
   import TagCloud from '../routes/widgets/tinnitus-tracker/TagCloud.svelte';
@@ -39,14 +40,25 @@
   let tab = $state('log');
 
   const TAGS_CACHE_KEY = 'tinnitus-tracker:tags';
-  const RETRY_MS = 20_000;
 
   // id per tag name, for hiding. Absent for a tag added offline that the server hasn't confirmed.
   let tagIds = $state<Record<string, number>>({});
   let tags = $state<string[]>([...TINNITUS_DEFAULT_TAGS]);
   let entries = $state<TinnitusEntry[]>([]);
   let pending = $state<PendingEntry[]>([]);
-  let flushing = false;
+
+  // The offline outbox lives in `$lib/outbox` (PD-736); this binds it to a Tinnitus entry. `onChange`
+  // mirrors its queue into the reactive `pending` above so the "N pending sync" line stays live.
+  const outbox = createOutbox<PendingEntry, TinnitusEntry>({
+    key: QUEUE_KEY,
+    send: createEntry,
+    isRejected: (e) => e instanceof RejectedError,
+    onChange: (list) => (pending = list),
+    onSent: (sent) => {
+      if (!compact) mergeEntries(sent);
+    },
+    onRejected: (_entry, message) => toast.show(`An entry was refused: ${message}`, 'error', 6000),
+  });
 
   let value = $state(0);
   let selected = $state<string[]>([]);
@@ -92,22 +104,6 @@
     );
   }
 
-  async function flush() {
-    if (flushing || pending.length === 0) return;
-    flushing = true;
-    const snapshot = pending;
-    try {
-      const r = await flushPending(snapshot, createEntry);
-      // Anything entered while the flush was in flight was appended after the snapshot; keep it.
-      pending = [...r.remaining, ...pending.slice(snapshot.length)];
-      savePending(pending);
-      if (!compact) mergeEntries(r.sent);
-      for (const { message } of r.rejected) toast.show(`An entry was refused: ${message}`, 'error', 6000);
-    } finally {
-      flushing = false;
-    }
-  }
-
   function submit() {
     let recordedAt = Date.now();
     if (backdating) {
@@ -129,15 +125,13 @@
       tags: [...selected],
       notes: notes.trim() || null,
     };
-    pending = [...pending, entry];
-    savePending(pending);
+    outbox.add(entry);
 
     // Tags, notes and the time override clear; the slider stays where it is.
     selected = [];
     notes = '';
     backdating = false;
     toast.show(`Logged ${entry.intensity}`);
-    void flush();
   }
 
   function addTag(name: string) {
@@ -167,19 +161,11 @@
   }
 
   onMount(() => {
-    pending = loadPending();
-    void load().then(flush);
-
-    const retry = () => void flush();
-    const onVisible = () => document.visibilityState === 'visible' && retry();
-    window.addEventListener('online', retry);
-    document.addEventListener('visibilitychange', onVisible);
-    const timer = setInterval(() => pending.length > 0 && retry(), RETRY_MS);
-    return () => {
-      window.removeEventListener('online', retry);
-      document.removeEventListener('visibilitychange', onVisible);
-      clearInterval(timer);
-    };
+    // `start` loads any persisted queue and wires the retry triggers; flush after the server load
+    // resolves, as before, so a sync folds into freshly fetched entries.
+    const teardown = outbox.start();
+    void load().then(() => outbox.flush());
+    return teardown;
   });
 </script>
 
