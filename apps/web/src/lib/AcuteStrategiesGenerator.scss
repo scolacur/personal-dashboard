@@ -220,6 +220,57 @@
   padding: var(--space-xs) var(--space-md);
 }
 
+/* ── Deck mode controls ────────────────────────────────────── */
+
+.deck-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.asg[data-variant='widget'] .deck-controls {
+  gap: var(--space-sm);
+}
+
+.deck-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  cursor: pointer;
+
+  input {
+    cursor: pointer;
+  }
+}
+
+.asg[data-variant='widget'] .deck-toggle {
+  font-size: var(--font-size-xs);
+}
+
+.deck-progress {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.reset-deck-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  padding: var(--space-xs) var(--space-md);
+  cursor: pointer;
+  flex-shrink: 0;
+
+  &:hover {
+    background: var(--border);
+  }
+}
+
 .generator-footer {
   display: flex;
   align-items: center;
