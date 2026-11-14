@@ -6,15 +6,21 @@
     onEdit: (idea: AcuteStrategyIdea) => void;
     onDelete: (idea: AcuteStrategyIdea) => void;
     onAdd: () => void;
+    onImport: () => void;
+    onExport: () => void;
   }
 
-  let { ideas, onEdit, onDelete, onAdd }: Props = $props();
+  let { ideas, onEdit, onDelete, onAdd, onImport, onExport }: Props = $props();
 </script>
 
 <div class="idea-list">
   <div class="list-header">
     <span class="count">{ideas.length} idea{ideas.length !== 1 ? 's' : ''}</span>
-    <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
+    <div class="header-actions">
+      <button class="btn-secondary" onclick={onImport}>Import</button>
+      <button class="btn-secondary" onclick={onExport} disabled={ideas.length === 0}>Export</button>
+      <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
+    </div>
   </div>
 
   {#if ideas.length === 0}

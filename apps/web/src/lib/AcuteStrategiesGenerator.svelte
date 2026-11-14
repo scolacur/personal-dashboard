@@ -2,10 +2,18 @@
   import { onMount } from 'svelte';
   import { IDEA_TYPES } from '@dashboard/shared';
   import type { AcuteStrategyIdea, IdeaType } from '@dashboard/shared';
-  import { fetchIdeas, createIdea, updateIdea, deleteIdea } from './acute-strategies-generator/api';
+  import {
+    fetchIdeas,
+    createIdea,
+    updateIdea,
+    deleteIdea,
+    importIdeas,
+  } from './acute-strategies-generator/api';
   import IdeaList from './acute-strategies-generator/IdeaList.svelte';
   import IdeaEditModal from './acute-strategies-generator/IdeaEditModal.svelte';
+  import ImportModal from './acute-strategies-generator/ImportModal.svelte';
   import { deriveAllTags, filterIdeas, pickRandom } from './acute-strategies-generator/utils';
+  import { ideasToText } from './acute-strategies-generator/import-export';
   import {
     drawFromDeck,
     deckProgress,
@@ -39,6 +47,7 @@
   let tagFilter = $state('');
   let currentIdea = $state<AcuteStrategyIdea | null>(null);
   let editingIdea = $state<AcuteStrategyIdea | null | undefined>(undefined);
+  let importing = $state(false);
 
   let allTags = $derived(deriveAllTags(ideas));
   let filteredIdeas = $derived(filterIdeas(ideas, typeFilter, tagFilter));
@@ -99,6 +108,24 @@
       const created = await createIdea(data);
       ideas = [...ideas, created];
     }
+  }
+
+  // Commit a batch import, then append the created ideas without a reload (T69).
+  async function handleImport(lines: string[], type: IdeaType, tags: string[]) {
+    const { created } = await importIdeas({ lines, type, tags });
+    ideas = [...ideas, ...created];
+    return created;
+  }
+
+  // Download every idea's text, one per line, in list order (T69).
+  function handleExport() {
+    const blob = new Blob([ideasToText(ideas)], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'acute-strategies.txt';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleDelete(idea: AcuteStrategyIdea) {
@@ -203,6 +230,8 @@
         onEdit={(idea) => (editingIdea = idea)}
         onDelete={handleDelete}
         onAdd={() => (editingIdea = null)}
+        onImport={() => (importing = true)}
+        onExport={handleExport}
       />
     </div>
   {/if}
@@ -213,6 +242,14 @@
     idea={editingIdea}
     onSave={handleSave}
     onCancel={() => (editingIdea = undefined)}
+  />
+{/if}
+
+{#if importing}
+  <ImportModal
+    existingTexts={ideas.map((i) => i.text)}
+    onImport={handleImport}
+    onCancel={() => (importing = false)}
   />
 {/if}
 
