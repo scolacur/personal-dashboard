@@ -28,6 +28,7 @@
 <div class="grid">
   {#each widgets as widget (widget.id)}
     <Widget
+      widgetId={widget.id}
       title={widget.title}
       description={widget.description}
       route={widget.route}

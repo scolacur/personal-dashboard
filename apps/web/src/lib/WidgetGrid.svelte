@@ -188,6 +188,7 @@
 <div class="grid" class:arranging={arrangeMode.active} bind:this={gridEl}>
   {#each resolved as { widget, placement } (widget.id)}
     <Widget
+      widgetId={widget.id}
       title={widget.title}
       description={widget.description}
       route={widget.route}
