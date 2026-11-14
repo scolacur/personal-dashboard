@@ -16,11 +16,6 @@
 <div class="idea-list">
   <div class="list-header">
     <span class="count">{ideas.length} idea{ideas.length !== 1 ? 's' : ''}</span>
-    <div class="header-actions">
-      <button class="btn-secondary" onclick={onImport}>Import</button>
-      <button class="btn-secondary" onclick={onExport} disabled={ideas.length === 0}>Export</button>
-      <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
-    </div>
   </div>
 
   {#if ideas.length === 0}
@@ -46,6 +41,12 @@
       {/each}
     </ul>
   {/if}
+
+  <div class="footer-actions">
+    <button class="btn-secondary" onclick={onImport}>Import</button>
+    <button class="btn-secondary" onclick={onExport} disabled={ideas.length === 0}>Export</button>
+    <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
+  </div>
 </div>
 
 <style lang="scss" src="./IdeaList.scss"></style>

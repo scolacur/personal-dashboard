@@ -15,10 +15,12 @@
   color: var(--muted);
 }
 
-.header-actions {
+.footer-actions {
   display: flex;
   gap: var(--space-sm);
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
 .btn-add {
@@ -26,9 +28,9 @@
   color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
-  padding: var(--space-xs) var(--space-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  padding: var(--space-sm) var(--space-lg);
+  font-size: var(--font-size-base);
+  font-weight: 600;
   cursor: pointer;
 
   &:hover {
