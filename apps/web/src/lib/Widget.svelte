@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { WidgetEmbed } from './widgets';
+  import WidgetTicketButton from './WidgetTicketButton.svelte';
 
   let {
+    widgetId,
     title,
     description,
     route,
@@ -18,6 +20,8 @@
     onResizeStart,
     onRemove,
   }: {
+    /** Registry id. Enables the bottom-left + (submit a ticket for this widget). */
+    widgetId?: string;
     title: string;
     description: string;
     route: string;
@@ -114,6 +118,10 @@
         {/if}
       </div>
     </div>
+  {/if}
+  {#if !arranging && widgetId}
+    <!-- Bottom-left, opposite the ↺ flip control. Outside `.widget-inner` so it never flips. -->
+    <WidgetTicketButton {widgetId} widgetTitle={title} {route} />
   {/if}
   {#if arranging}
     <!-- Opposite corner from the resize handle, so the two arrange affordances never compete

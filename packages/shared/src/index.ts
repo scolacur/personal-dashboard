@@ -107,6 +107,7 @@ export type {
   AgentState,
   AgentTicket,
   CreateTicketInput,
+  WidgetTicketInput,
   UpdateTicketInput,
   AgentProject,
   CreateProjectInput,

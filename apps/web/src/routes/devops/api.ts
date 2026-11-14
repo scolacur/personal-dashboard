@@ -12,6 +12,7 @@ import type {
   TicketEvent,
   TicketRelation,
   UpdateTicketInput,
+  WidgetTicketInput,
 } from '@dashboard/shared';
 
 export function projectIdColor(project: AgentProject | undefined | null): string {
@@ -324,4 +325,20 @@ export async function createRelation(
 export async function deleteRelation(ticketId: number, relationId: number): Promise<void> {
   const res = await fetch(`${BASE}/${ticketId}/relations/${relationId}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
+}
+
+/**
+ * File a ticket from a widget card's + button. The server picks the Epic (the widget triage
+ * inbox) and shapes title + provenance; `refine: true` also opens a Refine session on it.
+ */
+export async function fileWidgetTicket(
+  input: WidgetTicketInput,
+): Promise<{ ticket: AgentTicket; refineStarted: boolean }> {
+  const res = await fetch('/api/widgets/task-monitor/widget-tickets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ ticket: AgentTicket; refineStarted: boolean }>;
 }
