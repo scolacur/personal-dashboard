@@ -1,0 +1,145 @@
+.habits-manager {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.add-form {
+  display: flex;
+  gap: var(--space-sm);
+
+  input {
+    flex: 1 1 auto;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-base);
+  }
+}
+
+.item-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  &.dragging {
+    opacity: 0.5;
+  }
+
+  &.drop-target {
+    border-color: var(--accent);
+  }
+}
+
+.grip {
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+}
+
+.item-name {
+  flex: 1 1 auto;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: var(--font-size-base);
+  cursor: text;
+
+  &.muted {
+    color: var(--muted);
+    cursor: default;
+  }
+}
+
+.rename-input {
+  flex: 1 1 auto;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-base);
+}
+
+.item-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &.danger {
+    color: var(--status-stuck);
+  }
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.empty {
+  color: var(--muted);
+  padding: var(--space-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+}
+
+.archived h3,
+.settings h3 {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+
+  label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    font-size: var(--font-size-sm);
+  }
+
+  input {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-base);
+  }
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+}

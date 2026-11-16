@@ -1,6 +1,7 @@
 import type { Component } from 'svelte';
 import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
 import BuySellTrade from './BuySellTrade.svelte';
+import HabitTracker from './HabitTracker.svelte';
 import IdTracker from './IdTracker.svelte';
 import TinnitusTracker from './TinnitusTracker.svelte';
 import MusicTracker from './MusicTracker.svelte';
@@ -40,22 +41,24 @@ export interface WidgetMeta {
 // the registry answers "what exists", never "what goes where".
 export const widgets: WidgetMeta[] = [
   {
-    id: 'morning-routine',
-    title: 'Morning Routine',
-    description: 'A fresh morning checklist that resets each day.',
-    route: '/widgets/morning-routine',
-  },
-  {
     id: 'reminders',
     title: 'Reminders',
     description: 'One-off and recurring reminders.',
     route: '/widgets/reminders',
   },
   {
-    id: 'habit-log',
-    title: 'Habit Log',
-    description: 'Track daily habits.',
-    route: '/widgets/habit-log',
+    // Replaces the `habit-log` and `morning-routine` stubs (PD-721). A page whose saved
+    // membership still names either of those renders fine: `resolvePlacements` drops a placement
+    // the registry no longer has (see layout.ts / layout.spec.ts).
+    id: 'habit-tracker',
+    title: 'Habit Tracker',
+    description: 'Daily habits and the morning routine, ticked off once a day.',
+    route: '/widgets/habit-tracker',
+    embed: {
+      component: HabitTracker,
+      span: { cols: 1, rows: 3 },
+      // No `flippable` (D-062): the card is the Today checklist; managing habits lives on the page.
+    },
   },
   {
     id: 'pomodoro',
