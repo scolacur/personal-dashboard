@@ -269,3 +269,22 @@ export {
   TINNITUS_RUBRIC,
   tinnitusLabel,
 } from './tinnitus-tracker';
+export type {
+  HabitItemKind,
+  HabitMetricType,
+  HabitItem,
+  HabitItemView,
+  HabitCompletion,
+  HabitSettings,
+} from './habits';
+export {
+  DEFAULT_DAY_BOUNDARY_MINUTES,
+  DEFAULT_HABIT_TIMEZONE,
+  MINUTES_PER_DAY,
+  HABIT_NAME_MAX_LENGTH,
+  HABIT_DAY_PATTERN,
+  isHabitDay,
+  isValidDayBoundaryMinutes,
+  isValidTimezone,
+  habitDay,
+} from './habits';

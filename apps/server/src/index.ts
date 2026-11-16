@@ -15,6 +15,8 @@ import { bootstrapShellLayoutSchema } from './lib/shell-layout';
 import { registerShellLayoutRoutes } from './lib/shell-layout-routes';
 import { bootstrapDecisionIdsSchema } from './lib/decision-ids';
 import { registerDecisionIdRoutes } from './lib/decision-ids-routes';
+import { bootstrapHabitsSchema } from './lib/habits';
+import { registerHabitRoutes } from './lib/habits-routes';
 import type { BackendWidget } from './types';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
 import { widget as taskMonitorWidget } from './widgets/task-monitor/index';
@@ -63,6 +65,10 @@ bootstrapShellLayoutSchema(db);
 // decision log is not a widget, and the counter must exist before anything can ask for an id.
 bootstrapDecisionIdsSchema(db);
 
+// Shared habit store (PD-721, D-092). Core infrastructure like the stores above — habits live in
+// `lib/`, not in a widget's tables, so the Habit Tracker widget owns only its routes and UI.
+bootstrapHabitsSchema(db);
+
 for (const widget of widgets) {
   widget.bootstrapSchema?.(db);
 }
@@ -75,6 +81,7 @@ registerJobRunRoutes(app, db);
 registerMaintenanceRoutes(app, db);
 registerShellLayoutRoutes(app, db);
 registerDecisionIdRoutes(app, db);
+registerHabitRoutes(app, db);
 
 // In-process scheduler (PROJECT.md §2). Widgets register jobs via registerCron;
 // core jobs (DB backups) register directly. Uses Fastify's pino logger.
