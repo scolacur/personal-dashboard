@@ -124,6 +124,68 @@ describe('POST /api/widgets/acute-strategies-generator/ideas', () => {
   });
 });
 
+describe('POST /api/widgets/acute-strategies-generator/ideas/import', () => {
+  const URL = '/api/widgets/acute-strategies-generator/ideas/import';
+
+  it('imports new lines and returns created + skipped', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      payload: { lines: ['Brand new idea', 'Another fresh one'], type: 'Oblique', tags: ['batch'] },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json<{ created: { text: string; type: string; tags: string[] }[]; skipped: number }>();
+    expect(body.created).toHaveLength(2);
+    expect(body.skipped).toBe(0);
+    expect(body.created.every((i) => i.type === 'Oblique')).toBe(true);
+    expect(body.created[0].tags).toEqual(['batch']);
+  });
+
+  it('dedupes against existing ideas and within the batch', async () => {
+    const { app, db } = freshSetup();
+    createIdea(db, { text: 'Already here', type: 'Acute', tags: [] });
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      payload: { lines: [' already here ', 'fresh', 'FRESH'], type: 'Acute', tags: [] },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json<{ created: unknown[]; skipped: number }>();
+    expect(body.created).toHaveLength(1);
+    expect(body.skipped).toBe(2);
+  });
+
+  it('returns 400 when lines is not an array', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({ method: 'POST', url: URL, payload: { lines: 'nope', type: 'Acute' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when a line is not a string', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({
+      method: 'POST',
+      url: URL,
+      payload: { lines: ['ok', 42], type: 'Acute' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when type is invalid', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({ method: 'POST', url: URL, payload: { lines: ['a'], type: 'Bad' } });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('returns 400 when there are more than 1000 lines', async () => {
+    const { app } = freshSetup();
+    const lines = Array.from({ length: 1001 }, (_, i) => `idea ${i}`);
+    const res = await app.inject({ method: 'POST', url: URL, payload: { lines, type: 'Acute' } });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe('PUT /api/widgets/acute-strategies-generator/ideas/:id', () => {
   it('updates an idea', async () => {
     const { app, db } = freshSetup();

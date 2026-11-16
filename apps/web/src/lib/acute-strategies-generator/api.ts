@@ -1,4 +1,11 @@
-import type { AcuteStrategyIdea, CreateIdeaInput, IdeaType, UpdateIdeaInput } from '@dashboard/shared';
+import type {
+  AcuteStrategyIdea,
+  CreateIdeaInput,
+  IdeaType,
+  ImportIdeasInput,
+  ImportIdeasResult,
+  UpdateIdeaInput,
+} from '@dashboard/shared';
 
 const BASE = '/api/widgets/acute-strategies-generator';
 
@@ -35,4 +42,14 @@ export async function updateIdea(id: number, input: UpdateIdeaInput): Promise<Ac
 export async function deleteIdea(id: number): Promise<void> {
   const res = await fetch(`${BASE}/ideas/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete idea');
+}
+
+export async function importIdeas(input: ImportIdeasInput): Promise<ImportIdeasResult> {
+  const res = await fetch(`${BASE}/ideas/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) throw new Error('Failed to import ideas');
+  return res.json() as Promise<ImportIdeasResult>;
 }

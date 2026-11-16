@@ -1,5 +1,11 @@
 import type Database from 'better-sqlite3';
-import type { AcuteStrategyIdea, CreateIdeaInput, IdeaType, UpdateIdeaInput } from '@dashboard/shared';
+import type {
+  AcuteStrategyIdea,
+  CreateIdeaInput,
+  IdeaType,
+  ImportIdeasResult,
+  UpdateIdeaInput,
+} from '@dashboard/shared';
 import { IDEA_TYPES } from '@dashboard/shared';
 
 type IdeaRow = { id: number; text: string; type: string; tags: string; created_at: number; updated_at: number };
@@ -75,4 +81,48 @@ export function updateIdea(
 export function deleteIdea(db: Database.Database, id: number): boolean {
   const { changes } = db.prepare('DELETE FROM asg_ideas WHERE id = ?').run(id);
   return changes > 0;
+}
+
+/** Normalisation key for dedupe: whitespace-trimmed, case-insensitive (T69). */
+function dedupeKey(text: string): string {
+  return text.trim().toLowerCase();
+}
+
+/**
+ * Batch-import ideas, one per line, under a single type + tag set (T69).
+ * Trims each line and skips: blanks, lines matching an existing idea, and lines
+ * matching an earlier line in the same batch (all case-insensitive). The whole
+ * batch is inserted in one transaction, so a DB error adds nothing.
+ */
+export function importIdeas(
+  db: Database.Database,
+  lines: string[],
+  type: IdeaType,
+  tags: string[],
+): ImportIdeasResult {
+  const existing = db.prepare('SELECT text FROM asg_ideas').all() as { text: string }[];
+  const seen = new Set(existing.map((r) => dedupeKey(r.text)));
+  const tagsJson = JSON.stringify(tags);
+  const insert = db.prepare(
+    'INSERT INTO asg_ideas (text, type, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+  );
+
+  const run = db.transaction((): number[] => {
+    const now = Date.now();
+    const ids: number[] = [];
+    for (const raw of lines) {
+      const text = raw.trim();
+      if (!text) continue;
+      const key = dedupeKey(text);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const { lastInsertRowid } = insert.run(text, type, tagsJson, now, now);
+      ids.push(Number(lastInsertRowid));
+    }
+    return ids;
+  });
+
+  const createdIds = run();
+  const created = createdIds.map((id) => getIdea(db, id)!);
+  return { created, skipped: lines.length - created.length };
 }

@@ -1,9 +1,19 @@
 import type { FastifyInstance } from 'fastify';
 import type Database from 'better-sqlite3';
-import type { CreateIdeaInput, UpdateIdeaInput } from '@dashboard/shared';
-import { createIdea, deleteIdea, getIdea, isIdeaType, listIdeas, updateIdea } from './store';
+import type { CreateIdeaInput, ImportIdeasInput, UpdateIdeaInput } from '@dashboard/shared';
+import {
+  createIdea,
+  deleteIdea,
+  getIdea,
+  importIdeas,
+  isIdeaType,
+  listIdeas,
+  updateIdea,
+} from './store';
 
 const BASE = '/api/widgets/acute-strategies-generator';
+
+const IMPORT_MAX_LINES = 1000;
 
 export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
   app.get(`${BASE}/ideas`, async (request) => {
@@ -33,6 +43,26 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     }
     const tags = Array.isArray(body.tags) ? (body.tags as string[]).filter((t) => typeof t === 'string') : [];
     return reply.status(201).send(createIdea(db, { text: body.text.trim(), type: body.type, tags }));
+  });
+
+  app.post(`${BASE}/ideas/import`, async (request, reply) => {
+    const body = request.body as Partial<ImportIdeasInput>;
+    if (!Array.isArray(body.lines)) {
+      return reply.status(400).send({ error: 'lines must be an array' });
+    }
+    if (body.lines.length > IMPORT_MAX_LINES) {
+      return reply.status(400).send({ error: `at most ${IMPORT_MAX_LINES} lines` });
+    }
+    if (!body.lines.every((l) => typeof l === 'string')) {
+      return reply.status(400).send({ error: 'every line must be a string' });
+    }
+    if (!isIdeaType(body.type)) {
+      return reply.status(400).send({ error: 'type must be Acute, Oblique, or Inspiration' });
+    }
+    const tags = Array.isArray(body.tags)
+      ? (body.tags as string[]).filter((t) => typeof t === 'string')
+      : [];
+    return reply.status(201).send(importIdeas(db, body.lines as string[], body.type, tags));
   });
 
   app.put<{ Params: { id: string } }>(`${BASE}/ideas/:id`, async (request, reply) => {

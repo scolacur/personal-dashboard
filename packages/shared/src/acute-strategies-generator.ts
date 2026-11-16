@@ -21,3 +21,15 @@ export interface UpdateIdeaInput {
   type?: IdeaType;
   tags?: string[];
 }
+
+/** Batch import: one idea per line, with a single type + tag set for the whole batch (T69). */
+export interface ImportIdeasInput {
+  lines: string[];
+  type: IdeaType;
+  tags: string[];
+}
+
+export interface ImportIdeasResult {
+  created: AcuteStrategyIdea[];
+  skipped: number;
+}
