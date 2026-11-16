@@ -43,8 +43,10 @@
   {/if}
 
   <div class="footer-actions">
-    <button class="btn-secondary" onclick={onImport}>Import</button>
-    <button class="btn-secondary" onclick={onExport} disabled={ideas.length === 0}>Export</button>
+    <div class="secondary-actions">
+      <button class="btn-secondary" onclick={onImport}>Import</button>
+      <button class="btn-secondary" onclick={onExport} disabled={ideas.length === 0}>Export</button>
+    </div>
     <button class="btn-add" onclick={onAdd}>+ Add Idea</button>
   </div>
 </div>
