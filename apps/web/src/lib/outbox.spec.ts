@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOutbox, flushQueue, loadQueue, saveQueue, type OutboxStorage } from './outbox';
+import { collapseByKey, createOutbox, flushQueue, loadQueue, saveQueue, type OutboxStorage } from './outbox';
 
 // A stand-in payload — the outbox is generic, so these tests use a trivial shape.
 interface Payload {
@@ -83,7 +83,90 @@ describe('storage', () => {
   });
 });
 
+describe('collapseByKey', () => {
+  interface SetState {
+    subject: string;
+    v: number;
+  }
+  const key = (e: SetState) => e.subject;
+
+  it('keeps only the latest entry per key, in first-seen order', () => {
+    const r = collapseByKey(
+      [
+        { subject: 'a', v: 1 },
+        { subject: 'b', v: 1 },
+        { subject: 'a', v: 2 },
+        { subject: 'a', v: 3 },
+      ],
+      key,
+    );
+    expect(r).toEqual([
+      { subject: 'a', v: 3 },
+      { subject: 'b', v: 1 },
+    ]);
+  });
+
+  it('leaves a queue with no duplicates untouched', () => {
+    const list = [
+      { subject: 'a', v: 1 },
+      { subject: 'b', v: 2 },
+    ];
+    expect(collapseByKey(list, key)).toEqual(list);
+  });
+});
+
 describe('createOutbox', () => {
+  it('collapses per key while offline, so only the latest set-state for a subject is sent', async () => {
+    const kv = memoryKV();
+    const sent: string[] = [];
+    let reachable = false;
+    const outbox = createOutbox<{ subject: string; done: boolean }, void>({
+      key: KEY,
+      send: async (e) => {
+        if (!reachable) throw new Error('offline');
+        sent.push(`${e.subject}=${e.done}`);
+      },
+      isRejected,
+      kv,
+      collapseKey: (e) => e.subject,
+    });
+    // Tick then untick the same subject while offline (each add auto-flushes but fails to send).
+    outbox.add({ subject: 'x', done: true });
+    outbox.add({ subject: 'x', done: false });
+    outbox.add({ subject: 'y', done: true });
+    // Let the failed auto-flushes settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(outbox.pending()).toEqual([
+      { subject: 'x', done: false },
+      { subject: 'y', done: true },
+    ]);
+    // Only the collapsed final states remain, and only those are sent once reachable.
+    reachable = true;
+    await outbox.flush();
+    expect(sent).toEqual(['x=false', 'y=true']);
+    expect(outbox.pending()).toEqual([]);
+  });
+
+  it('collapses a pre-seeded queue on start', () => {
+    const kv = memoryKV({
+      [KEY]: JSON.stringify([
+        { subject: 'x', done: true },
+        { subject: 'x', done: false },
+      ]),
+    });
+    const outbox = createOutbox<{ subject: string; done: boolean }, void>({
+      key: KEY,
+      send: async () => {},
+      isRejected,
+      kv,
+      collapseKey: (e) => e.subject,
+    });
+    outbox.start();
+    expect(outbox.pending()).toEqual([{ subject: 'x', done: false }]);
+  });
+
+
   it('loads a pre-seeded queue on start (entries pending before the code changed are not lost)', () => {
     const kv = memoryKV({ [KEY]: JSON.stringify([p('old')]) });
     const seen: Payload[][] = [];
