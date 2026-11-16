@@ -1,17 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { IDEA_TYPES } from '@dashboard/shared';
-  import type { AcuteStrategyIdea, IdeaType } from '@dashboard/shared';
+  import type { AcuteStrategyDraw, AcuteStrategyIdea, IdeaType } from '@dashboard/shared';
   import {
     fetchIdeas,
     createIdea,
     updateIdea,
     deleteIdea,
     importIdeas,
+    recordDraw,
+    fetchDraws,
   } from './acute-strategies-generator/api';
   import IdeaList from './acute-strategies-generator/IdeaList.svelte';
   import IdeaEditModal from './acute-strategies-generator/IdeaEditModal.svelte';
   import ImportModal from './acute-strategies-generator/ImportModal.svelte';
+  import RecentDraws from './acute-strategies-generator/RecentDraws.svelte';
   import { deriveAllTags, filterIdeas, pickRandom } from './acute-strategies-generator/utils';
   import { ideasToText } from './acute-strategies-generator/import-export';
   import {
@@ -57,6 +60,9 @@
   let deckSeen = $state<number[]>(loadDeckSeen());
   let deckStatus = $derived(deckProgress(filteredIdeas, deckSeen));
 
+  // ── Draw History (T70): page variant shows recent draws; the card does not. ──
+  let draws = $state<AcuteStrategyDraw[]>([]);
+
   function shuffle() {
     if (deckMode) {
       const { idea, seenIds } = drawFromDeck(filteredIdeas, deckSeen, currentIdea?.id ?? null);
@@ -65,6 +71,20 @@
       currentIdea = idea;
     } else {
       currentIdea = pickRandom(filteredIdeas);
+    }
+    // Only a press of Shuffle that actually shows an idea counts as a draw — not
+    // the auto-pick on load, nor the re-pick a filter change triggers (T70).
+    if (currentIdea) void logDraw(currentIdea.id);
+  }
+
+  // Record the draw, then refresh the recent-draws list on the page. A failed
+  // record must never block or undo the draw — log it and move on (T70).
+  async function logDraw(ideaId: number) {
+    try {
+      await recordDraw(ideaId);
+      if (variant === 'page') draws = await fetchDraws();
+    } catch (err) {
+      console.error('Failed to record draw', err);
     }
   }
 
@@ -94,6 +114,15 @@
       loadError = 'Failed to load ideas.';
     } finally {
       loading = false;
+    }
+    // Draw history is a page-only section; the card has no room for it (T70). A
+    // failure here just leaves the list empty — it must not block the generator.
+    if (variant === 'page') {
+      try {
+        draws = await fetchDraws();
+      } catch (err) {
+        console.error('Failed to load draws', err);
+      }
     }
   });
 
@@ -222,6 +251,10 @@
         </p>
         <button class="add-idea-btn" onclick={() => (editingIdea = null)}>+ New idea</button>
       </div>
+
+      {#if variant === 'page'}
+        <RecentDraws {draws} />
+      {/if}
     </div>
   {:else}
     <div class="manage-view">

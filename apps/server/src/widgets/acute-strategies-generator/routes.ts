@@ -7,7 +7,9 @@ import {
   getIdea,
   importIdeas,
   isIdeaType,
+  listDraws,
   listIdeas,
+  recordDraw,
   updateIdea,
 } from './store';
 
@@ -97,5 +99,23 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     const deleted = deleteIdea(db, id);
     if (!deleted) return reply.status(404).send({ error: 'Not found' });
     return reply.status(204).send();
+  });
+
+  // ── Draw History (T70) ──────────────────────────────────────────────────
+  app.post(`${BASE}/draws`, async (request, reply) => {
+    const body = request.body as { ideaId?: unknown };
+    if (typeof body.ideaId !== 'number' || !Number.isInteger(body.ideaId)) {
+      return reply.status(400).send({ error: 'ideaId must be a number' });
+    }
+    const draw = recordDraw(db, body.ideaId);
+    if (!draw) return reply.status(404).send({ error: 'Not found' });
+    return reply.status(201).send(draw);
+  });
+
+  app.get(`${BASE}/draws`, async (request) => {
+    const { limit } = request.query as { limit?: string };
+    const parsed = limit !== undefined ? parseInt(limit, 10) : undefined;
+    // listDraws clamps to [1, DRAWS_MAX_LIMIT] and defaults a bad/missing value.
+    return listDraws(db, Number.isNaN(parsed) ? undefined : parsed);
   });
 }

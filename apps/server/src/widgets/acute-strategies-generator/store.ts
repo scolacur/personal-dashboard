@@ -1,12 +1,13 @@
 import type Database from 'better-sqlite3';
 import type {
+  AcuteStrategyDraw,
   AcuteStrategyIdea,
   CreateIdeaInput,
   IdeaType,
   ImportIdeasResult,
   UpdateIdeaInput,
 } from '@dashboard/shared';
-import { IDEA_TYPES } from '@dashboard/shared';
+import { DRAWS_DEFAULT_LIMIT, DRAWS_MAX_LIMIT, IDEA_TYPES } from '@dashboard/shared';
 
 type IdeaRow = { id: number; text: string; type: string; tags: string; created_at: number; updated_at: number };
 
@@ -125,4 +126,56 @@ export function importIdeas(
   const createdIds = run();
   const created = createdIds.map((id) => getIdea(db, id)!);
   return { created, skipped: lines.length - created.length };
+}
+
+/* ── Draw History (T70) ─────────────────────────────────────────────────────
+   Each press of Shuffle logs one row. The idea's text and type are snapshotted
+   here (not joined at read time) so the history reads true after an idea is
+   edited and survives its deletion — see schema.ts / PR #400. */
+
+type DrawRow = {
+  id: number;
+  idea_id: number | null;
+  idea_text: string;
+  idea_type: string;
+  drawn_at: number;
+};
+
+function rowToDraw(row: DrawRow): AcuteStrategyDraw {
+  return {
+    id: row.id,
+    idea_id: row.idea_id,
+    idea_text: row.idea_text,
+    idea_type: row.idea_type as IdeaType,
+    drawn_at: row.drawn_at,
+  };
+}
+
+/**
+ * Record a draw of `ideaId`, snapshotting the idea's current text + type. Returns
+ * the new draw row, or null if the idea does not exist (the caller maps that to 404).
+ */
+export function recordDraw(db: Database.Database, ideaId: number): AcuteStrategyDraw | null {
+  const idea = getIdea(db, ideaId);
+  if (!idea) return null;
+  const { lastInsertRowid } = db
+    .prepare('INSERT INTO asg_draws (idea_id, idea_text, idea_type, drawn_at) VALUES (?, ?, ?, ?)')
+    .run(idea.id, idea.text, idea.type, Date.now());
+  const row = db.prepare('SELECT * FROM asg_draws WHERE id = ?').get(Number(lastInsertRowid)) as DrawRow;
+  return rowToDraw(row);
+}
+
+/**
+ * List draws newest first. `limit` is clamped to [1, DRAWS_MAX_LIMIT]; a missing,
+ * non-finite, or non-positive value falls back to DRAWS_DEFAULT_LIMIT.
+ */
+export function listDraws(db: Database.Database, limit?: number): AcuteStrategyDraw[] {
+  const n =
+    typeof limit === 'number' && Number.isFinite(limit) && limit >= 1
+      ? Math.min(Math.floor(limit), DRAWS_MAX_LIMIT)
+      : DRAWS_DEFAULT_LIMIT;
+  const rows = db
+    .prepare('SELECT * FROM asg_draws ORDER BY drawn_at DESC, id DESC LIMIT ?')
+    .all(n) as DrawRow[];
+  return rows.map(rowToDraw);
 }
