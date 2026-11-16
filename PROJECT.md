@@ -399,6 +399,17 @@ signature, path-guard rejection, setup fault → 0 retries, park + surface), or 
 signatures auto-promote transient→deterministic at N=2.
 _Avoid_: conflating a per-ticket deterministic fault with a system-wide pause.
 
+**Checkpoint**:
+> ⚠️ **Designed, not built (D-094, 2026-11-16).** Today, reaching the ceiling is a deterministic fault.
+
+What a **run** becomes when it reaches its turn ceiling ([[D-066]]): not a fault, but a pause. The
+Robot loop asks the session for a **status report**, saves the work, and parks the ticket in the
+`checkpoint` state for Steve to choose **Continue** (a new run with more turns, default +50,
+starting from the saved work with the report in its prompt) or **Restart** (a new run from a clean
+`main`). Only the ceiling checkpoints; crashes and stalls remain faults.
+_Avoid_: calling a checkpoint "stuck" or a fault, and calling Continue a "retry": it does not count
+against the retry cap.
+
 **agent-worker**:
 The long-running process (`apps/agent-worker`, Agent SDK, out of the Fastify web process)
 that **hosts LLM-agent jobs**. Owns the shared read-only repo checkout, the egress proxy,
