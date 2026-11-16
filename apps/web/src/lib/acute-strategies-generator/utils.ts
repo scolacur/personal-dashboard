@@ -24,6 +24,22 @@ export function pickRandom<T>(pool: T[]): T | null {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+/**
+ * Short relative time for the Draw History (T70): "just now" / "3 min ago" /
+ * "2 hr ago" / "4 days ago". Kept here (pure, injectable `now`) so it is
+ * unit-testable without mounting the component.
+ */
+export function relativeDrawTime(ts: number, now: number = Date.now()): string {
+  const sec = Math.floor(Math.max(0, now - ts) / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  const day = Math.floor(hr / 24);
+  return `${day} day${day === 1 ? '' : 's'} ago`;
+}
+
 export type ParseIdeaFormResult =
   | { ok: true; data: { text: string; type: IdeaType; tags: string[] } }
   | { ok: false; error: string };

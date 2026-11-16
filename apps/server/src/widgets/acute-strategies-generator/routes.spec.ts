@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes } from './routes';
-import { createIdea } from './store';
+import { createIdea, recordDraw } from './store';
 
 function freshSetup() {
   const db = new Database(':memory:');
@@ -239,5 +239,90 @@ describe('DELETE /api/widgets/acute-strategies-generator/ideas/:id', () => {
       url: '/api/widgets/acute-strategies-generator/ideas/99999',
     });
     expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('POST /api/widgets/acute-strategies-generator/draws', () => {
+  const URL = '/api/widgets/acute-strategies-generator/draws';
+
+  it('records a draw and returns 201 with the snapshot', async () => {
+    const { app, db } = freshSetup();
+    const idea = createIdea(db, { text: 'Reverse something', type: 'Oblique', tags: [] });
+    const res = await app.inject({ method: 'POST', url: URL, payload: { ideaId: idea.id } });
+    expect(res.statusCode).toBe(201);
+    const body = res.json<{ idea_id: number; idea_text: string; idea_type: string }>();
+    expect(body.idea_id).toBe(idea.id);
+    expect(body.idea_text).toBe('Reverse something');
+    expect(body.idea_type).toBe('Oblique');
+  });
+
+  it('returns 404 when the idea does not exist', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({ method: 'POST', url: URL, payload: { ideaId: 99999 } });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('returns 400 when ideaId is missing or not a number', async () => {
+    const { app } = freshSetup();
+    expect((await app.inject({ method: 'POST', url: URL, payload: {} })).statusCode).toBe(400);
+    expect(
+      (await app.inject({ method: 'POST', url: URL, payload: { ideaId: 'x' } })).statusCode,
+    ).toBe(400);
+  });
+});
+
+describe('GET /api/widgets/acute-strategies-generator/draws', () => {
+  const URL = '/api/widgets/acute-strategies-generator/draws';
+
+  it('returns draws newest first', async () => {
+    const { app, db } = freshSetup();
+    const idea = createIdea(db, { text: 'Idea', type: 'Acute', tags: [] });
+    db.prepare('INSERT INTO asg_draws (idea_id, idea_text, idea_type, drawn_at) VALUES (?, ?, ?, ?)').run(
+      idea.id,
+      'older',
+      'Acute',
+      1000,
+    );
+    db.prepare('INSERT INTO asg_draws (idea_id, idea_text, idea_type, drawn_at) VALUES (?, ?, ?, ?)').run(
+      idea.id,
+      'newer',
+      'Acute',
+      2000,
+    );
+    const res = await app.inject({ method: 'GET', url: URL });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ idea_text: string }[]>().map((d) => d.idea_text)).toEqual(['newer', 'older']);
+  });
+
+  it('defaults to 20 draws', async () => {
+    const { app, db } = freshSetup();
+    const idea = createIdea(db, { text: 'Idea', type: 'Acute', tags: [] });
+    for (let i = 0; i < 25; i++) recordDraw(db, idea.id);
+    const res = await app.inject({ method: 'GET', url: URL });
+    expect(res.json<unknown[]>()).toHaveLength(20);
+  });
+
+  it('honours an explicit limit', async () => {
+    const { app, db } = freshSetup();
+    const idea = createIdea(db, { text: 'Idea', type: 'Acute', tags: [] });
+    for (let i = 0; i < 10; i++) recordDraw(db, idea.id);
+    const res = await app.inject({ method: 'GET', url: `${URL}?limit=3` });
+    expect(res.json<unknown[]>()).toHaveLength(3);
+  });
+
+  it('clamps the limit to a maximum of 200', async () => {
+    const { app, db } = freshSetup();
+    const idea = createIdea(db, { text: 'Idea', type: 'Acute', tags: [] });
+    for (let i = 0; i < 205; i++) recordDraw(db, idea.id);
+    const res = await app.inject({ method: 'GET', url: `${URL}?limit=500` });
+    expect(res.json<unknown[]>()).toHaveLength(200);
+  });
+
+  it('falls back to the default for a non-numeric limit', async () => {
+    const { app, db } = freshSetup();
+    const idea = createIdea(db, { text: 'Idea', type: 'Acute', tags: [] });
+    for (let i = 0; i < 25; i++) recordDraw(db, idea.id);
+    const res = await app.inject({ method: 'GET', url: `${URL}?limit=abc` });
+    expect(res.json<unknown[]>()).toHaveLength(20);
   });
 });
