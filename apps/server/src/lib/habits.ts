@@ -80,6 +80,8 @@ function rowToCompletion(r: HabitCompletionRow): HabitCompletion {
 const SETTINGS_ID = 1;
 
 export function bootstrapHabitsSchema(db: Database.Database): void {
+  // The schema below is a JS template literal: never use a backtick inside it, including in SQL
+  // comments. Quoting a word in backticks there ends the string early and breaks the build.
   db.exec(`
     CREATE TABLE IF NOT EXISTS habit_items (
       id          INTEGER PRIMARY KEY,
