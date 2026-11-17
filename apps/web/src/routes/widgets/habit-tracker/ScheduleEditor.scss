@@ -1,0 +1,92 @@
+.schedule-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.kind-toggle {
+  display: flex;
+  gap: var(--space-xs);
+
+  button {
+    flex: 1 1 0;
+    padding: var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+
+    &:hover {
+      background: var(--surface-2);
+    }
+
+    &.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--on-accent);
+    }
+  }
+}
+
+.weekdays {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.weekday {
+  flex: 1 1 0;
+  min-width: 2.5rem;
+  padding: var(--space-sm) var(--space-xs);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+
+  &.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+}
+
+.per-week {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+
+  input {
+    width: 4rem;
+    padding: var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-base);
+  }
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+
+  &.error {
+    color: var(--status-stuck);
+  }
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}

@@ -3,12 +3,23 @@ import {
   DEFAULT_DAY_BOUNDARY_MINUTES,
   DEFAULT_HABIT_TIMEZONE,
   HABIT_NAME_MAX_LENGTH,
+  habitDay,
+  isDue,
   isHabitDay,
   isValidDayBoundaryMinutes,
+  isValidDaysMask,
+  isValidPerWeekN,
   isValidTimezone,
+  perWeekProgress,
+  scheduleForDay,
+  streak,
   type HabitCompletion,
   type HabitItemView,
+  type HabitSchedule,
+  type HabitScheduleKind,
   type HabitSettings,
+  type HabitTodayRow,
+  type HabitTodayView,
 } from '@dashboard/shared';
 
 /**
@@ -59,6 +70,26 @@ interface HabitSettingsRow {
   timezone: string;
 }
 
+interface HabitScheduleRow {
+  id: number;
+  item_id: number;
+  effective_from_day: string;
+  kind: string;
+  days_mask: number | null;
+  per_week_n: number | null;
+}
+
+function rowToSchedule(r: HabitScheduleRow): HabitSchedule {
+  return {
+    id: r.id,
+    itemId: r.item_id,
+    effectiveFromDay: r.effective_from_day,
+    kind: r.kind as HabitScheduleKind,
+    daysMask: r.days_mask,
+    perWeekN: r.per_week_n,
+  };
+}
+
 function rowToItem(r: HabitItemRow): HabitItemView {
   return {
     id: r.id,
@@ -106,6 +137,24 @@ export function bootstrapHabitsSchema(db: Database.Database): void {
     /* Range reads for Today and (later) the Log pull completions by day. */
     CREATE INDEX IF NOT EXISTS idx_habit_completions_day
       ON habit_completions (day);
+
+    /* Effective-dated schedules (PD-722, D-095): the row in force on a day is the latest one whose
+       effective_from_day <= day. A schedule change inserts/replaces the row for today and never
+       touches a past row, so history is judged by the schedule that applied then. An item with no
+       row is treated as daily. UNIQUE(item_id, effective_from_day) makes a same-day re-edit an
+       upsert rather than a pile of rows. */
+    CREATE TABLE IF NOT EXISTS habit_schedules (
+      id                 INTEGER PRIMARY KEY,
+      item_id            INTEGER NOT NULL REFERENCES habit_items(id) ON DELETE CASCADE,
+      effective_from_day TEXT    NOT NULL,
+      kind               TEXT    NOT NULL CHECK (kind IN ('days_of_week', 'per_week')),
+      days_mask          INTEGER,
+      per_week_n         INTEGER,
+      UNIQUE (item_id, effective_from_day)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_habit_schedules_item
+      ON habit_schedules (item_id, effective_from_day);
 
     /* Single-row settings. The id check pins it to one row forever. */
     CREATE TABLE IF NOT EXISTS habit_settings (
@@ -279,6 +328,118 @@ export function getCompletions(
     .prepare(`SELECT * FROM habit_completions WHERE day >= ? AND day <= ? ORDER BY day, item_id`)
     .all(fromDay, toDay) as HabitCompletionRow[];
   return rows.map(rowToCompletion);
+}
+
+/* ── Schedules (PD-722, D-095) ──────────────── */
+
+/** Every schedule row for one item, oldest effective day first. */
+export function listSchedules(db: Database.Database, itemId: number): HabitSchedule[] {
+  const rows = db
+    .prepare(`SELECT * FROM habit_schedules WHERE item_id = ? ORDER BY effective_from_day, id`)
+    .all(itemId) as HabitScheduleRow[];
+  return rows.map(rowToSchedule);
+}
+
+/** Every schedule row, for the manage tab (grouped client-side) and the Today view. */
+export function listAllSchedules(db: Database.Database): HabitSchedule[] {
+  const rows = db
+    .prepare(`SELECT * FROM habit_schedules ORDER BY item_id, effective_from_day, id`)
+    .all() as HabitScheduleRow[];
+  return rows.map(rowToSchedule);
+}
+
+/**
+ * Set a habit's schedule, effective from today's habit day (D-095). Inserts a new row, or replaces
+ * today's if one already exists — a past row is never touched, so history stays judged by the
+ * schedule that applied then. Returns the stored schedule, or null if there is no such item.
+ */
+export function setSchedule(
+  db: Database.Database,
+  itemId: number,
+  input: { kind?: unknown; daysMask?: unknown; perWeekN?: unknown },
+  now = Date.now(),
+): HabitSchedule | null {
+  if (!Number.isInteger(itemId)) {
+    throw new HabitValidationError('itemId must be an item id.', 'invalid_item_id');
+  }
+  if (input.kind !== 'days_of_week' && input.kind !== 'per_week') {
+    throw new HabitValidationError("kind must be 'days_of_week' or 'per_week'.", 'invalid_schedule_kind');
+  }
+
+  let daysMask: number | null = null;
+  let perWeekN: number | null = null;
+  if (input.kind === 'days_of_week') {
+    if (!isValidDaysMask(input.daysMask)) {
+      throw new HabitValidationError('daysMask must be an integer in [1, 127].', 'invalid_days_mask');
+    }
+    daysMask = input.daysMask;
+  } else {
+    if (!isValidPerWeekN(input.perWeekN)) {
+      throw new HabitValidationError('perWeekN must be an integer in [1, 7].', 'invalid_per_week_n');
+    }
+    perWeekN = input.perWeekN;
+  }
+
+  if (!getItem(db, itemId)) return null;
+
+  const today = habitDay(now, getSettings(db));
+  db.prepare(
+    `INSERT INTO habit_schedules (item_id, effective_from_day, kind, days_mask, per_week_n)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (item_id, effective_from_day)
+       DO UPDATE SET kind = excluded.kind, days_mask = excluded.days_mask, per_week_n = excluded.per_week_n`,
+  ).run(itemId, today, input.kind, daysMask, perWeekN);
+
+  const row = db
+    .prepare(`SELECT * FROM habit_schedules WHERE item_id = ? AND effective_from_day = ?`)
+    .get(itemId, today) as HabitScheduleRow;
+  return rowToSchedule(row);
+}
+
+/* ── Today view (PD-722, D-095) ─────────────── */
+
+/**
+ * Everything the Today surface needs for the current habit day, computed server-side because the
+ * server owns full completion history: for each active item, the schedule in force, whether it is
+ * due, this week's per-week progress, and the current/longest streak. The client stays thin and
+ * "today" matches the server's `habitDay` (D-092).
+ */
+export function getTodayView(db: Database.Database, now = Date.now()): HabitTodayView {
+  const settings = getSettings(db);
+  const today = habitDay(now, settings);
+  const items = listItems(db); // active only
+
+  const schedulesByItem = new Map<number, HabitSchedule[]>();
+  for (const s of listAllSchedules(db)) {
+    const list = schedulesByItem.get(s.itemId) ?? [];
+    list.push(s);
+    schedulesByItem.set(s.itemId, list);
+  }
+
+  const daysByItem = new Map<number, string[]>();
+  const completionRows = db
+    .prepare(`SELECT item_id, day FROM habit_completions`)
+    .all() as { item_id: number; day: string }[];
+  for (const c of completionRows) {
+    const list = daysByItem.get(c.item_id) ?? [];
+    list.push(c.day);
+    daysByItem.set(c.item_id, list);
+  }
+
+  const rows: HabitTodayRow[] = items.map((item) => {
+    const schedules = schedulesByItem.get(item.id) ?? [];
+    const days = daysByItem.get(item.id) ?? [];
+    return {
+      item,
+      schedule: scheduleForDay(schedules, today),
+      due: isDue(schedules, today),
+      completedToday: days.includes(today),
+      perWeek: perWeekProgress(schedules, today, days),
+      streak: streak(schedules, days, today),
+    };
+  });
+
+  return { day: today, rows };
 }
 
 /* ── Settings ───────────────────────────────── */

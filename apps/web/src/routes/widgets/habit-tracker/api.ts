@@ -1,4 +1,11 @@
-import type { HabitCompletion, HabitItemView, HabitSettings } from '@dashboard/shared';
+import type {
+  HabitCompletion,
+  HabitItemView,
+  HabitSchedule,
+  HabitSettings,
+  HabitTodayView,
+  SetHabitScheduleInput,
+} from '@dashboard/shared';
 
 /**
  * Typed fetch wrappers for the shared habit store (PD-721, D-092).
@@ -61,6 +68,18 @@ export async function setCompletion(
   return json<{ completion: HabitCompletion | null }>(
     await fetch(`${BASE}/completions`, send('PUT', { itemId, day, done })),
   );
+}
+
+export async function fetchToday(): Promise<HabitTodayView> {
+  return json<HabitTodayView>(await fetch(`${BASE}/today`));
+}
+
+export async function fetchSchedules(): Promise<HabitSchedule[]> {
+  return (await json<{ schedules: HabitSchedule[] }>(await fetch(`${BASE}/schedules`))).schedules;
+}
+
+export async function setSchedule(id: number, input: SetHabitScheduleInput): Promise<HabitSchedule> {
+  return json<HabitSchedule>(await fetch(`${BASE}/items/${id}/schedule`, send('PUT', input)));
 }
 
 export async function fetchSettings(): Promise<HabitSettings> {

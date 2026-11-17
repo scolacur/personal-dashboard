@@ -60,6 +60,25 @@
   flex: 1 1 auto;
 }
 
+.week-progress {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+
+  &.met {
+    color: var(--status-done);
+  }
+}
+
+.streak {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--accent-3);
+  white-space: nowrap;
+}
+
 .empty {
   color: var(--muted);
   padding: var(--space-md);

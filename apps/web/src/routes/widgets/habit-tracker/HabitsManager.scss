@@ -77,6 +77,23 @@
   font-size: var(--font-size-base);
 }
 
+.schedule-pill {
+  flex: 0 0 auto;
+  padding: 2px var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+}
+
 .item-actions {
   display: flex;
   gap: var(--space-sm);

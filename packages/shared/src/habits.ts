@@ -134,3 +134,277 @@ export function habitDay(instantMs: number, settings: HabitSettings): string {
   const prev = new Date(Date.UTC(year, month - 1, day) - 86_400_000);
   return isoDate(prev.getUTCFullYear(), prev.getUTCMonth() + 1, prev.getUTCDate());
 }
+
+/* ── Schedules, due logic and streaks (PD-722, D-095) ───────────────────────────────
+ *
+ * A schedule says when a habit is due. It is **effective-dated**: `habit_schedules` carries one row
+ * per (item, effective-from day), and the row in force on a given day is the latest one whose
+ * `effectiveFromDay <= day`. A schedule change never edits a past row, so history is always judged
+ * by the schedule that applied then (spec §2; the Mon/Wed/Fri → Tue/Thu test). A habit with no row
+ * is treated as daily.
+ *
+ * All of this is pure and lives here so the server (the Today view, D-095) and any later client use
+ * compute identically. The weekday mask is **Monday-indexed**: bit 0 = Monday … bit 6 = Sunday, to
+ * match the Mon–Sun habit week (glossary). */
+
+export type HabitScheduleKind = 'days_of_week' | 'per_week';
+
+/** One row of `habit_schedules`: the schedule for `itemId` from `effectiveFromDay` onward. */
+export interface HabitSchedule {
+  id: number;
+  itemId: number;
+  /** A habit day `YYYY-MM-DD`; the schedule applies from this day forward. */
+  effectiveFromDay: string;
+  kind: HabitScheduleKind;
+  /** 1..127, bit 0 = Mon … bit 6 = Sun. Null unless `kind === 'days_of_week'`. */
+  daysMask: number | null;
+  /** Completions required per habit week, ≥ 1. Null unless `kind === 'per_week'`. */
+  perWeekN: number | null;
+}
+
+/** All seven weekday bits set — the default "every day" mask. */
+export const DAYS_OF_WEEK_ALL = 0b111_1111; // 127
+/** One completion per day caps a weekly target at seven. */
+export const MAX_PER_WEEK_N = 7;
+/** Monday-indexed short names; index 0 = Mon. */
+export const HABIT_WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+
+function dayUtcMs(day: string): number {
+  const [y, m, d] = day.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+/** The Monday-indexed weekday (0 = Mon … 6 = Sun) of a habit day. */
+export function habitWeekday(day: string): number {
+  return (new Date(dayUtcMs(day)).getUTCDay() + 6) % 7;
+}
+
+/** A habit day `delta` calendar days from `day` (pure calendar arithmetic, done in UTC). */
+export function addHabitDays(day: string, delta: number): string {
+  const dt = new Date(dayUtcMs(day) + delta * 86_400_000);
+  return isoDate(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+}
+
+/** The Monday that opens the habit week containing `day`. */
+export function habitWeekStart(day: string): string {
+  return addHabitDays(day, -habitWeekday(day));
+}
+
+export function weekdayInMask(mask: number, weekday: number): boolean {
+  return (mask & (1 << weekday)) !== 0;
+}
+
+export function isValidDaysMask(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= DAYS_OF_WEEK_ALL;
+}
+
+export function isValidPerWeekN(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_PER_WEEK_N;
+}
+
+/** The schedule in force on `day`: the latest row with `effectiveFromDay <= day`, or null (daily). */
+export function scheduleForDay(schedules: HabitSchedule[], day: string): HabitSchedule | null {
+  let best: HabitSchedule | null = null;
+  for (const s of schedules) {
+    if (s.effectiveFromDay <= day && (best === null || s.effectiveFromDay > best.effectiveFromDay)) {
+      best = s;
+    }
+  }
+  return best;
+}
+
+/** The mask a days-of-week schedule imposes; falls back to "every day" for daily/per-week. */
+function maskOf(schedule: HabitSchedule | null): number {
+  if (!schedule || schedule.kind !== 'days_of_week') return DAYS_OF_WEEK_ALL;
+  return schedule.daysMask ?? DAYS_OF_WEEK_ALL;
+}
+
+/**
+ * Whether the habit is "on Today" on `day`, judged by the schedule in force then:
+ * a days-of-week habit is due only on its masked weekdays; a per-week habit appears every day
+ * (until N is reached it is still shown, then shown as done — see {@link perWeekProgress}).
+ */
+export function isDue(schedules: HabitSchedule[], day: string): boolean {
+  const schedule = scheduleForDay(schedules, day);
+  if (!schedule || schedule.kind === 'days_of_week') {
+    return weekdayInMask(maskOf(schedule), habitWeekday(day));
+  }
+  return true;
+}
+
+export interface PerWeekProgress {
+  /** Completions in the habit week containing the day. */
+  count: number;
+  /** The weekly target N in force. */
+  target: number;
+  met: boolean;
+}
+
+/**
+ * Progress through the per-week target for the habit week containing `day`, or null when the
+ * schedule in force is not per-week. `completionDays` is the item's completion days (any range that
+ * covers the week; days outside it are ignored).
+ */
+export function perWeekProgress(
+  schedules: HabitSchedule[],
+  day: string,
+  completionDays: Iterable<string>,
+): PerWeekProgress | null {
+  const schedule = scheduleForDay(schedules, day);
+  if (!schedule || schedule.kind !== 'per_week') return null;
+  const target = schedule.perWeekN ?? 1;
+  const start = habitWeekStart(day);
+  const end = addHabitDays(start, 6);
+  let count = 0;
+  for (const c of completionDays) if (c >= start && c <= end) count++;
+  return { count, target, met: count >= target };
+}
+
+export interface StreakResult {
+  current: number;
+  longest: number;
+}
+
+function earliestDay(days: Set<string>, fallback: string): string {
+  let min = fallback;
+  let seen = false;
+  for (const d of days) {
+    if (!seen || d < min) {
+      min = d;
+      seen = true;
+    }
+  }
+  return seen ? min : fallback;
+}
+
+function daysOfWeekStreak(schedules: HabitSchedule[], done: Set<string>, today: string): StreakResult {
+  const dueOn = (day: string): boolean => weekdayInMask(maskOf(scheduleForDay(schedules, day)), habitWeekday(day));
+  const floor = earliestDay(done, today);
+
+  // Current: walk back over due days. A due day not done breaks it; not-due days and extras are
+  // skipped; an unfinished due *today* is in progress and neither counts nor breaks.
+  let current = 0;
+  let day = dueOn(today) && !done.has(today) ? addHabitDays(today, -1) : today;
+  while (day >= floor) {
+    if (!dueOn(day)) {
+      day = addHabitDays(day, -1);
+      continue;
+    }
+    if (!done.has(day)) break;
+    current += 1;
+    day = addHabitDays(day, -1);
+  }
+
+  // Longest: the best run of consecutive done due days over the recorded history.
+  let longest = 0;
+  let run = 0;
+  for (let d = floor; d <= today; d = addHabitDays(d, 1)) {
+    if (!dueOn(d)) continue;
+    if (done.has(d)) {
+      run += 1;
+      if (run > longest) longest = run;
+    } else if (d !== today) {
+      run = 0; // an unfinished due today is in progress, not a break
+    }
+  }
+  return { current, longest: Math.max(longest, current) };
+}
+
+function perWeekStreak(schedules: HabitSchedule[], done: Set<string>, today: string): StreakResult {
+  const targetFor = (weekStart: string): number => scheduleForDay(schedules, weekStart)?.perWeekN ?? 1;
+  const met = (weekStart: string): boolean => {
+    const end = addHabitDays(weekStart, 6);
+    let count = 0;
+    for (const d of done) if (d >= weekStart && d <= end) count += 1;
+    return count >= targetFor(weekStart);
+  };
+
+  const floorWeek = habitWeekStart(earliestDay(done, today));
+  const currentWeek = habitWeekStart(today);
+
+  // Current: an unmet current week is in progress (skip it, do not break); earlier weeks must be met.
+  let current = 0;
+  let w = met(currentWeek) ? currentWeek : addHabitDays(currentWeek, -7);
+  while (w >= floorWeek) {
+    if (!met(w)) break;
+    current += 1;
+    w = addHabitDays(w, -7);
+  }
+
+  let longest = 0;
+  let run = 0;
+  for (let wk = floorWeek; wk <= currentWeek; wk = addHabitDays(wk, 7)) {
+    if (met(wk)) {
+      run += 1;
+      if (run > longest) longest = run;
+    } else if (wk !== currentWeek) {
+      run = 0;
+    }
+  }
+  return { current, longest: Math.max(longest, current) };
+}
+
+/**
+ * Current and longest streak for an item, judged by the schedule in force on each period (D-095):
+ * consecutive done due days for a days-of-week habit, consecutive weeks meeting N for a per-week
+ * habit. Extras never count, not-due days never break, and the unfinished current period never
+ * breaks it. The period model follows the kind in force today.
+ */
+export function streak(
+  schedules: HabitSchedule[],
+  completionDays: Iterable<string>,
+  today: string,
+): StreakResult {
+  const done = new Set<string>(completionDays);
+  const kind = scheduleForDay(schedules, today)?.kind ?? 'days_of_week';
+  return kind === 'per_week'
+    ? perWeekStreak(schedules, done, today)
+    : daysOfWeekStreak(schedules, done, today);
+}
+
+/** A short human label for a schedule, for the Habits tab ("Every day", "Mon, Wed, Fri", "3× per week"). */
+export function scheduleLabel(schedule: HabitSchedule | null): string {
+  if (!schedule || (schedule.kind === 'days_of_week' && maskOf(schedule) === DAYS_OF_WEEK_ALL)) {
+    return 'Every day';
+  }
+  if (schedule.kind === 'per_week') {
+    return `${schedule.perWeekN ?? 1}× per week`;
+  }
+  const mask = maskOf(schedule);
+  return HABIT_WEEKDAY_NAMES.filter((_, i) => weekdayInMask(mask, i)).join(', ');
+}
+
+/* ── The Today view (server-computed, D-095) ────────────────────────────────────────
+ *
+ * The server owns full completion history, so it computes each item's due state, per-week progress
+ * and streak in one `GET /api/habits/today` payload rather than shipping history to the client. This
+ * keeps the client thin and keeps "today" consistent with the server's `habitDay` (D-092). */
+
+/** One active item's standing on the current habit day. */
+export interface HabitTodayRow {
+  item: HabitItemView;
+  /** The schedule in force today, or null (treated as daily). */
+  schedule: HabitSchedule | null;
+  /** Whether the item is on Today (per-week items are always on; days-of-week only on due days). */
+  due: boolean;
+  completedToday: boolean;
+  /** Non-null only for a per-week item. */
+  perWeek: PerWeekProgress | null;
+  streak: StreakResult;
+}
+
+export interface HabitTodayView {
+  /** The current habit day the rows were computed for. */
+  day: string;
+  rows: HabitTodayRow[];
+}
+
+/** Input for setting a habit's schedule (applied from today). One kind's fields, the other's null. */
+export interface SetHabitScheduleInput {
+  kind: HabitScheduleKind;
+  daysMask?: number | null;
+  perWeekN?: number | null;
+}
+
+/** 🔥 is shown on a Today row from this streak length up (spec §2, "from 🔥2 upward"). */
+export const STREAK_BADGE_MIN = 2;

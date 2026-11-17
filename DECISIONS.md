@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-095](DECISIONS/D-095-habit-schedules-are-effective-dated-and-the-today-view-is-server-computed.md)** — Habit schedules are effective-dated rows, and due/streak are pure shared functions computed in a server Today view
 - **[D-094](DECISIONS/D-094-the-turn-ceiling-is-a-checkpoint-not-a-failure.md)** — The turn ceiling is a checkpoint, not a failure: report, save the work, and let Steve choose Continue or Restart
 - **[D-093](DECISIONS/D-093-shared-outbox-is-a-plain-module-with-onchange.md)** — The shared offline outbox is a plain module with an `onChange` callback, not a reactive `.svelte.ts` store
 - **[D-092](DECISIONS/D-092-habits-are-a-second-shared-domain-store.md)** — Habits are a second shared domain store in `apps/server/src/lib/`, beside the daily log — not widget tables, and not daily-log columns
