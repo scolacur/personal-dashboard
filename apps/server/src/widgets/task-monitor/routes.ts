@@ -13,7 +13,7 @@ import {
   type UpdateTicketInput,
 } from '@dashboard/shared';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
-import { fileWidgetTicket } from './widget-tickets';
+import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import {
   addRelation,
   appendRefineReply,
@@ -59,15 +59,16 @@ import {
   updateTicket,
   ValidationError,
 } from './store';
-import { createGuardFailure, patchGuardFailure, queueGuardFailure, reopenGuardFailure } from './ticket-guards';
+import {
+  createGuardFailure,
+  patchGuardFailure,
+  queueGuardFailure,
+  reopenGuardFailure,
+} from './ticket-guards';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
-import {
-  GITHUB_WRITE_TOKEN_ENV,
-  closeIssueNotPlanned,
-  postIssueComment,
-} from './github-sync';
+import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -137,7 +138,9 @@ export function registerRoutes(
       return reply.status(400).send({ error: 'name is required', code: 'INVALID_NAME' });
     }
     if (getProjectBySlug(db, body.slug.trim())) {
-      return reply.status(409).send({ error: 'project slug already exists', code: 'DUPLICATE_SLUG' });
+      return reply
+        .status(409)
+        .send({ error: 'project slug already exists', code: 'DUPLICATE_SLUG' });
     }
     return reply.status(201).send(
       createProject(db, {
@@ -184,15 +187,23 @@ export function registerRoutes(
       return reply.status(400).send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
     }
     if (body.epicId !== undefined && body.epicId !== null && !Number.isInteger(body.epicId)) {
-      return reply.status(400).send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
+      return reply
+        .status(400)
+        .send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
     }
 
     const input: CreateTicketInput = {
       title: body.title.trim(),
       projectId: body.projectId,
       body: (body.body as string | null | undefined) ?? null,
-      priority: body.priority === null ? null : isPriority(body.priority) ? body.priority : undefined,
-      assignee: body.assignee === undefined ? undefined : body.assignee === null ? null : (body.assignee as TicketAssignee),
+      priority:
+        body.priority === null ? null : isPriority(body.priority) ? body.priority : undefined,
+      assignee:
+        body.assignee === undefined
+          ? undefined
+          : body.assignee === null
+            ? null
+            : (body.assignee as TicketAssignee),
       status: isStatus(body.status) ? body.status : undefined,
       isEpic: body.isEpic === true,
       epicId: body.epicId === undefined ? undefined : (body.epicId as number | null),
@@ -210,22 +221,35 @@ export function registerRoutes(
       return reply.status(201).send(createTicket(db, input, epicInvalidationOpts(body)));
     } catch (e) {
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
-      if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
+      if (e instanceof ValidationError)
+        return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
     }
   });
 
-  // The + on every widget card: free text → a backlog Ticket in the widget triage-inbox Epic, with
-  // the widget as provenance; `refine: true` also opens a Refine session ("grill me first").
-  // Its own route rather than POST /tickets because the server owns the Epic choice and the
-  // title/provenance shape — the client sends only what it knows: the text and which widget.
-  app.post(`${base}/widget-tickets`, async (request, reply) => {
-    const result = fileWidgetTicket(db, (request.body ?? {}) as Record<string, unknown>);
+  // Suggestion tickets — the widget card +, the page footer, and the app-wide nav button: free
+  // text → a backlog Ticket in the triage-inbox Epic, with the surface as provenance; `refine: true`
+  // also opens a Refine session ("grill me first"). Its own route rather than POST /tickets because
+  // the server owns the Epic choice and the title/provenance shape — the client sends only what it
+  // knows: the text and where it was filed from.
+  const fileAndReply = (raw: Record<string, unknown>, reply: FastifyReply) => {
+    const result = fileSurfaceTicket(db, raw);
     if (!result.ok) {
-      return reply.status(result.code === 'NO_PROJECT' ? 500 : 400).send({ error: result.message, code: result.code });
+      return reply
+        .status(result.code === 'NO_PROJECT' ? 500 : 400)
+        .send({ error: result.message, code: result.code });
     }
-    return reply.status(201).send({ ticket: result.ticket, refineStarted: result.refineEvent !== null });
-  });
+    return reply
+      .status(201)
+      .send({ ticket: result.ticket, refineStarted: result.refineEvent !== null });
+  };
+  app.post(`${base}/surface-tickets`, async (request, reply) =>
+    fileAndReply((request.body ?? {}) as Record<string, unknown>, reply),
+  );
+  // The PD-734 shape (widget-only, flat fields). Kept for a tab loaded before this deploy.
+  app.post(`${base}/widget-tickets`, async (request, reply) =>
+    fileAndReply(fromLegacyWidgetBody((request.body ?? {}) as Record<string, unknown>), reply),
+  );
 
   // Every live Epic's roll-up + derived lane (D-054) — the bulk read the board fetches alongside
   // tickets to place Epic cards and show done/total. Sparse; mirrors the /relations bulk pattern.
@@ -336,7 +360,9 @@ export function registerRoutes(
     }
     if (body.refined !== undefined) {
       if (typeof body.refined !== 'boolean') {
-        return reply.status(400).send({ error: 'refined must be a boolean', code: 'INVALID_REFINED' });
+        return reply
+          .status(400)
+          .send({ error: 'refined must be a boolean', code: 'INVALID_REFINED' });
       }
       patch.refined = body.refined;
     }
@@ -352,13 +378,17 @@ export function registerRoutes(
     }
     if (body.isEpic !== undefined) {
       if (typeof body.isEpic !== 'boolean') {
-        return reply.status(400).send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
+        return reply
+          .status(400)
+          .send({ error: 'isEpic must be a boolean', code: 'INVALID_IS_EPIC' });
       }
       patch.isEpic = body.isEpic;
     }
     if (body.epicId !== undefined) {
       if (body.epicId !== null && !Number.isInteger(body.epicId)) {
-        return reply.status(400).send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
+        return reply
+          .status(400)
+          .send({ error: 'epicId must be an integer or null', code: 'INVALID_EPIC_ID' });
       }
       patch.epicId = body.epicId as number | null;
     }
@@ -396,7 +426,8 @@ export function registerRoutes(
       // Epic invariants (D-054). (D-051 blocker gate no longer refuses queue entry — PD-408; a
       // blocked ticket may sit in the queue and the loop skips it at selection.)
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
-      if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
+      if (e instanceof ValidationError)
+        return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
     }
     if (!updated) {
@@ -419,7 +450,9 @@ export function registerRoutes(
 
     const body = (request.body ?? {}) as { epicId?: unknown };
     if (body.epicId !== undefined && body.epicId !== null && !Number.isInteger(body.epicId)) {
-      return reply.status(400).send({ error: 'epicId must be an integer', code: 'INVALID_EPIC_ID' });
+      return reply
+        .status(400)
+        .send({ error: 'epicId must be an integer', code: 'INVALID_EPIC_ID' });
     }
     const epicId = body.epicId === undefined ? undefined : (body.epicId as number | null);
 
@@ -437,7 +470,8 @@ export function registerRoutes(
       return updated;
     } catch (e) {
       if (e instanceof EpicGuardError) return sendEpicError(reply, e);
-      if (e instanceof ValidationError) return reply.status(400).send({ error: e.message, code: e.code });
+      if (e instanceof ValidationError)
+        return reply.status(400).send({ error: e.message, code: e.code });
       throw e;
     }
   });
@@ -498,7 +532,9 @@ export function registerRoutes(
   });
 
   // Unread count — cheap poll for the nav bell badge.
-  app.get(`${base}/notifications/unread-count`, async () => ({ count: unreadNotificationCount(db) }));
+  app.get(`${base}/notifications/unread-count`, async () => ({
+    count: unreadNotificationCount(db),
+  }));
 
   app.post(`${base}/notifications/:id/read`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
@@ -511,7 +547,9 @@ export function registerRoutes(
     return reply.status(204).send();
   });
 
-  app.post(`${base}/notifications/read-all`, async () => ({ marked: markAllNotificationsRead(db) }));
+  app.post(`${base}/notifications/read-all`, async () => ({
+    marked: markAllNotificationsRead(db),
+  }));
 
   // Inline reply to a parked agent (PD-250). DB-native as of C5/PD-346: the reply is recorded as a
   // `robot_human_reply` event the Robot loop's resume sweep detects to re-queue the ticket and hand
@@ -550,7 +588,9 @@ export function registerRoutes(
         deps.fetchImpl ?? fetch,
       );
       if (!ok) {
-        app.log.warn(`task-monitor: GitHub reply mirror to ${ref.githubRepo}#${ref.githubIssueNumber} failed (reply still recorded in DB)`);
+        app.log.warn(
+          `task-monitor: GitHub reply mirror to ${ref.githubRepo}#${ref.githubIssueNumber} failed (reply still recorded in DB)`,
+        );
       }
     }
     app.log.info(`task-monitor: recorded reply on ticket ${id}`);
@@ -585,7 +625,8 @@ export function registerRoutes(
   // Reset a ticket's transient-retry budget (for a capped/backing-off ticket) and re-dispatch.
   app.post(`${base}/tickets/:id/robot/reset`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
-    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     const ticket = resetRobotRuns(db, id, 'reset');
     if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     return ticket;
@@ -594,7 +635,8 @@ export function registerRoutes(
   // Unstick a parked ticket (stuck / awaiting-human): clear the park + re-queue it.
   app.post(`${base}/tickets/:id/robot/unstick`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
-    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     const ticket = resetRobotRuns(db, id, 'unstick');
     if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     return ticket;
@@ -650,7 +692,8 @@ export function registerRoutes(
   // an agent's proposal being accepted. Same reasoning that gave Reopen its own route in PD-542.
   app.post(`${base}/tickets/:id/mark-refined`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
-    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     const ticket = markTicketRefined(db, id);
     if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     return ticket;
@@ -695,7 +738,9 @@ export function registerRoutes(
           code: 'EPIC_NOT_QUEUEABLE',
         });
       case 'queue_gate':
-        return reply.status(409).send({ error: result.detail, code: 'QUEUE_GATE', blockers: result.blockers });
+        return reply
+          .status(409)
+          .send({ error: result.detail, code: 'QUEUE_GATE', blockers: result.blockers });
       default:
         return reply
           .status(422)
@@ -753,7 +798,9 @@ export function registerRoutes(
       return reply.status(400).send({ error: 'toId is required', code: 'INVALID_TO' });
     }
     if (!RELATION_TYPES.includes(body.type as RelationType)) {
-      return reply.status(400).send({ error: 'invalid relation type', code: 'INVALID_RELATION_TYPE' });
+      return reply
+        .status(400)
+        .send({ error: 'invalid relation type', code: 'INVALID_RELATION_TYPE' });
     }
     if (id !== fromId && id !== toId) {
       return reply
@@ -772,9 +819,7 @@ export function registerRoutes(
         return reply.status(400).send({ error: e.message, code: 'SELF_RELATION' });
       }
       if (e instanceof RelationCycleError) {
-        return reply
-          .status(409)
-          .send({ error: e.message, code: 'RELATION_CYCLE', path: e.path });
+        return reply.status(409).send({ error: e.message, code: 'RELATION_CYCLE', path: e.path });
       }
       throw e;
     }
