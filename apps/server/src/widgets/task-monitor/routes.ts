@@ -47,6 +47,7 @@ import {
   listWorkerHeartbeats,
   markAllNotificationsRead,
   markNotificationRead,
+  parkRefine,
   projectExists,
   rejectRefine,
   RelationCycleError,
@@ -683,6 +684,25 @@ export function registerRoutes(
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return reply.status(201).send(event);
+  });
+
+  // Park a Refine session (PD-743, D-096): end it with no commit. 409 when there is no thread or
+  // it already ended, so a double-click is harmless. A later refine-reply reopens it.
+  app.post(`${base}/tickets/:id/refine-park`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const result = parkRefine(db, id);
+    if (!result.ok) {
+      if (result.reason === 'not_found') {
+        return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+      }
+      return result.reason === 'no_session'
+        ? reply.status(409).send({ error: 'this ticket has no Refine session to park', code: 'NO_SESSION' })
+        : reply.status(409).send({ error: 'this Refine session has already ended', code: 'ALREADY_ENDED' });
+    }
+    return reply.status(201).send(result.event);
   });
 
   // ✓ Mark refined (PD-610). Its own route, not a `PATCH { refined: true }`, because it carries

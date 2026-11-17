@@ -560,6 +560,31 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     const res = await app.inject({ method: 'POST', url: `${base}/tickets/9999/refine-reply`, payload: { body: 'hi' } });
     expect(res.statusCode).toBe(404);
   });
+
+  // PD-743: end a Refine session with no commit.
+  it('POST /tickets/:id/refine-park 201s with the refine_parked event, then 409s ALREADY_ENDED', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
+    await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reply`, payload: { body: 'start' } });
+    const res = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-park` });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().type).toBe('refine_parked');
+    const ticket = (await app.inject({ method: 'GET', url: `${base}/tickets/${id}` })).json();
+    expect(ticket.refineState).toBeNull();
+    const again = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-park` });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().code).toBe('ALREADY_ENDED');
+  });
+
+  it('POST /tickets/:id/refine-park 409s NO_SESSION without a thread; 404 unknown; 400 bad id', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
+    const none = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-park` });
+    expect(none.statusCode).toBe(409);
+    expect(none.json().code).toBe('NO_SESSION');
+    expect((await app.inject({ method: 'POST', url: `${base}/tickets/9999/refine-park` })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'POST', url: `${base}/tickets/abc/refine-park` })).statusCode).toBe(400);
+  });
 });
 
 describe('POST /tickets/:id/refine — start a Refine session (D-044, PD-268)', () => {

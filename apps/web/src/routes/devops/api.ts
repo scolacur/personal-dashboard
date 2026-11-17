@@ -274,6 +274,13 @@ export async function approveRefine(
   return { queued: body.queued === true, populated: body.populated === true };
 }
 
+/** Park the Refine session (PD-743, D-096): end it without a commit. A later reply reopens it.
+ *  Throws on 409 (no session / already ended). */
+export async function parkRefine(id: number): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/refine-park`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+}
+
 /** Reject the latest Refine commit proposal (PD-269); the refine session can propose again. */
 export async function rejectRefine(id: number): Promise<void> {
   const res = await fetch(`${BASE}/${id}/refine-reject`, { method: 'POST' });

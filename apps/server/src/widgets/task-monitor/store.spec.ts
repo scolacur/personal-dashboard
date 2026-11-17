@@ -29,6 +29,7 @@ import {
   markTicketRefined,
   markAllNotificationsRead,
   markNotificationRead,
+  parkRefine,
   rejectRefine,
   startRefine,
   unreadNotificationCount,
@@ -36,7 +37,7 @@ import {
   ValidationError,
 } from './store';
 import type { RefineProposal, TicketStatus } from '@dashboard/shared';
-import { REFINE_STATE_EVENT, ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
+import { REFINE_STATE_EVENT, ROBOT_MAX_TURNS_LIMIT, refineSessionEnd } from '@dashboard/shared';
 
 const ROBOT_BODY = '## Context\nc\n## Task\nt\n## Done When\nd\n## Out of scope\no';
 
@@ -645,6 +646,86 @@ describe('startRefine + refineState (D-044, PD-268)', () => {
       'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
     ).run(t.id, 'refine_agent', JSON.stringify({ text: 'plan', sessionId: 's' }), Date.now() + 1000);
     expect(getTicket(db, t.id)?.refineState).toBe('awaiting-human');
+  });
+});
+
+describe('an ended Refine session stops awaiting Steve; Park (PD-743, D-096)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+  // Events land in the past so a park (stamped Date.now()) is always the newest.
+  const at = (ticketId: number, type: string, ago: number, detail: unknown = { text: type }) =>
+    db
+      .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+      .run(ticketId, type, JSON.stringify(detail), Date.now() - ago);
+
+  it('a session that ends in an approved commit no longer reads as awaiting-human', () => {
+    // The PD-465 shape: human → proposal → agent "it's on the board" → commit.
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_human', 5000);
+    at(t.id, 'refine_proposal', 4000, { mode: 'refine_in_place', body: 'b' });
+    at(t.id, 'refine_agent', 3000, { text: 'recorded', sessionId: 's' });
+    expect(getTicket(db, t.id)!.refineState).toBe('awaiting-human');
+    at(t.id, 'refine_committed', 2000, { mode: 'refine_in_place' });
+    expect(getTicket(db, t.id)!.refineState).toBeNull();
+    expect(listTickets(db).find((x) => x.id === t.id)!.refineState).toBeNull();
+  });
+
+  it('a rejected proposal leaves the session open — the agent may propose again', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_human', 5000);
+    at(t.id, 'refine_agent', 4000, { text: 'plan', sessionId: 's' });
+    at(t.id, 'refine_rejected', 3000, { eventId: 1 });
+    expect(getTicket(db, t.id)!.refineState).toBe('awaiting-human');
+  });
+
+  it('a turn after a commit reopens the session', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_human', 5000);
+    at(t.id, 'refine_committed', 4000);
+    at(t.id, 'refine_human', 3000, { text: 'one more thing' });
+    expect(getTicket(db, t.id)!.refineState).toBe('refining');
+  });
+
+  it('parkRefine ends an awaiting session, resolves its refine notifications, and reopens on reply', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_human', 5000);
+    at(t.id, 'refine_agent', 4000, { text: 'q?', sessionId: 's' });
+    createNotification(db, { kind: 'agent_refine', ticketId: t.id, title: 'Refine agent replied' });
+    expect(unreadNotificationCount(db)).toBe(1);
+
+    const r = parkRefine(db, t.id);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.event.type).toBe('refine_parked');
+    expect(getTicket(db, t.id)!.refineState).toBeNull();
+    expect(unreadNotificationCount(db)).toBe(0);
+    expect(refineSessionEnd(listTicketEvents(db, t.id))).toBe('parked');
+
+    // A second park is refused (one event), and a reply reopens the session.
+    expect(parkRefine(db, t.id)).toEqual({ ok: false, reason: 'already_ended' });
+    expect(listTicketEvents(db, t.id).filter((e) => e.type === 'refine_parked')).toHaveLength(1);
+    appendRefineReply(db, t.id, 'actually, let us continue');
+    expect(getTicket(db, t.id)!.refineState).toBe('refining');
+    expect(refineSessionEnd(listTicketEvents(db, t.id))).toBeNull();
+  });
+
+  it('parkRefine refuses a ticket with no Refine thread, and an unknown ticket', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    expect(parkRefine(db, t.id)).toEqual({ ok: false, reason: 'no_session' });
+    expect(parkRefine(db, 9999)).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it('refineSessionEnd names how the newest session ended', () => {
+    const ev = (type: string, createdAt: number, id = createdAt) => ({ type, createdAt, id });
+    expect(refineSessionEnd([])).toBeNull();
+    expect(refineSessionEnd([ev('refine_human', 1), ev('refine_agent', 2)])).toBeNull();
+    expect(refineSessionEnd([ev('refine_agent', 2), ev('refine_committed', 3)])).toBe('committed');
+    expect(refineSessionEnd([ev('refine_parked', 3), ev('refine_agent', 2)])).toBe('parked');
+    // Unrelated events never end a session, and order in the array doesn't matter.
+    expect(refineSessionEnd([ev('refine_committed', 3), ev('status_changed', 9), ev('refine_human', 4)])).toBeNull();
   });
 });
 
