@@ -110,7 +110,8 @@ export type {
   AgentState,
   AgentTicket,
   CreateTicketInput,
-  WidgetTicketInput,
+  TicketSurface,
+  SurfaceTicketInput,
   UpdateTicketInput,
   AgentProject,
   CreateProjectInput,
@@ -251,7 +252,13 @@ export {
   validateDocUrl,
   fenceFetchedContent,
 } from './doc-allowlist';
-export type { HoldTrigger, HoldStatus, MaintenanceHold, MaintenanceHoldRun, MaintenanceJob } from './maintenance';
+export type {
+  HoldTrigger,
+  HoldStatus,
+  MaintenanceHold,
+  MaintenanceHoldRun,
+  MaintenanceJob,
+} from './maintenance';
 export type { MaintenanceHoldStatus } from './task-monitor';
 export type { NeedsHumanTicket } from './task-monitor';
 export { HOLD_WINDOW_MS, HOLD_CADENCE_MS, MAINTENANCE_JOBS, isHoldActive } from './maintenance';

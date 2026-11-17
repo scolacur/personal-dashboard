@@ -5,6 +5,8 @@
   import { page } from '$app/state';
   import SideNav from '$lib/SideNav.svelte';
   import NotificationBell from '$lib/NotificationBell.svelte';
+  import AppTicketButton from '$lib/AppTicketButton.svelte';
+  import PageTicketFooter from '$lib/PageTicketFooter.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
   import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from '$lib/nav-utils';
   import DeployStatus from './DeployStatus.svelte';
@@ -111,14 +113,15 @@
         <DispatchKillswitch />
         <DeployStatus />
       {/if}
+      <AppTicketButton />
       <NotificationBell />
       {#if canArrange}
         <button
           class="arrange-btn"
           class:active={arrangeMode.active}
           onclick={arrangeMode.toggle}
-          aria-label={arrangeMode.active ? 'Exit arrange mode' : 'Arrange widgets'}
-        >Arrange</button>
+          aria-label={arrangeMode.active ? 'Exit arrange mode' : 'Arrange widgets'}>Arrange</button
+        >
       {/if}
       <button class="theme-toggle" onclick={toggleTheme} aria-label="Toggle light/dark theme">
         {#if theme === 'dark'}<Sun size={16} />{:else}<Moon size={16} />{/if}
@@ -126,6 +129,11 @@
     </nav>
     <main class="content">
       {@render children()}
+      <!-- Page-scoped suggestions (PD-578 front door): one footer for every page, keyed to the
+           current route so its draft never carries over to the next page. -->
+      {#key page.url.pathname}
+        <PageTicketFooter pageTitle={currentPageTitle} route={page.url.pathname} />
+      {/key}
     </main>
   </div>
 </div>

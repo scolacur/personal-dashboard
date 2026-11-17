@@ -1,0 +1,68 @@
+.wt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.wt-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 7rem;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+
+  &:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+}
+
+.wt-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  kbd {
+    font-family: inherit;
+    padding: 0 var(--space-xs);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+  }
+}
+
+.wt-error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--status-stuck);
+}
+
+.wt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.wt-done {
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.wt-done-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.wt-thread {
+  max-height: 65vh;
+  overflow-y: auto;
+}
