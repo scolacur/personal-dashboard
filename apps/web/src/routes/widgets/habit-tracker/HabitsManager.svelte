@@ -2,37 +2,69 @@
   import {
     isValidTimezone,
     MINUTES_PER_DAY,
+    scheduleForDay,
+    scheduleLabel,
     type HabitItemView,
+    type HabitSchedule,
     type HabitSettings,
+    type SetHabitScheduleInput,
   } from '@dashboard/shared';
   import Button from '$lib/Button.svelte';
   import Modal from '$lib/Modal.svelte';
+  import ScheduleEditor from './ScheduleEditor.svelte';
   import { toast } from '$lib/toast-store.svelte';
 
   /**
-   * The Habits manage tab (PD-721): add, rename, archive, delete and reorder habits, plus the two
-   * settings. Reorder is native HTML5 drag (D-069). Delete confirms with the completion count the
-   * list already carries ("Delete Gym and its 84 completions?").
+   * The Habits manage tab (PD-721; schedules PD-722): add, rename, archive, delete and reorder
+   * habits, edit a habit's schedule, plus the two settings. Reorder is native HTML5 drag (D-069).
+   * Delete confirms with the completion count the list already carries ("Delete Gym and its 84
+   * completions?"). A schedule change applies from today (D-095).
    */
   let {
     items,
+    schedules,
+    today,
     settings,
     onAdd,
     onRename,
     onArchive,
     onDelete,
     onReorder,
+    onSchedule,
     onSettings,
   }: {
     items: HabitItemView[];
+    schedules: HabitSchedule[];
+    today: string;
     settings: HabitSettings;
     onAdd: (name: string) => Promise<void>;
     onRename: (id: number, name: string) => Promise<void>;
     onArchive: (id: number, archived: boolean) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
     onReorder: (ids: number[]) => Promise<void>;
+    onSchedule: (id: number, input: SetHabitScheduleInput) => Promise<void>;
     onSettings: (patch: Partial<HabitSettings>) => Promise<void>;
   } = $props();
+
+  // The schedule in force today for each item, for the summary label and the editor's initial state.
+  const currentSchedule = (itemId: number): HabitSchedule | null =>
+    scheduleForDay(
+      schedules.filter((s) => s.itemId === itemId),
+      today,
+    );
+
+  // ── Schedule editor ──────────────────────────────────────────────────────────────
+  let scheduleTarget = $state<HabitItemView | null>(null);
+
+  async function saveSchedule(input: SetHabitScheduleInput) {
+    const target = scheduleTarget;
+    if (!target) return;
+    try {
+      await onSchedule(target.id, input);
+    } catch {
+      toast.show('Could not save the schedule.', 'error');
+    }
+  }
 
   const active = $derived(items.filter((i) => i.archivedAt === null));
   const archived = $derived(items.filter((i) => i.archivedAt !== null));
@@ -207,6 +239,9 @@
         {:else}
           <button type="button" class="item-name" onclick={() => startEdit(item)}>{item.name}</button>
         {/if}
+        <button type="button" class="schedule-pill" onclick={() => (scheduleTarget = item)}>
+          {scheduleLabel(currentSchedule(item.id))}
+        </button>
         <div class="item-actions">
           <button type="button" class="link" onclick={() => toggleArchive(item)}>Archive</button>
           <button type="button" class="link danger" onclick={() => (deleteTarget = item)}>Delete</button>
@@ -270,5 +305,14 @@
     </div>
   {/if}
 </Modal>
+
+{#if scheduleTarget}
+  <ScheduleEditor
+    name={scheduleTarget.name}
+    schedule={currentSchedule(scheduleTarget.id)}
+    onSave={saveSchedule}
+    onClose={() => (scheduleTarget = null)}
+  />
+{/if}
 
 <style lang="scss" src="./HabitsManager.scss"></style>

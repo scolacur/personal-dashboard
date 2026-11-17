@@ -6,12 +6,15 @@ import {
   deleteItem,
   getCompletions,
   getSettings,
+  getTodayView,
   HabitValidationError,
+  listAllSchedules,
   listItems,
   patchSettings,
   renameItem,
   reorderItems,
   setCompletion,
+  setSchedule,
 } from './habits';
 
 /**
@@ -90,6 +93,26 @@ export function registerHabitRoutes(app: FastifyInstance, db: Database.Database)
     if (!result) return reply.code(404).send({ error: 'No such item.', code: 'not_found' });
     return result;
   });
+
+  /* ── Schedules (PD-722, D-095) ────────────── */
+
+  app.get(`${BASE}/schedules`, async () => ({ schedules: listAllSchedules(db) }));
+
+  app.put(`${BASE}/items/:id/schedule`, async (request, reply) => {
+    const id = parseId((request.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    try {
+      const schedule = setSchedule(db, id, (request.body ?? {}) as Record<string, unknown>);
+      if (!schedule) return reply.code(404).send({ error: 'No such item.', code: 'not_found' });
+      return schedule;
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  /* ── Today view (PD-722, D-095) ───────────── */
+
+  app.get(`${BASE}/today`, async () => getTodayView(db));
 
   /* ── Completions ──────────────────────────── */
 

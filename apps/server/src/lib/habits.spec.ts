@@ -8,12 +8,15 @@ import {
   deleteItem,
   getCompletions,
   getSettings,
+  getTodayView,
   HabitValidationError,
   listItems,
+  listSchedules,
   patchSettings,
   renameItem,
   reorderItems,
   setCompletion,
+  setSchedule,
 } from './habits';
 
 let db: Database.Database;
@@ -152,6 +155,80 @@ describe('settings', () => {
     expect(() => patchSettings(db, { dayBoundaryMinutes: 1440 })).toThrow(HabitValidationError);
     expect(() => patchSettings(db, { dayBoundaryMinutes: 12.5 })).toThrow(HabitValidationError);
     expect(() => patchSettings(db, { timezone: 'Mars/Phobos' })).toThrow(HabitValidationError);
+  });
+});
+
+describe('schedules (PD-722, D-095)', () => {
+  // Nov 16 2026 10:00 EST (15:00 UTC) → habit day 2026-11-16, a Monday.
+  const MON = Date.UTC(2026, 10, 16, 15, 0);
+  const MWF = 1 | 4 | 16; // Mon, Wed, Fri
+
+  it('inserts a schedule effective today, and a same-day re-edit upserts it', () => {
+    const item = createItem(db, { name: 'Gym' });
+    const s1 = setSchedule(db, item.id, { kind: 'days_of_week', daysMask: MWF }, MON);
+    expect(s1).toMatchObject({
+      itemId: item.id,
+      effectiveFromDay: '2026-11-16',
+      kind: 'days_of_week',
+      daysMask: MWF,
+      perWeekN: null,
+    });
+
+    setSchedule(db, item.id, { kind: 'per_week', perWeekN: 3 }, MON);
+    const rows = listSchedules(db, item.id);
+    expect(rows).toHaveLength(1); // same day → one row, last write wins
+    expect(rows[0]).toMatchObject({ kind: 'per_week', perWeekN: 3, daysMask: null });
+  });
+
+  it('validates input and returns null for a missing item', () => {
+    const item = createItem(db, { name: 'Gym' });
+    expect(() => setSchedule(db, item.id, { kind: 'nope' })).toThrow(HabitValidationError);
+    expect(() => setSchedule(db, item.id, { kind: 'days_of_week', daysMask: 0 })).toThrow(HabitValidationError);
+    expect(() => setSchedule(db, item.id, { kind: 'days_of_week', daysMask: 200 })).toThrow(HabitValidationError);
+    expect(() => setSchedule(db, item.id, { kind: 'per_week', perWeekN: 0 })).toThrow(HabitValidationError);
+    expect(() => setSchedule(db, item.id, { kind: 'per_week', perWeekN: 8 })).toThrow(HabitValidationError);
+    expect(setSchedule(db, 9999, { kind: 'days_of_week', daysMask: MWF })).toBeNull();
+  });
+});
+
+describe('getTodayView (PD-722, D-095)', () => {
+  const MWF = 1 | 4 | 16;
+  const MON = Date.UTC(2026, 10, 16, 15, 0); // 2026-11-16
+  const TUE = Date.UTC(2026, 10, 17, 15, 0); // 2026-11-17
+  const FRI = Date.UTC(2026, 10, 20, 15, 0); // 2026-11-20
+
+  it('marks a Mon/Wed/Fri habit due on Monday but not on Tuesday', () => {
+    const item = createItem(db, { name: 'Gym' });
+    setSchedule(db, item.id, { kind: 'days_of_week', daysMask: MWF }, MON);
+
+    const findRow = (now: number) => getTodayView(db, now).rows.find((r) => r.item.id === item.id);
+    expect(findRow(MON)?.due).toBe(true);
+    expect(findRow(TUE)?.due).toBe(false);
+  });
+
+  it('reports per-week progress, streak and completedToday', () => {
+    const item = createItem(db, { name: 'Run' });
+    setSchedule(db, item.id, { kind: 'per_week', perWeekN: 3 }, MON);
+    for (const day of ['2026-11-16', '2026-11-18', '2026-11-20']) {
+      setCompletion(db, { itemId: item.id, day, done: true });
+    }
+
+    const row = getTodayView(db, FRI).rows.find((r) => r.item.id === item.id);
+    expect(row?.perWeek).toEqual({ count: 3, target: 3, met: true });
+    expect(row?.due).toBe(true);
+    expect(row?.completedToday).toBe(true);
+    expect(row?.streak.current).toBe(1); // the current week, met
+  });
+
+  it('excludes archived items and defaults an unscheduled habit to daily (due)', () => {
+    const daily = createItem(db, { name: 'Floss' });
+    const gone = createItem(db, { name: 'Old' });
+    archiveItem(db, gone.id, true);
+
+    const rows = getTodayView(db, TUE).rows;
+    expect(rows.map((r) => r.item.id)).toEqual([daily.id]);
+    expect(rows[0].due).toBe(true); // no schedule → daily
+    expect(rows[0].schedule).toBeNull();
   });
 });
 

@@ -6,7 +6,10 @@
     DEFAULT_HABIT_TIMEZONE,
     habitDay,
     type HabitItemView,
+    type HabitSchedule,
     type HabitSettings,
+    type HabitTodayRow,
+    type SetHabitScheduleInput,
   } from '@dashboard/shared';
   import { toast } from '$lib/toast-store.svelte';
   import Tabs from '$lib/Tabs.svelte';
@@ -16,14 +19,16 @@
   import {
     createItem,
     deleteItem,
-    fetchCompletions,
     fetchItems,
+    fetchSchedules,
     fetchSettings,
+    fetchToday,
     patchSettings,
     RejectedError,
     renameItem,
     reorderItems,
     setArchived,
+    setSchedule,
   } from '../routes/widgets/habit-tracker/api';
   import {
     applyPendingCompletions,
@@ -53,6 +58,9 @@
     timezone: DEFAULT_HABIT_TIMEZONE,
   });
   let items = $state<HabitItemView[]>([]);
+  let schedules = $state<HabitSchedule[]>([]);
+  // The Today view (due state, per-week progress, streaks) is computed server-side (D-095).
+  let todayRows = $state<HabitTodayRow[]>([]);
   // SvelteSet so in-place add/delete are reactive (optimistic ticking mutates it directly).
   const completedToday = new SvelteSet<number>();
   let loaded = $state(false);
@@ -71,25 +79,37 @@
     isRejected: (e) => e instanceof RejectedError,
     collapseKey: pendingKey,
     onChange: (list) => (pending = list),
+    // A tick that reached the server changes its streak / per-week figures, so re-pull the
+    // server-computed Today view once writes flush (D-095).
+    onSent: () => {
+      void refreshToday();
+    },
     onRejected: (_entry, message) => toast.show(`A habit write was refused: ${message}`, 'error', 6000),
   });
 
-  // Recomputes if the day boundary / timezone change on the Habits tab; otherwise stable.
+  // Recomputes if the day boundary / timezone change on the Habits tab; otherwise stable. The server
+  // Today view carries its own `day`; this is the fallback the optimistic tick writes against.
   const today = $derived(habitDay(Date.now(), settings));
-  const activeItems = $derived(items.filter((i) => i.archivedAt === null));
+
+  async function refreshToday() {
+    const view = await fetchToday();
+    todayRows = view.rows;
+    completedToday.clear();
+    // Fold any queued-but-unsynced ticks over the server's done-set, so an offline tick doesn't
+    // visually revert on refresh (PROJECT.md §4). The server view already carries the streak /
+    // per-week figures (D-095); pending writes only move the done-set until they flush.
+    const serverDone = view.rows.filter((r) => r.completedToday).map((r) => r.item.id);
+    for (const id of applyPendingCompletions(serverDone, outbox.pending(), view.day))
+      completedToday.add(id);
+  }
 
   async function load() {
     try {
-      const s = await fetchSettings();
-      settings = s;
-      const day = habitDay(Date.now(), s);
-      const [its, comps] = await Promise.all([fetchItems(true), fetchCompletions(day, day)]);
+      settings = await fetchSettings();
+      const [its, scheds] = await Promise.all([fetchItems(true), fetchSchedules()]);
       items = its;
-      // Fold any queued-but-unsynced ticks over the server state, so an offline tick doesn't
-      // visually revert on reload (PROJECT.md §4).
-      completedToday.clear();
-      for (const id of applyPendingCompletions(comps.map((c) => c.itemId), outbox.pending(), day))
-        completedToday.add(id);
+      schedules = scheds;
+      await refreshToday();
     } catch {
       toast.show('Could not load habits.', 'error');
     } finally {
@@ -102,37 +122,56 @@
     if (done) completedToday.add(item.id);
     else completedToday.delete(item.id); // optimistic
     // The write is queued, not awaited: it shows immediately and syncs when the server is reachable.
+    // Once it flushes, `onSent` re-pulls the server-computed streak / per-week figures (D-095).
     outbox.add({ kind: 'completion', itemId: item.id, day: today, done });
   }
 
   // ── Habits-tab actions (page only) ─────────────────────────────────────────────
+  // Edits here can change what is due today (a new habit, an archive, a schedule change), so each
+  // refreshes the Today view as well as its own slice of state.
   async function addHabit(name: string) {
     const created = await createItem(name);
     items = [...items, created];
+    await refreshToday();
   }
 
   async function rename(id: number, name: string) {
     const updated = await renameItem(id, name);
     items = items.map((i) => (i.id === updated.id ? updated : i));
+    await refreshToday();
   }
 
   async function archive(id: number, archived: boolean) {
     const updated = await setArchived(id, archived);
     items = items.map((i) => (i.id === updated.id ? updated : i));
+    await refreshToday();
   }
 
   async function remove(id: number) {
     await deleteItem(id);
     items = items.filter((i) => i.id !== id);
     completedToday.delete(id);
+    await refreshToday();
   }
 
   async function reorder(ids: number[]) {
     items = await reorderItems(ids);
+    await refreshToday();
+  }
+
+  async function updateSchedule(id: number, input: SetHabitScheduleInput) {
+    const saved = await setSchedule(id, input);
+    // Replace today's row for this item, keeping the item's other (past) rows.
+    schedules = [
+      ...schedules.filter((s) => !(s.itemId === saved.itemId && s.effectiveFromDay === saved.effectiveFromDay)),
+      saved,
+    ];
+    await refreshToday();
   }
 
   async function updateSettings(patch: Partial<HabitSettings>) {
     settings = await patchSettings(patch);
+    await refreshToday();
   }
 
   const TABS = [
@@ -152,7 +191,7 @@
 </script>
 
 {#snippet todayPanel()}
-  <TodayList items={activeItems} completed={completedToday} onToggle={toggle} {loaded} {compact} />
+  <TodayList rows={todayRows} completed={completedToday} onToggle={toggle} {loaded} {compact} />
   {#if pending.length > 0}
     <p class="pending" role="status">{pending.length} pending sync</p>
   {/if}
@@ -167,12 +206,15 @@
         {#if id === 'habits'}
           <HabitsManager
             {items}
+            {schedules}
+            {today}
             {settings}
             onAdd={addHabit}
             onRename={rename}
             onArchive={archive}
             onDelete={remove}
             onReorder={reorder}
+            onSchedule={updateSchedule}
             onSettings={updateSettings}
           />
         {:else if id === 'log'}
