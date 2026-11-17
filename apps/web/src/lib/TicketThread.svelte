@@ -2,10 +2,16 @@
   import { onMount, tick } from 'svelte';
   import { applyMarkdown } from '$lib/markdown';
   import type { RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
-  import { isReady, latestActionableProposal, refineThreadFromEvents } from '@dashboard/shared';
+  import {
+    isReady,
+    latestActionableProposal,
+    refineSessionEnd,
+    refineThreadFromEvents,
+  } from '@dashboard/shared';
   import {
     approveRefine,
     fetchTicketEvents,
+    parkRefine,
     postRefineReply,
     rejectRefine,
   } from '../routes/devops/api';
@@ -41,6 +47,9 @@
   let deciding = $state(false);
   let decideMsg = $state<string | null>(null);
   let threadEl = $state<HTMLElement | null>(null);
+  // PD-743: how the session ended (approved commit or parked), or null while it is open.
+  let sessionEnd = $state<'committed' | 'parked' | null>(null);
+  let parking = $state(false);
 
   // True while we're waiting on the agent-worker — the newest turn is Steve's.
   const awaitingAgent = $derived(messages.length > 0 && messages[messages.length - 1].role === 'human');
@@ -91,6 +100,7 @@
       const events = await fetchTicketEvents(ticketId);
       messages = refineThreadFromEvents(events);
       proposal = latestActionableProposal(events)?.proposal ?? null;
+      sessionEnd = refineSessionEnd(events);
       error = null;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -140,6 +150,23 @@
       sendMsg = e instanceof Error ? e.message : String(e);
     } finally {
       sending = false;
+    }
+  }
+
+  // PD-743: end the session with no commit. Nothing is waiting on Steve after this; replying
+  // reopens it. The server refuses a second park, so a double-click is harmless.
+  async function park() {
+    if (parking) return;
+    parking = true;
+    sendMsg = null;
+    try {
+      await parkRefine(ticketId);
+      await load();
+      onChanged?.();
+    } catch (e) {
+      sendMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      parking = false;
     }
   }
 
@@ -268,6 +295,14 @@
         <li class="decide-msg" role="status">{decideMsg}</li>
       {/if}
 
+      {#if sessionEnd}
+        <li class="session-ended" role="status">
+          {sessionEnd === 'parked'
+            ? 'Session parked. Nothing is waiting on you. Reply to reopen it.'
+            : 'Proposal approved, so this session has ended. Reply to reopen it.'}
+        </li>
+      {/if}
+
       {#if awaitingAgent}
         <li class="working" aria-live="polite">
           <span class="working-dots" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -297,6 +332,17 @@
             {sending ? 'Sending…' : 'Send'}
           </button>
           {#if sendMsg}<span class="send-msg">{sendMsg}</span>{/if}
+          {#if messages.length > 0 && sessionEnd === null}
+            <button
+              class="park"
+              type="button"
+              onclick={park}
+              disabled={parking}
+              title="End this Refine session without a commit. It stops waiting on you; a reply reopens it."
+            >
+              {parking ? 'Parking…' : 'Park'}
+            </button>
+          {/if}
         </div>
       </div>
     {/if}

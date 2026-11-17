@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3';
 import type { RefineProposal, TicketEvent } from '@dashboard/shared';
-import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT, refineThreadFromEvents } from '@dashboard/shared';
+import {
+  REFINE_EVENT_TYPE,
+  REFINE_PARKED_EVENT,
+  REFINE_PROPOSAL_EVENT,
+  refineThreadFromEvents,
+} from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { buildContextPack } from '../../shared/context-pack';
 import {
@@ -45,19 +50,26 @@ export interface RefineWork {
  */
 export function nextRefineWork(events: TicketEvent[]): RefineWork | null {
   const refine = events.filter(
-    (e) => e.type === REFINE_EVENT_TYPE.human || e.type === REFINE_EVENT_TYPE.agent,
+    (e) =>
+      e.type === REFINE_EVENT_TYPE.human ||
+      e.type === REFINE_EVENT_TYPE.agent ||
+      e.type === REFINE_PARKED_EVENT,
   );
   if (refine.length === 0) return null;
 
+  // PD-743: a park closes the pending set just like an agent turn does — human turns before it
+  // were deliberately left unanswered. Resume still comes from the last AGENT turn.
+  let boundaryIdx = -1;
   let lastAgentIdx = -1;
   for (let i = refine.length - 1; i >= 0; i--) {
+    if (boundaryIdx === -1 && refine[i].type !== REFINE_EVENT_TYPE.human) boundaryIdx = i;
     if (refine[i].type === REFINE_EVENT_TYPE.agent) {
       lastAgentIdx = i;
       break;
     }
   }
 
-  const pending = refine.slice(lastAgentIdx + 1); // all human turns (nothing after last agent)
+  const pending = refine.slice(boundaryIdx + 1); // only human turns after the last agent turn or park
   if (pending.length === 0) return null;
 
   const prompt = refineThreadFromEvents(pending)
@@ -134,23 +146,27 @@ export function listTicketEvents(db: Database.Database, ticketId: number): Ticke
   return rows.map(rowToEvent);
 }
 
-/** Ticket ids whose newest `refine_human` turn is newer than their newest `refine_agent`
- *  turn — i.e. a human is waiting on the agent. Filtered in SQL to avoid scanning the log. */
+/** Ticket ids whose newest `refine_human` turn is newer than both their newest `refine_agent`
+ *  turn and their newest `refine_parked` event — i.e. a human is waiting on the agent and the
+ *  session was not parked after they wrote (PD-743). A reply after a park is newer than it, so
+ *  it reopens the session. Filtered in SQL to avoid scanning the log. */
 export function findPendingRefineTicketIds(db: Database.Database): number[] {
   const rows = db
     .prepare(
       `SELECT ticket_id
          FROM agent_ticket_events
-        WHERE type IN (?, ?)
+        WHERE type IN (?, ?, ?)
         GROUP BY ticket_id
        HAVING MAX(CASE WHEN type = ? THEN created_at END) >
-              COALESCE(MAX(CASE WHEN type = ? THEN created_at END), 0)`,
+              COALESCE(MAX(CASE WHEN type IN (?, ?) THEN created_at END), 0)`,
     )
     .all(
       REFINE_EVENT_TYPE.human,
       REFINE_EVENT_TYPE.agent,
+      REFINE_PARKED_EVENT,
       REFINE_EVENT_TYPE.human,
       REFINE_EVENT_TYPE.agent,
+      REFINE_PARKED_EVENT,
     ) as { ticket_id: number }[];
   return rows.map((r) => r.ticket_id);
 }

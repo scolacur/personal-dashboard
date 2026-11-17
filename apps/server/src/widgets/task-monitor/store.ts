@@ -36,8 +36,10 @@ import {
   latestActionableProposal,
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
+  REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
   REFINE_STATE_EVENT,
+  REFINE_STATE_EVENT_TYPES,
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
 } from '@dashboard/shared';
@@ -204,11 +206,14 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
 
 /* ── Tickets ────────────────────────────────────── */
 
-// Newest refine_* event type per ticket, so rowToTicket can derive refineState (D-044,
+// Newest Refine-state event type per ticket, so rowToTicket can derive refineState (D-044,
 // PD-268) for the card/detail pill without an N+1 fetch. `t` is the agent_tickets alias.
+// PD-743: the session-ending types (commit, park) count too, so an ended session derives to
+// null instead of reading as awaiting-human forever. The list is the shared one, so this SQL
+// and `refineSessionEnd` cannot disagree about what ends a session.
 const LATEST_REFINE_TYPE_SELECT = `(
   SELECT e.type FROM agent_ticket_events e
-   WHERE e.ticket_id = t.id AND e.type IN ('refine_human', 'refine_agent')
+   WHERE e.ticket_id = t.id AND e.type IN (${REFINE_STATE_EVENT_TYPES.map((s) => `'${s}'`).join(', ')})
    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
 ) AS latest_refine_type`;
 
@@ -1283,6 +1288,48 @@ export function appendRefineReply(
     .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
     .get(Number(res.lastInsertRowid)) as TicketEventRow | undefined;
   return row ? rowToTicketEvent(row) : null;
+}
+
+export type ParkRefineResult =
+  | { ok: true; event: TicketEvent }
+  | { ok: false; reason: 'not_found' | 'no_session' | 'already_ended' };
+
+/**
+ * Park a Refine session (PD-743, D-096): end it without committing anything. Writes a
+ * `refine_parked` event — which derives the ticket's refineState to null and stops the
+ * agent-worker from answering a pending turn — and marks the ticket's unread `agent_refine`
+ * notifications read, since nothing is waiting on Steve any more. A later human reply reopens
+ * the session (the reply is newer than the park). Refuses a ticket with no Refine thread, or
+ * one whose session already ended, so a double-click writes one event.
+ */
+export function parkRefine(db: Database.Database, ticketId: number): ParkRefineResult {
+  if (getTicket(db, ticketId) === null) return { ok: false, reason: 'not_found' };
+  const newest = db
+    .prepare(
+      `SELECT type FROM agent_ticket_events
+        WHERE ticket_id = ? AND type IN (${REFINE_STATE_EVENT_TYPES.map(() => '?').join(', ')})
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(ticketId, ...REFINE_STATE_EVENT_TYPES) as { type: string } | undefined;
+  if (!newest) return { ok: false, reason: 'no_session' };
+  if (refineStateFromLatestType(newest.type) === null) return { ok: false, reason: 'already_ended' };
+
+  const now = Date.now();
+  const write = db.transaction(() => {
+    const res = db
+      .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+      .run(ticketId, REFINE_PARKED_EVENT, null, now);
+    db.prepare(
+      `UPDATE agent_notifications SET read_at = ?
+        WHERE ticket_id = ? AND kind = 'agent_refine' AND read_at IS NULL`,
+    ).run(now, ticketId);
+    return Number(res.lastInsertRowid);
+  });
+  const eventId = write();
+  const row = db
+    .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
+    .get(eventId) as TicketEventRow;
+  return { ok: true, event: rowToTicketEvent(row) };
 }
 
 /**

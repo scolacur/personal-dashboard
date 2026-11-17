@@ -219,6 +219,23 @@
   font-size: var(--font-size-sm);
 }
 
+// PD-743: Park is secondary to Send — an outline button pushed to the far end of the row.
+.reply-actions button.park {
+  margin-left: auto;
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+// PD-743: the notice that a session ended (committed or parked). Same register as decide-msg.
+.session-ended {
+  list-style: none;
+  color: var(--text-muted, var(--text));
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs) 0;
+  border-top: 1px dashed var(--border);
+}
+
 // Commit proposal (D-044, PD-269) — the approval gate before any ticket writes. Rendered
 // inline as an interactive agent bubble (.turn-proposal) so a long proposal scrolls WITH the
 // thread and its Approve/Reject actions stay reachable. Previously a fixed-height panel below

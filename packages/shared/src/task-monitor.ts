@@ -740,12 +740,53 @@ export function isRefineEventType(type: string): boolean {
  *  with the commit step, PD-269.) */
 export type RefineState = 'refining' | 'awaiting-human';
 
-/** Map the newest refine_* event type to a session state, or null if none. */
+/** Steve ended a Refine session without committing anything (PD-743, D-096). Written by
+ *  `POST /tickets/:id/refine-park`; a later human reply reopens the session. */
+export const REFINE_PARKED_EVENT = 'refine_parked';
+
+/**
+ * The event types that END a Refine session (PD-743, D-096): an approved commit, or a park.
+ * `refine_rejected` is deliberately absent — rejecting a proposal leaves the session open so the
+ * agent can propose again. A turn (human or agent) newer than one of these reopens the session.
+ */
+// 'refine_committed' is REFINE_PROPOSAL_EVENT.committed, spelled out because that constant is
+// declared further down this module and would not be initialized yet here.
+export const REFINE_SESSION_END_TYPES: readonly string[] = ['refine_committed', REFINE_PARKED_EVENT];
+
+/** Every event type that decides a ticket's Refine state: the two turn types plus the ends. */
+export const REFINE_STATE_EVENT_TYPES: readonly string[] = [
+  REFINE_EVENT_TYPE.human,
+  REFINE_EVENT_TYPE.agent,
+  ...REFINE_SESSION_END_TYPES,
+];
+
+/** Map the newest Refine-state event type (one of `REFINE_STATE_EVENT_TYPES`) to a session
+ *  state, or null if there is none or the session has ended (PD-743). Before PD-743 only the
+ *  two turn types were considered, so a session that ended in an approved commit read as
+ *  `awaiting-human` forever. */
 export function refineStateFromLatestType(
   latestRefineType: string | null | undefined,
 ): RefineState | null {
   if (latestRefineType === REFINE_EVENT_TYPE.agent) return 'awaiting-human';
   if (latestRefineType === REFINE_EVENT_TYPE.human) return 'refining';
+  return null;
+}
+
+/** How the newest Refine session ended, or null if it is still open (or never started). Pure,
+ *  over a ticket's event log in any order — the thread UI uses it to show the ended notice. */
+export function refineSessionEnd(
+  events: readonly { type: string; createdAt: number; id: number }[],
+): 'committed' | 'parked' | null {
+  let newest: { type: string; createdAt: number; id: number } | null = null;
+  for (const e of events) {
+    if (!REFINE_STATE_EVENT_TYPES.includes(e.type)) continue;
+    if (newest === null || e.createdAt > newest.createdAt || (e.createdAt === newest.createdAt && e.id > newest.id)) {
+      newest = e;
+    }
+  }
+  if (newest === null) return null;
+  if (newest.type === REFINE_PARKED_EVENT) return 'parked';
+  if (newest.type === 'refine_committed') return 'committed';
   return null;
 }
 

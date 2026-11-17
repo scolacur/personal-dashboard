@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-096](DECISIONS/D-096-refine-is-an-asynchronous-question-queue-paced-by-answers.md)** — Refine is an asynchronous question queue, auto-started on every new ticket and paced by how fast Steve answers
 - **[D-095](DECISIONS/D-095-habit-schedules-are-effective-dated-and-the-today-view-is-server-computed.md)** — Habit schedules are effective-dated rows, and due/streak are pure shared functions computed in a server Today view
 - **[D-094](DECISIONS/D-094-the-turn-ceiling-is-a-checkpoint-not-a-failure.md)** — The turn ceiling is a checkpoint, not a failure: report, save the work, and let Steve choose Continue or Restart
 - **[D-093](DECISIONS/D-093-shared-outbox-is-a-plain-module-with-onchange.md)** — The shared offline outbox is a plain module with an `onChange` callback, not a reactive `.svelte.ts` store

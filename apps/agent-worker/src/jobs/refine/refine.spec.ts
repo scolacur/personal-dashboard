@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import type { RefineProposal, TicketEvent } from '@dashboard/shared';
-import { REFINE_EVENT_TYPE, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
+import { REFINE_EVENT_TYPE, REFINE_PARKED_EVENT, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
 import { type AgentWorkerConfig, loadRobotConfig, loadEvaluatorConfig, loadMaintenanceConfig } from '../../shared/config';
 import type { RefineSession, RefineTurnResult, OpenRefineSession, OpenSessionInput } from './session';
 import {
@@ -140,6 +140,27 @@ describe('nextRefineWork (pure)', () => {
     ]);
     expect(work).toEqual({ prompt: 'reply one\n\nreply two', resumeSessionId: 'sess-42' });
   });
+
+  it('PD-743: a park leaves earlier human turns unanswered', () => {
+    const work = nextRefineWork([
+      ev(REFINE_EVENT_TYPE.human, { text: 'body' }, 1),
+      ev(REFINE_EVENT_TYPE.agent, { text: 'plan', sessionId: 'sess-42' }, 2),
+      ev(REFINE_EVENT_TYPE.human, { text: 'never mind' }, 3),
+      ev(REFINE_PARKED_EVENT, null, 4),
+    ]);
+    expect(work).toBeNull();
+  });
+
+  it('PD-743: a reply after a park reopens the session, resuming from the last agent turn', () => {
+    const work = nextRefineWork([
+      ev(REFINE_EVENT_TYPE.human, { text: 'body' }, 1),
+      ev(REFINE_EVENT_TYPE.agent, { text: 'plan', sessionId: 'sess-42' }, 2),
+      ev(REFINE_EVENT_TYPE.human, { text: 'unanswered' }, 3),
+      ev(REFINE_PARKED_EVENT, null, 4),
+      ev(REFINE_EVENT_TYPE.human, { text: 'back again' }, 5),
+    ]);
+    expect(work).toEqual({ prompt: 'back again', resumeSessionId: 'sess-42' });
+  });
 });
 
 describe('findPendingRefineTicketIds', () => {
@@ -167,6 +188,15 @@ describe('findPendingRefineTicketIds', () => {
     expect(findPendingRefineTicketIds(db)).toEqual([]);
     addEvent(db, 2, REFINE_EVENT_TYPE.human, { text: 'follow-up' });
     expect(findPendingRefineTicketIds(db)).toEqual([2]);
+  });
+
+  it('PD-743: skips a session parked after the human wrote, and re-lists it on a new reply', () => {
+    addTicket(db, 4, 'PD-4');
+    addEvent(db, 4, REFINE_EVENT_TYPE.human, { text: 'a' });
+    addEvent(db, 4, REFINE_PARKED_EVENT, null);
+    expect(findPendingRefineTicketIds(db)).toEqual([]);
+    addEvent(db, 4, REFINE_EVENT_TYPE.human, { text: 'reopen' });
+    expect(findPendingRefineTicketIds(db)).toEqual([4]);
   });
 });
 
