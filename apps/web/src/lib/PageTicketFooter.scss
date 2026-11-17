@@ -1,0 +1,31 @@
+.page-ticket-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-xl);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+// Quiet by default — it's on every page, so it must not compete with the page's own content.
+.page-ticket-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}

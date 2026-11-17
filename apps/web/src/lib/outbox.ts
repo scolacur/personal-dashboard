@@ -85,6 +85,29 @@ export async function flushQueue<T, S>(
   return result;
 }
 
+/**
+ * Collapse set-state entries that supersede each other: keep only the latest entry per key,
+ * preserving first-seen order among the survivors. For a queue of idempotent, last-write-wins
+ * messages (e.g. "habit X on day D is done/not done"), earlier entries for the same subject are
+ * redundant once a later one exists, so there is no point sending them. Used by the habit outbox
+ * to collapse per `(item, day)` before a flush (PD-736 / this ticket).
+ */
+export function collapseByKey<T>(list: T[], key: (entry: T) => string): T[] {
+  const result: T[] = [];
+  const indexByKey = new Map<string, number>();
+  for (const entry of list) {
+    const k = key(entry);
+    const at = indexByKey.get(k);
+    if (at === undefined) {
+      indexByKey.set(k, result.length);
+      result.push(entry);
+    } else {
+      result[at] = entry; // same subject seen again → the later value wins, in place
+    }
+  }
+  return result;
+}
+
 /** How long between unprompted flush attempts while entries are pending. */
 export const OUTBOX_RETRY_MS = 20_000;
 
@@ -95,6 +118,12 @@ export interface OutboxOptions<T, S> {
   send: (entry: T) => Promise<S>;
   /** True for an error that means "the server refused this" (4xx) — such entries are dropped, not retried. */
   isRejected: (error: unknown) => boolean;
+  /**
+   * Optional subject key. When present, `add` and `start` collapse the queue so only the latest
+   * entry per key survives (see {@link collapseByKey}). Omit it for append-only queues (Tinnitus,
+   * whose entries each carry a unique client id and never supersede one another).
+   */
+  collapseKey?: (entry: T) => string;
   /** Fires whenever the pending list changes, so a component can mirror it into reactive state. */
   onChange?: (pending: T[]) => void;
   /** Fires with the entries a flush got through, for the caller to fold into its view. */
@@ -136,14 +165,23 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
     opts.onChange?.(pending);
   }
 
+  function collapse(list: T[]): T[] {
+    return opts.collapseKey ? collapseByKey(list, opts.collapseKey) : list;
+  }
+
   async function flush(): Promise<void> {
     if (flushing || pending.length === 0) return;
     flushing = true;
     const snapshot = pending;
     try {
       const r = await flushQueue(snapshot, opts.send, opts.isRejected);
-      // Anything added while the flush was in flight was appended after the snapshot; keep it.
-      setPending([...r.remaining, ...pending.slice(snapshot.length)]);
+      // Entries added while the flush was in flight are whatever is in `pending` now that wasn't in
+      // the snapshot (by identity — a positional slice is wrong once `collapse` can rewrite the
+      // queue's prefix). Keep the failed tail, then those, then collapse so a just-added write for a
+      // subject supersedes its stale, already-sent snapshot entry.
+      const inSnapshot = new Set<T>(snapshot);
+      const added = pending.filter((e) => !inSnapshot.has(e));
+      setPending(collapse([...r.remaining, ...added]));
       if (r.sent.length > 0) opts.onSent?.(r.sent);
       for (const { entry, message } of r.rejected) opts.onRejected?.(entry, message);
     } finally {
@@ -152,12 +190,12 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
   }
 
   function add(entry: T): void {
-    setPending([...pending, entry]);
+    setPending(collapse([...pending, entry]));
     void flush();
   }
 
   function start(): () => void {
-    pending = loadQueue<T>(opts.key, kv);
+    pending = collapse(loadQueue<T>(opts.key, kv));
     opts.onChange?.(pending);
 
     // The retry triggers need a browser. `onMount` only fires client-side, but guard anyway so the

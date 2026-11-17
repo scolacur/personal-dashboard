@@ -1,4 +1,5 @@
 import type {
+  AcuteStrategyDraw,
   AcuteStrategyIdea,
   CreateIdeaInput,
   IdeaType,
@@ -52,4 +53,22 @@ export async function importIdeas(input: ImportIdeasInput): Promise<ImportIdeasR
   });
   if (!res.ok) throw new Error('Failed to import ideas');
   return res.json() as Promise<ImportIdeasResult>;
+}
+
+/** Log a draw of `ideaId` (T70). Callers must not let a rejection block the draw. */
+export async function recordDraw(ideaId: number): Promise<AcuteStrategyDraw> {
+  const res = await fetch(`${BASE}/draws`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ideaId }),
+  });
+  if (!res.ok) throw new Error('Failed to record draw');
+  return res.json() as Promise<AcuteStrategyDraw>;
+}
+
+export async function fetchDraws(limit?: number): Promise<AcuteStrategyDraw[]> {
+  const qs = limit !== undefined ? `?limit=${limit}` : '';
+  const res = await fetch(`${BASE}/draws${qs}`);
+  if (!res.ok) throw new Error('Failed to load draws');
+  return res.json() as Promise<AcuteStrategyDraw[]>;
 }

@@ -12,7 +12,7 @@ import type {
   TicketEvent,
   TicketRelation,
   UpdateTicketInput,
-  WidgetTicketInput,
+  SurfaceTicketInput,
 } from '@dashboard/shared';
 
 export function projectIdColor(project: AgentProject | undefined | null): string {
@@ -58,7 +58,11 @@ async function parseError(res: Response): Promise<never> {
   let code: string | null = null;
   let blockers: QueueCriterion[] | null = null;
   try {
-    const body = (await res.json()) as { error?: string; code?: string; blockers?: QueueCriterion[] };
+    const body = (await res.json()) as {
+      error?: string;
+      code?: string;
+      blockers?: QueueCriterion[];
+    };
     if (body.error) message = body.error;
     if (body.code) code = body.code;
     if (Array.isArray(body.blockers)) blockers = body.blockers;
@@ -152,7 +156,10 @@ export async function reopenTicket(id: number, epicId?: number): Promise<AgentTi
 
 /** Archive a ticket. For an Epic (D-054), `cascadeMembers` archives its members too; otherwise
  *  they're unlinked and survive as free tickets. */
-export async function deleteTicket(id: number, opts: { cascadeMembers?: boolean } = {}): Promise<void> {
+export async function deleteTicket(
+  id: number,
+  opts: { cascadeMembers?: boolean } = {},
+): Promise<void> {
   const q = opts.cascadeMembers ? '?cascadeMembers=1' : '';
   const res = await fetch(`${BASE}/${id}${q}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 204) return parseError(res);
@@ -328,13 +335,14 @@ export async function deleteRelation(ticketId: number, relationId: number): Prom
 }
 
 /**
- * File a ticket from a widget card's + button. The server picks the Epic (the widget triage
- * inbox) and shapes title + provenance; `refine: true` also opens a Refine session on it.
+ * File a suggestion ticket from a widget card's +, a page's footer, or the app-wide nav button.
+ * The server picks the Epic (the triage inbox) and shapes title + provenance from the surface;
+ * `refine: true` also opens a Refine session on it.
  */
-export async function fileWidgetTicket(
-  input: WidgetTicketInput,
+export async function fileSurfaceTicket(
+  input: SurfaceTicketInput,
 ): Promise<{ ticket: AgentTicket; refineStarted: boolean }> {
-  const res = await fetch('/api/widgets/task-monitor/widget-tickets', {
+  const res = await fetch('/api/widgets/task-monitor/surface-tickets', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(input),

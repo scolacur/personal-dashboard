@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveAllTags, filterIdeas, pickRandom, parseIdeaForm } from './utils';
+import { deriveAllTags, filterIdeas, pickRandom, parseIdeaForm, relativeDrawTime } from './utils';
 import type { AcuteStrategyIdea } from '@dashboard/shared';
 
 const ideas: AcuteStrategyIdea[] = [
@@ -106,5 +106,30 @@ describe('parseIdeaForm', () => {
   it('carries the chosen type through unchanged', () => {
     const result = parseIdeaForm('idea', 'Inspiration', 'x');
     expect(result.ok && result.data.type).toBe('Inspiration');
+  });
+});
+
+describe('relativeDrawTime', () => {
+  const now = 1_000_000_000_000;
+
+  it('shows "just now" under a minute', () => {
+    expect(relativeDrawTime(now - 30_000, now)).toBe('just now');
+  });
+
+  it('shows minutes', () => {
+    expect(relativeDrawTime(now - 3 * 60_000, now)).toBe('3 min ago');
+  });
+
+  it('shows hours', () => {
+    expect(relativeDrawTime(now - 2 * 3_600_000, now)).toBe('2 hr ago');
+  });
+
+  it('shows days, pluralising', () => {
+    expect(relativeDrawTime(now - 24 * 3_600_000, now)).toBe('1 day ago');
+    expect(relativeDrawTime(now - 3 * 24 * 3_600_000, now)).toBe('3 days ago');
+  });
+
+  it('treats a future timestamp as just now', () => {
+    expect(relativeDrawTime(now + 5000, now)).toBe('just now');
   });
 });

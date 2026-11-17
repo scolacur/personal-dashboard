@@ -13,6 +13,7 @@
   } from '@dashboard/shared';
   import { toast } from '$lib/toast-store.svelte';
   import Tabs from '$lib/Tabs.svelte';
+  import { createOutbox } from '$lib/outbox';
   import TodayList from '../routes/widgets/habit-tracker/TodayList.svelte';
   import HabitsManager from '../routes/widgets/habit-tracker/HabitsManager.svelte';
   import {
@@ -23,12 +24,19 @@
     fetchSettings,
     fetchToday,
     patchSettings,
+    RejectedError,
     renameItem,
     reorderItems,
     setArchived,
-    setCompletion,
     setSchedule,
   } from '../routes/widgets/habit-tracker/api';
+  import {
+    applyPendingCompletions,
+    pendingKey,
+    QUEUE_KEY,
+    sendHabitWrite,
+    type PendingHabitWrite,
+  } from '../routes/widgets/habit-tracker/queue';
 
   /**
    * Habit Tracker (PD-721, the tracer slice). `widget` is the dashboard card — the Today checklist,
@@ -56,20 +64,43 @@
   // SvelteSet so in-place add/delete are reactive (optimistic ticking mutates it directly).
   const completedToday = new SvelteSet<number>();
   let loaded = $state(false);
+  let pending = $state<PendingHabitWrite[]>([]);
+
+  /**
+   * Every tick / untick (and, when the metric UI lands, every metric write) rides the shared
+   * offline outbox (`$lib/outbox`, D-093; this ticket). The UI updates optimistically; the outbox
+   * persists the write, flushes when the server is reachable, and collapses pending writes per
+   * `(item, day)` so a flurry of toggles on one habit sends only the final state. `onChange` mirrors
+   * the queue into `pending` for the live "N pending sync" line.
+   */
+  const outbox = createOutbox<PendingHabitWrite, void>({
+    key: QUEUE_KEY,
+    send: sendHabitWrite,
+    isRejected: (e) => e instanceof RejectedError,
+    collapseKey: pendingKey,
+    onChange: (list) => (pending = list),
+    // A tick that reached the server changes its streak / per-week figures, so re-pull the
+    // server-computed Today view once writes flush (D-095).
+    onSent: () => {
+      void refreshToday();
+    },
+    onRejected: (_entry, message) => toast.show(`A habit write was refused: ${message}`, 'error', 6000),
+  });
 
   // Recomputes if the day boundary / timezone change on the Habits tab; otherwise stable. The server
   // Today view carries its own `day`; this is the fallback the optimistic tick writes against.
   const today = $derived(habitDay(Date.now(), settings));
 
-  function seedCompleted(rows: HabitTodayRow[]) {
-    completedToday.clear();
-    for (const r of rows) if (r.completedToday) completedToday.add(r.item.id);
-  }
-
   async function refreshToday() {
     const view = await fetchToday();
     todayRows = view.rows;
-    seedCompleted(view.rows);
+    completedToday.clear();
+    // Fold any queued-but-unsynced ticks over the server's done-set, so an offline tick doesn't
+    // visually revert on refresh (PROJECT.md §4). The server view already carries the streak /
+    // per-week figures (D-095); pending writes only move the done-set until they flush.
+    const serverDone = view.rows.filter((r) => r.completedToday).map((r) => r.item.id);
+    for (const id of applyPendingCompletions(serverDone, outbox.pending(), view.day))
+      completedToday.add(id);
   }
 
   async function load() {
@@ -86,20 +117,13 @@
     }
   }
 
-  async function toggle(item: HabitItemView) {
+  function toggle(item: HabitItemView) {
     const done = !completedToday.has(item.id);
     if (done) completedToday.add(item.id);
     else completedToday.delete(item.id); // optimistic
-
-    try {
-      await setCompletion(item.id, today, done);
-      // Refresh the server-computed streak/per-week figures the tick just changed.
-      await refreshToday();
-    } catch {
-      if (done) completedToday.delete(item.id);
-      else completedToday.add(item.id);
-      toast.show('Could not save. Check the connection.', 'error');
-    }
+    // The write is queued, not awaited: it shows immediately and syncs when the server is reachable.
+    // Once it flushes, `onSent` re-pulls the server-computed streak / per-week figures (D-095).
+    outbox.add({ kind: 'completion', itemId: item.id, day: today, done });
   }
 
   // ── Habits-tab actions (page only) ─────────────────────────────────────────────
@@ -157,11 +181,20 @@
   ];
   let tab = $state('today');
 
-  onMount(load);
+  onMount(() => {
+    // `start` loads any persisted queue and wires the retry triggers; load() then folds that queue
+    // over the server state, and a flush pushes anything already queued once the server answers.
+    const teardown = outbox.start();
+    void load().then(() => outbox.flush());
+    return teardown;
+  });
 </script>
 
 {#snippet todayPanel()}
   <TodayList rows={todayRows} completed={completedToday} onToggle={toggle} {loaded} {compact} />
+  {#if pending.length > 0}
+    <p class="pending" role="status">{pending.length} pending sync</p>
+  {/if}
 {/snippet}
 
 {#if compact}

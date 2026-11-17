@@ -11,19 +11,39 @@ import type {
  * Typed fetch wrappers for the shared habit store (PD-721, D-092).
  *
  * The store is core infrastructure, so the routes live at `/api/habits/...`, not under
- * `/api/widgets/...`. No offline outbox yet — that is lifted in for all widgets in PD-728/PD-729;
- * this tracer talks to the server directly.
+ * `/api/widgets/...`.
+ *
+ * Writes that go through the offline outbox (completions and metric values; this ticket) need the
+ * outbox's reachable-vs-refused distinction, so those requests throw {@link UnreachableError} (keep
+ * queued, retry) or {@link RejectedError} (4xx, drop — a retry fails the same way), mirroring the
+ * Tinnitus Tracker's api.
  */
 
 const BASE = '/api/habits';
 
-async function json<T>(res: Response): Promise<T> {
+/**
+ * The server couldn't be reached, or answered with a 5xx (which includes the tailnet proxy failing
+ * to reach the NAS). Worth retrying later — the offline outbox keeps such writes queued.
+ */
+export class UnreachableError extends Error {}
+
+/** The server reached a verdict and said no (4xx). Retrying the same request won't help. */
+export class RejectedError extends Error {}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, init);
+  } catch {
+    throw new UnreachableError('Server unreachable.');
+  }
   if (res.ok) return (res.status === 204 ? undefined : await res.json()) as T;
   const body = (await res.json().catch(() => ({}))) as { error?: string };
-  throw new Error(body.error ?? `Request failed (${res.status})`);
+  const message = body.error ?? `Request failed (${res.status})`;
+  throw res.status >= 500 ? new UnreachableError(message) : new RejectedError(message);
 }
 
-const send = (method: string, body?: unknown): RequestInit => ({
+const withBody = (method: string, body?: unknown): RequestInit => ({
   method,
   headers: { 'content-type': 'application/json' },
   body: body === undefined ? undefined : JSON.stringify(body),
@@ -31,61 +51,75 @@ const send = (method: string, body?: unknown): RequestInit => ({
 
 export async function fetchItems(includeArchived = false): Promise<HabitItemView[]> {
   const q = includeArchived ? '?includeArchived=1' : '';
-  return (await json<{ items: HabitItemView[] }>(await fetch(`${BASE}/items${q}`))).items;
+  return (await request<{ items: HabitItemView[] }>(`/items${q}`)).items;
 }
 
-export async function createItem(name: string): Promise<HabitItemView> {
-  return json<HabitItemView>(await fetch(`${BASE}/items`, send('POST', { name })));
+export function createItem(name: string): Promise<HabitItemView> {
+  return request<HabitItemView>('/items', withBody('POST', { name }));
 }
 
-export async function renameItem(id: number, name: string): Promise<HabitItemView> {
-  return json<HabitItemView>(await fetch(`${BASE}/items/${id}`, send('PATCH', { name })));
+export function renameItem(id: number, name: string): Promise<HabitItemView> {
+  return request<HabitItemView>(`/items/${id}`, withBody('PATCH', { name }));
 }
 
 export async function reorderItems(ids: number[]): Promise<HabitItemView[]> {
-  return (await json<{ items: HabitItemView[] }>(await fetch(`${BASE}/items/reorder`, send('PUT', { ids }))))
-    .items;
+  return (await request<{ items: HabitItemView[] }>('/items/reorder', withBody('PUT', { ids }))).items;
 }
 
-export async function setArchived(id: number, archived: boolean): Promise<HabitItemView> {
-  return json<HabitItemView>(await fetch(`${BASE}/items/${id}/archive`, send('POST', { archived })));
+export function setArchived(id: number, archived: boolean): Promise<HabitItemView> {
+  return request<HabitItemView>(`/items/${id}/archive`, withBody('POST', { archived }));
 }
 
-export async function deleteItem(id: number): Promise<{ completionCount: number }> {
-  return json<{ completionCount: number }>(await fetch(`${BASE}/items/${id}`, send('DELETE')));
+export function deleteItem(id: number): Promise<{ completionCount: number }> {
+  return request<{ completionCount: number }>(`/items/${id}`, withBody('DELETE'));
 }
 
 export async function fetchCompletions(from: string, to: string): Promise<HabitCompletion[]> {
   const q = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
-  return (await json<{ completions: HabitCompletion[] }>(await fetch(`${BASE}/completions${q}`))).completions;
+  return (await request<{ completions: HabitCompletion[] }>(`/completions${q}`)).completions;
 }
 
-export async function setCompletion(
+/**
+ * Set whether `itemId` is done on habit day `day` (idempotent set-state — the outbox replays it).
+ * Throws {@link UnreachableError} / {@link RejectedError} so the outbox can keep-or-drop the write.
+ */
+export function setCompletion(
   itemId: number,
   day: string,
   done: boolean,
 ): Promise<{ completion: HabitCompletion | null }> {
-  return json<{ completion: HabitCompletion | null }>(
-    await fetch(`${BASE}/completions`, send('PUT', { itemId, day, done })),
-  );
+  return request<{ completion: HabitCompletion | null }>('/completions', withBody('PUT', { itemId, day, done }));
 }
 
-export async function fetchToday(): Promise<HabitTodayView> {
-  return json<HabitTodayView>(await fetch(`${BASE}/today`));
+export function fetchToday(): Promise<HabitTodayView> {
+  return request<HabitTodayView>('/today');
 }
 
 export async function fetchSchedules(): Promise<HabitSchedule[]> {
-  return (await json<{ schedules: HabitSchedule[] }>(await fetch(`${BASE}/schedules`))).schedules;
+  return (await request<{ schedules: HabitSchedule[] }>('/schedules')).schedules;
 }
 
-export async function setSchedule(id: number, input: SetHabitScheduleInput): Promise<HabitSchedule> {
-  return json<HabitSchedule>(await fetch(`${BASE}/items/${id}/schedule`, send('PUT', input)));
+export function setSchedule(id: number, input: SetHabitScheduleInput): Promise<HabitSchedule> {
+  return request<HabitSchedule>(`/items/${id}/schedule`, withBody('PUT', input));
 }
 
-export async function fetchSettings(): Promise<HabitSettings> {
-  return json<HabitSettings>(await fetch(`${BASE}/settings`));
+/**
+ * Set metric `itemId`'s value on habit day `day` (`null` clears it). An idempotent set-state write,
+ * keyed on `(item, day)` like a completion (PROJECT.md §4), so it rides the same offline outbox.
+ *
+ * The metric store, its `PUT /api/habits/metric-values` route and the metric UI are later slices
+ * (PD-724 and the Log views PD-725/PD-726); this wrapper + the outbox dispatch are in place so the
+ * write path is uniform the moment those land. Shape follows the `habit_metric_values` sketch in
+ * `widgets/habit-tracker/PROJECT.md` §5.
+ */
+export function setMetricValue(itemId: number, day: string, value: string | null): Promise<void> {
+  return request<void>('/metric-values', withBody('PUT', { itemId, day, value }));
 }
 
-export async function patchSettings(input: Partial<HabitSettings>): Promise<HabitSettings> {
-  return json<HabitSettings>(await fetch(`${BASE}/settings`, send('PATCH', input)));
+export function fetchSettings(): Promise<HabitSettings> {
+  return request<HabitSettings>('/settings');
+}
+
+export function patchSettings(input: Partial<HabitSettings>): Promise<HabitSettings> {
+  return request<HabitSettings>('/settings', withBody('PATCH', input));
 }

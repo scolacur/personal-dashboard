@@ -47,6 +47,9 @@
         await tick();
         textareaEl?.focus();
       } else {
+        // Reset before closing so our state never depends on being unmounted
+        // (latent bug from Evaluator advisory on PR #407).
+        saving = false;
         // A single save closes the modal; the parent owns that.
         onCancel();
       }

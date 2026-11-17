@@ -43,11 +43,7 @@ export function laneForcedAssignee(_status: TicketStatus): TicketAssignee | null
 //    by hand — its **Epic** is queued and its members follow.
 //  - completed: agent-set terminal (the Robot loop's PR merged), or hand-set for work assigned to
 //    a human. closed: manual/wontfix terminal (D-036), hidden by default.
-export type TicketStatus =
-  | 'backlog'
-  | 'queue'
-  | 'completed'
-  | 'closed';
+export type TicketStatus = 'backlog' | 'queue' | 'completed' | 'closed';
 
 // Priority is a P0–P5 scale (P0 most urgent). A ticket's priority may also be
 // *unset* — represented as `null` in the domain/API (see AgentTicket.priority).
@@ -220,7 +216,7 @@ export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
   // re-activates on any trusted feedback, unboundedly — so the previous wording described a
   // mechanism that does not exist.
   'needs-human':
-    'A human closed the Robot\'s PR without merging it. The loop will not touch the ticket again on its own.',
+    "A human closed the Robot's PR without merging it. The loop will not touch the ticket again on its own.",
   'awaiting-human':
     'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
   wontfix: "Terminal: the ticket was closed as won't-fix.",
@@ -387,16 +383,32 @@ export interface CreateTicketInput {
 }
 
 /**
- * A ticket filed from a widget card's + button (PD-578 front door). Server-side it becomes a
- * backlog Ticket in the widget triage-inbox Epic, stamped `source = 'widget:<widgetId>'`.
+ * Where a suggestion ticket was filed from (PD-578 front door). Three scopes, narrowest first:
+ * a widget card's +, the "Suggest a change" footer at the bottom of every page, and the
+ * app-wide button in the top nav. Server-side each becomes a backlog Ticket in the triage-inbox
+ * Epic, stamped `source = 'widget:<id>' | 'page:<route>' | 'app'`.
  */
-export interface WidgetTicketInput {
+export type TicketSurface =
+  | {
+      kind: 'widget';
+      widgetId: string;
+      widgetTitle: string;
+      /** The widget's own page, e.g. `/widgets/acute-strategies-generator`. */
+      route: string;
+    }
+  | {
+      kind: 'page';
+      /** The page's display name, as the top nav shows it. */
+      pageTitle: string;
+      /** The pathname the suggestion was filed from, e.g. `/productivity`. */
+      route: string;
+    }
+  | { kind: 'app' };
+
+export interface SurfaceTicketInput {
   /** Whatever Steve typed. First line becomes the title; all of it goes in the body. */
   text: string;
-  widgetId: string;
-  widgetTitle: string;
-  /** The widget's own page, e.g. `/widgets/acute-strategies-generator`. */
-  route: string;
+  surface: TicketSurface;
   /** Open a Refine session on the new ticket ("grill me first"). */
   refine?: boolean;
 }
@@ -479,15 +491,11 @@ export function isReady(body: string | null): boolean {
 // so the client renders the server's answer instead of re-deriving it.
 
 export type QueueCriterionId =
-  | 'refined'
-  | 'epic-refined'
-  | 'epic-not-stale'
-  | 'members-refined'
-  | 'ready'
-  | 'unblocked';
+  'refined' | 'epic-refined' | 'epic-not-stale' | 'members-refined' | 'ready' | 'unblocked';
 
 /** Where an unmet criterion is satisfied. `ticketId` is the ticket to open. */
-export type QueueRemedyKind = 'mark-refined' | 'refine-epic' | 'open-epic' | 'edit-body' | 'resolve-blocker';
+export type QueueRemedyKind =
+  'mark-refined' | 'refine-epic' | 'open-epic' | 'edit-body' | 'resolve-blocker';
 
 export interface QueueCriterion {
   id: QueueCriterionId;
@@ -521,9 +529,30 @@ export function epicQueueCriteria(
 ): QueueCriterion[] {
   if (!epic) {
     return [
-      { id: 'epic-refined', label: 'No Epic', met: true, bypassable: false, refusesEntry: true, remedy: { kind: 'open-epic' } },
-      { id: 'epic-not-stale', label: 'No Epic', met: true, bypassable: false, refusesEntry: true, remedy: { kind: 'open-epic' } },
-      { id: 'members-refined', label: 'No Epic', met: true, bypassable: false, refusesEntry: true, remedy: { kind: 'open-epic' } },
+      {
+        id: 'epic-refined',
+        label: 'No Epic',
+        met: true,
+        bypassable: false,
+        refusesEntry: true,
+        remedy: { kind: 'open-epic' },
+      },
+      {
+        id: 'epic-not-stale',
+        label: 'No Epic',
+        met: true,
+        bypassable: false,
+        refusesEntry: true,
+        remedy: { kind: 'open-epic' },
+      },
+      {
+        id: 'members-refined',
+        label: 'No Epic',
+        met: true,
+        bypassable: false,
+        refusesEntry: true,
+        remedy: { kind: 'open-epic' },
+      },
     ];
   }
   const unrefined = members.filter(
@@ -712,7 +741,9 @@ export function isRefineEventType(type: string): boolean {
 export type RefineState = 'refining' | 'awaiting-human';
 
 /** Map the newest refine_* event type to a session state, or null if none. */
-export function refineStateFromLatestType(latestRefineType: string | null | undefined): RefineState | null {
+export function refineStateFromLatestType(
+  latestRefineType: string | null | undefined,
+): RefineState | null {
   if (latestRefineType === REFINE_EVENT_TYPE.agent) return 'awaiting-human';
   if (latestRefineType === REFINE_EVENT_TYPE.human) return 'refining';
   return null;
@@ -887,7 +918,11 @@ export function refineThreadFromEvents(events: TicketEvent[]): RefineMessage[] {
   const out: RefineMessage[] = [];
   for (const e of events) {
     const role: RefineRole | null =
-      e.type === REFINE_EVENT_TYPE.human ? 'human' : e.type === REFINE_EVENT_TYPE.agent ? 'agent' : null;
+      e.type === REFINE_EVENT_TYPE.human
+        ? 'human'
+        : e.type === REFINE_EVENT_TYPE.agent
+          ? 'agent'
+          : null;
     if (!role) continue;
     const detail = (e.detail ?? {}) as Partial<RefineDetail>;
     out.push({
@@ -1078,13 +1113,17 @@ export type RateLimitHealth = 'ok' | 'low' | 'exhausted' | 'stale';
  * running, the last reading says nothing about now, and showing a comfortable "4,900 remaining"
  * from an hour ago is worse than showing nothing.
  */
-export function rateLimitHealth(status: GithubRateLimitStatus | null, now: number): RateLimitHealth {
+export function rateLimitHealth(
+  status: GithubRateLimitStatus | null,
+  now: number,
+): RateLimitHealth {
   if (!status) return 'stale';
   if (now - status.checkedAt > RATE_LIMIT_STALE_MS) return 'stale';
   const buckets = status.graphql ? [status.core, status.graphql] : [status.core];
   // Worst bucket wins — headroom in one quota is no comfort when the other is spent.
   if (buckets.some((b) => b.remaining <= 0)) return 'exhausted';
-  if (buckets.some((b) => b.limit > 0 && b.remaining / b.limit < RATE_LIMIT_LOW_FRACTION)) return 'low';
+  if (buckets.some((b) => b.limit > 0 && b.remaining / b.limit < RATE_LIMIT_LOW_FRACTION))
+    return 'low';
   return 'ok';
 }
 
@@ -1177,7 +1216,9 @@ export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human
  */
 export type WorkerVersionState = 'current' | 'stale' | 'unknown';
 
-export function workerVersionState(w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'>): WorkerVersionState {
+export function workerVersionState(
+  w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'>,
+): WorkerVersionState {
   if (!w.buildSha) return 'unknown';
   if (!w.checkoutSha) return 'unknown';
   return w.buildSha === w.checkoutSha ? 'current' : 'stale';
@@ -1284,7 +1325,8 @@ export function evaluatorVerdictLine(detail: RobotEventDetail): string {
 
   if (verdict === 'revise') return `revise — ${plural(blocking, 'blocking finding')} to fix`;
   if (verdict === 'escalate') return 'escalate — needs a human decision before more work';
-  if (verdict === 'ship') return advisory > 0 ? `ship, with ${plural(advisory, 'advisory note')}` : 'ship — no findings';
+  if (verdict === 'ship')
+    return advisory > 0 ? `ship, with ${plural(advisory, 'advisory note')}` : 'ship — no findings';
   return verdict;
 }
 

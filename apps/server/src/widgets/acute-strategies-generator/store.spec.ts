@@ -7,7 +7,9 @@ import {
   getIdea,
   importIdeas,
   isIdeaType,
+  listDraws,
   listIdeas,
+  recordDraw,
   updateIdea,
 } from './store';
 
@@ -271,5 +273,94 @@ describe('asg_draws (PD-70 schema)', () => {
   it('is created idempotently', () => {
     const db = freshDb();
     expect(() => bootstrapSchema(db)).not.toThrow();
+  });
+});
+
+describe('recordDraw', () => {
+  it('snapshots the idea text and type at draw time', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'Reverse something', type: 'Oblique', tags: [] });
+    const draw = recordDraw(db, idea.id);
+    expect(draw).not.toBeNull();
+    expect(draw!.idea_id).toBe(idea.id);
+    expect(draw!.idea_text).toBe('Reverse something');
+    expect(draw!.idea_type).toBe('Oblique');
+    expect(draw!.drawn_at).toBeGreaterThan(0);
+  });
+
+  it('keeps the snapshot after the idea is edited', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'Original', type: 'Acute', tags: [] });
+    recordDraw(db, idea.id);
+    updateIdea(db, idea.id, { text: 'Changed', type: 'Inspiration' });
+    const [draw] = listDraws(db);
+    expect(draw.idea_text).toBe('Original');
+    expect(draw.idea_type).toBe('Acute');
+  });
+
+  it('survives deletion of the idea, nulling idea_id', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'Gone soon', type: 'Acute', tags: [] });
+    recordDraw(db, idea.id);
+    deleteIdea(db, idea.id);
+    const [draw] = listDraws(db);
+    expect(draw.idea_id).toBeNull();
+    expect(draw.idea_text).toBe('Gone soon');
+  });
+
+  it('returns null for an unknown idea', () => {
+    const db = freshDb();
+    expect(recordDraw(db, 99999)).toBeNull();
+    expect(listDraws(db)).toHaveLength(0);
+  });
+});
+
+describe('listDraws', () => {
+  it('returns draws newest first', () => {
+    const db = freshDb();
+    const a = createIdea(db, { text: 'A', type: 'Acute', tags: [] });
+    const b = createIdea(db, { text: 'B', type: 'Acute', tags: [] });
+    db.prepare('INSERT INTO asg_draws (idea_id, idea_text, idea_type, drawn_at) VALUES (?, ?, ?, ?)').run(
+      a.id,
+      'A',
+      'Acute',
+      1000,
+    );
+    db.prepare('INSERT INTO asg_draws (idea_id, idea_text, idea_type, drawn_at) VALUES (?, ?, ?, ?)').run(
+      b.id,
+      'B',
+      'Acute',
+      2000,
+    );
+    expect(listDraws(db).map((d) => d.idea_text)).toEqual(['B', 'A']);
+  });
+
+  it('defaults to 20 draws', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'X', type: 'Acute', tags: [] });
+    for (let i = 0; i < 25; i++) recordDraw(db, idea.id);
+    expect(listDraws(db)).toHaveLength(20);
+  });
+
+  it('clamps the limit to 200 maximum', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'X', type: 'Acute', tags: [] });
+    for (let i = 0; i < 205; i++) recordDraw(db, idea.id);
+    expect(listDraws(db, 1000)).toHaveLength(200);
+  });
+
+  it('honours an explicit in-range limit', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'X', type: 'Acute', tags: [] });
+    for (let i = 0; i < 10; i++) recordDraw(db, idea.id);
+    expect(listDraws(db, 5)).toHaveLength(5);
+  });
+
+  it('falls back to the default for a non-positive limit', () => {
+    const db = freshDb();
+    const idea = createIdea(db, { text: 'X', type: 'Acute', tags: [] });
+    for (let i = 0; i < 25; i++) recordDraw(db, idea.id);
+    expect(listDraws(db, 0)).toHaveLength(20);
+    expect(listDraws(db, -5)).toHaveLength(20);
   });
 });
