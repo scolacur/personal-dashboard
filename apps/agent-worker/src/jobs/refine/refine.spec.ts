@@ -74,6 +74,7 @@ const CONFIG: AgentWorkerConfig = {
   pullIntervalMs: 1,
   refineIntervalMs: 1,
   refineMaxTurns: 30,
+  refineAutostart: { enabled: false, openCap: 15 },
   auditIntervalMs: 1,
   httpsProxy: '',
   robot: loadRobotConfig({}),

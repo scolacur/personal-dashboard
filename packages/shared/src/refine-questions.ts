@@ -250,3 +250,21 @@ export interface AwaitingRefineItem {
   agentText: string;
   round: RefineQuestionRound | null;
 }
+/** The Refine auto-start scheduler's last-cycle state (PD-747, D-096 §1–2), published by the
+ *  agent-worker into `robot_state` and shown in system status. */
+export interface RefineAutostartStatus {
+  enabled: boolean;
+  /** Refine sessions open now: waiting on Steve, or the agent working. */
+  open: number;
+  /** No new auto-session starts while `open` is at or above this. */
+  cap: number;
+  /** New tickets waiting for an auto-started session. */
+  queued: number;
+  /** Why the last cycle started nothing, if it was held back; null when free to start. */
+  heldBy: string | null;
+  /** Unix ms of the cycle that wrote this. */
+  at: number;
+}
+
+/** The `robot_state` key the worker publishes `RefineAutostartStatus` under. */
+export const REFINE_AUTOSTART_STATUS_KEY = 'refine_autostart_status';

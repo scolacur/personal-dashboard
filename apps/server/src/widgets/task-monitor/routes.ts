@@ -33,6 +33,7 @@ import {
   createProject,
   createTicket,
   getDispatchPauseState,
+  getRefineAutostartStatus,
   getRobotBudget,
   getSessionLimitHold,
   getGithubRateLimit,
@@ -938,5 +939,7 @@ export function registerRoutes(
     // "Loop on" during a maintenance window, which is true of the killswitch and false of reality.
     maintenanceHold: getMaintenanceHoldStatus(db),
     needsHuman: getNeedsHumanTickets(db),
+    // PD-747: the Refine auto-start scheduler — open sessions against the cap, the queue, what holds it.
+    refineAutostart: getRefineAutostartStatus(db),
   }));
 }

@@ -11,6 +11,7 @@ import type {
   LineageRef,
   NotificationKind,
   RefineAnswerSet,
+  RefineAutostartStatus,
   RefineCommitMode,
   RefineQuestionRound,
   EpicDerivedLane,
@@ -42,6 +43,7 @@ import {
   REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
   REFINE_STATE_EVENT,
+  REFINE_AUTOSTART_STATUS_KEY,
   REFINE_STATE_EVENT_TYPES,
   renderRoundAnswers,
   ROBOT_EVENT,
@@ -2113,6 +2115,22 @@ export function getDispatchPauseState(db: Database.Database): DispatchPauseState
   })();
   if (!row || row.value === null) return { paused: false, reason: null, since: null };
   return { paused: true, reason: row.value, since: row.updated_at };
+}
+
+/** The Refine auto-start scheduler's last published state (PD-747), or null before the worker has
+ *  run a cycle. The worker owns the config (enabled, cap), which this process cannot read, so it
+ *  publishes the state into `robot_state` the same way it publishes its budget policy. */
+export function getRefineAutostartStatus(db: Database.Database): RefineAutostartStatus | null {
+  try {
+    const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(REFINE_AUTOSTART_STATUS_KEY) as
+      | { value: string | null }
+      | undefined;
+    if (!row?.value) return null;
+    return JSON.parse(row.value) as RefineAutostartStatus;
+  } catch {
+    // robot_state not bootstrapped yet, or an unreadable value ⇒ unknown.
+    return null;
+  }
 }
 
 /** The loop-wide budget ceiling and the spend against it (PD-463). The ceiling is worker config —

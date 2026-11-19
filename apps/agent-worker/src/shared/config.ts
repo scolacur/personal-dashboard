@@ -36,6 +36,9 @@ export interface AgentWorkerConfig {
    * converging.
    */
   refineMaxTurns: number;
+  /** Refine auto-start (PD-747, D-096): start a session on every new unrefined ticket, at most
+   *  `openCap` sessions open at once. Off unless `REFINE_AUTOSTART_ENABLED` is set. */
+  refineAutostart: { enabled: boolean; openCap: number };
   /** How often to poll the shared DB for `requested` audit runs to claim (ms). */
   auditIntervalMs: number;
   /** Squid proxy URL when egress-hardened; empty in local dev (direct egress). */
@@ -250,6 +253,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     pullIntervalMs: Number(env.AGENT_WORKER_PULL_INTERVAL_MS ?? 5 * 60_000),
     refineIntervalMs: Number(env.AGENT_WORKER_REFINE_INTERVAL_MS ?? 5_000),
     refineMaxTurns: Number(env.AGENT_WORKER_REFINE_MAX_TURNS ?? 30),
+    refineAutostart: {
+      enabled: env.REFINE_AUTOSTART_ENABLED === '1' || env.REFINE_AUTOSTART_ENABLED === 'true',
+      openCap: Math.max(1, Number(env.REFINE_OPEN_CAP ?? 15) || 15),
+    },
     auditIntervalMs: Number(env.AGENT_WORKER_AUDIT_INTERVAL_MS ?? 30_000),
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
     robot: loadRobotConfig(env),
