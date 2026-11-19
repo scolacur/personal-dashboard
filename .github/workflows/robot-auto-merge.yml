@@ -105,6 +105,15 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
     steps:
+      # PD-764: the shared approval script. Pinned to the default branch, never the PR's head, so a PR
+      # cannot change the rule that decides whether it may merge.
+      - name: Check out the approval script from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
       - name: Squash-merge any approved and fully mergeable PRs
         run: |
           set -euo pipefail
@@ -149,24 +158,9 @@ jobs:
             # ── 3. Check for a standing authorized APPROVED review ───────────────
             # Group by reviewer, take each reviewer's most recent review, then check
             # whether any authorized reviewer's latest review is APPROVED.
-            AUTHORIZED_APPROVED="$(echo "$DATA" | jq -r --arg bot "$BOT_LOGIN" '
-              .reviews
-              | map(select(.author != null))
-              | group_by(.author.login)
-              | map(sort_by(.submittedAt) | last)
-              | map(select(
-                  .state == "APPROVED" and
-                  .author.login != $bot and
-                  (
-                    .authorAssociation == "OWNER" or
-                    (
-                      .authorAssociation == "COLLABORATOR" and
-                      ((.body // "") | contains("<!-- robot:human-reply -->"))
-                    )
-                  )
-                ))
-              | length > 0
-            ')"
+            # The approval rule lives in one script shared with review-gate.yml (PD-764), checked out
+            # from the default branch above, so the two workflows cannot disagree about who may approve.
+            AUTHORIZED_APPROVED="$(echo "$DATA" | BOT_LOGIN="$BOT_LOGIN" .github/scripts/authorized-approval.sh)"
 
             if [ "$AUTHORIZED_APPROVED" != "true" ]; then
               echo "PR #$PR: no authorized standing APPROVED review — skip."
