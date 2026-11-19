@@ -28,16 +28,18 @@ interface Row {
  */
 export function pendingEvaluatorBrief(db: Database.Database, ticketId: number): string | null {
   const lastDispatch = lastDispatchAt(db, ticketId);
-  let row: Row | undefined;
+  // PD-767: every `revise` since the last dispatch — one per reviewer — merged into one brief, so a
+  // PR both the code and the security reviewer sent back is reworked once with both sets of findings.
+  let rows: Row[];
   try {
-    row = db
+    rows = db
       .prepare(
         `SELECT verdict, findings, summary, started_at
            FROM evaluator_runs
-          WHERE ticket_id = ? AND verdict = 'revise'
-          ORDER BY started_at DESC, id DESC LIMIT 1`,
+          WHERE ticket_id = ? AND verdict = 'revise' AND started_at > ?
+          ORDER BY started_at ASC, id ASC`,
       )
-      .get(ticketId) as Row | undefined;
+      .all(ticketId, lastDispatch) as Row[];
   } catch {
     // `evaluator_runs` does not exist — the Evaluator has never been started in this deployment.
     // The Robot loop must not crash because an OPTIONAL reviewer was never initialised: this is
@@ -45,14 +47,13 @@ export function pendingEvaluatorBrief(db: Database.Database, ticketId: number): 
     // Evaluator ⇒ no brief, which is exactly right.
     return null;
   }
-  if (!row) return null;
-  // Already consumed by a dispatch that ran after it.
-  if (row.started_at <= lastDispatch) return null;
+  // A revise at or before the last dispatch was already consumed by that dispatch (the query bound).
+  if (rows.length === 0) return null;
 
   const report: EvaluatorReport = {
     verdict: 'revise',
-    findings: parseFindings(row.findings),
-    summary: row.summary ?? '',
+    findings: rows.flatMap((r) => parseFindings(r.findings)),
+    summary: rows.map((r) => r.summary ?? '').filter(Boolean).join(' '),
   };
   if (report.findings.length === 0) return null;
   return reworkBrief(report);

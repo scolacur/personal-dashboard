@@ -1,7 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type Database from 'better-sqlite3';
-import { buildEvaluatorPrompt, evaluatorSystemPrompt, ROBOT_EVENT, type EvaluatorReport } from '@dashboard/shared';
+import {
+  buildEvaluatorPrompt,
+  evaluatorSystemPrompt,
+  ROBOT_EVENT,
+  securityEvaluatorSystemPrompt,
+  type EvaluatorLens,
+  type EvaluatorReport,
+} from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { buildContextPack } from '../../shared/context-pack';
@@ -132,19 +139,6 @@ export async function evaluateOnePr(
   deps: EvaluatePassDeps = {},
   now: number = Date.now(),
 ): Promise<EvaluatorReport | null> {
-  // PD-763: the review-gate status. Only when its token is configured; otherwise the pass behaves
-  // exactly as before. A status failure is logged by the poster and never affects the evaluation.
-  const gateOn = config.evaluator.reviewGateToken !== '';
-  const postStatus = deps.postStatus ?? defaultStatusPoster(config);
-  let gateSha: string | null = null;
-  const gate = async (status: ReturnType<typeof gateForOutcome>) => {
-    if (gateOn && gateSha) await postStatus(target.repo, gateSha, status, gateTargetUrl(config, displayIdFor(db, target.ticketId)));
-  };
-  const finish = async (report: EvaluatorReport | null, round: number) => {
-    await gate(gateForOutcome(report, round, MAX_EVALUATION_ROUNDS));
-    return report;
-  };
-
   const runAgent = deps.runAgent ?? runEvaluatorTurn;
   const fetchDiff = deps.fetchDiff ?? defaultDiffFetcher(config);
   const buildContext = deps.buildContext ?? buildContextPack;
@@ -155,18 +149,35 @@ export async function evaluateOnePr(
     return null;
   }
 
+  // PD-767: the reviewers this PR gets. Each has its own rubric, ledger rows and round count; they
+  // share the diff, the pinned SHA and the decision below.
+  const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
   const since = lastHandoffAt(db, target.ticketId);
-  const round = evaluationRounds(db, target.ticketId, since) + 1;
-  const runId = startEvaluatorRun(
-    db,
-    { ticketId: target.ticketId, prNumber: target.prNumber, round, model: config.evaluator.model },
-    now,
-  );
+  const rounds = new Map(lenses.map((l) => [l, evaluationRounds(db, target.ticketId, since, l) + 1]));
+  const round = Math.max(...rounds.values());
+
+  // PD-763: the review-gate status, only when its token is configured. A status failure is logged by
+  // the poster and never affects the evaluation.
+  const gateOn = config.evaluator.reviewGateToken !== '';
+  const postStatus = deps.postStatus ?? defaultStatusPoster(config);
+  let gateSha: string | null = null;
+  const gate = async (status: ReturnType<typeof gateForOutcome>) => {
+    if (gateOn && gateSha) await postStatus(target.repo, gateSha, status, gateTargetUrl(config, displayIdFor(db, target.ticketId)));
+  };
+
   // Written BEFORE the pass, so an evaluation that dies or hangs is legible on the timeline as
   // "reviewing…" with no verdict after it. A failure writes no verdict on purpose (it must never
   // read as approval), which without this marker would make it invisible rather than merely
   // inconclusive.
-  logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round, prNumber: target.prNumber }, now);
+  const runIds = new Map<EvaluatorLens, number>();
+  for (const lens of lenses) {
+    const r = rounds.get(lens)!;
+    runIds.set(
+      lens,
+      startEvaluatorRun(db, { ticketId: target.ticketId, prNumber: target.prNumber, round: r, model: config.evaluator.model, lens }, now),
+    );
+    logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round: r, prNumber: target.prNumber, lens }, now);
+  }
 
   // PD-763: pin the head SHA BEFORE reading the diff. If the Robot pushes mid-review, the verdict
   // lands on the commit that was actually reviewed, and the new commit starts with no gate at all.
@@ -177,72 +188,89 @@ export async function evaluateOnePr(
 
   const rawDiff = await fetchDiff(target.repo, target.prNumber);
   if (rawDiff === null) {
-    finishEvaluatorRun(db, runId, { error: 'diff fetch failed' }, now);
-    return finish(null, round);
+    for (const id of runIds.values()) finishEvaluatorRun(db, id, { error: 'diff fetch failed' }, now);
+    await gate(gateForOutcome(null, round, MAX_EVALUATION_ROUNDS));
+    return null;
   }
   const { diff, truncated } = capDiff(rawDiff);
-
-  const result = await runAgent(
-    config,
-    evaluatorSystemPrompt(
-      buildContext(config.checkoutDir, (what) =>
-        logger.warn({ what, ticketId: target.ticketId }, 'evaluator: context source missing — the review is degraded'),
-      ),
-    ),
-    buildEvaluatorPrompt({
-      title: ticket.title,
-      body: ticket.body,
-      prNumber: target.prNumber,
-      diff,
-      diffTruncated: truncated,
-    }),
+  const userPrompt = buildEvaluatorPrompt({ title: ticket.title, body: ticket.body, prNumber: target.prNumber, diff, diffTruncated: truncated });
+  const contextPack = buildContext(config.checkoutDir, (what) =>
+    logger.warn({ what, ticketId: target.ticketId }, 'evaluator: context source missing — the review is degraded'),
   );
 
-  if (!result.ok) {
-    finishEvaluatorRun(db, runId, { error: result.text || 'agent error', turns: result.turns, tokens: result.tokens }, now);
-    logger.warn({ ticketId: target.ticketId, error: result.text }, 'evaluator: agent turn failed');
-    return finish(null, round);
-  }
-
-  const report = parseEvaluatorReport(result.text);
-  if (!report) {
-    finishEvaluatorRun(
+  // Each lens reviews independently. A lens with no usable verdict records its error and yields null.
+  const reports = new Map<EvaluatorLens, EvaluatorReport | null>();
+  for (const lens of lenses) {
+    const runId = runIds.get(lens)!;
+    const r = rounds.get(lens)!;
+    const system = lens === 'security' ? securityEvaluatorSystemPrompt(contextPack) : evaluatorSystemPrompt(contextPack);
+    const result = await runAgent(config, system, userPrompt);
+    if (!result.ok) {
+      finishEvaluatorRun(db, runId, { error: result.text || 'agent error', turns: result.turns, tokens: result.tokens }, now);
+      logger.warn({ ticketId: target.ticketId, lens, error: result.text }, 'evaluator: agent turn failed');
+      reports.set(lens, null);
+      continue;
+    }
+    const report = parseEvaluatorReport(result.text);
+    if (!report) {
+      finishEvaluatorRun(
+        db,
+        runId,
+        { error: `unparseable report: ${result.text.slice(0, 500)}`, turns: result.turns, tokens: result.tokens },
+        now,
+      );
+      logger.warn({ ticketId: target.ticketId, lens }, 'evaluator: reply had no usable verdict — leaving the PR alone');
+      reports.set(lens, null);
+      continue;
+    }
+    finishEvaluatorRun(db, runId, { report, turns: result.turns, tokens: result.tokens }, now);
+    const blocking = blockingFindings(report);
+    // Recorded on EVERY verdict, not just a rejecting one: a timeline that only shows the Evaluator
+    // complaining reads as noise, and "it reviewed this and was satisfied" is the thing a human most
+    // wants to know before merging.
+    logMilestone(
       db,
-      runId,
-      { error: `unparseable report: ${result.text.slice(0, 500)}`, turns: result.turns, tokens: result.tokens },
+      target.ticketId,
+      ROBOT_EVENT.evaluated,
+      {
+        verdict: report.verdict,
+        findings: report.findings.length,
+        blockingFindings: blocking.length,
+        round: r,
+        prNumber: target.prNumber,
+        reason: report.summary,
+        lens,
+      },
       now,
     );
-    logger.warn({ ticketId: target.ticketId }, 'evaluator: reply had no usable verdict — leaving the PR alone');
-    return finish(null, round);
+    // PD-767: a secret in a PR is already public (the repo is public). Say so loudly and at once,
+    // whatever the verdict, because the remedy — rotating it — does not wait for the PR.
+    const secrets = report.findings.filter((f) => f.kind === 'secret');
+    if (lens === 'security' && secrets.length > 0) {
+      notifySecretFound(db, target, secrets.map((f) => f.where || 'unknown location'), now);
+    }
+    reports.set(lens, report);
   }
 
-  finishEvaluatorRun(db, runId, { report, turns: result.turns, tokens: result.tokens }, now);
+  // One decision for the PR, from every lens. Any missing verdict means the PR cannot pass (D-076:
+  // a failed evaluation is never approval); otherwise the worst verdict wins.
+  const all = [...reports.values()];
+  const combined: EvaluatorReport | null = all.some((r) => r === null)
+    ? null
+    : {
+        verdict: all.some((r) => r!.verdict === 'escalate') ? 'escalate' : all.some((r) => r!.verdict === 'revise') ? 'revise' : 'ship',
+        findings: all.flatMap((r) => r!.findings),
+        summary: all.map((r) => r!.summary).join(' '),
+      };
+  // The round that matters is the highest among the lenses asking for changes.
+  const reviseRound = Math.max(0, ...lenses.filter((l) => reports.get(l)?.verdict === 'revise').map((l) => rounds.get(l)!));
 
-  const blocking = blockingFindings(report);
-  // Recorded on EVERY verdict, not just a rejecting one: a timeline that only shows the Evaluator
-  // complaining reads as noise, and "it reviewed this and was satisfied" is the thing a human most
-  // wants to know before merging.
-  logMilestone(
-    db,
-    target.ticketId,
-    ROBOT_EVENT.evaluated,
-    {
-      verdict: report.verdict,
-      findings: report.findings.length,
-      blockingFindings: blocking.length,
-      round,
-      prNumber: target.prNumber,
-      reason: report.summary,
-    },
-    now,
-  );
-
-  if (report.verdict === 'revise') {
-    if (round >= MAX_EVALUATION_ROUNDS) {
+  if (combined?.verdict === 'revise') {
+    if (reviseRound >= MAX_EVALUATION_ROUNDS) {
       // The cap is the loop-safety limit (see MAX_EVALUATION_ROUNDS). At the ceiling the finding is
       // recorded and the human decides — sending it back again is the unbounded cycle.
       logger.warn(
-        { ticketId: target.ticketId, round },
+        { ticketId: target.ticketId, round: reviseRound },
         'evaluator: revise at the round cap — leaving for the human instead of another rework',
       );
     } else {
@@ -251,16 +279,35 @@ export async function evaluateOnePr(
         db,
         target.ticketId,
         ROBOT_EVENT.reactivated,
-        { reason: `evaluator requested changes (round ${round})`, prNumber: target.prNumber },
+        { reason: `evaluator requested changes (round ${reviseRound})`, prNumber: target.prNumber },
         now,
       );
-      logger.info({ ticketId: target.ticketId, blocking: blocking.length }, 'evaluator: revise → re-queued for rework');
+      logger.info({ ticketId: target.ticketId, blocking: blockingFindings(combined).length }, 'evaluator: revise → re-queued for rework');
     }
-  } else {
-    logger.info({ ticketId: target.ticketId, verdict: report.verdict }, 'evaluator: verdict recorded');
+  } else if (combined) {
+    logger.info({ ticketId: target.ticketId, verdict: combined.verdict }, 'evaluator: verdict recorded');
   }
 
-  return finish(report, round);
+  await gate(gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS));
+  return combined;
+}
+
+/** An urgent Notification Center entry for a secret found in a PR (PD-767). Never carries the value:
+ *  the security prompt forbids repeating it, and this names only where it is. */
+function notifySecretFound(
+  db: Database.Database,
+  target: { ticketId: number; prNumber: number },
+  where: string[],
+  now: number,
+): void {
+  const displayId = displayIdFor(db, target.ticketId);
+  db.prepare('INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)').run(
+    'agent_needs_human',
+    target.ticketId,
+    `Possible secret in PR #${target.prNumber}${displayId ? ` (${displayId})` : ''}: rotate it`,
+    `The security reviewer found a credential at ${where.join(', ')}. The repo is public, so treat it as leaked: rotate it now, then remove it from the branch.`,
+    now,
+  );
 }
 
 /**

@@ -1374,6 +1374,12 @@ export type RobotEventType = (typeof ROBOT_EVENT)[keyof typeof ROBOT_EVENT];
  * distinguished from a clean one, because those notes are the reason to open the PR and look.
  */
 export function evaluatorVerdictLine(detail: RobotEventDetail): string {
+  // PD-767: two reviewers write verdicts now; say which one this is when it is not the default.
+  const line = codeVerdictLine(detail);
+  return detail.lens === 'security' ? `security: ${line}` : line;
+}
+
+function codeVerdictLine(detail: RobotEventDetail): string {
   const verdict = detail.verdict ?? 'unknown';
   const total = detail.findings ?? 0;
   const blocking = detail.blockingFindings ?? 0;
@@ -1414,6 +1420,8 @@ export interface RobotEventDetail {
   maxTurns?: number;
   /** PD-487: the Evaluator's verdict (`robot_evaluated`). */
   verdict?: EvaluatorVerdict;
+  /** PD-767: which reviewer wrote this `robot_evaluating`/`robot_evaluated` event. Absent = code. */
+  lens?: 'code' | 'security';
   /** PD-487: how many findings the verdict carried, and how many of those were blocking. */
   findings?: number;
   blockingFindings?: number;

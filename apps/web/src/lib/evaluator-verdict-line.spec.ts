@@ -38,3 +38,11 @@ describe('the evaluator event pair', () => {
     expect(ROBOT_EVENT.evaluated).toBe('robot_evaluated');
   });
 });
+
+describe('evaluatorVerdictLine — which reviewer (PD-767)', () => {
+  it('prefixes the security reviewer, and leaves the code reviewer unprefixed', () => {
+    expect(evaluatorVerdictLine({ verdict: 'ship', findings: 0, blockingFindings: 0, lens: 'security' })).toBe('security: ship — no findings');
+    expect(evaluatorVerdictLine({ verdict: 'ship', findings: 0, blockingFindings: 0, lens: 'code' })).toBe('ship — no findings');
+    expect(evaluatorVerdictLine({ verdict: 'ship', findings: 0, blockingFindings: 0 })).toBe('ship — no findings');
+  });
+});

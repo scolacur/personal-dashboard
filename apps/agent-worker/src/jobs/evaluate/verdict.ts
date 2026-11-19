@@ -1,4 +1,4 @@
-import { EVALUATOR_VERDICTS, type EvaluatorFinding, type EvaluatorReport, type EvaluatorVerdict } from '@dashboard/shared';
+import { EVALUATOR_VERDICTS, SECURITY_FINDING_KINDS, type EvaluatorFinding, type EvaluatorReport, type EvaluatorVerdict } from '@dashboard/shared';
 
 /**
  * Parsing and bounding the Evaluator's output (PD-487, [[D-076]]).
@@ -33,6 +33,8 @@ const FINDING_KINDS: readonly EvaluatorFinding['kind'][] = [
   'test-gap',
   'correctness',
   'convention',
+  'readability',
+  ...SECURITY_FINDING_KINDS,
 ];
 
 function isVerdict(v: unknown): v is EvaluatorVerdict {

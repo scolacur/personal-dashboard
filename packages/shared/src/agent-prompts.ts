@@ -502,8 +502,34 @@ export type EvaluatorVerdict = (typeof EVALUATOR_VERDICTS)[number];
 /** One thing the Evaluator found. `blocking` is what separates a REVISE from an advisory note on a
  *  SHIP — an evaluator that cannot say "worth knowing, not worth a rework cycle" will either nag or
  *  stay silent, and both make it ignorable. */
+/** Which reviewer produced a verdict (PD-767). `code` is the original Evaluator (D-076); `security`
+ *  reviews the same diff for secrets and vulnerabilities only. */
+export const EVALUATOR_LENSES = ['code', 'security'] as const;
+export type EvaluatorLens = (typeof EVALUATOR_LENSES)[number];
+
+/** Finding kinds the security lens reports (PD-767). */
+export const SECURITY_FINDING_KINDS = [
+  'secret',
+  'injection',
+  'xss',
+  'ssrf',
+  'auth',
+  'dependency',
+  'ci-change',
+  'token-handling',
+  'vulnerability',
+] as const;
+
 export interface EvaluatorFinding {
-  kind: 'ac-unmet' | 'out-of-scope' | 'redundancy' | 'test-gap' | 'correctness' | 'convention';
+  kind:
+    | 'ac-unmet'
+    | 'out-of-scope'
+    | 'redundancy'
+    | 'test-gap'
+    | 'correctness'
+    | 'convention'
+    | 'readability'
+    | (typeof SECURITY_FINDING_KINDS)[number];
   blocking: boolean;
   /** Where it is, `path:line` when known. */
   where: string;
@@ -541,8 +567,10 @@ export function evaluatorSystemPrompt(contextPack: string): string {
     'You are READ-ONLY. You do not fix what you find, you do not edit files, and you do not touch',
     'the board. You name problems precisely enough that the Robot can fix them on a rework pass.',
     '',
-    'You are NOT a merge gate. A human still reviews and merges. Your job is to catch what a green',
-    '`npm run verify` cannot: verify is a floor (it compiles, tests pass), not a quality bar.',
+    'Your verdict, together with the separate security reviewer\'s, decides whether this PR may merge',
+    'without a human (D-098). Your job is to catch what a green `npm run verify` cannot: verify is a',
+    'floor (it compiles, tests pass), not a quality bar. Security is NOT your lens: a separate',
+    'reviewer handles secrets and vulnerabilities, so do not spend findings on them.',
     '',
     '## What you are given',
     '',
@@ -572,7 +600,13 @@ export function evaluatorSystemPrompt(contextPack: string): string {
     'must not have been weakened, skipped, or deleted to reach green.',
     '',
     '**5. Correctness and convention.** Real defects the tests miss, and departures from the',
-    "surrounding code's established patterns.",
+    "surrounding code's established patterns and PROJECT.md §5 (shared types in packages/shared,",
+    'styles in sibling SCSS using the global.scss tokens, no raw SQL in route handlers, unix-ms times).',
+    '',
+    '**6. Readability and best practices.** Names that say what things are, functions small enough to',
+    'follow, comments that explain why rather than restate what, no dead code, and components under',
+    "the 300-line extraction threshold. Report as `readability`; it is blocking only when it would",
+    'genuinely mislead the next reader.',
     '',
     '## Verdicts',
     '',
@@ -581,8 +615,8 @@ export function evaluatorSystemPrompt(contextPack: string): string {
     '- **revise** — at least one blocking finding. This sends the ticket back to the Robot for',
     '  another pass, so the cost of a wrong `revise` is a whole rework cycle: only use it for',
     '  something the Robot can actually act on from your description alone.',
-    '- **escalate** — the ticket itself looks wrong, the work went far outside it, or you found',
-    'something security-relevant. Do NOT use this merely because you are unsure; use it when a human',
+    '- **escalate** — the ticket itself looks wrong, or the work went far outside it. Do NOT use',
+    'this merely because you are unsure; use it when a human',
     '  needs to decide before any more work happens.',
     '',
     'A finding you cannot ground is not a finding. Prefer a `ship` with honest advisory notes over a',
@@ -594,7 +628,7 @@ export function evaluatorSystemPrompt(contextPack: string): string {
     'Return ONLY a JSON object (no prose outside it):',
     '  { "verdict": "ship|revise|escalate",',
     '    "summary": "<one paragraph a human reads without opening the PR>",',
-    '    "findings": [ { "kind": "ac-unmet|out-of-scope|redundancy|test-gap|correctness|convention",',
+    '    "findings": [ { "kind": "ac-unmet|out-of-scope|redundancy|test-gap|correctness|convention|readability",',
     '                    "blocking": true|false, "where": "<path:line>", "what": "<one sentence>",',
     '                    "insteadUse": "<existing thing to use instead — redundancy only>" } ] }',
     'A `revise` verdict MUST carry at least one finding with "blocking": true.',
@@ -615,6 +649,70 @@ export interface EvaluatorPromptInput {
 }
 
 /** The per-PR user turn. Kept separate from the rubric so the rubric stays cacheable across PRs. */
+/**
+ * The security reviewer's system prompt (PD-767, D-098). Same input and output shape as the code
+ * Evaluator, so parsing, the ledger and the rework brief are shared; only the rubric differs. It
+ * looks at the diff for one thing: what an attacker, a leaked log or a careless dependency could do
+ * with it.
+ */
+export function securityEvaluatorSystemPrompt(contextPack: string): string {
+  return [
+    'You are the security reviewer for the Personal Dashboard repo (PD-767). A Robot agent opened a',
+    'PR. A separate reviewer judges code quality; you judge ONLY security. Your verdict, with theirs,',
+    'decides whether this PR may merge and deploy without a human (D-098), so be precise, not loud.',
+    '',
+    'You are READ-ONLY. You name problems precisely enough that the Robot can fix them.',
+    '',
+    'Context: a LAN/tailnet-only dashboard on a home NAS, no auth (PROJECT.md §1), SQLite via',
+    'better-sqlite3, a Robot coding agent behind an egress proxy allowlist, tokens held by an',
+    'agent-worker. The repo is public, so anything committed is public.',
+    '',
+    '## Check the diff for',
+    '',
+    '- **secret**: tokens, API keys, passwords, private keys, or real-looking credentials anywhere in',
+    '  the diff, including tests, fixtures, docs and logs. Any real one is ALWAYS `escalate`: it is',
+    '  already public and must be rotated, whatever else happens to the PR.',
+    '- **token-handling**: a token or secret reaching a log line, an HTTP response, the browser, an',
+    "  error message, or the Robot's coding environment (`codingEnv` copies the worker env; every",
+    '  worker-only secret must be stripped there).',
+    '- **injection**: SQL built by string concatenation instead of prepared statements; shell commands',
+    '  built from input (prefer execFile with an argument array); path traversal from user input.',
+    '- **xss**: `{@html}`, `innerHTML`, or markdown rendered without sanitizing user-controlled text.',
+    '- **ssrf**: server-side fetches to user-supplied URLs; changes to the egress proxy allowlist',
+    '  (`ops/agent-worker/squid.conf`).',
+    '- **auth**: anything that widens who can reach or change data, or exposes the dashboard beyond',
+    '  the tailnet.',
+    '- **dependency**: a new or upgraded package. Name it, and say whether it looks legitimate and',
+    '  necessary. A new dependency is never blocking on its own; a suspicious one is `escalate`.',
+    '- **ci-change**: edits to `.github/**`, deploy, Docker or other sensitive paths',
+    '  (`.github/sensitive-paths.txt`). Check they do not weaken a gate.',
+    '- **vulnerability**: anything else exploitable.',
+    '',
+    'Ground every finding in the diff or the checkout (Read/Grep/Glob). A finding you cannot ground is',
+    'not a finding. Ignore code quality, naming and tests; that is the other reviewer\'s lens.',
+    '',
+    '## Verdicts',
+    '',
+    '- **ship**: nothing exploitable. Advisory notes are fine.',
+    '- **revise**: a concrete, fixable problem the Robot can correct from your description alone (for',
+    '  example: parameterize this query, strip this token from the session env).',
+    '- **escalate**: a real secret in the diff, a suspicious dependency, a weakened gate, or anything a',
+    '  human must judge before more work happens.',
+    '',
+    '## Output',
+    '',
+    'Return ONLY a JSON object (no prose outside it):',
+    '  { "verdict": "ship|revise|escalate",',
+    '    "summary": "<one paragraph a human reads without opening the PR>",',
+    `    "findings": [ { "kind": "${SECURITY_FINDING_KINDS.join('|')}",`,
+    '                    "blocking": true|false, "where": "<path:line>", "what": "<one sentence; never repeat a secret value>" } ] }',
+    'A `revise` verdict MUST carry at least one finding with "blocking": true.',
+    '',
+    'Project context:',
+    contextPack,
+  ].join('\n');
+}
+
 export function buildEvaluatorPrompt(input: EvaluatorPromptInput): string {
   return [
     `Evaluate PR #${input.prNumber} against its ticket.`,

@@ -14,7 +14,9 @@ const TARGET = { ticketId: 1, repo: 'scolacur/personal-dashboard', prNumber: 314
 
 function config(over: Partial<AgentWorkerConfig['evaluator']> = {}): AgentWorkerConfig {
   const base = loadConfig({});
-  return { ...base, evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, ...over } };
+  // The security lens (PD-767) is off here so these tests keep exercising the code reviewer alone;
+  // the two-lens behaviour has its own describe block below.
+  return { ...base, evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, securityEnabled: false, ...over } };
 }
 
 /** An agent stand-in returning canned text. Nothing here spawns a real session. */
@@ -288,5 +290,88 @@ describe('review-gate status on the reviewed commit (PD-763)', () => {
     const { cfg } = gated();
     await evaluateOnePr(db, cfg, TARGET, { postStatus, fetchHeadSha: async () => null, runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 300);
     expect(posts).toEqual([]);
+  });
+});
+
+describe('two reviewers: code and security (PD-767)', () => {
+  const secReply = (verdict: string, findings: unknown[] = []) => JSON.stringify({ verdict, summary: `security ${verdict}`, findings });
+  const sqlFinding = { kind: 'injection', blocking: true, where: 'apps/server/src/x.ts:9', what: 'builds SQL by concatenation' };
+  /** Answers per reviewer: the security prompt identifies itself as "the security reviewer". */
+  function byLens(code: string, security: string) {
+    return vi.fn(async (_c: AgentWorkerConfig, system: string): Promise<EvaluatorTurnResult> => ({
+      text: system.includes('the security reviewer') ? security : code,
+      ok: true,
+      turns: 2,
+      tokens: 100,
+    }));
+  }
+  const both = () => config({ securityEnabled: true });
+  const lensOf = (e: { detail: string }) => (JSON.parse(e.detail) as { lens?: string }).lens;
+
+  beforeEach(() => {
+    db.exec(`CREATE TABLE IF NOT EXISTS agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER,
+      title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL)`);
+    db.exec('ALTER TABLE agent_tickets ADD COLUMN display_id TEXT');
+    db.prepare("UPDATE agent_tickets SET display_id = 'PD-1' WHERE id = 1").run();
+  });
+
+  it('runs both on one diff, labels each verdict, and ships only when both ship', async () => {
+    const agent = byLens(shipReply, secReply('ship'));
+    const report = await evaluateOnePr(db, both(), TARGET, { runAgent: agent, fetchDiff: async () => 'd' }, 200);
+    expect(agent).toHaveBeenCalledTimes(2);
+    expect(report?.verdict).toBe('ship');
+    expect(eventsOfType('robot_evaluated').map(lensOf)).toEqual(['code', 'security']);
+    expect(agentState()).toBe('in-review');
+  });
+
+  it('a security revise alone re-queues once, and the brief carries its finding', async () => {
+    await evaluateOnePr(db, both(), TARGET, { runAgent: byLens(shipReply, secReply('revise', [sqlFinding])), fetchDiff: async () => 'd' }, 200);
+    expect(agentState()).toBe('queued');
+    expect(eventsOfType('robot_reactivated')).toHaveLength(1);
+    expect(pendingEvaluatorBrief(db, 1)).toContain('builds SQL by concatenation');
+  });
+
+  it('when both revise, the Robot gets ONE rework with both sets of findings', async () => {
+    await evaluateOnePr(db, both(), TARGET, { runAgent: byLens(reviseReply, secReply('revise', [sqlFinding])), fetchDiff: async () => 'd' }, 200);
+    expect(eventsOfType('robot_reactivated')).toHaveLength(1);
+    const brief = pendingEvaluatorBrief(db, 1)!;
+    expect(brief).toContain('packages/shared/fmt');
+    expect(brief).toContain('builds SQL by concatenation');
+  });
+
+  it('a found secret escalates, never re-queues, and raises an urgent notification without the value', async () => {
+    const secret = { kind: 'secret', blocking: true, where: 'apps/server/.env.example:3', what: 'a live-looking API key' };
+    const report = await evaluateOnePr(db, both(), TARGET, { runAgent: byLens(shipReply, secReply('escalate', [secret])), fetchDiff: async () => 'd' }, 200);
+    expect(report?.verdict).toBe('escalate');
+    expect(agentState()).toBe('in-review');
+    const n = db.prepare('SELECT kind, title, body FROM agent_notifications').all() as { kind: string; title: string; body: string }[];
+    expect(n).toHaveLength(1);
+    expect(n[0]).toMatchObject({ kind: 'agent_needs_human', title: 'Possible secret in PR #314 (PD-1): rotate it' });
+    expect(n[0].body).toContain('apps/server/.env.example:3');
+  });
+
+  it('one reviewer failing means no verdict for the PR: nothing ships, nothing re-queues', async () => {
+    const report = await evaluateOnePr(db, both(), TARGET, { runAgent: byLens(shipReply, 'not json'), fetchDiff: async () => 'd' }, 200);
+    expect(report).toBeNull();
+    expect(agentState()).toBe('in-review');
+    expect(eventsOfType('robot_evaluated').map(lensOf)).toEqual(['code']);
+  });
+
+  it('review-gate needs both: success on two ships, failure if either cannot decide', async () => {
+    const posts: string[] = [];
+    const deps = { fetchHeadSha: async () => 'b'.repeat(40), postStatus: async (_r: string, _s: string, st: { state: string }) => (posts.push(st.state), true) };
+    const cfg = config({ securityEnabled: true, reviewGateToken: 'tok' });
+    await evaluateOnePr(db, cfg, TARGET, { ...deps, runAgent: byLens(shipReply, secReply('ship')), fetchDiff: async () => 'd' }, 200);
+    expect(posts).toEqual(['pending', 'success']);
+    posts.length = 0;
+    await evaluateOnePr(db, cfg, TARGET, { ...deps, runAgent: byLens(shipReply, 'nope'), fetchDiff: async () => 'd' }, 300);
+    expect(posts.at(-1)).toBe('failure');
+  });
+
+  it('counts rounds per reviewer, so two reviewers do not hit the cap twice as fast', async () => {
+    await evaluateOnePr(db, both(), TARGET, { runAgent: byLens(reviseReply, secReply('ship')), fetchDiff: async () => 'd' }, 200);
+    expect(eventsOfType('robot_reactivated')).toHaveLength(1); // round 1 of 2 for the code reviewer
+    const rounds = (eventsOfType('robot_evaluated').map((e) => JSON.parse(e.detail) as { round: number; lens: string }));
+    expect(rounds).toEqual([expect.objectContaining({ lens: 'code', round: 1 }), expect.objectContaining({ lens: 'security', round: 1 })]);
   });
 });
