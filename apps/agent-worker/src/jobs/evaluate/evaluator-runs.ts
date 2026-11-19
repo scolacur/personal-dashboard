@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import type { EvaluatorLens } from '@dashboard/shared';
 import type { EvaluatorFinding, EvaluatorReport, EvaluatorVerdict } from '@dashboard/shared';
 import { evaluateBudget, type BudgetPolicy, type BudgetUsage, type BudgetVerdict } from '../robot/budget';
 
@@ -56,20 +57,26 @@ export function ensureEvaluatorRunsTable(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_evaluator_runs_ticket ON evaluator_runs (ticket_id, started_at);
   `);
+  // PD-767: which reviewer the run belongs to. Existing rows predate the security lens, so they are
+  // code reviews by definition — hence the default.
+  const cols = db.prepare('PRAGMA table_info(evaluator_runs)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'lens')) {
+    db.exec("ALTER TABLE evaluator_runs ADD COLUMN lens TEXT NOT NULL DEFAULT 'code'");
+  }
 }
 
 /** Open a run row and return its id. Written BEFORE the agent starts so a crashed evaluation leaves
  *  evidence rather than nothing — the same reason `agent_runs` claims a row up front. */
 export function startEvaluatorRun(
   db: Database.Database,
-  input: { ticketId: number; prNumber: number; round: number; model: string },
+  input: { ticketId: number; prNumber: number; round: number; model: string; lens?: EvaluatorLens },
   now: number = Date.now(),
 ): number {
   const res = db
     .prepare(
-      `INSERT INTO evaluator_runs (ticket_id, pr_number, round, model, started_at) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO evaluator_runs (ticket_id, pr_number, round, model, started_at, lens) VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(input.ticketId, input.prNumber, input.round, input.model, now);
+    .run(input.ticketId, input.prNumber, input.round, input.model, now, input.lens ?? 'code');
   return Number(res.lastInsertRowid);
 }
 
@@ -104,10 +111,11 @@ export function finishEvaluatorRun(
  * per-ticket-lifetime: a ticket a human sends back for genuinely new reasons months later gets a
  * fresh pair of rounds, while a Robot⇄Evaluator ping-pong inside one cycle still terminates.
  */
-export function evaluationRounds(db: Database.Database, ticketId: number, since = 0): number {
+export function evaluationRounds(db: Database.Database, ticketId: number, since = 0, lens: EvaluatorLens = 'code'): number {
+  // PD-767: counted per lens, so two reviewers on one PR do not reach the round cap twice as fast.
   const row = db
-    .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE ticket_id = ? AND started_at >= ?`)
-    .get(ticketId, since) as { n: number };
+    .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE ticket_id = ? AND started_at >= ? AND lens = ?`)
+    .get(ticketId, since, lens) as { n: number };
   return row.n;
 }
 
@@ -117,7 +125,7 @@ export function alreadyEvaluated(db: Database.Database, ticketId: number, prNumb
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM evaluator_runs
-        WHERE ticket_id = ? AND pr_number = ? AND started_at >= ?`,
+        WHERE ticket_id = ? AND pr_number = ? AND started_at >= ? AND lens = 'code'`,
     )
     .get(ticketId, prNumber, since) as { n: number };
   return row.n > 0;

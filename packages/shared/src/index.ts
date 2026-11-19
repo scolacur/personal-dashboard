@@ -213,6 +213,7 @@ export type {
   AgentType,
   AgentProfile,
   EvaluatorVerdict,
+  EvaluatorLens,
   EvaluatorFinding,
   EvaluatorReport,
   EvaluatorPromptInput,
@@ -241,7 +242,10 @@ export {
   sampleRobotTaskPrompt,
   DOCS_FETCH_RULE,
   EVALUATOR_VERDICTS,
+  EVALUATOR_LENSES,
+  SECURITY_FINDING_KINDS,
   evaluatorSystemPrompt,
+  securityEvaluatorSystemPrompt,
   buildEvaluatorPrompt,
   SAMPLE_EVALUATOR_PROMPT_INPUT,
 } from './agent-prompts';
