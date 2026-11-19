@@ -95,6 +95,22 @@
   min-width: 0;
 }
 
+// PD-746: a live count beside a nav item (Decisions waiting on Steve).
+.side-link-badge {
+  flex-shrink: 0;
+  min-width: 1.5em;
+  padding: 0 var(--space-xs);
+  border-radius: 999px;
+  // Same register as the board's "Needs you" Refine pill: outlined, in --status-refine-needs.
+  border: 1px solid var(--status-refine-needs);
+  color: var(--status-refine-needs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 // Inherits the row's colour, so on the yellow accent it reads as --on-accent rather than the
 // unreadable light grey --muted.
 .side-link-caret {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { notificationHref } from '$lib/notification-links';
   import { onMount } from 'svelte';
   import { Bell } from 'lucide-svelte';
   import type { AgentNotification } from '@dashboard/shared';
@@ -94,7 +95,7 @@
               {#if n.ticketDisplayId}
                 <a
                   class="notif-link"
-                  href="/devops/tickets/{n.ticketDisplayId}"
+                  href={notificationHref(n)}
                   onclick={() => onItemClick(n)}
                 >
                   <span class="notif-title">{n.title}</span>

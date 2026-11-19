@@ -5,6 +5,7 @@ import {
   addRelation,
   appendRefineReply,
   appendStructuredRefineReply,
+  listAwaitingRefine,
   openQuestionRound,
   approveRefine,
   archiveTicket,
@@ -799,6 +800,70 @@ describe('structured question rounds: openQuestionRound + appendStructuredRefine
     const r = appendStructuredRefineReply(db, t.id, { answers: [] });
     expect(r).toEqual({ ok: false, reason: 'invalid', message: 'unanswered: sync' });
     expect(appendStructuredRefineReply(db, 9999, { answers: [] })).toEqual({ ok: false, reason: 'not_found' });
+  });
+});
+
+describe('listAwaitingRefine — the Decisions inbox (PD-746)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+  const ROUND = {
+    questions: [
+      {
+        id: 'q',
+        question: 'Which?',
+        why: 'It decides the split.',
+        options: [
+          { label: 'A', description: 'one' },
+          { label: 'B', description: 'two' },
+        ],
+        recommended: 0,
+      },
+    ],
+    assumptions: [],
+  };
+  const at = (ticketId: number, type: string, ago: number, detail: unknown) =>
+    db
+      .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+      .run(ticketId, type, JSON.stringify(detail), Date.now() - ago);
+
+  it('lists only sessions waiting on Steve, highest priority first, then oldest question first', () => {
+    const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P1' });
+    const epic2 = createTicket(db, { title: 'E2', projectId: pd, isEpic: true, priority: 'P3' });
+    const older = createTicket(db, { title: 'older P1', projectId: pd, epicId: epic.id });
+    const newer = createTicket(db, { title: 'newer P1', projectId: pd, epicId: epic.id });
+    const low = createTicket(db, { title: 'P3', projectId: pd, epicId: epic2.id });
+    const refining = createTicket(db, { title: 'agent working', projectId: pd, epicId: epic.id });
+    at(low.id, 'refine_agent', 9000, { text: 'old but low', round: ROUND });
+    at(older.id, 'refine_agent', 5000, { text: 'first', round: ROUND });
+    at(newer.id, 'refine_agent', 1000, { text: 'second' });
+    at(refining.id, 'refine_agent', 3000, { text: 'q' });
+    at(refining.id, 'refine_human', 2000, { text: 'answered' });
+    const items = listAwaitingRefine(db);
+    expect(items.map((i) => i.title)).toEqual(['older P1', 'newer P1', 'P3']);
+    expect(items[0].round?.questions[0].id).toBe('q');
+    expect(items[0].epicTitle).toBe('E');
+    expect(items[0].priority).toBe('P1');
+    expect(items[1].round).toBeNull(); // a free-text turn is listed, with no round
+    expect(items[1].agentText).toBe('second');
+  });
+
+  it('uses the newest agent turn, and drops an invalid stored round to null', () => {
+    const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P2' });
+    const t = createTicket(db, { title: 'x', projectId: pd, epicId: epic.id });
+    at(t.id, 'refine_agent', 5000, { text: 'old', round: ROUND });
+    at(t.id, 'refine_human', 4000, { text: 'reply' });
+    at(t.id, 'refine_agent', 1000, { text: 'new', round: { ...ROUND, questions: [{ ...ROUND.questions[0], recommended: 9 }] } });
+    const [item] = listAwaitingRefine(db);
+    expect(item.agentText).toBe('new');
+    expect(item.round).toBeNull();
+  });
+
+  it('is empty when nothing waits', () => {
+    expect(listAwaitingRefine(db)).toEqual([]);
   });
 });
 

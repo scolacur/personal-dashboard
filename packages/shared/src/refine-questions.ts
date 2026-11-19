@@ -229,3 +229,24 @@ export function roundAsMarkdown(round: RefineQuestionRound): string {
   }
   return out.join('\n').trim();
 }
+
+/** Title prefix of the `agent_refine` notification raised when the agent asks a structured round
+ *  (PD-746). The web links such notifications to the Decisions inbox instead of the ticket page;
+ *  both sides read this constant so the title and the link rule cannot drift apart. */
+export const REFINE_QUESTIONS_NOTIFICATION_PREFIX = 'Refine agent asked';
+
+/** One ticket waiting on Steve's Refine answer, for the Decisions inbox (PD-746). `round` is null
+ *  when the agent's latest turn was free text (older sessions); the inbox then links to the thread. */
+export interface AwaitingRefineItem {
+  ticketId: number;
+  displayId: string | null;
+  title: string;
+  priority: string | null;
+  epicDisplayId: string | null;
+  epicTitle: string | null;
+  /** The agent turn awaiting an answer. */
+  eventId: number;
+  askedAt: number;
+  agentText: string;
+  round: RefineQuestionRound | null;
+}

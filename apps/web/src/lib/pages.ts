@@ -5,6 +5,8 @@ export interface NavChild {
   id: string;
   title: string;
   route: string;
+  /** A live count shown beside the item (PD-746). `decisions` = Refine sessions waiting on Steve. */
+  badge?: 'decisions';
 }
 
 export interface PageMeta {
@@ -77,6 +79,7 @@ export const pages: PageMeta[] = [
       { id: 'do-agent-dashboard', title: 'Agent Dashboard', route: '/devops/agent-dashboard' },
       { id: 'do-jobs', title: 'Jobs', route: '/devops/jobs' },
       { id: 'do-task-tracker', title: 'Task Tracker', route: '/devops/task-tracker' },
+      { id: 'do-decisions', title: 'Decisions', route: '/devops/decisions', badge: 'decisions' },
     ],
   },
 ];

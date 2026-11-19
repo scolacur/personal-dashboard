@@ -5,10 +5,23 @@
   import { pages } from '$lib/pages';
   import { LIBRARY_ROUTE, LIBRARY_TITLE } from '$lib/nav-utils';
   import YinYang from '$lib/icons/YinYang.svelte';
+  import { decisionsCount, refreshDecisionsCount } from '$lib/decisions-store';
 
   // Called after a nav link is chosen — the layout uses it to close the
   // mobile drawer. No-op on desktop where the rail is always visible.
   let { onNavigate }: { onNavigate?: () => void } = $props();
+
+  // PD-746: the Decisions badge. Polled here because the nav is the one thing mounted on every
+  // page; the Decisions page refreshes the same store when it sends an answer.
+  $effect(() => {
+    void refreshDecisionsCount();
+    const timer = setInterval(refreshDecisionsCount, 30_000);
+    return () => clearInterval(timer);
+  });
+  const badgeCount = (badge: 'decisions' | undefined): number => (badge === 'decisions' ? $decisionsCount : 0);
+  // A parent shows the sum of its children's badges, so the count is visible before drilling in.
+  const parentBadge = (p: (typeof pages)[number]): number =>
+    (p.children ?? []).reduce((n, c) => n + badgeCount(c.badge), 0);
 
   // Panel travel matches the rail width, so a panel slides fully out of view.
   const SLIDE_X = 220;
@@ -75,6 +88,9 @@
                 onclick={() => onParentClick(!!p.children?.length)}
               >
                 <span class="side-link-label">{p.title}</span>
+                {#if parentBadge(p) > 0}
+                  <span class="side-link-badge" aria-label="{parentBadge(p)} waiting on you">{parentBadge(p)}</span>
+                {/if}
                 {#if p.children?.length}
                   <!-- Inside the link, so the active highlight spans it (PR #273). -->
                   <span class="side-link-caret" aria-hidden="true"><ChevronRight size={16} /></span>
@@ -122,6 +138,9 @@
                 onclick={onNavigate}
               >
                 <span class="side-link-label">{child.title}</span>
+                {#if badgeCount(child.badge) > 0}
+                  <span class="side-link-badge" aria-label="{badgeCount(child.badge)} waiting on you">{badgeCount(child.badge)}</span>
+                {/if}
               </a>
             </li>
           {/each}

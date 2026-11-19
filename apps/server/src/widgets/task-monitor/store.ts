@@ -5,6 +5,7 @@ import type {
   AgentState,
   NeedsHumanTicket,
   AgentTicket,
+  AwaitingRefineItem,
   CreateProjectInput,
   CreateTicketInput,
   LineageRef,
@@ -1293,6 +1294,64 @@ export function appendRefineReply(
     .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
     .get(Number(res.lastInsertRowid)) as TicketEventRow | undefined;
   return row ? rowToTicketEvent(row) : null;
+}
+
+/**
+ * Every ticket whose Refine session is waiting on Steve, with the agent turn it waits on — the
+ * Decisions inbox (PD-746, D-096 §7). Two queries, never one per ticket: the tickets (refineState
+ * derived exactly as the board derives it), then each one's newest `refine_agent` event. Sorted by
+ * priority (P0 first, unset last), then oldest question first, so what has waited longest at the
+ * highest priority leads.
+ */
+export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] {
+  const all = listTickets(db);
+  const tickets = all.filter((t) => t.refineState === 'awaiting-human');
+  if (tickets.length === 0) return [];
+  const ids = tickets.map((t) => t.id);
+  const placeholders = ids.map(() => '?').join(', ');
+  const latest = db
+    .prepare(
+      `SELECT e.id, e.ticket_id, e.detail, e.created_at FROM agent_ticket_events e
+        WHERE e.type = ? AND e.ticket_id IN (${placeholders})
+          AND e.id = (SELECT e2.id FROM agent_ticket_events e2
+                       WHERE e2.ticket_id = e.ticket_id AND e2.type = ?
+                       ORDER BY e2.created_at DESC, e2.id DESC LIMIT 1)`,
+    )
+    .all(REFINE_EVENT_TYPE.agent, ...ids, REFINE_EVENT_TYPE.agent) as {
+    id: number;
+    ticket_id: number;
+    detail: string | null;
+    created_at: number;
+  }[];
+  const byTicket = new Map(latest.map((r) => [r.ticket_id, r]));
+  const epics = new Map(all.filter((t) => t.isEpic).map((t) => [t.id, t]));
+  const items: AwaitingRefineItem[] = [];
+  for (const t of tickets) {
+    const ev = byTicket.get(t.id);
+    if (!ev) continue;
+    let detail: { text?: string; round?: RefineQuestionRound } = {};
+    try {
+      detail = ev.detail ? (JSON.parse(ev.detail) as typeof detail) : {};
+    } catch {
+      detail = {};
+    }
+    const round = detail.round && validateQuestionRound(detail.round) === null ? detail.round : null;
+    const epic = t.epicId !== null ? epics.get(t.epicId) : undefined;
+    items.push({
+      ticketId: t.id,
+      displayId: t.displayId,
+      title: t.title,
+      priority: t.priority,
+      epicDisplayId: epic?.displayId ?? null,
+      epicTitle: epic?.title ?? null,
+      eventId: ev.id,
+      askedAt: ev.created_at,
+      agentText: typeof detail.text === 'string' ? detail.text : '',
+      round,
+    });
+  }
+  const rank = (p: string | null) => (p === null ? 99 : Number(p.replace(/^P/, '')));
+  return items.sort((a, b) => rank(a.priority) - rank(b.priority) || a.askedAt - b.askedAt);
 }
 
 export type StructuredRefineReplyResult =

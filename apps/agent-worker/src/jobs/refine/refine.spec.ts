@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import type { RefineProposal, RefineQuestionRound, TicketEvent } from '@dashboard/shared';
-import { REFINE_EVENT_TYPE, REFINE_PARKED_EVENT, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
+import {
+  REFINE_EVENT_TYPE,
+  REFINE_PARKED_EVENT,
+  REFINE_PROPOSAL_EVENT,
+  REFINE_QUESTIONS_NOTIFICATION_PREFIX,
+} from '@dashboard/shared';
 import { type AgentWorkerConfig, loadRobotConfig, loadEvaluatorConfig, loadMaintenanceConfig } from '../../shared/config';
 import type { RefineSession, RefineTurnResult, OpenRefineSession, OpenSessionInput } from './session';
 import {
@@ -491,8 +496,10 @@ describe('ask_questions path (PD-744, D-096)', () => {
     const detail = agent[0].detail as { text: string; round?: RefineQuestionRound };
     expect(detail.round?.questions[0].id).toBe('bar');
     expect(detail.text).toBe(roundOnlyText(ROUND));
-    const notif = db.prepare('SELECT body FROM agent_notifications').get() as { body: string };
+    const notif = db.prepare('SELECT title, body FROM agent_notifications').get() as { title: string; body: string };
     expect(notif.body).toContain('Which bar are we clearing?');
+    // PD-746: the round's own title, which the web links to the Decisions inbox.
+    expect(notif.title).toBe(`${REFINE_QUESTIONS_NOTIFICATION_PREFIX} 1 question on PD-1`);
   });
 
   it('a warm session\'s second turn gets its own round, and a turn without one carries none', async () => {

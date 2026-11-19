@@ -606,6 +606,24 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     expect(ok.json().detail.text).toContain('→ B: three tickets');
   });
 
+  // PD-746: the Decisions inbox.
+  it('GET /refine/awaiting returns the waiting sessions and their count', async () => {
+    const { app, db } = freshSetup();
+    const empty = (await app.inject({ method: 'GET', url: `${base}/refine/awaiting` })).json();
+    expect(empty).toEqual({ items: [], count: 0 });
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      'refine_agent',
+      JSON.stringify({ text: 'a question' }),
+      Date.now() - 1000,
+    );
+    const res = (await app.inject({ method: 'GET', url: `${base}/refine/awaiting` })).json();
+    expect(res.count).toBe(1);
+    expect(res.items[0].ticketId).toBe(id);
+    expect(res.items[0].agentText).toBe('a question');
+  });
+
   // PD-743: end a Refine session with no commit.
   it('POST /tickets/:id/refine-park 201s with the refine_parked event, then 409s ALREADY_ENDED', async () => {
     const { app, db } = freshSetup();

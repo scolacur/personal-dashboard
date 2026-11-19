@@ -4,6 +4,7 @@ import {
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
+  REFINE_QUESTIONS_NOTIFICATION_PREFIX,
   refineThreadFromEvents,
 } from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
@@ -246,6 +247,7 @@ export function notifyRefinePosted(
   ticketId: number,
   text: string,
   now: number = Date.now(),
+  round?: RefineQuestionRound,
 ): void {
   const dup = db
     .prepare('SELECT 1 FROM agent_notifications WHERE ticket_id = ? AND kind = ? AND read_at IS NULL')
@@ -255,7 +257,12 @@ export function notifyRefinePosted(
   const t = db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(ticketId) as
     | { display_id: string | null }
     | undefined;
-  const title = `Refine agent replied${t?.display_id ? ` on ${t.display_id}` : ''}`;
+  // PD-746: a structured round gets its own title, which the web uses to link the notification to
+  // the Decisions inbox rather than the ticket page (REFINE_QUESTIONS_NOTIFICATION_PREFIX).
+  const on = t?.display_id ? ` on ${t.display_id}` : '';
+  const title = round
+    ? `${REFINE_QUESTIONS_NOTIFICATION_PREFIX} ${round.questions.length === 1 ? '1 question' : `${round.questions.length} questions`}${on}`
+    : `Refine agent replied${on}`;
   const body = text.length > 280 ? `${text.slice(0, 279)}…` : text;
   db.prepare(
     'INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -493,7 +500,7 @@ export async function processPendingRefines(
       const ts = now();
       backoff.clear(ticketId);
       writeRefineAgentTurn(db, ticketId, text, result.sessionId, ts, round);
-      notifyRefinePosted(db, ticketId, round ? `${roundOnlyText(round)} ${round.questions[0].question}` : text, ts);
+      notifyRefinePosted(db, ticketId, round ? `${roundOnlyText(round)} ${round.questions[0].question}` : text, ts, round);
       handled++;
       logger.info(
         { ticketId, warm, questions: round?.questions.length ?? 0, cacheReadTokens: result.cacheReadTokens, durationMs: result.durationMs },
