@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { applyMarkdown } from '$lib/markdown';
-  import type { RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
+  import type { RefineAnswerSet, RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
   import {
     isReady,
     latestActionableProposal,
@@ -14,8 +14,11 @@
     fetchTicketEvents,
     parkRefine,
     postRefineReply,
+    postRefineAnswers,
     rejectRefine,
   } from '../routes/devops/api';
+  import RefineQuestionForm from './RefineQuestionForm.svelte';
+  import { answerSummary, openRoundMessage, roundsAnsweredBy } from './refine-form-logic';
 
   // The Refine thread lives on the ticket's activity log (agent_ticket_events); this
   // component reads it via the generic events endpoint and renders the refine_* subset
@@ -137,6 +140,17 @@
     }
   }
 
+  // PD-745: the round Steve can answer now (newest turn is an agent round, session still open), and
+  // for each structured reply the round it answered, so the reply renders as a summary.
+  const openRound = $derived(sessionEnd === null ? openRoundMessage(messages) : null);
+  const answeredRounds = $derived(roundsAnsweredBy(messages));
+
+  async function submitAnswers(answers: RefineAnswerSet) {
+    await postRefineAnswers(ticketId, answers); // throws → the form shows the error
+    await load();
+    await scrollToBottom();
+  }
+
   async function submit() {
     const body = replyText.trim();
     if (!body || sending) return;
@@ -216,11 +230,36 @@
             </div>
             {#if m.role === 'agent'}
               <div class="turn-body prose" use:applyMarkdown={m.text}></div>
-              {#if m.round}
-                <!-- PD-744: a structured round, read-only until the answer form (PD-745) lands.
-                     A typed reply answers it. -->
-                <div class="turn-body prose turn-round" use:applyMarkdown={roundAsMarkdown(m.round)}></div>
+              {#if m.round && openRound?.id === m.id}
+                <!-- PD-745: the open round, answered with clicks. Keyed by turn so a new round always
+                     starts from an empty draft. -->
+                <div class="turn-round">
+                  {#key m.id}
+                    <RefineQuestionForm round={m.round} formId={m.id} onSubmit={submitAnswers} />
+                  {/key}
+                </div>
+              {:else if m.round}
+                <!-- An answered or superseded round: kept readable, folded away. -->
+                <details class="turn-round turn-round-past">
+                  <summary>{m.round.questions.length === 1 ? '1 question' : `${m.round.questions.length} questions`}</summary>
+                  <div class="turn-body prose" use:applyMarkdown={roundAsMarkdown(m.round)}></div>
+                </details>
               {/if}
+            {:else if m.answers && answeredRounds.has(m.id)}
+              {@const r = answeredRounds.get(m.id)!}
+              <!-- PD-745: a structured reply, shown as what was chosen rather than the rendered text. -->
+              <ul class="turn-body answer-summary">
+                {#each answerSummary(r, m.answers) as line, li (li)}
+                  <li>
+                    <span class="answer-q">{line.question}</span>
+                    <span class="answer-a">{line.answer}{#if line.recommended}<span class="answer-rec"> (recommended)</span>{/if}</span>
+                  </li>
+                {/each}
+                {#each m.answers.overruled ?? [] as ai (ai)}
+                  {#if r.assumptions[ai]}<li><span class="answer-q">Overruled</span><span class="answer-a">{r.assumptions[ai].text}</span></li>{/if}
+                {/each}
+                {#if m.answers.note}<li><span class="answer-q">Note</span><span class="answer-a">{m.answers.note}</span></li>{/if}
+              </ul>
             {:else}
               <div class="turn-body">{m.text}</div>
             {/if}
@@ -330,7 +369,7 @@
         <textarea
           bind:value={replyText}
           rows="3"
-          placeholder="Reply to the Refine agent…"
+          placeholder={openRound ? 'Or reply in your own words…' : 'Reply to the Refine agent…'}
           disabled={sending}
         ></textarea>
         <div class="reply-actions">
