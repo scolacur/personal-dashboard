@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3';
-import { REFINE_AUTOSTART_STATUS_KEY, REFINE_EVENT_TYPE, type RefineAutostartStatus } from '@dashboard/shared';
+import {
+  REFINE_AUTOSTART_STATUS_KEY,
+  REFINE_BACKFILL_EXCLUDED_EVENT,
+  REFINE_EVENT_TYPE,
+  type RefineAutostartStatus,
+} from '@dashboard/shared';
 import { logger } from '../../shared/logger';
 import { activeSessionLimitHold, isDispatchPaused, readStateNumber, writeState } from '../robot/state';
 
@@ -95,6 +100,68 @@ export function nextAutostartCandidate(
   return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
 }
 
+// ── Backfill (PD-748) ─────────────────────────────────────────────────────────
+//
+// When no new ticket is waiting, the existing backlog drips in: tickets created BEFORE the boundary,
+// highest priority first (P0 → P5, unset last), then oldest. Same pacing as new tickets — the open
+// cap applies to both, and new tickets always go first.
+//
+// **Epics before their members.** A member waits while its Epic is itself waiting for a session or
+// has one open: the Epic's Populate frames its members, and siblings refined one by one would be
+// asked the same questions again. Once the Epic is refined, or its session ended without refining
+// it, the member is a candidate on its own.
+//
+// **Excludable per Epic.** The newest `refine_backfill_excluded` event on an Epic switches it — and
+// its members — out (the wishlist Epics for widgets that do not exist yet).
+
+/** True when a ticket's own newest backfill-exclude event says excluded. `x` is the table alias. */
+const excludedSql = (x: string) => `COALESCE((SELECT json_extract(b.detail, '$.excluded') FROM agent_ticket_events b
+   WHERE b.ticket_id = ${x}.id AND b.type = '${REFINE_BACKFILL_EXCLUDED_EVENT}'
+   ORDER BY b.created_at DESC, b.id DESC LIMIT 1), 0) = 1`;
+
+/** True when ticket `x` has a Refine session open now (newest state event is a turn). */
+const openSessionSql = (x: string) => `(SELECT s.type FROM agent_ticket_events s
+   WHERE s.ticket_id = ${x}.id AND s.type IN ('refine_human', 'refine_agent', 'refine_committed', 'refine_parked')
+   ORDER BY s.created_at DESC, s.id DESC LIMIT 1) IN ('refine_human', 'refine_agent')`;
+
+/** True when ticket `x` has never had a Refine thread. */
+const noThreadSql = (x: string) => `NOT EXISTS (SELECT 1 FROM agent_ticket_events n
+   WHERE n.ticket_id = ${x}.id AND n.type IN ('refine_human', 'refine_agent'))`;
+
+const BACKFILL_WHERE = `
+  t.archived_at IS NULL AND t.status = 'backlog' AND t.refined = 0 AND t.created_at < ?
+  AND ${noThreadSql('t')}
+  AND NOT (${excludedSql('t')})
+  AND NOT EXISTS (
+    SELECT 1 FROM agent_tickets ep
+     WHERE ep.id = t.epic_id AND (
+       ${excludedSql('ep')}
+       OR ${openSessionSql('ep')}
+       OR (ep.archived_at IS NULL AND ep.status = 'backlog' AND ep.refined = 0 AND ${noThreadSql('ep')})
+     )
+  )`;
+
+const PRIORITY_RANK = `CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3
+  WHEN 'P4' THEN 4 WHEN 'P5' THEN 5 ELSE 9 END`;
+
+export function backfillRemaining(db: Database.Database, since: number): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${BACKFILL_WHERE}`).get(since) as { n: number }).n;
+}
+
+/** The next backlog ticket to backfill, or null. */
+export function nextBackfillCandidate(
+  db: Database.Database,
+  since: number,
+): { id: number; displayId: string | null; title: string; body: string | null } | null {
+  const row = db
+    .prepare(
+      `SELECT t.id, t.display_id, t.title, t.body FROM agent_tickets t WHERE ${BACKFILL_WHERE}
+        ORDER BY ${PRIORITY_RANK}, t.created_at ASC, t.id ASC LIMIT 1`,
+    )
+    .get(since) as { id: number; display_id: string | null; title: string; body: string | null } | undefined;
+  return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
+}
+
 /** Write the kickoff turn — the same `title\n\nbody` the Refine button writes (server
  *  `startRefine`) — marked `auto` so the thread can say who started it. */
 export function writeAutostartKickoff(
@@ -117,8 +184,17 @@ export function writeAutostartKickoff(
  */
 export function runAutostart(db: Database.Database, config: AutostartConfig, now: number): number | null {
   const open = openSessionCount(db);
+  let backfill = 0;
   const publish = (queued: number, heldBy: string | null) => {
-    const status: RefineAutostartStatus = { enabled: config.enabled, open, cap: config.openCap, queued, heldBy, at: now };
+    const status: RefineAutostartStatus = {
+      enabled: config.enabled,
+      open,
+      cap: config.openCap,
+      queued,
+      backfillRemaining: backfill,
+      heldBy,
+      at: now,
+    };
     writeState(db, REFINE_AUTOSTART_STATUS_KEY, JSON.stringify(status), now);
   };
 
@@ -128,6 +204,7 @@ export function runAutostart(db: Database.Database, config: AutostartConfig, now
   }
   const since = autostartSince(db, now);
   const queued = autostartQueue(db, since);
+  backfill = backfillRemaining(db, since);
 
   const hold = activeSessionLimitHold(db, now);
   if (hold) {
@@ -143,13 +220,15 @@ export function runAutostart(db: Database.Database, config: AutostartConfig, now
     return null;
   }
 
-  const candidate = nextAutostartCandidate(db, since);
+  // New tickets first; the backlog backfill only when none is waiting (PD-748).
+  const candidate = nextAutostartCandidate(db, since) ?? nextBackfillCandidate(db, since);
   if (!candidate) {
     publish(0, null);
     return null;
   }
   writeAutostartKickoff(db, candidate, now);
-  publish(queued - 1, null);
+  backfill = backfillRemaining(db, since);
+  publish(autostartQueue(db, since), null);
   logger.info({ ticketId: candidate.id, displayId: candidate.displayId, open: open + 1 }, 'refine: auto-started a session');
   return candidate.id;
 }

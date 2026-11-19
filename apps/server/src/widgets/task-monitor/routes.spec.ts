@@ -624,6 +624,23 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     expect(res.items[0].agentText).toBe('a question');
   });
 
+  // PD-748: the Epic backfill switch.
+  it('POST /tickets/:id/backfill-exclude toggles an Epic; 400 on a non-Epic or a bad body', async () => {
+    const { app, db } = freshSetup();
+    const pd = projectId(db, 'personal-dashboard');
+    const epic = await app.inject({ method: 'POST', url: `${base}/tickets`, payload: { title: 'E', projectId: pd, isEpic: true } });
+    const epicId = epic.json().id as number;
+    const on = await app.inject({ method: 'POST', url: `${base}/tickets/${epicId}/backfill-exclude`, payload: { excluded: true } });
+    expect(on.statusCode).toBe(200);
+    expect(on.json().backfillExcluded).toBe(true);
+    const bad = await app.inject({ method: 'POST', url: `${base}/tickets/${epicId}/backfill-exclude`, payload: { excluded: 'yes' } });
+    expect(bad.statusCode).toBe(400);
+    const id = await makeTicket(app, db, pd);
+    const notEpic = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/backfill-exclude`, payload: { excluded: true } });
+    expect(notEpic.statusCode).toBe(400);
+    expect(notEpic.json().code).toBe('NOT_EPIC');
+  });
+
   // PD-743: end a Refine session with no commit.
   it('POST /tickets/:id/refine-park 201s with the refine_parked event, then 409s ALREADY_ENDED', async () => {
     const { app, db } = freshSetup();

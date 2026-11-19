@@ -32,6 +32,7 @@ import {
   markTicketRefined,
   markAllNotificationsRead,
   markNotificationRead,
+  setBackfillExcluded,
   parkRefine,
   rejectRefine,
   startRefine,
@@ -864,6 +865,33 @@ describe('listAwaitingRefine — the Decisions inbox (PD-746)', () => {
 
   it('is empty when nothing waits', () => {
     expect(listAwaitingRefine(db)).toEqual([]);
+  });
+});
+
+describe('setBackfillExcluded — the Epic backfill switch (PD-748)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('switches an Epic out and back in; the newest event wins and shows on the ticket', () => {
+    const epic = createTicket(db, { title: 'Wishlist', projectId: pd, isEpic: true });
+    expect(getTicket(db, epic.id)!.backfillExcluded).toBe(false);
+    const r = setBackfillExcluded(db, epic.id, true);
+    expect(r.ok && r.ticket.backfillExcluded).toBe(true);
+    expect(listTickets(db).find((t) => t.id === epic.id)!.backfillExcluded).toBe(true);
+    setBackfillExcluded(db, epic.id, false);
+    expect(getTicket(db, epic.id)!.backfillExcluded).toBe(false);
+    expect(listTicketEvents(db, epic.id).filter((e) => e.type === 'refine_backfill_excluded')).toHaveLength(2);
+  });
+
+  it('refuses a non-Epic and an unknown ticket', () => {
+    const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true });
+    const t = createTicket(db, { title: 'x', projectId: pd, epicId: epic.id });
+    expect(setBackfillExcluded(db, t.id, true)).toEqual({ ok: false, reason: 'not_epic' });
+    expect(setBackfillExcluded(db, 9999, true)).toEqual({ ok: false, reason: 'not_found' });
   });
 });
 

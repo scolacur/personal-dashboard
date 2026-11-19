@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TicketEvent, RobotEventDetail } from '@dashboard/shared';
-  import { ROBOT_EVENT, evaluatorVerdictLine } from '@dashboard/shared';
+  import { REFINE_BACKFILL_EXCLUDED_EVENT, ROBOT_EVENT, evaluatorVerdictLine } from '@dashboard/shared';
   import { fetchTicketEvents } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
@@ -125,6 +125,11 @@
         return 'Archived';
       case 'epic_unlinked':
         return 'Unlinked from epic';
+      case REFINE_BACKFILL_EXCLUDED_EVENT:
+        // PD-748: an Epic switched in or out of the Refine backfill.
+        return (e.detail as { excluded?: boolean } | null)?.excluded
+          ? 'Excluded from the Refine backfill (members too)'
+          : 'Included in the Refine backfill';
       default:
         return e.type;
     }

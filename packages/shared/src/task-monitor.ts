@@ -327,6 +327,9 @@ export interface AgentTicket {
    * half going stale. Cleared by re-refining.
    */
   refineStale: boolean;
+  /** PD-748: this Epic is switched out of the Refine backfill (its members inherit it). Optional so
+   *  fixtures predating it still type-check; absent reads as false. */
+  backfillExcluded?: boolean;
   /** Whether the body is Robot-ready — the mechanical 4-section shape check (`isReady`),
    *  recomputed on every body write and persisted (D-058). Server-computed, NOT client-settable
    *  (absent from Create/UpdateTicketInput). A bypassable dispatch gate; refinement is the hard one

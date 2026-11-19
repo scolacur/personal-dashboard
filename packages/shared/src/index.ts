@@ -353,4 +353,4 @@ export {
   validateQuestionRound,
 } from './refine-questions';
 export type { RefineAutostartStatus } from './refine-questions';
-export { REFINE_AUTOSTART_STATUS_KEY } from './refine-questions';
+export { REFINE_AUTOSTART_STATUS_KEY, REFINE_BACKFILL_EXCLUDED_EVENT } from './refine-questions';

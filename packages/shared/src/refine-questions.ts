@@ -260,6 +260,8 @@ export interface RefineAutostartStatus {
   cap: number;
   /** New tickets waiting for an auto-started session. */
   queued: number;
+  /** PD-748: older backlog tickets still to drip in, behind the new ones. */
+  backfillRemaining: number;
   /** Why the last cycle started nothing, if it was held back; null when free to start. */
   heldBy: string | null;
   /** Unix ms of the cycle that wrote this. */
@@ -268,3 +270,7 @@ export interface RefineAutostartStatus {
 
 /** The `robot_state` key the worker publishes `RefineAutostartStatus` under. */
 export const REFINE_AUTOSTART_STATUS_KEY = 'refine_autostart_status';
+
+/** Event type that switches an Epic in or out of the Refine backfill (PD-748). Detail
+ *  `{ excluded: boolean }`; the newest one wins, and an Epic's members inherit it. */
+export const REFINE_BACKFILL_EXCLUDED_EVENT = 'refine_backfill_excluded';
