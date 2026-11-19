@@ -699,6 +699,16 @@ _Avoid_: reading it as a property of the Epic's prose alone. Under that reading 
 true on an Epic whose description does not mention half its members, which is exactly the state
 D-089 was written to end.
 
+**Body edit on a refined ticket** (D-097):
+> ⚠️ **Decided, not built (2026-11-17).** Today a body edit silently keeps `refined`.
+
+Changing the body of a refined Ticket or Epic is a moment where someone must say whether the claim
+still holds. In the UI that is a prompt ("Mark this unrefined?", default yes). Through the API, the
+edit must carry the answer, or it is refused. Clearing it on an Epic is the same invalidation as a
+membership change (it goes **stale**).
+_Avoid_: assuming a body edit leaves `refined` meaningful by default, or that it dequeues queued
+work. An un-refined queued ticket stays in the Queue and is skipped until re-marked.
+
 **Queue gate** (`queueBlockers`, D-091, PD-632):
 What a **robot-assigned** ticket must satisfy to enter the Queue: it is refined, its Epic is refined
 and not stale, and every open member of its Epic is refined — all hard, no bypass. `ready` and
