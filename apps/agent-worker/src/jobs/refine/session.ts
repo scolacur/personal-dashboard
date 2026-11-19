@@ -1,7 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { refineSystemPrompt, type RefineProposal } from '@dashboard/shared';
+import { refineSystemPrompt, type RefineProposal, type RefineQuestionRound } from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
+import { ASK_TOOL_NAME } from './ask-tool';
 import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
 
 /** Read-only built-in tools — the agent-worker grounds against the checkout, never edits. */
@@ -19,6 +20,9 @@ export interface RefineTurnInput {
   onProposal?: (proposal: RefineProposal) => void;
   /** PD-634: the ticket is an Epic, so a decompose is a Populate and must carry the Epic's body. */
   targetIsEpic?: boolean;
+  /** PD-744: called when the agent invokes ask_questions; stages the round for this turn. A warm
+   *  session binds this once, on open, so it must not close over per-turn state. */
+  onRound?: (round: RefineQuestionRound) => void;
 }
 
 export interface RefineTurnResult {
@@ -51,14 +55,17 @@ function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): RefineTur
 }
 
 /** The SDK options shared by the one-shot and warm-streaming paths. When `onProposal` is
- *  given, the propose_commit tool (PD-269) is exposed and allowed alongside the read-only set. */
+ *  given, the propose_commit tool (PD-269) is exposed and allowed alongside the read-only set;
+ *  `onRound` adds ask_questions (PD-744). */
 function refineOptions(
   config: AgentWorkerConfig,
   contextPack: string,
   resumeSessionId?: string,
   onProposal?: (proposal: RefineProposal) => void,
   targetIsEpic?: boolean,
+  onRound?: (round: RefineQuestionRound) => void,
 ) {
+  const refineTools = onProposal ? [PROPOSE_TOOL_NAME, ...(onRound ? [ASK_TOOL_NAME] : [])] : [];
   return {
     model: config.model,
     cwd: config.checkoutDir,
@@ -70,10 +77,10 @@ function refineOptions(
     // path rather than being persisted as the agent's words.
     maxTurns: config.refineMaxTurns,
     systemPrompt: refineSystemPrompt(contextPack, config.robot.maxTurns),
-    allowedTools: onProposal ? [...READ_ONLY_TOOLS, PROPOSE_TOOL_NAME] : READ_ONLY_TOOLS,
+    allowedTools: [...READ_ONLY_TOOLS, ...refineTools],
     // Headless: deny any tool outside the allowlist without prompting (would hang).
     permissionMode: 'dontAsk' as const,
-    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic }) } } : {}),
+    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic, onRound }) } } : {}),
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 }
@@ -94,7 +101,14 @@ export async function runRefineTurn(input: RefineTurnInput): Promise<RefineTurnR
 
   for await (const message of query({
     prompt: input.prompt,
-    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal, input.targetIsEpic),
+    options: refineOptions(
+      input.config,
+      input.contextPack,
+      input.resumeSessionId,
+      input.onProposal,
+      input.targetIsEpic,
+      input.onRound,
+    ),
   })) {
     if (message.type === 'result') result = resultFrom(message);
   }
@@ -131,6 +145,9 @@ export interface OpenSessionInput {
   onProposal?: (proposal: RefineProposal) => void;
   /** PD-634: the ticket is an Epic, so a decompose is a Populate and must carry the Epic's body. */
   targetIsEpic?: boolean;
+  /** PD-744: called when the agent invokes ask_questions; stages the round for this turn. A warm
+   *  session binds this once, on open, so it must not close over per-turn state. */
+  onRound?: (round: RefineQuestionRound) => void;
 }
 
 /** Factory type so the warm-session manager and its tests can swap the real SDK out. */
@@ -210,7 +227,14 @@ export const openWarmSession: OpenRefineSession = (input) => {
 
   const q = query({
     prompt: input$.stream,
-    options: refineOptions(input.config, input.contextPack, input.resumeSessionId, input.onProposal, input.targetIsEpic),
+    options: refineOptions(
+      input.config,
+      input.contextPack,
+      input.resumeSessionId,
+      input.onProposal,
+      input.targetIsEpic,
+      input.onRound,
+    ),
   });
 
   // Drain the query in the background, routing each completed turn back to its `send` caller.

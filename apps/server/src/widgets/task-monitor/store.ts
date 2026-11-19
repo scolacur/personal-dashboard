@@ -9,7 +9,9 @@ import type {
   CreateTicketInput,
   LineageRef,
   NotificationKind,
+  RefineAnswerSet,
   RefineCommitMode,
+  RefineQuestionRound,
   EpicDerivedLane,
   EpicSummary,
   RelationOrigin,
@@ -40,8 +42,11 @@ import {
   REFINE_PROPOSAL_EVENT,
   REFINE_STATE_EVENT,
   REFINE_STATE_EVENT_TYPES,
+  renderRoundAnswers,
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
+  validateAnswerSet,
+  validateQuestionRound,
 } from '@dashboard/shared';
 import type { QueueCriterion } from '@dashboard/shared';
 import { queueGuardFailure, type QueueGateContext } from './ticket-guards';
@@ -1288,6 +1293,73 @@ export function appendRefineReply(
     .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
     .get(Number(res.lastInsertRowid)) as TicketEventRow | undefined;
   return row ? rowToTicketEvent(row) : null;
+}
+
+export type StructuredRefineReplyResult =
+  | { ok: true; event: TicketEvent }
+  | { ok: false; reason: 'not_found' | 'no_open_round' }
+  | { ok: false; reason: 'invalid'; message: string };
+
+/**
+ * The question round Steve can answer right now (PD-744): the newest Refine turn is an agent turn
+ * that carries a round, and the session has not ended since. Null otherwise. Returned with the
+ * event id so a reply can record which round it answered.
+ */
+export function openQuestionRound(
+  db: Database.Database,
+  ticketId: number,
+): { eventId: number; round: RefineQuestionRound } | null {
+  const newest = db
+    .prepare(
+      `SELECT id, type, detail FROM agent_ticket_events
+        WHERE ticket_id = ? AND type IN (${REFINE_STATE_EVENT_TYPES.map(() => '?').join(', ')})
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(ticketId, ...REFINE_STATE_EVENT_TYPES) as { id: number; type: string; detail: string | null } | undefined;
+  if (!newest || newest.type !== REFINE_EVENT_TYPE.agent || newest.detail == null) return null;
+  let round: RefineQuestionRound | undefined;
+  try {
+    round = (JSON.parse(newest.detail) as { round?: RefineQuestionRound }).round;
+  } catch {
+    return null;
+  }
+  // The worker validated it at the tool boundary; re-check rather than trust a stored blob.
+  if (!round || validateQuestionRound(round) !== null) return null;
+  return { eventId: newest.id, round };
+}
+
+/**
+ * Append Steve's structured answers to the open round as a `refine_human` event (PD-744, D-096 §4).
+ * The event's `text` is the rendered answers, so the agent-worker, which reads only text, needs no
+ * change to consume it; `answers` and `roundEventId` are kept for the UI.
+ */
+export function appendStructuredRefineReply(
+  db: Database.Database,
+  ticketId: number,
+  set: RefineAnswerSet,
+): StructuredRefineReplyResult {
+  if (getTicket(db, ticketId) === null) return { ok: false, reason: 'not_found' };
+  const open = openQuestionRound(db, ticketId);
+  if (!open) return { ok: false, reason: 'no_open_round' };
+  const invalid = validateAnswerSet(open.round, set);
+  if (invalid) return { ok: false, reason: 'invalid', message: invalid };
+  const answers: RefineAnswerSet = {
+    answers: set.answers.map((a) =>
+      a.other !== undefined && a.other !== null && a.other.trim() !== ''
+        ? { questionId: a.questionId, other: a.other.trim() }
+        : { questionId: a.questionId, choice: a.choice },
+    ),
+    ...(set.overruled && set.overruled.length > 0 ? { overruled: [...new Set(set.overruled)].sort((x, y) => x - y) } : {}),
+    ...(set.note && set.note.trim() !== '' ? { note: set.note.trim() } : {}),
+  };
+  const text = renderRoundAnswers(open.round, answers);
+  const res = db
+    .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+    .run(ticketId, REFINE_EVENT_TYPE.human, JSON.stringify({ text, answers, roundEventId: open.eventId }), Date.now());
+  const row = db
+    .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
+    .get(Number(res.lastInsertRowid)) as TicketEventRow;
+  return { ok: true, event: rowToTicketEvent(row) };
 }
 
 export type ParkRefineResult =

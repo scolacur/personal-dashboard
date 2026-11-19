@@ -561,6 +561,51 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     expect(res.statusCode).toBe(404);
   });
 
+  // PD-744: structured answers to the open question round.
+  it('POST /tickets/:id/refine-reply with answers 201s on the open round; 409 with none; 400 invalid', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
+    const answers = [{ questionId: 'q1', choice: 1 }];
+    const none = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reply`, payload: { answers } });
+    expect(none.statusCode).toBe(409);
+    expect(none.json().code).toBe('NO_OPEN_ROUND');
+
+    const round = {
+      questions: [
+        {
+          id: 'q1',
+          question: 'Which?',
+          why: 'It decides the split.',
+          options: [
+            { label: 'A', description: 'one ticket' },
+            { label: 'B', description: 'three tickets' },
+          ],
+          recommended: 0,
+        },
+      ],
+      assumptions: [],
+    };
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      'refine_agent',
+      JSON.stringify({ text: 'q', sessionId: 's', round }),
+      Date.now() - 1000,
+    );
+    const bad = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets/${id}/refine-reply`,
+      payload: { answers: [{ questionId: 'q1', choice: 7 }] },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('INVALID_ANSWERS');
+    expect((await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reply`, payload: { answers: 'x' } })).statusCode).toBe(400);
+
+    const ok = await app.inject({ method: 'POST', url: `${base}/tickets/${id}/refine-reply`, payload: { answers } });
+    expect(ok.statusCode).toBe(201);
+    expect(ok.json().type).toBe('refine_human');
+    expect(ok.json().detail.text).toContain('→ B: three tickets');
+  });
+
   // PD-743: end a Refine session with no commit.
   it('POST /tickets/:id/refine-park 201s with the refine_parked event, then 409s ALREADY_ENDED', async () => {
     const { app, db } = freshSetup();

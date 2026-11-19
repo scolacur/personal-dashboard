@@ -7,6 +7,7 @@
     latestActionableProposal,
     refineSessionEnd,
     refineThreadFromEvents,
+    roundAsMarkdown,
   } from '@dashboard/shared';
   import {
     approveRefine,
@@ -215,6 +216,11 @@
             </div>
             {#if m.role === 'agent'}
               <div class="turn-body prose" use:applyMarkdown={m.text}></div>
+              {#if m.round}
+                <!-- PD-744: a structured round, read-only until the answer form (PD-745) lands.
+                     A typed reply answers it. -->
+                <div class="turn-body prose turn-round" use:applyMarkdown={roundAsMarkdown(m.round)}></div>
+              {/if}
             {:else}
               <div class="turn-body">{m.text}</div>
             {/if}

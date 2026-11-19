@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { RefineProposal, TicketEvent } from '@dashboard/shared';
+import type { RefineProposal, RefineQuestionRound, TicketEvent } from '@dashboard/shared';
 import {
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
@@ -171,17 +171,37 @@ export function findPendingRefineTicketIds(db: Database.Database): number[] {
   return rows.map((r) => r.ticket_id);
 }
 
-/** Persist a agent-worker turn as a `refine_agent` event, carrying the SDK session id for resume. */
+/** Persist a agent-worker turn as a `refine_agent` event, carrying the SDK session id for resume
+ *  and, when the agent asked through ask_questions, the structured round (PD-744). */
 export function writeRefineAgentTurn(
   db: Database.Database,
   ticketId: number,
   text: string,
   sessionId: string | undefined,
   now: number = Date.now(),
+  round?: RefineQuestionRound,
 ): void {
   db.prepare(
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
-  ).run(ticketId, REFINE_EVENT_TYPE.agent, JSON.stringify({ text, sessionId }), now);
+  ).run(ticketId, REFINE_EVENT_TYPE.agent, JSON.stringify({ text, sessionId, ...(round ? { round } : {}) }), now);
+}
+
+/**
+ * Question rounds the agent sent via ask_questions during the turn in flight, by ticket (PD-744).
+ *
+ * Module-level on purpose. A warm session binds its tool callbacks ONCE, when it opens, and stays
+ * resident across poll cycles — so a callback closing over one cycle's local map would write every
+ * later turn's round into a map nobody reads. Keyed by ticket, and turns are strictly sequential per
+ * ticket, so this is unambiguous: cleared before each turn, taken after it. A round is attached to
+ * the agent turn only when the turn completes cleanly; a failed turn's round is dropped with it, so
+ * Steve never sees questions whose turn was retried.
+ */
+const stagedRounds = new Map<number, RefineQuestionRound>();
+
+/** Fallback text for a turn that asked questions but wrote no prose around them. */
+export function roundOnlyText(round: RefineQuestionRound): string {
+  const n = round.questions.length;
+  return n === 1 ? 'I have a question for you before I propose anything.' : `I have ${n} questions for you before I propose anything.`;
 }
 
 /**
@@ -412,6 +432,9 @@ export async function processPendingRefines(
     const warm = sessions.has(ticketId);
     // The agent calls propose_commit → we persist the proposal for Steve to approve.
     const onProposal = (proposal: RefineProposal) => writeRefineProposal(db, ticketId, proposal, now());
+    // PD-744: stage the round; it is attached to the agent turn below only if the turn succeeds.
+    const onRound = (round: RefineQuestionRound) => stagedRounds.set(ticketId, round);
+    stagedRounds.delete(ticketId);
     // PD-634: lets propose_commit refuse a Populate without the Epic's rewritten body while the agent
     // can still correct it. The server re-checks at approval, so a stale warm session cannot slip past.
     const targetIsEpic =
@@ -420,7 +443,7 @@ export async function processPendingRefines(
     try {
       let result = await sessions.turn(
         ticketId,
-        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal, targetIsEpic },
+        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal, targetIsEpic, onRound },
         work.prompt,
       );
       // Stale resume: the SDK's session store is per-container and not persisted, so a rebuild
@@ -429,12 +452,15 @@ export async function processPendingRefines(
       if (!result.ok && work.resumeSessionId && isStaleSessionError(result.text)) {
         logger.warn({ ticketId, staleSessionId: work.resumeSessionId }, 'refine: resume session gone — retrying fresh');
         sessions.reset(ticketId);
+        stagedRounds.delete(ticketId);
         result = await sessions.turn(
           ticketId,
-          { config, contextPack, resumeSessionId: undefined, onProposal, targetIsEpic },
+          { config, contextPack, resumeSessionId: undefined, onProposal, targetIsEpic, onRound },
           fullThreadPrompt(events),
         );
       }
+      const round = stagedRounds.get(ticketId);
+      stagedRounds.delete(ticketId);
       if (!result.ok) {
         // An API/agent error (billing, rate limit, auth, max-turns) — NOT the agent's words.
         // Log the real reason and leave the ticket pending so it self-heals on a later poll
@@ -457,21 +483,24 @@ export async function processPendingRefines(
         );
         continue;
       }
-      if (result.text.trim() === '') {
+      // A turn that asked through ask_questions and wrote no prose is still a real turn (PD-744).
+      const text = result.text.trim() === '' && round ? roundOnlyText(round) : result.text;
+      if (text.trim() === '') {
         const { attempt, waitMs } = backoff.recordFailure(ticketId, now());
         logger.warn({ ticketId, attempt, waitMs }, 'refine: empty turn — backing off, will retry');
         continue;
       }
       const ts = now();
       backoff.clear(ticketId);
-      writeRefineAgentTurn(db, ticketId, result.text, result.sessionId, ts);
-      notifyRefinePosted(db, ticketId, result.text, ts);
+      writeRefineAgentTurn(db, ticketId, text, result.sessionId, ts, round);
+      notifyRefinePosted(db, ticketId, round ? `${roundOnlyText(round)} ${round.questions[0].question}` : text, ts);
       handled++;
       logger.info(
-        { ticketId, warm, cacheReadTokens: result.cacheReadTokens, durationMs: result.durationMs },
+        { ticketId, warm, questions: round?.questions.length ?? 0, cacheReadTokens: result.cacheReadTokens, durationMs: result.durationMs },
         'refine: posted turn',
       );
     } catch (err) {
+      stagedRounds.delete(ticketId);
       const { attempt, waitMs } = backoff.recordFailure(ticketId, now());
       logger.error({ err, ticketId, attempt, waitMs }, 'refine: turn failed — backing off');
     }

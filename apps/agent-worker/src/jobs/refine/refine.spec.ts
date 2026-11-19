@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import type { RefineProposal, TicketEvent } from '@dashboard/shared';
+import type { RefineProposal, RefineQuestionRound, TicketEvent } from '@dashboard/shared';
 import { REFINE_EVENT_TYPE, REFINE_PARKED_EVENT, REFINE_PROPOSAL_EVENT } from '@dashboard/shared';
 import { type AgentWorkerConfig, loadRobotConfig, loadEvaluatorConfig, loadMaintenanceConfig } from '../../shared/config';
 import type { RefineSession, RefineTurnResult, OpenRefineSession, OpenSessionInput } from './session';
@@ -11,6 +11,7 @@ import {
   processPendingRefines,
   writeRefineProposal,
   RefineBackoff,
+  roundOnlyText,
   WarmSessions,
 } from './refine';
 import { ensureRobotStateTable, sessionLimitHold, holdForSessionLimit } from '../robot/state';
@@ -431,6 +432,101 @@ describe('propose_commit path (D-044, PD-269)', () => {
     const proposals = listTicketEvents(db, 1).filter((e) => e.type === REFINE_PROPOSAL_EVENT.proposal);
     expect(proposals).toHaveLength(1);
     expect((proposals[0].detail as RefineProposal).body).toBe('tightened');
+  });
+});
+
+describe('ask_questions path (PD-744, D-096)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+    seq = 0;
+  });
+  const ROUND: RefineQuestionRound = {
+    questions: [
+      {
+        id: 'bar',
+        question: 'Which bar are we clearing?',
+        why: 'Decides whether this is one ticket or three.',
+        options: [
+          { label: 'Local only', description: 'One small ticket.' },
+          { label: 'Full push', description: 'Three tickets.' },
+        ],
+        recommended: 1,
+      },
+    ],
+    assumptions: [],
+  };
+
+  /** A session whose every turn calls ask_questions through the callback bound AT OPEN — the way
+   *  the real warm session binds its MCP server once — when `ask` says so for that turn. */
+  function askingSessions(plan: { ask: boolean; text: string; ok?: boolean }[]) {
+    let turn = 0;
+    let opens = 0;
+    const open: OpenRefineSession = (input: OpenSessionInput) => {
+      opens++;
+      const onRound = input.onRound; // bound once, like buildProposeToolServer in refineOptions
+      return {
+        get sessionId() {
+          return 'sess-1';
+        },
+        lastUsedAt: Date.now(),
+        async send(): Promise<RefineTurnResult> {
+          const p = plan[turn++];
+          if (p.ask) onRound?.(ROUND);
+          return { text: p.text, ok: p.ok ?? true, sessionId: 'sess-1' };
+        },
+        async close() {},
+      };
+    };
+    return { open, opens: () => opens };
+  }
+
+  it('attaches the round to the agent turn, and writes stand-in text when the agent wrote none', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const fake = askingSessions([{ ask: true, text: '' }]);
+    await processPendingRefines(db, CONFIG, { sessions: new WarmSessions(fake.open), buildContext: noContext, now: () => ++seq });
+    const agent = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
+    expect(agent).toHaveLength(1);
+    const detail = agent[0].detail as { text: string; round?: RefineQuestionRound };
+    expect(detail.round?.questions[0].id).toBe('bar');
+    expect(detail.text).toBe(roundOnlyText(ROUND));
+    const notif = db.prepare('SELECT body FROM agent_notifications').get() as { body: string };
+    expect(notif.body).toContain('Which bar are we clearing?');
+  });
+
+  it('a warm session\'s second turn gets its own round, and a turn without one carries none', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const fake = askingSessions([
+      { ask: false, text: 'grounding first' },
+      { ask: true, text: 'now my questions' },
+    ]);
+    const sessions = new WarmSessions(fake.open);
+    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'go on' });
+    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    expect(fake.opens()).toBe(1); // the same warm session served both turns
+    const agent = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
+    expect(agent.map((e) => (e.detail as { round?: unknown }).round !== undefined)).toEqual([false, true]);
+  });
+
+  it('drops the round of a failed turn, so a retry never inherits stale questions', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const fake = askingSessions([
+      { ask: true, text: 'rate limited', ok: false },
+      { ask: false, text: 'plain reply' },
+    ]);
+    const sessions = new WarmSessions(fake.open);
+    let t = 0;
+    const backoff = new RefineBackoff();
+    await processPendingRefines(db, CONFIG, { sessions, backoff, buildContext: noContext, now: () => (t += 1) });
+    // Jump past the backoff so the retry runs.
+    await processPendingRefines(db, CONFIG, { sessions, backoff, buildContext: noContext, now: () => (t += 10 * 60 * 60_000) });
+    const agent = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
+    expect(agent).toHaveLength(1);
+    expect((agent[0].detail as { round?: unknown }).round).toBeUndefined();
   });
 });
 

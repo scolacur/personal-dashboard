@@ -384,3 +384,10 @@
   font-size: var(--font-size-sm);
   padding: var(--space-xs) 0;
 }
+
+// PD-744: a structured question round shown read-only under the agent's text.
+.turn-round {
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px dashed var(--border);
+}
