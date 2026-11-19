@@ -47,6 +47,27 @@ export function notifyAwaitingHuman(db: Database.Database, ticketId: number, tit
 }
 
 /**
+ * A Robot PR the merge bridge merged with no human approval (PD-765). Linking the PR itself is the
+ * point: it is the record of what shipped without Steve looking at it.
+ */
+export function notifyAutoMerged(
+  db: Database.Database,
+  ticketId: number,
+  prNumber: number,
+  prUrl: string,
+  now: number = Date.now(),
+): void {
+  let t: { display_id: string | null; title: string } | undefined;
+  try {
+    t = db.prepare('SELECT display_id, title FROM agent_tickets WHERE id = ?').get(ticketId) as typeof t;
+  } catch (err) {
+    logger.warn({ err, ticketId }, 'robot: auto-merge notification could not read the ticket (using its id)');
+  }
+  const label = t ? `${t.display_id ?? `#${ticketId}`} (${t.title})` : `ticket #${ticketId}`;
+  notify(db, 'agent_auto_merged', ticketId, `Auto-merged PR #${prNumber} for ${label}`, `Merged with green checks and review-gate, no human approval: ${prUrl}`, now);
+}
+
+/**
  * A LOOP-WIDE notification, with no ticket attached (PD-463's budget ceiling is the first: the loop
  * paused because of cumulative spend, which belongs to no single ticket — pinning it on whichever
  * ticket happened to be next would misattribute it).
