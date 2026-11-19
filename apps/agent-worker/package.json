@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "smoke": "tsx src/smoke.ts",
     "decisions:index": "tsx src/build-decisions-index.ts",
+    "secrets:scan": "tsx src/secret-scan-cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
