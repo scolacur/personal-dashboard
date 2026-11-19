@@ -429,3 +429,77 @@
   color: var(--muted);
   font-size: var(--font-size-sm);
 }
+
+// PD-760: the beside-the-button hint that the Queue gate will refuse, and the refusal panel itself.
+.proposal-actions .gate-hint {
+  font-size: var(--font-size-sm);
+  color: var(--status-warn, #b7791f);
+  cursor: help;
+}
+
+.queue-refusal {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-warn, #b7791f);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2);
+  font-size: var(--font-size-sm);
+
+  .queue-refusal-lead {
+    margin: 0 0 var(--space-xs);
+    font-weight: 600;
+  }
+
+  .queue-refusal-rows {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-sm);
+      padding: var(--space-xs) 0;
+    }
+  }
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  .queue-refusal-fix {
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm, 6px);
+    text-decoration: none;
+  }
+
+  .queue-refusal-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+  }
+
+  .approve {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .queue-refusal-cancel {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+}
