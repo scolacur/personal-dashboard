@@ -3,6 +3,7 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { processPendingRefines, RefineBackoff, WarmSessions } from './refine';
 import { ensureRobotStateTable } from '../robot/state';
+import { runAutostart } from './autostart';
 
 /**
  * Start the Refine job (D-044, PD-267/PD-268). Polls the shared DB for pending Refine
@@ -28,6 +29,13 @@ export function startRefineJob(db: Database.Database, config: AgentWorkerConfig)
   setInterval(() => {
     if (running) return;
     running = true;
+    // PD-747: start at most one new session first, so its kickoff is answered this same cycle.
+    // A scheduler error is logged and never stops the turn processing behind it.
+    try {
+      runAutostart(db, config.refineAutostart, Date.now());
+    } catch (err) {
+      logger.error({ err }, 'refine: auto-start cycle failed');
+    }
     void processPendingRefines(db, config, { sessions, backoff })
       .catch((err) => logger.error({ err }, 'refine: poll cycle failed'))
       .finally(() => {

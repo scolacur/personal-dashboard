@@ -352,3 +352,5 @@ export {
   validateAnswerSet,
   validateQuestionRound,
 } from './refine-questions';
+export type { RefineAutostartStatus } from './refine-questions';
+export { REFINE_AUTOSTART_STATUS_KEY } from './refine-questions';
