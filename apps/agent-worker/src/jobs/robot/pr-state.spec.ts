@@ -2,12 +2,27 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import { loadConfig } from '../../shared/config';
-import { decideReactivation, inlineCommentsPath, parsePrUrl, pollInReviewPrs, type PrState, type PrFetcher } from './pr-state';
+import { decideReactivation, inlineCommentsPath, isAutoMerge, parsePrUrl, pollInReviewPrs, type PrState, type PrFetcher } from './pr-state';
 import { ensureRunsTable, startRun, finishRun } from './runs';
 import { ensureRobotStateTable } from './state';
 
 const EMPTY: PrState = { state: 'OPEN', mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [], inlineComments: [] };
 const iso = (ms: number): string => new Date(ms).toISOString();
+
+describe('isAutoMerge (PD-765)', () => {
+  const owner = (state: string) => ({ authorLogin: 'scolacur', authorAssociation: 'OWNER', state, body: '', submittedAt: iso(1) });
+  const bot = { authorLogin: 'sortie-bot-55', authorAssociation: 'COLLABORATOR', state: 'APPROVED', body: '', submittedAt: iso(1) };
+  it('is true for a bridge merge with no trusted approval', () => {
+    expect(isAutoMerge({ ...EMPTY, state: 'MERGED', mergedBy: 'app/github-actions' })).toBe(true);
+    expect(isAutoMerge({ ...EMPTY, state: 'MERGED', mergedBy: 'github-actions', reviews: [bot, owner('COMMENTED')] })).toBe(true);
+  });
+  it('is false when Steve approved, merged by hand, or it is not merged', () => {
+    expect(isAutoMerge({ ...EMPTY, state: 'MERGED', mergedBy: 'app/github-actions', reviews: [owner('APPROVED')] })).toBe(false);
+    expect(isAutoMerge({ ...EMPTY, state: 'MERGED', mergedBy: 'scolacur' })).toBe(false);
+    expect(isAutoMerge({ ...EMPTY, state: 'MERGED' })).toBe(false);
+    expect(isAutoMerge({ ...EMPTY, state: 'OPEN', mergedBy: 'app/github-actions' })).toBe(false);
+  });
+});
 
 describe('parsePrUrl', () => {
   it('extracts owner/repo + number', () => {
@@ -100,13 +115,13 @@ describe('pollInReviewPrs', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     db.exec(`
-      CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
       CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
     `);
     ensureRunsTable(db);
     ensureRobotStateTable(db);
-    db.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (1, 'queue', 'robot', 'in-review')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, assignee, agent_state) VALUES (1, 'PD-1', 'Do the thing', 'queue', 'robot', 'in-review')").run();
     const runId = startRun(db, { ticketId: 1, issueNumber: 220, branch: 'robot/220' }, 10);
     finishRun(db, runId, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 100);
   });
@@ -138,6 +153,22 @@ describe('pollInReviewPrs', () => {
     expect(row.ag).toBe('done');
     const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = 1').all() as { type: string }[]).map((r) => r.type);
     expect(types).toContain('robot_completed');
+  });
+
+  it('raises one auto-merge notification when the bridge merged with no human approval (PD-765)', async () => {
+    const fetcher: PrFetcher = async () => ({ ...EMPTY, state: 'MERGED', mergedBy: 'app/github-actions' });
+    await pollInReviewPrs(db, cfg(), 5000, fetcher);
+    await pollInReviewPrs(db, cfg(), 5000 + 10 * 60_000, fetcher); // completed → no longer polled
+    const notifs = db.prepare("SELECT title FROM agent_notifications WHERE ticket_id = 1 AND kind = 'agent_auto_merged'").all() as { title: string }[];
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].title).toMatch(/^Auto-merged PR #\d+ for PD-1 \(Do the thing\)$/);
+  });
+
+  it('does not call an approved merge an auto-merge (PD-765)', async () => {
+    const approved = { authorLogin: 'scolacur', authorAssociation: 'OWNER', state: 'APPROVED', body: '', submittedAt: iso(2000) };
+    const fetcher: PrFetcher = async () => ({ ...EMPTY, state: 'MERGED', mergedBy: 'app/github-actions', reviews: [approved] });
+    await pollInReviewPrs(db, cfg(), 5000, fetcher);
+    expect(db.prepare("SELECT 1 FROM agent_notifications WHERE kind = 'agent_auto_merged'").get()).toBeUndefined();
   });
 
   it('parks an in-review ticket needs-human when its PR was closed unmerged (C6/PD-347)', async () => {

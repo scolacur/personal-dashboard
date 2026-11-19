@@ -1,6 +1,18 @@
 # Robot auto-merge bridge: squash-merges any PR an authorized human has approved
 # once it is fully mergeable (all required checks green, no conflicts, reviews satisfied).
 #
+# GATED ROBOT MERGES (PD-765, D-098): a `robot/*` PR also merges with NO approval once its
+# `review-gate` status is `success` — the agent-worker posts it from both Evaluator lenses' `ship`
+# verdicts — and every other check is green. Two independent conditions hold that path shut:
+#   - the repo variable AUTO_MERGE_ROBOT must be exactly `on` (unset or anything else = off). This is
+#     the kill switch; Steve can still approve or merge by hand. Unset-means-off keeps the bridge from
+#     attempting merges that branch protection would refuse until the PD-766 cutover drops the
+#     approval requirement.
+#   - the bridge itself reads `review-gate` == success on the head commit. It does not rely on branch
+#     protection requiring that status, so a mis-set protection rule cannot let an ungated PR through.
+# A CHANGES_REQUESTED review decision also blocks it. Path-guard (D-047) is a required check, so a
+# sensitive-path PR waits for Steve's ack exactly as before.
+#
 # WHY THIS EXISTS: branch protection on `main` requires the `verify` check + 1 approving
 # review + no merge conflicts, but a pure APPROVED review triggers nothing on its own.
 # Without this, Steve would merge every green PR by hand. This bridge closes that gap and
@@ -61,12 +73,18 @@ on:
   # Fires when the `ci` workflow finishes — catches the common case where the approval
   # landed BEFORE CI was green. MUST be workflow_run (see TRIGGER note in the header):
   # check_suite/status events from GITHUB_TOKEN don't trigger workflows, so they were dead.
+  # PD-765: also `review-gate`, which posts its status with GITHUB_TOKEN (whose `status` event is
+  # suppressed), so its completion is the only signal that a non-Robot PR's gate just went green.
   workflow_run:
-    workflows: ["ci"]
+    workflows: ["ci", "review-gate"]
     types: [completed]
   # Fires when a PR is force-pushed or reopened after an earlier check.
   pull_request:
     types: [synchronize, reopened]
+  # PD-765: the agent-worker posts `review-gate` with its own token (REVIEW_GATE_TOKEN), and statuses
+  # posted by a PAT DO trigger workflows — only GITHUB_TOKEN-originated events are suppressed. This is
+  # what merges a Robot PR whose Evaluator verdict lands after CI went green.
+  status:
 
 permissions:
   contents: write
@@ -74,7 +92,7 @@ permissions:
 
 # One in-flight merge attempt per PR (or per commit SHA when the PR number is unknown).
 concurrency:
-  group: robot-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || 'global' }}
+  group: robot-auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.head_sha || github.event.sha || 'global' }}
   cancel-in-progress: false
 
 jobs:
@@ -83,6 +101,7 @@ jobs:
     #  - pull_request_review: only an APPROVED review from an authorized user.
     #  - workflow_run: only when the `ci` run succeeded (a failed CI can't be CLEAN anyway).
     #  - pull_request (synchronize/reopened): always run.
+    #  - status: only `review-gate` turning success (PD-765). Every other status is noise.
     if: >-
       (
         github.event_name == 'pull_request_review' &&
@@ -99,11 +118,18 @@ jobs:
         github.event_name == 'workflow_run' &&
         github.event.workflow_run.conclusion == 'success'
       ) ||
-      github.event_name == 'pull_request'
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'status' &&
+        github.event.context == 'review-gate' &&
+        github.event.state == 'success'
+      )
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
+      # PD-765 kill switch: only the exact value `on` enables gated (approval-less) Robot merges.
+      AUTO_MERGE_ROBOT: ${{ vars.AUTO_MERGE_ROBOT }}
     steps:
       # PD-764: the shared approval script. Pinned to the default branch, never the PR's head, so a PR
       # cannot change the rule that decides whether it may merge.
@@ -114,7 +140,7 @@ jobs:
           sparse-checkout: .github/scripts
           persist-credentials: false
 
-      - name: Squash-merge any approved and fully mergeable PRs
+      - name: Squash-merge any approved (or gated Robot) and fully mergeable PRs
         run: |
           set -euo pipefail
 
@@ -126,10 +152,14 @@ jobs:
 
           if [ "$EVENT" = "pull_request_review" ] || [ "$EVENT" = "pull_request" ]; then
             PRS=("${{ github.event.pull_request.number }}")
-          elif [ "$EVENT" = "workflow_run" ]; then
-            # workflow_run carries no PR number — map the CI run's head SHA to an open PR.
+          elif [ "$EVENT" = "workflow_run" ] || [ "$EVENT" = "status" ]; then
+            # Neither carries a PR number — map the commit SHA to an open PR whose head it is.
             # (Note: gh's --jq flag does NOT accept --arg, so pipe to the runner's real jq.)
-            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            if [ "$EVENT" = "status" ]; then
+              HEAD_SHA="${{ github.event.sha }}"
+            else
+              HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            fi
             mapfile -t PRS < <(
               gh pr list --repo "$REPO" --state open --json number,headRefOid \
                 | jq -r --arg sha "$HEAD_SHA" \
@@ -147,7 +177,7 @@ jobs:
 
             # ── 2. Idempotency: skip if not OPEN ────────────────────────────────
             DATA="$(gh pr view "$PR" --repo "$REPO" \
-              --json state,mergeable,mergeStateStatus,reviews)"
+              --json state,headRefName,reviewDecision,reviews,statusCheckRollup)"
             STATE="$(echo "$DATA" | jq -r .state)"
 
             if [ "$STATE" != "OPEN" ]; then
@@ -162,12 +192,36 @@ jobs:
             # from the default branch above, so the two workflows cannot disagree about who may approve.
             AUTHORIZED_APPROVED="$(echo "$DATA" | BOT_LOGIN="$BOT_LOGIN" .github/scripts/authorized-approval.sh)"
 
+            # PD-765: without an approval, only a gated Robot PR may continue.
+            GATED="no"
             if [ "$AUTHORIZED_APPROVED" != "true" ]; then
-              echo "PR #$PR: no authorized standing APPROVED review — skip."
-              continue
+              HEAD_REF="$(echo "$DATA" | jq -r .headRefName)"
+              case "$HEAD_REF" in
+                robot/*) ;;
+                *) echo "PR #$PR: no authorized standing APPROVED review — skip."; continue ;;
+              esac
+              if [ "$AUTO_MERGE_ROBOT" != "on" ]; then
+                echo "PR #$PR: Robot PR without approval, and AUTO_MERGE_ROBOT is '${AUTO_MERGE_ROBOT:-unset}' (not 'on') — skip."
+                continue
+              fi
+              # The commit status for the head commit; the rollup holds only each context's latest.
+              REVIEW_GATE="$(echo "$DATA" | jq -r '
+                [ .statusCheckRollup[]? | select((.context // "") == "review-gate") ]
+                | sort_by(.startedAt // .createdAt // "") | last | (.state // "MISSING")
+              ')"
+              if [ "$REVIEW_GATE" != "SUCCESS" ]; then
+                echo "PR #$PR: Robot PR without approval, review-gate=$REVIEW_GATE — skip until the Evaluator ships it."
+                continue
+              fi
+              if [ "$(echo "$DATA" | jq -r '.reviewDecision // ""')" = "CHANGES_REQUESTED" ]; then
+                echo "PR #$PR: changes requested — skip."
+                continue
+              fi
+              GATED="yes"
+              echo "PR #$PR: Robot PR with review-gate=SUCCESS and AUTO_MERGE_ROBOT=on — checking mergeability."
+            else
+              echo "PR #$PR has an authorized APPROVED review — checking mergeability."
             fi
-
-            echo "PR #$PR has an authorized APPROVED review — checking mergeability."
 
             # ── 4. Poll mergeStateStatus past UNKNOWN ──
             # UNKNOWN means GitHub has not finished computing mergeability yet (distinct from
@@ -237,7 +291,18 @@ jobs:
 
               echo "PR #$PR mergeable=$MERGEABLE reviewDecision=$REVIEW_DECISION others_pending=$OTHERS_PENDING others_failed=$OTHERS_FAILED"
 
-              if [ "$MERGEABLE" = "MERGEABLE" ] && [ "$REVIEW_DECISION" = "APPROVED" ] \
+              # Reviews satisfied: an approval, or (gated Robot PR, PD-765) no review requirement left
+              # unmet — REVIEW_REQUIRED means protection still wants an approval (pre-cutover), so
+              # attempting would only be refused.
+              REVIEWS_OK="no"
+              if [ "$REVIEW_DECISION" = "APPROVED" ]; then
+                REVIEWS_OK="yes"
+              elif [ "$GATED" = "yes" ] && [ "$REVIEW_DECISION" != "REVIEW_REQUIRED" ] \
+                   && [ "$REVIEW_DECISION" != "CHANGES_REQUESTED" ]; then
+                REVIEWS_OK="yes"
+              fi
+
+              if [ "$MERGEABLE" = "MERGEABLE" ] && [ "$REVIEWS_OK" = "yes" ] \
                  && [ "$OTHERS_PENDING" -eq 0 ] && [ "$OTHERS_FAILED" -eq 0 ]; then
                 ATTEMPT="yes"
                 SELF_BLOCKED="yes"
@@ -260,7 +325,11 @@ jobs:
                 echo "PR #$PR: GitHub refused the merge — branch protection is the authority; leaving it open."
               fi
             else
-              echo "PR #$PR is CLEAN with an authorized APPROVED review — squash-merging."
+              if [ "$GATED" = "yes" ]; then
+                echo "PR #$PR is CLEAN, gated by review-gate (no approval) — squash-merging (PD-765)."
+              else
+                echo "PR #$PR is CLEAN with an authorized APPROVED review — squash-merging."
+              fi
               gh pr merge "$PR" --repo "$REPO" --squash
               echo "PR #$PR merged successfully."
             fi

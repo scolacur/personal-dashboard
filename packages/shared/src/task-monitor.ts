@@ -657,12 +657,16 @@ export function queueEntryRefusals(criteria: readonly QueueCriterion[]): QueueCr
 // parking for a human (ask_human / needs-human); widget notifications plug in later.
 // 'agent_refine' (D-044, PD-267): the Refine/agent-worker agent posted a turn (plan, questions,
 // or needs-full-refine) on a ticket's Refine thread and wants Steve's attention.
-export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine';
+/** `agent_auto_merged` (PD-765): the merge bridge merged a Robot PR with no human approval, on the
+ *  strength of its required checks and the `review-gate` status (D-098). Informational, not a call
+ *  to act. */
+export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_awaiting_human',
   'agent_needs_human',
   'agent_refine',
+  'agent_auto_merged',
 ] as const;
 
 export interface AgentNotification {

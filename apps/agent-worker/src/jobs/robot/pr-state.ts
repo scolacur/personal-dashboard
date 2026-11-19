@@ -7,7 +7,7 @@ import { logger } from '../../shared/logger';
 import { logMilestone } from './events';
 import { lastHandoffAt } from './runs';
 import { setAgentState, completeTicket } from './board';
-import { notifyNeedsHuman } from './notify';
+import { notifyAutoMerged, notifyNeedsHuman } from './notify';
 import { readStateNumber, writeState } from './state';
 
 const run = promisify(execFile);
@@ -49,6 +49,8 @@ export interface PrState {
    *  via `reviews`/`comments`, so they're fetched separately — a bare inline comment posts as a
    *  COMMENTED review with an empty body and would otherwise never trigger rework. */
   inlineComments: PrComment[];
+  /** Login of whoever merged the PR (PD-765); null/absent while it is unmerged or unknown. */
+  mergedBy?: string | null;
 }
 
 /** Fetch a PR's state (injectable so tests never shell out). Returns null on any failure. */
@@ -71,7 +73,7 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
       };
       const { stdout } = await run(
         'gh',
-        ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,mergeable,reviewDecision,reviews,comments'],
+        ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,mergeable,reviewDecision,reviews,comments,mergedBy'],
         { env },
       );
       const raw = JSON.parse(stdout) as {
@@ -80,6 +82,7 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
         reviewDecision?: string | null;
         reviews?: { author?: { login?: string }; authorAssociation?: string; state?: string; body?: string; submittedAt?: string }[];
         comments?: { author?: { login?: string }; authorAssociation?: string; body?: string; createdAt?: string }[];
+        mergedBy?: { login?: string } | null;
       };
       return {
         state: raw.state ?? 'OPEN',
@@ -99,6 +102,7 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
           createdAt: c.createdAt ?? '',
         })),
         inlineComments: await fetchInlineComments(repo, prNumber, env),
+        mergedBy: raw.mergedBy?.login ?? null,
       };
     } catch (err) {
       logger.warn({ err, repo, prNumber }, 'robot: PR-state fetch failed (skipping this poll)');
@@ -201,6 +205,18 @@ export function decideReactivation(pr: PrState, lastHandoffAt: number): Reactiva
   return { reactivate: false };
 }
 
+/**
+ * Was this merged PR an AUTO-merge (PD-765)? True when the merge bridge did it (the Actions bot is
+ * the merger) and no trusted human approval stands on it — i.e. it shipped on checks + review-gate
+ * alone. A PR Steve approved and the bridge then merged is his merge, not an auto-merge; so is one
+ * he merged by hand. Pure.
+ */
+export function isAutoMerge(pr: PrState): boolean {
+  if (pr.state !== 'MERGED') return false;
+  if (!/^(app\/)?github-actions(\[bot\])?$/.test(pr.mergedBy ?? '')) return false;
+  return !pr.reviews.some((r) => r.state === 'APPROVED' && isTrusted(r.authorAssociation, r.body));
+}
+
 interface InReviewTarget {
   ticketId: number;
   repo: string;
@@ -272,6 +288,10 @@ export async function pollInReviewPrs(
       completeTicket(db, target.ticketId, now);
       logMilestone(db, target.ticketId, ROBOT_EVENT.completed, { prNumber: target.prNumber }, now);
       logger.info({ ticketId: target.ticketId, prNumber: target.prNumber }, 'robot: PR merged — ticket completed');
+      // Exactly once: completing the ticket takes it out of in-review, so this branch never re-runs.
+      if (isAutoMerge(pr)) {
+        notifyAutoMerged(db, target.ticketId, target.prNumber, `https://github.com/${target.repo}/pull/${target.prNumber}`, now);
+      }
       continue;
     }
     if (pr.state === 'CLOSED') {
