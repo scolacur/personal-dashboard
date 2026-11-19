@@ -52,6 +52,7 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   parkRefine,
+  setBackfillExcluded,
   projectExists,
   rejectRefine,
   RelationCycleError,
@@ -723,6 +724,23 @@ export function registerRoutes(
   app.get(`${base}/refine/awaiting`, async () => {
     const items = listAwaitingRefine(db);
     return { items, count: items.length };
+  });
+
+  // PD-748: switch an Epic in or out of the Refine backfill; its members inherit it.
+  app.post(`${base}/tickets/:id/backfill-exclude`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (typeof body.excluded !== 'boolean') {
+      return reply.status(400).send({ error: 'excluded must be a boolean', code: 'INVALID_BODY' });
+    }
+    const result = setBackfillExcluded(db, id, body.excluded);
+    if (!result.ok) {
+      return result.reason === 'not_found'
+        ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
+        : reply.status(400).send({ error: 'only an Epic can be excluded from the backfill', code: 'NOT_EPIC' });
+    }
+    return result.ticket;
   });
 
   // Park a Refine session (PD-743, D-096): end it with no commit. 409 when there is no thread or

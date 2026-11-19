@@ -53,6 +53,7 @@
   } from '../../epic-members';
   import EpicPicker from '../../EpicPicker.svelte';
   import EpicJoinModal from '../../EpicJoinModal.svelte';
+  import BackfillToggle from './BackfillToggle.svelte';
   import { joinWriteOpts, planEpicJoin, unrefinedToast, type EpicJoinChoice, type EpicJoinPlan } from '../../epic-join';
   import { toast } from '$lib/toast-store.svelte';
   import TicketBoard from '../../task-tracker/TicketBoard.svelte';
@@ -778,6 +779,11 @@
       {/if}
 
       {#if ticket.isEpic}
+        <BackfillToggle
+          ticketId={ticket.id}
+          excluded={ticket.backfillExcluded ?? false}
+          onChanged={() => ticketId && load(ticketId)}
+        />
         <section class="epic-members">
           <div class="epic-members-head">
             <h2>Members</h2>

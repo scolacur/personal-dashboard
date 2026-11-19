@@ -136,6 +136,17 @@ export async function updateTicket(
  * it carries obligations a generic field write cannot express — clear the staleness, and re-arm the
  * members a stale-pause un-armed. Approving an agent's proposal must not do the second thing.
  */
+/** Switch an Epic in or out of the Refine backfill (PD-748); its members inherit it. */
+export async function setBackfillExcluded(id: number, excluded: boolean): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/backfill-exclude`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ excluded }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
 export async function markRefined(id: number): Promise<AgentTicket> {
   const res = await fetch(`${BASE}/${id}/mark-refined`, {
     method: 'POST',

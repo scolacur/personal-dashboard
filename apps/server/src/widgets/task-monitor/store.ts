@@ -44,6 +44,7 @@ import {
   REFINE_PROPOSAL_EVENT,
   REFINE_STATE_EVENT,
   REFINE_AUTOSTART_STATUS_KEY,
+  REFINE_BACKFILL_EXCLUDED_EVENT,
   REFINE_STATE_EVENT_TYPES,
   renderRoundAnswers,
   ROBOT_EVENT,
@@ -84,6 +85,8 @@ interface TicketRow {
   /** Newest refine_* event type for this ticket, joined in by the list/get queries
    *  (absent on create/update returns → refineState is null there). */
   latest_refine_type?: string | null;
+  /** PD-748: the newest backfill-exclude event's `excluded` (1/0), joined like latest_refine_type. */
+  backfill_excluded?: number | null;
 }
 
 interface ProjectRow {
@@ -137,6 +140,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
         : refineStateFromLatestType(row.latest_refine_type),
     refined: row.refined === 1,
     refineStale: row.refine_stale === 1,
+    backfillExcluded: row.backfill_excluded === 1,
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
     maxTurns: row.max_turns,
@@ -223,7 +227,12 @@ const LATEST_REFINE_TYPE_SELECT = `(
   SELECT e.type FROM agent_ticket_events e
    WHERE e.ticket_id = t.id AND e.type IN (${REFINE_STATE_EVENT_TYPES.map((s) => `'${s}'`).join(', ')})
    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) AS latest_refine_type`;
+) AS latest_refine_type,
+(
+  SELECT json_extract(e.detail, '$.excluded') FROM agent_ticket_events e
+   WHERE e.ticket_id = t.id AND e.type = '${REFINE_BACKFILL_EXCLUDED_EVENT}'
+   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) AS backfill_excluded`;
 
 /**
  * Turns used by each ticket's LATEST Robot run (PD-230), keyed by ticket id.
@@ -1421,6 +1430,26 @@ export function appendStructuredRefineReply(
     .prepare('SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE id = ?')
     .get(Number(res.lastInsertRowid)) as TicketEventRow;
   return { ok: true, event: rowToTicketEvent(row) };
+}
+
+export type BackfillExcludeResult = { ok: true; ticket: AgentTicket } | { ok: false; reason: 'not_found' | 'not_epic' };
+
+/**
+ * Switch an Epic in or out of the Refine backfill (PD-748). Its members inherit the setting. Written
+ * as an event rather than a column so it needs no migration, and so the timeline shows who changed it
+ * and when. Only Epics: a single ticket is kept out of Refine by parking its session.
+ */
+export function setBackfillExcluded(db: Database.Database, ticketId: number, excluded: boolean): BackfillExcludeResult {
+  const ticket = getTicket(db, ticketId);
+  if (!ticket) return { ok: false, reason: 'not_found' };
+  if (!ticket.isEpic) return { ok: false, reason: 'not_epic' };
+  db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+    ticketId,
+    REFINE_BACKFILL_EXCLUDED_EVENT,
+    JSON.stringify({ excluded }),
+    Date.now(),
+  );
+  return { ok: true, ticket: getTicket(db, ticketId)! };
 }
 
 export type ParkRefineResult =

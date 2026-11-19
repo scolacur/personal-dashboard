@@ -32,7 +32,7 @@ export function startRefineJob(db: Database.Database, config: AgentWorkerConfig)
     // PD-747: start at most one new session first, so its kickoff is answered this same cycle.
     // A scheduler error is logged and never stops the turn processing behind it.
     try {
-      runAutostart(db, config.refineAutostart, Date.now());
+      runAutostart(db, { ...config.refineAutostart, repo: config.githubRepo }, Date.now());
     } catch (err) {
       logger.error({ err }, 'refine: auto-start cycle failed');
     }
