@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { ROBOT_MAX_TURNS_LIMIT, coerceTicketStatus } from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { RefineProposal } from '@dashboard/shared';
+import type { RefineProposal, RefineQuestionRound } from '@dashboard/shared';
+import { buildAskQuestionsTool } from './ask-tool';
 
 /**
  * The `propose_commit` SDK tool (D-044, PD-269). The agent-worker NEVER writes tickets — when a
@@ -136,12 +137,13 @@ export function validateProposalShape(
 }
 
 /**
- * Build the in-process MCP server exposing `propose_commit`. `onProposal` runs synchronously
- * in the agent-worker when the agent calls the tool (it persists the proposal to the shared DB).
+ * Build the in-process `refine` MCP server: `propose_commit`, plus `ask_questions` (PD-744) when
+ * `opts.onRound` is given. `onProposal` runs synchronously in the agent-worker when the agent calls
+ * propose_commit (it persists the proposal to the shared DB); `onRound` stages a question round.
  */
 export function buildProposeToolServer(
   onProposal: (proposal: RefineProposal) => void,
-  opts: { targetIsEpic?: boolean } = {},
+  opts: { targetIsEpic?: boolean; onRound?: (round: RefineQuestionRound) => void } = {},
 ) {
   const proposeCommit = tool(
     'propose_commit',
@@ -194,5 +196,6 @@ export function buildProposeToolServer(
     },
   );
 
-  return createSdkMcpServer({ name: 'refine', version: '0.0.1', tools: [proposeCommit] });
+  const tools = opts.onRound ? [proposeCommit, buildAskQuestionsTool(opts.onRound)] : [proposeCommit];
+  return createSdkMcpServer({ name: 'refine', version: '0.0.1', tools });
 }

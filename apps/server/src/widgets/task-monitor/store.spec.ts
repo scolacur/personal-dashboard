@@ -4,6 +4,8 @@ import { bootstrapSchema } from './schema';
 import {
   addRelation,
   appendRefineReply,
+  appendStructuredRefineReply,
+  openQuestionRound,
   approveRefine,
   archiveTicket,
   computeEpicSummary,
@@ -726,6 +728,77 @@ describe('an ended Refine session stops awaiting Steve; Park (PD-743, D-096)', (
     expect(refineSessionEnd([ev('refine_parked', 3), ev('refine_agent', 2)])).toBe('parked');
     // Unrelated events never end a session, and order in the array doesn't matter.
     expect(refineSessionEnd([ev('refine_committed', 3), ev('status_changed', 9), ev('refine_human', 4)])).toBeNull();
+  });
+});
+
+describe('structured question rounds: openQuestionRound + appendStructuredRefineReply (PD-744)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+  const ROUND = {
+    questions: [
+      {
+        id: 'sync',
+        question: 'Live sync or reload-only?',
+        why: 'Both surfaces are on screen at once.',
+        options: [
+          { label: 'Live', description: 'Instant, a little more code.' },
+          { label: 'Reload', description: 'Simpler, visibly out of sync.' },
+        ],
+        recommended: 0,
+      },
+    ],
+    assumptions: [{ text: 'Sounds are synthesized.', source: 'PROJECT.md, Conventions' }],
+  };
+  const at = (ticketId: number, type: string, ago: number, detail: unknown) =>
+    db
+      .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')
+      .run(ticketId, type, JSON.stringify(detail), Date.now() - ago);
+
+  it('finds the round on the newest agent turn, and none once Steve has replied', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_human', 3000, { text: 'go' });
+    expect(openQuestionRound(db, t.id)).toBeNull();
+    at(t.id, 'refine_agent', 2000, { text: 'q', sessionId: 's', round: ROUND });
+    expect(openQuestionRound(db, t.id)?.round.questions[0].id).toBe('sync');
+    at(t.id, 'refine_human', 1000, { text: 'typed instead' });
+    expect(openQuestionRound(db, t.id)).toBeNull();
+  });
+
+  it('ignores a stored round that fails validation', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_agent', 2000, { text: 'q', round: { ...ROUND, questions: [{ ...ROUND.questions[0], recommended: 9 }] } });
+    expect(openQuestionRound(db, t.id)).toBeNull();
+  });
+
+  it('writes the rendered answers as a refine_human turn the agent reads, keeping the structure', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_agent', 2000, { text: 'q', sessionId: 's', round: ROUND });
+    const r = appendStructuredRefineReply(db, t.id, { answers: [{ questionId: 'sync', choice: 0 }], overruled: [0, 0], note: '  ' });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const d = r.event.detail as { text: string; answers: { overruled?: number[]; note?: string }; roundEventId: number };
+    expect(d.text).toContain('→ Live (your recommendation)');
+    expect(d.text).toContain('Sounds are synthesized.');
+    expect(d.answers.overruled).toEqual([0]);
+    expect(d.answers.note).toBeUndefined();
+    expect(getTicket(db, t.id)!.refineState).toBe('refining');
+    // The round is answered, so a second structured reply has nothing to answer.
+    expect(appendStructuredRefineReply(db, t.id, { answers: [{ questionId: 'sync', choice: 1 }] })).toEqual({
+      ok: false,
+      reason: 'no_open_round',
+    });
+  });
+
+  it('refuses invalid answers with the reason, and unknown tickets', () => {
+    const t = createTicket(db, { title: 'x', projectId: pd });
+    at(t.id, 'refine_agent', 2000, { text: 'q', round: ROUND });
+    const r = appendStructuredRefineReply(db, t.id, { answers: [] });
+    expect(r).toEqual({ ok: false, reason: 'invalid', message: 'unanswered: sync' });
+    expect(appendStructuredRefineReply(db, 9999, { answers: [] })).toEqual({ ok: false, reason: 'not_found' });
   });
 });
 

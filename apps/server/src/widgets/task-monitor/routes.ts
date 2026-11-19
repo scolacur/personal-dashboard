@@ -6,6 +6,7 @@ import {
   TICKET_ASSIGNEES,
   RELATION_TYPES,
   type CreateTicketInput,
+  type RefineAnswerSet,
   type RelationType,
   type TicketAssignee,
   type TicketPriority,
@@ -17,6 +18,7 @@ import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import {
   addRelation,
   appendRefineReply,
+  appendStructuredRefineReply,
   appendRobotReply,
   approveRefine,
   markTicketRefined,
@@ -676,6 +678,34 @@ export function registerRoutes(
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
     const body = (request.body ?? {}) as Record<string, unknown>;
+    // PD-744: structured answers to the open question round. The server renders them into the
+    // text the agent reads, so the agent-worker consumes them exactly like a typed reply.
+    if (body.answers !== undefined) {
+      if (!Array.isArray(body.answers)) {
+        return reply.status(400).send({ error: 'answers must be an array', code: 'INVALID_ANSWERS' });
+      }
+      if (body.overruled !== undefined && !Array.isArray(body.overruled)) {
+        return reply.status(400).send({ error: 'overruled must be an array', code: 'INVALID_ANSWERS' });
+      }
+      if (body.note !== undefined && typeof body.note !== 'string') {
+        return reply.status(400).send({ error: 'note must be a string', code: 'INVALID_ANSWERS' });
+      }
+      const result = appendStructuredRefineReply(db, id, {
+        answers: body.answers as RefineAnswerSet['answers'],
+        overruled: body.overruled as number[] | undefined,
+        note: body.note as string | undefined,
+      });
+      if (!result.ok) {
+        if (result.reason === 'not_found') {
+          return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+        }
+        if (result.reason === 'no_open_round') {
+          return reply.status(409).send({ error: 'there is no open question round to answer', code: 'NO_OPEN_ROUND' });
+        }
+        return reply.status(400).send({ error: 'message' in result ? result.message : 'invalid answers', code: 'INVALID_ANSWERS' });
+      }
+      return reply.status(201).send(result.event);
+    }
     if (typeof body.body !== 'string' || body.body.trim() === '') {
       return reply.status(400).send({ error: 'reply body is required', code: 'INVALID_BODY' });
     }

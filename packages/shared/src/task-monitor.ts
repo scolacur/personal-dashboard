@@ -3,6 +3,7 @@
 
 // Type-only, and one-directional: `agent-prompts.ts` imports nothing, so this cannot cycle.
 import type { EvaluatorVerdict } from './agent-prompts';
+import type { RefineAnswerSet, RefineQuestionRound } from './refine-questions';
 
 // Who the ticket is assigned to. 'steve' = human owner; 'robot' = the Robot loop.
 // null = unassigned.
@@ -718,6 +719,12 @@ export interface RefineDetail {
   text: string;
   /** Present only on refine_agent turns; the SDK session id to resume from. */
   sessionId?: string;
+  /** PD-744: on a refine_agent turn, the structured question round the agent asked via
+   *  `ask_questions`. Absent on free-text turns. */
+  round?: RefineQuestionRound;
+  /** PD-744: on a refine_human turn, the structured answers Steve sent; `text` holds their
+   *  rendering, which is what the agent reads. */
+  answers?: RefineAnswerSet;
 }
 
 /** A single Refine turn, projected from a refine_* `TicketEvent` for the thread UI. */
@@ -727,6 +734,10 @@ export interface RefineMessage {
   role: RefineRole;
   text: string;
   createdAt: number;
+  /** PD-744: the structured round on an agent turn, if it asked one. */
+  round?: RefineQuestionRound;
+  /** PD-744: the structured answers on a human turn, if it sent them. */
+  answers?: RefineAnswerSet;
 }
 
 /** True for the two Refine event types. */
@@ -972,6 +983,8 @@ export function refineThreadFromEvents(events: TicketEvent[]): RefineMessage[] {
       role,
       text: typeof detail.text === 'string' ? detail.text : '',
       createdAt: e.createdAt,
+      ...(detail.round ? { round: detail.round } : {}),
+      ...(detail.answers ? { answers: detail.answers } : {}),
     });
   }
   return out;
