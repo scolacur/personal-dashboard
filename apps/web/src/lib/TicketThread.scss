@@ -385,9 +385,47 @@
   padding: var(--space-xs) 0;
 }
 
-// PD-744: a structured question round shown read-only under the agent's text.
+// PD-744/PD-745: a structured question round under the agent's text — the answer form while it
+// is open, a folded read-only copy once it has been answered.
 .turn-round {
   margin-top: var(--space-sm);
   padding-top: var(--space-sm);
   border-top: 1px dashed var(--border);
+  min-width: 0;
+}
+
+.turn-round-past summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+// PD-745: a structured reply, as question → chosen answer.
+.answer-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  li {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+}
+
+.answer-q {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.answer-a {
+  overflow-wrap: anywhere;
+}
+
+.answer-rec {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
 }

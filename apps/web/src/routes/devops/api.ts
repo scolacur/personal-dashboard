@@ -1,5 +1,6 @@
 import type {
   AgentProject,
+  RefineAnswerSet,
   AgentRun,
   AgentTicket,
   CreateTicketInput,
@@ -272,6 +273,19 @@ export async function approveRefine(
   if (!res.ok) return parseError(res);
   const body = (await res.json()) as { queued?: boolean; populated?: boolean };
   return { queued: body.queued === true, populated: body.populated === true };
+}
+
+/** Answer the open Refine question round with structured answers (PD-744/PD-745). The server
+ *  validates them against the round and writes the rendered text the agent reads. Throws on 409
+ *  (no open round — e.g. already answered in another tab) / 400 (invalid answers). */
+export async function postRefineAnswers(id: number, answers: RefineAnswerSet): Promise<TicketEvent> {
+  const res = await fetch(`${BASE}/${id}/refine-reply`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(answers),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketEvent>;
 }
 
 /** Park the Refine session (PD-743, D-096): end it without a commit. A later reply reopens it.
