@@ -117,6 +117,9 @@ export function codingEnv(config: AgentWorkerConfig): Record<string, string | un
   return {
     ...process.env,
     GITHUB_READ_TOKEN: undefined,
+    // PD-763: the review-gate token marks a Robot PR as reviewed. If the Robot could read it, it
+    // could approve its own work, so it never reaches the coding session.
+    REVIEW_GATE_TOKEN: undefined,
     // The image sets NODE_ENV=production for the WORKER, and it leaked into the Robot's shell:
     // `npm ci` then omits devDependencies (vite, vitest, svelte-check), so the prompt's plain
     // `npm ci && npm run verify` could not build, and the Robot spent turns working around it

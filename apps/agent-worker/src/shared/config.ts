@@ -101,6 +101,12 @@ export interface EvaluatorConfig {
   budgetTurns: number;
   /** Token ceiling per window; 0 disables (the default), same reasoning as the Robot's. */
   budgetTokens: number;
+  /** PD-763: a GitHub token with **Commit statuses: write** only, used to post `review-gate` on Robot
+   *  PRs. Worker-only — stripped from the coding session (`codingEnv`). Empty = post nothing. */
+  reviewGateToken: string;
+  /** PD-763: base URL of the dashboard's ticket pages (e.g. `http://host:8088/devops/tickets`), so a
+   *  status links to its ticket. Optional. */
+  reviewGateTicketUrlBase: string;
 }
 
 /**
@@ -237,6 +243,8 @@ export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
     budgetWindowMs: Number(env.EVALUATOR_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
     budgetTurns: Number(env.EVALUATOR_BUDGET_TURNS ?? 200),
     budgetTokens: Number(env.EVALUATOR_BUDGET_TOKENS ?? 0),
+    reviewGateToken: env.REVIEW_GATE_TOKEN ?? '',
+    reviewGateTicketUrlBase: env.REVIEW_GATE_TICKET_URL_BASE ?? '',
   };
 }
 

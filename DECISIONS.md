@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-098](DECISIONS/D-098-robot-prs-are-gated-by-a-review-gate-status-the-evaluator-sets.md)** — Robot PRs are gated by a `review-gate` status the Evaluator sets with a statuses-only token the Robot never holds
 - **[D-097](DECISIONS/D-097-a-body-edit-to-a-refined-ticket-must-say-whether-it-stays-refined.md)** — A body edit to a refined ticket must say whether it stays refined, in the UI as a prompt and in the API as a required field
 - **[D-096](DECISIONS/D-096-refine-is-an-asynchronous-question-queue-paced-by-answers.md)** — Refine is an asynchronous question queue, auto-started on every new ticket and paced by how fast Steve answers
 - **[D-095](DECISIONS/D-095-habit-schedules-are-effective-dated-and-the-today-view-is-server-computed.md)** — Habit schedules are effective-dated rows, and due/streak are pure shared functions computed in a server Today view

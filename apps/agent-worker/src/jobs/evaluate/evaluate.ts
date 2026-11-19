@@ -23,6 +23,15 @@ import { runEvaluatorTurn, type RunEvaluatorTurn } from './evaluate-agent';
 // recorded findings (`brief.ts`), so the wording the Robot receives always matches the stored
 // verdict rather than being a second copy that can drift.
 import { MAX_DIFF_CHARS, MAX_EVALUATION_ROUNDS, blockingFindings, parseEvaluatorReport } from './verdict';
+import {
+  defaultHeadShaFetcher,
+  defaultStatusPoster,
+  gateForOutcome,
+  gateReviewing,
+  gateTargetUrl,
+  type HeadShaFetcher,
+  type StatusPoster,
+} from './review-gate';
 
 const run = promisify(execFile);
 
@@ -31,9 +40,9 @@ const run = promisify(execFile);
  * the verdict on the ticket timeline, and send a `revise` back through the loop's existing rework
  * path.
  *
- * **It is a reviewer, not a gate.** Nothing here blocks a merge, and that is deliberate — the
- * path-guard is the gate, and a second merge blocker with no track record is how a loop deadlocks
- * (PD-487's own out-of-scope). A human still reviews and merges every PR.
+ * **Its verdict feeds the `review-gate` status (D-098, amending D-076).** On its own it still blocks
+ * nothing: `review-gate` only gates merging once branch protection requires it (PD-766). With
+ * `REVIEW_GATE_TOKEN` unset, no status is posted and this is the advisory reviewer D-076 described.
  *
  * **It runs post-hand-off, as its own process, and that is load-bearing.** An in-session evaluator
  * would be sub-agent-shaped, and sub-agent turns are invisible to `num_turns` — the exact accounting
@@ -78,6 +87,9 @@ export interface EvaluatePassDeps {
   runAgent?: RunEvaluatorTurn;
   fetchDiff?: DiffFetcher;
   buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
+  /** PD-763: injectable for tests; default to `gh` with the read / statuses-only tokens. */
+  fetchHeadSha?: HeadShaFetcher;
+  postStatus?: StatusPoster;
 }
 
 interface TicketRow {
@@ -90,6 +102,13 @@ function ticketFor(db: Database.Database, ticketId: number): TicketRow | null {
     | { title: string; body: string | null }
     | undefined;
   return row ?? null;
+}
+
+function displayIdFor(db: Database.Database, ticketId: number): string | null {
+  const row = db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(ticketId) as
+    | { display_id: string | null }
+    | undefined;
+  return row?.display_id ?? null;
 }
 
 /** Trim an over-long diff, reporting whether it was cut. */
@@ -113,6 +132,19 @@ export async function evaluateOnePr(
   deps: EvaluatePassDeps = {},
   now: number = Date.now(),
 ): Promise<EvaluatorReport | null> {
+  // PD-763: the review-gate status. Only when its token is configured; otherwise the pass behaves
+  // exactly as before. A status failure is logged by the poster and never affects the evaluation.
+  const gateOn = config.evaluator.reviewGateToken !== '';
+  const postStatus = deps.postStatus ?? defaultStatusPoster(config);
+  let gateSha: string | null = null;
+  const gate = async (status: ReturnType<typeof gateForOutcome>) => {
+    if (gateOn && gateSha) await postStatus(target.repo, gateSha, status, gateTargetUrl(config, displayIdFor(db, target.ticketId)));
+  };
+  const finish = async (report: EvaluatorReport | null, round: number) => {
+    await gate(gateForOutcome(report, round, MAX_EVALUATION_ROUNDS));
+    return report;
+  };
+
   const runAgent = deps.runAgent ?? runEvaluatorTurn;
   const fetchDiff = deps.fetchDiff ?? defaultDiffFetcher(config);
   const buildContext = deps.buildContext ?? buildContextPack;
@@ -136,10 +168,17 @@ export async function evaluateOnePr(
   // inconclusive.
   logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round, prNumber: target.prNumber }, now);
 
+  // PD-763: pin the head SHA BEFORE reading the diff. If the Robot pushes mid-review, the verdict
+  // lands on the commit that was actually reviewed, and the new commit starts with no gate at all.
+  if (gateOn) {
+    gateSha = await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(target.repo, target.prNumber);
+    await gate(gateReviewing(round));
+  }
+
   const rawDiff = await fetchDiff(target.repo, target.prNumber);
   if (rawDiff === null) {
     finishEvaluatorRun(db, runId, { error: 'diff fetch failed' }, now);
-    return null;
+    return finish(null, round);
   }
   const { diff, truncated } = capDiff(rawDiff);
 
@@ -162,7 +201,7 @@ export async function evaluateOnePr(
   if (!result.ok) {
     finishEvaluatorRun(db, runId, { error: result.text || 'agent error', turns: result.turns, tokens: result.tokens }, now);
     logger.warn({ ticketId: target.ticketId, error: result.text }, 'evaluator: agent turn failed');
-    return null;
+    return finish(null, round);
   }
 
   const report = parseEvaluatorReport(result.text);
@@ -174,7 +213,7 @@ export async function evaluateOnePr(
       now,
     );
     logger.warn({ ticketId: target.ticketId }, 'evaluator: reply had no usable verdict — leaving the PR alone');
-    return null;
+    return finish(null, round);
   }
 
   finishEvaluatorRun(db, runId, { report, turns: result.turns, tokens: result.tokens }, now);
@@ -221,7 +260,7 @@ export async function evaluateOnePr(
     logger.info({ ticketId: target.ticketId, verdict: report.verdict }, 'evaluator: verdict recorded');
   }
 
-  return report;
+  return finish(report, round);
 }
 
 /**

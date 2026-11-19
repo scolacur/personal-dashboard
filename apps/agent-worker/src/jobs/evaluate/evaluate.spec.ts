@@ -234,3 +234,59 @@ describe('timeline visibility', () => {
     expect(detail).toMatchObject({ verdict: 'revise', findings: 1, blockingFindings: 1, round: 1 });
   });
 });
+
+describe('review-gate status on the reviewed commit (PD-763)', () => {
+  const SHA = 'a'.repeat(40);
+  function gated() {
+    db.exec('ALTER TABLE agent_tickets ADD COLUMN display_id TEXT');
+    db.prepare("UPDATE agent_tickets SET display_id = 'PD-1' WHERE id = 1").run();
+    const posts: { sha: string; state: string; description: string; url: string | null }[] = [];
+    const deps = {
+      fetchHeadSha: async () => SHA,
+      postStatus: async (_repo: string, sha: string, s: { state: string; description: string }, url: string | null) => {
+        posts.push({ sha, state: s.state, description: s.description, url });
+        return true;
+      },
+    };
+    const cfg = config({ reviewGateToken: 'tok', reviewGateTicketUrlBase: 'http://dash/devops/tickets' });
+    return { posts, deps, cfg };
+  }
+
+  it('posts pending while reviewing, then success on ship, on the SHA pinned before the diff', async () => {
+    const { posts, deps, cfg } = gated();
+    await evaluateOnePr(db, cfg, TARGET, { ...deps, runAgent: fakeAgent(shipReply), fetchDiff: async () => 'diff' }, 200);
+    expect(posts.map((p) => p.state)).toEqual(['pending', 'success']);
+    expect(posts.every((p) => p.sha === SHA)).toBe(true);
+    expect(posts[1].url).toBe('http://dash/devops/tickets/PD-1');
+  });
+
+  it('a failed evaluation ends in failure, never success', async () => {
+    const { posts, deps, cfg } = gated();
+    await evaluateOnePr(db, cfg, TARGET, { ...deps, runAgent: fakeAgent('no json here'), fetchDiff: async () => 'diff' }, 200);
+    expect(posts.at(-1)?.state).toBe('failure');
+    const posts2: string[] = [];
+    await evaluateOnePr(
+      db,
+      cfg,
+      TARGET,
+      {
+        fetchHeadSha: async () => SHA,
+        postStatus: async (_r, _s, st) => (posts2.push(st.state), true),
+        runAgent: fakeAgent(shipReply),
+        fetchDiff: async () => null,
+      },
+      201,
+    );
+    expect(posts2.at(-1)).toBe('failure');
+  });
+
+  it('posts nothing without the token, and nothing when the head SHA cannot be read', async () => {
+    const posts: string[] = [];
+    const postStatus = async () => (posts.push('x'), true);
+    await evaluateOnePr(db, config(), TARGET, { postStatus, runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 200);
+    expect(posts).toEqual([]);
+    const { cfg } = gated();
+    await evaluateOnePr(db, cfg, TARGET, { postStatus, fetchHeadSha: async () => null, runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 300);
+    expect(posts).toEqual([]);
+  });
+});
