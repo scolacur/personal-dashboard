@@ -236,8 +236,13 @@ export async function runRobotSession(
   let error: string | undefined;
   let turns: number | undefined;
   let tokens: number | undefined;
-  /** Running count of assistant messages — the live stand-in for the SDK's final `num_turns`. */
+  /** Live stand-in for the SDK's final `num_turns`: the count of DISTINCT top-level assistant
+   *  `message.id`s seen so far (T-902). The SDK emits one assistant message per content block, so
+   *  a single turn (text + a tool call) arrives as several messages sharing one id — counting
+   *  messages double-counts. `seenTurnIds` dedupes them; `liveTurns` is its size plus any id-less
+   *  messages counted defensively below. */
   let liveTurns = 0;
+  const seenTurnIds = new Set<string>();
   /** Rolling tail of what the session said and ran (PD-426). */
   let outputTail = '';
 
@@ -299,12 +304,27 @@ export async function runRobotSession(
       // Only TOP-LEVEL assistant messages count. Ones emitted inside a tool-use / sub-agent
       // context carry a non-null `parent_tool_use_id` and are not turns of the main loop —
       // counting them would inflate the live number well past the SDK's final `num_turns`.
+      // T-902: count DISTINCT `message.id`s, not messages. The stream emits one assistant message
+      // per content block, several per turn sharing one id, so counting messages roughly doubled
+      // the live number (the "119/100" Steve saw). Read the id defensively: a message with no id
+      // falls back to the old per-message count, so an SDK shape change degrades to prior behaviour
+      // rather than counting nothing.
       if (message.type === 'assistant' && message.parent_tool_use_id == null && onProgress) {
-        liveTurns += 1;
-        try {
-          onProgress(liveTurns);
-        } catch (err) {
-          logger.warn({ err, ticketId: candidate.id }, 'robot: turn-progress report failed');
+        const messageId = (message as { message?: { id?: unknown } }).message?.id;
+        let advanced: boolean;
+        if (typeof messageId === 'string') {
+          advanced = !seenTurnIds.has(messageId);
+          if (advanced) seenTurnIds.add(messageId);
+        } else {
+          advanced = true; // no id to dedupe on — count it, as before
+        }
+        if (advanced) {
+          liveTurns += 1;
+          try {
+            onProgress(liveTurns);
+          } catch (err) {
+            logger.warn({ err, ticketId: candidate.id }, 'robot: turn-progress report failed');
+          }
         }
       }
       if (message.type === 'result') {
