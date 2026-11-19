@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { applyMarkdown } from '$lib/markdown';
-  import type { RefineAnswerSet, RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
+  import type { AgentTicket, RefineAnswerSet, RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
   import {
     isReady,
     latestActionableProposal,
@@ -12,11 +12,14 @@
   import {
     approveRefine,
     fetchTicketEvents,
+    markRefined,
     parkRefine,
     postRefineReply,
     postRefineAnswers,
     rejectRefine,
+    queueGateBlockers,
   } from '../routes/devops/api';
+  import { predictQueueRefusals, refusalHint, refusalRows, type RefusalRow } from './refine-queue-gate';
   import RefineQuestionForm from './RefineQuestionForm.svelte';
   import { answerSummary, openRoundMessage, roundsAnsweredBy } from './refine-form-logic';
 
@@ -27,15 +30,22 @@
   // onStart (C4 redesign): before a thread exists, the composer is replaced by a single
   // "Start Refine" button that calls this — the conversation only opens once there's one to hold.
   // isEpic hides "Approve & queue" — an Epic can never enter the Robot's Queue (D-054/D-057).
+  // epic / epicMembers (PD-760): the ticket's Epic and its members, when the page has them, so the
+  // thread can say BEFORE the click that the Queue gate will refuse. Optional: without them the
+  // server's 409 is still rendered, it just isn't foreseen.
   const {
     ticketId,
     isEpic = false,
+    epic = null,
+    epicMembers = [],
     onChanged,
     onStart,
     starting = false,
   }: {
     ticketId: number;
     isEpic?: boolean;
+    epic?: AgentTicket | null;
+    epicMembers?: AgentTicket[];
     onChanged?: () => void;
     onStart?: () => void;
     starting?: boolean;
@@ -51,6 +61,9 @@
   let deciding = $state(false);
   let decideMsg = $state<string | null>(null);
   let threadEl = $state<HTMLElement | null>(null);
+  // PD-760: the Queue gate's refusal of "Approve & queue", shown beside the buttons with a remedy per
+  // row. Null when there is none. Nothing has been written while it is showing.
+  let gateRows = $state<RefusalRow[] | null>(null);
   // PD-743: how the session ended (approved commit or parked), or null while it is open.
   let sessionEnd = $state<'committed' | 'parked' | null>(null);
   let parking = $state(false);
@@ -84,6 +97,10 @@
   const notReady = $derived(
     proposal?.mode === 'refine_in_place' && !isReady(proposal.body ?? null),
   );
+  // PD-760: what the page can foresee the gate refusing (approval itself refines the ticket, so only
+  // its Epic can). The server stays the authority: an unforeseen 409 is rendered from its criteria.
+  const foreseen = $derived(predictQueueRefusals(ticketId, epic, epicMembers));
+  const gateHint = $derived(refusalHint(foreseen, epic));
 
   // PD-634: mirrors `approveRefine` — a child lands refined unless the agent said otherwise, or it is
   // robot-assigned and fails the Ready check. Shown so the panel displays what approval will write.
@@ -115,8 +132,14 @@
 
   async function decide(action: 'approve' | 'approve-queue' | 'reject') {
     if (deciding) return;
-    deciding = true;
     decideMsg = null;
+    gateRows = null;
+    // PD-760: a foreseen refusal is shown without asking the server, which would refuse anyway.
+    if (action === 'approve-queue' && foreseen.length > 0) {
+      gateRows = refusalRows(foreseen, epic, epicMembers, ticketId);
+      return;
+    }
+    deciding = true;
     try {
       if (action === 'reject') {
         await rejectRefine(ticketId);
@@ -132,6 +155,25 @@
             : "Approved. Drag to the Robot's Queue when you're ready to dispatch.";
       }
       await load();
+      onChanged?.();
+    } catch (e) {
+      const server = queueGateBlockers(e);
+      if (server) gateRows = refusalRows(server, epic, epicMembers, ticketId);
+      else decideMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      deciding = false;
+    }
+  }
+
+  // PD-760: the remedy for "Epic not refined". The same dedicated route the ticket page's own
+  // button uses (PD-610). It does not approve or queue anything: Steve clicks Approve & queue again.
+  async function markEpicRefined(epicId: number) {
+    if (deciding) return;
+    deciding = true;
+    try {
+      await markRefined(epicId);
+      gateRows = null;
+      decideMsg = 'Epic marked refined. Approve & queue is clear now.';
       onChanged?.();
     } catch (e) {
       decideMsg = e instanceof Error ? e.message : String(e);
@@ -328,10 +370,34 @@
                 >
                   Approve &amp; queue
                 </button>
+                {#if gateHint}<span class="gate-hint" title="The Queue gate (D-091) will refuse this until it is fixed. Click for the remedy.">{gateHint}</span>{/if}
                 {#if notReady}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">not formatted</span>{/if}
               {/if}
               <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
             </div>
+            {#if gateRows}
+              <!-- PD-760: the refusal sits under the button that caused it, not at the end of the list. -->
+              <div class="queue-refusal" role="alert">
+                <p class="queue-refusal-lead">Can't queue this yet. Nothing has been written.</p>
+                <ul class="queue-refusal-rows">
+                  {#each gateRows as row (row.id)}
+                    <li>
+                      <span>{row.label}</span>
+                      {#if row.action?.kind === 'mark-epic-refined'}
+                        {@const epicId = row.action.epicId}
+                        <button class="queue-refusal-fix" onclick={() => markEpicRefined(epicId)} disabled={deciding}>{row.action.text}</button>
+                      {:else if row.action?.kind === 'link'}
+                        <a class="queue-refusal-fix" href={row.action.href}>{row.action.text}</a>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
+                <div class="queue-refusal-actions">
+                  <button class="approve" onclick={() => decide('approve')} disabled={deciding}>Approve without queueing</button>
+                  <button class="queue-refusal-cancel" onclick={() => (gateRows = null)} disabled={deciding}>Cancel</button>
+                </div>
+              </div>
+            {/if}
           </div>
         </li>
       {/if}

@@ -1121,6 +1121,8 @@
         <TicketThread
           ticketId={ticket.id}
           isEpic={ticket.isEpic}
+          epic={parentEpic ?? null}
+          epicMembers={parentEpic ? allTickets.filter((t) => t.epicId === parentEpic.id) : []}
           onChanged={() => ticketId && load(ticketId)}
           onStart={startRefine}
           {starting}
