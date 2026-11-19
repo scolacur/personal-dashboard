@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { notificationHref } from '$lib/notification-links';
   import type { AgentNotification } from '@dashboard/shared';
   import {
     fetchNotifications,
@@ -87,7 +88,7 @@
         {#if n.ticketDisplayId}
           <a
             class="notif-page-link"
-            href="/devops/tickets/{n.ticketDisplayId}"
+            href={notificationHref(n)}
             onclick={() => onItemRead(n)}
           >
             <span class="notif-page-title">{n.title}</span>

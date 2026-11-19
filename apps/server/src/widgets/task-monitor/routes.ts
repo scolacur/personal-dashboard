@@ -19,6 +19,7 @@ import {
   addRelation,
   appendRefineReply,
   appendStructuredRefineReply,
+  listAwaitingRefine,
   appendRobotReply,
   approveRefine,
   markTicketRefined,
@@ -714,6 +715,13 @@ export function registerRoutes(
       return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     }
     return reply.status(201).send(event);
+  });
+
+  // The Decisions inbox (PD-746): every Refine session waiting on Steve, with its latest round.
+  // `count` is what the nav badge shows; it is cheap enough to poll.
+  app.get(`${base}/refine/awaiting`, async () => {
+    const items = listAwaitingRefine(db);
+    return { items, count: items.length };
   });
 
   // Park a Refine session (PD-743, D-096): end it with no commit. 409 when there is no thread or

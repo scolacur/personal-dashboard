@@ -1,5 +1,6 @@
 import type {
   AgentProject,
+  AwaitingRefineItem,
   RefineAnswerSet,
   AgentRun,
   AgentTicket,
@@ -286,6 +287,13 @@ export async function postRefineAnswers(id: number, answers: RefineAnswerSet): P
   });
   if (!res.ok) return parseError(res);
   return res.json() as Promise<TicketEvent>;
+}
+
+/** Every Refine session waiting on Steve, with its latest round (PD-746, the Decisions inbox). */
+export async function fetchAwaitingRefine(): Promise<{ items: AwaitingRefineItem[]; count: number }> {
+  const res = await fetch('/api/widgets/task-monitor/refine/awaiting');
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ items: AwaitingRefineItem[]; count: number }>;
 }
 
 /** Park the Refine session (PD-743, D-096): end it without a commit. A later reply reopens it.

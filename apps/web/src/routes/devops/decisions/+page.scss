@@ -1,0 +1,154 @@
+// The Decisions inbox (PD-746). Tokens only — see global.scss. Mirrors the Jobs page frame.
+
+.decisions-page {
+  padding: var(--space-lg) var(--space-md);
+  max-width: 860px;
+}
+
+.decisions-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.decisions-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.decisions-back {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.decisions-sub {
+  margin: var(--space-xs) 0 var(--space-lg);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  max-width: 65ch;
+}
+
+.decisions-empty {
+  color: var(--muted);
+}
+
+.decisions-error {
+  color: var(--status-stuck);
+}
+
+.decisions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.decision {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+  // A notification deep-link scrolls here; leave room for the top bar.
+  scroll-margin-top: var(--space-xl);
+}
+
+.decision-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.decision-ticket {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+
+  &:hover .decision-name {
+    text-decoration: underline;
+  }
+}
+
+.decision-id {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: var(--space-xs);
+}
+
+.decision-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.decision-priority {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.decision-epic {
+  overflow-wrap: anywhere;
+}
+
+.decision-agent {
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.decision-freetext {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+
+  a {
+    color: var(--accent);
+  }
+}
+
+.decisions-sent {
+  list-style: none;
+  margin: var(--space-lg) 0 0;
+  padding: var(--space-md) 0 0;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.decision-sent-note {
+  margin-left: var(--space-sm);
+  color: var(--status-done);
+}
+
+@media (max-width: 600px) {
+  .decisions-page {
+    padding: var(--space-md) var(--space-sm);
+  }
+
+  .decisions-title {
+    font-size: 1.25rem;
+  }
+
+  .decision {
+    padding: var(--space-sm);
+  }
+}
