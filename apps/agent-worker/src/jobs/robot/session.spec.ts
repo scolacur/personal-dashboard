@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import Database from 'better-sqlite3';
-import { appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, ROBOT_TOOLS, type RunQuery } from './session';
+import { allowedCodingEnv, appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, ROBOT_TOOLS, type RunQuery } from './session';
 import { OUTPUT_TAIL_MAX } from './runs';
 import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from '@dashboard/shared';
 import type { RobotCandidate } from './select';
@@ -50,6 +50,43 @@ describe('codingEnv', () => {
       if (before === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = before;
     }
+  });
+
+  it('passes only allowlisted vars through: a new worker secret never reaches the Robot (PD-777)', () => {
+    const keys = ['SOME_NEW_SECRET', 'GITHUB_READ_TOKEN', 'REVIEW_GATE_TOKEN', 'ROBOT_GITHUB_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'LC_ALL'];
+    const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    Object.assign(process.env, {
+      SOME_NEW_SECRET: 'sekrit',
+      GITHUB_READ_TOKEN: 'ghp_read',
+      REVIEW_GATE_TOKEN: 'github_pat_gate',
+      ROBOT_GITHUB_TOKEN: 'ghp_write',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth',
+      LC_ALL: 'C.UTF-8',
+    });
+    try {
+      const env = codingEnv(loadConfig({ ROBOT_GITHUB_TOKEN: 'ghp_write' }));
+      expect(env.SOME_NEW_SECRET).toBeUndefined();
+      expect(env.GITHUB_READ_TOKEN).toBeUndefined();
+      expect(env.REVIEW_GATE_TOKEN).toBeUndefined();
+      // The write token arrives only as GH_TOKEN/GITHUB_TOKEN, injected from config.
+      expect(env.ROBOT_GITHUB_TOKEN).toBeUndefined();
+      expect(env.GH_TOKEN).toBe('ghp_write');
+      expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth');
+      expect(env.LC_ALL).toBe('C.UTF-8');
+      expect(env.PATH).toBe(process.env.PATH);
+    } finally {
+      for (const k of keys) {
+        if (before[k] === undefined) delete process.env[k];
+        else process.env[k] = before[k];
+      }
+    }
+  });
+
+  it('allowedCodingEnv keeps listed names and LC_ prefixes, nothing else', () => {
+    expect(allowedCodingEnv({ PATH: '/bin', LC_CTYPE: 'UTF-8', AGENT_WORKER_MODEL: 'x', NODE_ENV: 'production', FOO: undefined })).toEqual({
+      PATH: '/bin',
+      LC_CTYPE: 'UTF-8',
+    });
   });
 
   it('sets proxy vars only when a proxy is configured', () => {
