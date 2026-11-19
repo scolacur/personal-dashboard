@@ -28,6 +28,19 @@
   gap: var(--space-xs);
 }
 
+.item-list.children {
+  // A set's children are nested in the DOM; indent one step per level so the tree reads.
+  margin-top: var(--space-xs);
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--border);
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
 .item-row {
   display: flex;
   align-items: center;
@@ -37,12 +50,48 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
 
+  &.is-set {
+    background: var(--surface-2);
+    font-weight: 600;
+  }
+
   &.dragging {
     opacity: 0.5;
   }
 
-  &.drop-target {
+  // Drop cues: a filled outline for "nest into", an edge line for "reorder before/after".
+  &.drop-into {
     border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  &.drop-before {
+    box-shadow: inset 0 2px 0 0 var(--accent);
+  }
+
+  &.drop-after {
+    box-shadow: inset 0 -2px 0 0 var(--accent);
+  }
+}
+
+.set-tag {
+  margin-right: var(--space-xs);
+  color: var(--accent);
+}
+
+.unnest-zone {
+  padding: var(--space-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  text-align: center;
+  opacity: 0.5;
+
+  &.active {
+    opacity: 1;
+    border-color: var(--accent);
+    color: var(--text);
   }
 }
 

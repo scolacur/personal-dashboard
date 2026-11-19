@@ -66,6 +66,20 @@ export async function reorderItems(ids: number[]): Promise<HabitItemView[]> {
   return (await request<{ items: HabitItemView[] }>('/items/reorder', withBody('PUT', { ids }))).items;
 }
 
+/**
+ * Move an item into / out of a set (PD-723). `parentId` null moves it to the top level; `siblingIds`
+ * is the destination group's new order. The server rejects cycles.
+ */
+export async function moveItem(
+  itemId: number,
+  parentId: number | null,
+  siblingIds: number[],
+): Promise<HabitItemView[]> {
+  return (
+    await request<{ items: HabitItemView[] }>(`/items/${itemId}/move`, withBody('PUT', { parentId, siblingIds }))
+  ).items;
+}
+
 export function setArchived(id: number, archived: boolean): Promise<HabitItemView> {
   return request<HabitItemView>(`/items/${id}/archive`, withBody('POST', { archived }));
 }

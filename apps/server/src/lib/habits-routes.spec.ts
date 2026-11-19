@@ -62,6 +62,45 @@ describe('item routes', () => {
     expect((res.json() as { items: HabitItemView[] }).items.map((i) => i.name)).toEqual(['C', 'A', 'B']);
   });
 
+  it('moves an item into a set and rejects a cycle (PD-723)', async () => {
+    const mr = await create('Morning Routine');
+    const vitamins = await create('Vitamins');
+
+    const nested = await app.inject({
+      method: 'PUT',
+      url: `/api/habits/items/${vitamins.id}/move`,
+      payload: { parentId: mr.id, siblingIds: [vitamins.id] },
+    });
+    expect(nested.statusCode).toBe(200);
+    const items = (nested.json() as { items: HabitItemView[] }).items;
+    expect(items.find((i) => i.id === vitamins.id)!.parentId).toBe(mr.id);
+
+    // Nesting the parent under its own child closes a cycle → 400.
+    const cycle = await app.inject({
+      method: 'PUT',
+      url: `/api/habits/items/${mr.id}/move`,
+      payload: { parentId: vitamins.id, siblingIds: [mr.id] },
+    });
+    expect(cycle.statusCode).toBe(400);
+    expect((cycle.json() as { code: string }).code).toBe('cycle');
+
+    // Move it back out to the top level.
+    const out = await app.inject({
+      method: 'PUT',
+      url: `/api/habits/items/${vitamins.id}/move`,
+      payload: { parentId: null, siblingIds: [mr.id, vitamins.id] },
+    });
+    expect(out.statusCode).toBe(200);
+    expect(
+      (out.json() as { items: HabitItemView[] }).items.find((i) => i.id === vitamins.id)!.parentId,
+    ).toBeNull();
+  });
+
+  it('404s moving a missing item', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/habits/items/999/move', payload: { parentId: null } });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('archives and restores an item', async () => {
     const gym = await create('Gym');
     await app.inject({ method: 'POST', url: `/api/habits/items/${gym.id}/archive` });

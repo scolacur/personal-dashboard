@@ -298,6 +298,9 @@ export type {
   HabitTodayRow,
   HabitTodayView,
   SetHabitScheduleInput,
+  SetProgress,
+  HabitDayNode,
+  HabitHistoryNode,
 } from './habits';
 export {
   DEFAULT_DAY_BOUNDARY_MINUTES,
@@ -324,6 +327,12 @@ export {
   perWeekProgress,
   streak,
   scheduleLabel,
+  isSetNode,
+  nodeDue,
+  nodeDone,
+  nodeProgress,
+  projectHabitDay,
+  setStreak,
 } from './habits';
 export type {
   RefineAnswer,

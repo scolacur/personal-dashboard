@@ -23,13 +23,14 @@
     fetchSchedules,
     fetchSettings,
     fetchToday,
+    moveItem,
     patchSettings,
     RejectedError,
     renameItem,
-    reorderItems,
     setArchived,
     setSchedule,
   } from '../routes/widgets/habit-tracker/api';
+  import { buildHabitTree, dueLeaves, type HabitTreeNode } from '../routes/widgets/habit-tracker/tree';
   import {
     applyPendingCompletions,
     pendingKey,
@@ -117,13 +118,34 @@
     }
   }
 
-  function toggle(item: HabitItemView) {
-    const done = !completedToday.has(item.id);
-    if (done) completedToday.add(item.id);
-    else completedToday.delete(item.id); // optimistic
+  // Today's render tree (PD-723), rebuilt from the server rows + the optimistic done-set so a set's
+  // done/progress recompute the instant a child is ticked. Set streaks come from the server rows.
+  const tree = $derived(buildHabitTree(todayRows, completedToday));
+
+  function queueToggle(itemId: number, done: boolean) {
+    if (done) completedToday.add(itemId);
+    else completedToday.delete(itemId); // optimistic
     // The write is queued, not awaited: it shows immediately and syncs when the server is reachable.
     // Once it flushes, `onSent` re-pulls the server-computed streak / per-week figures (D-095).
-    outbox.add({ kind: 'completion', itemId: item.id, day: today, done });
+    outbox.add({ kind: 'completion', itemId, day: today, done });
+  }
+
+  function toggle(item: HabitItemView) {
+    queueToggle(item.id, !completedToday.has(item.id));
+  }
+
+  /**
+   * Ticking a set ticks all its due leaf descendants; unticking a done set unticks them. A partly
+   * done set completes the remainder without clearing what's done (PD-723): if every due leaf is
+   * already done we clear them, otherwise we complete the ones still outstanding.
+   */
+  function toggleSet(node: HabitTreeNode) {
+    const leaves = dueLeaves(node);
+    if (leaves.length === 0) return;
+    const target = !leaves.every((l) => completedToday.has(l.item.id));
+    for (const leaf of leaves) {
+      if (completedToday.has(leaf.item.id) !== target) queueToggle(leaf.item.id, target);
+    }
   }
 
   // ── Habits-tab actions (page only) ─────────────────────────────────────────────
@@ -154,8 +176,8 @@
     await refreshToday();
   }
 
-  async function reorder(ids: number[]) {
-    items = await reorderItems(ids);
+  async function move(itemId: number, parentId: number | null, siblingIds: number[]) {
+    items = await moveItem(itemId, parentId, siblingIds);
     await refreshToday();
   }
 
@@ -191,7 +213,7 @@
 </script>
 
 {#snippet todayPanel()}
-  <TodayList rows={todayRows} completed={completedToday} onToggle={toggle} {loaded} {compact} />
+  <TodayList {tree} onToggleLeaf={toggle} onToggleSet={toggleSet} {loaded} {compact} />
   {#if pending.length > 0}
     <p class="pending" role="status">{pending.length} pending sync</p>
   {/if}
@@ -213,7 +235,7 @@
             onRename={rename}
             onArchive={archive}
             onDelete={remove}
-            onReorder={reorder}
+            onMove={move}
             onSchedule={updateSchedule}
             onSettings={updateSettings}
           />
