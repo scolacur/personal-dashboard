@@ -1,0 +1,65 @@
+# review-gate for non-Robot PRs (PD-764, D-098).
+#
+# Branch protection will require a `review-gate` commit status in place of an approving review
+# (PD-766). On a Robot PR (`robot/*` head branch) the agent-worker owns it, posting it from the
+# Evaluator's verdicts (PD-763, PD-767). On every OTHER PR — Steve's, and hand-built session PRs — it
+# means what branch protection means today: a standing authorized approval. This workflow posts it.
+#
+# WHY pull_request_target: it runs this file from the BASE branch, and the checkout below is pinned
+# to the default branch, so a PR can never swap in its own version of the workflow or the approval
+# script to approve itself. (`pull_request_review` has no _target variant; it runs the workflow from
+# the PR's merge ref. A PR editing this file is still caught: `.github/**` is a sensitive path, so
+# path-guard needs Steve's ack before it can merge.)
+#
+# STALE APPROVALS: mirrors today's protection (`dismiss_stale_reviews: false`,
+# `require_last_push_approval: false`) — an approval survives later pushes. Every push re-posts the
+# status on the new head SHA, because a status belongs to one commit.
+
+name: review-gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: review-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review-gate:
+    # Robot PRs are the agent-worker's to gate.
+    if: ${{ !startsWith(github.event.pull_request.head.ref, 'robot/') }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out the approval script from the default branch (never the PR)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Post review-gate from Steve's approval
+        run: |
+          set -euo pipefail
+          APPROVED="$(gh pr view "$PR" --repo "$REPO" --json reviews | .github/scripts/authorized-approval.sh)"
+          if [ "$APPROVED" = "true" ]; then
+            STATE=success; DESC="Approved by Steve"
+          else
+            STATE=pending; DESC="Waiting for Steve's approval"
+          fi
+          echo "PR #$PR @ $SHA: review-gate=$STATE ($DESC)"
+          gh api --method POST "repos/$REPO/statuses/$SHA" \
+            -f state="$STATE" -f context=review-gate -f description="$DESC" \
+            -f target_url="${{ github.event.pull_request.html_url }}"
