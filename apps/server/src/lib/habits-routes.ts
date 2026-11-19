@@ -10,6 +10,7 @@ import {
   HabitValidationError,
   listAllSchedules,
   listItems,
+  moveItem,
   patchSettings,
   renameItem,
   reorderItems,
@@ -59,6 +60,24 @@ export function registerHabitRoutes(app: FastifyInstance, db: Database.Database)
     const body = (request.body ?? {}) as { ids?: unknown };
     try {
       return { items: reorderItems(db, body.ids) };
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  /**
+   * Move an item into / out of a set and renumber its destination sibling group (PD-723). `parentId`
+   * null (or absent) moves it to the top level. Cycles are rejected (400 `cycle`).
+   */
+  app.put(`${BASE}/items/:id/move`, async (request, reply) => {
+    const id = parseId((request.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    const body = (request.body ?? {}) as { parentId?: unknown; siblingIds?: unknown };
+    const parentId = body.parentId === undefined || body.parentId === null ? null : (body.parentId as number);
+    try {
+      const items = moveItem(db, id, parentId, body.siblingIds);
+      if (!items) return reply.code(404).send({ error: 'No such item.', code: 'not_found' });
+      return { items };
     } catch (e) {
       return sendValidation(reply, e);
     }

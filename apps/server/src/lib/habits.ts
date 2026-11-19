@@ -10,10 +10,16 @@ import {
   isValidDaysMask,
   isValidPerWeekN,
   isValidTimezone,
+  nodeDone,
+  nodeDue,
+  nodeProgress,
   perWeekProgress,
+  projectHabitDay,
   scheduleForDay,
+  setStreak,
   streak,
   type HabitCompletion,
+  type HabitHistoryNode,
   type HabitItemView,
   type HabitSchedule,
   type HabitScheduleKind,
@@ -257,16 +263,105 @@ export function reorderItems(db: Database.Database, ids: unknown): HabitItemView
   return listItems(db, { includeArchived: true });
 }
 
+/** Every id in the subtree rooted at `rootId`, including `rootId`. Breadth-first over `parent_id`. */
+function subtreeIds(db: Database.Database, rootId: number): number[] {
+  const out = [rootId];
+  const queue = [rootId];
+  const childStmt = db.prepare(`SELECT id FROM habit_items WHERE parent_id = ?`);
+  while (queue.length > 0) {
+    const parent = queue.shift() as number;
+    for (const r of childStmt.all(parent) as { id: number }[]) {
+      out.push(r.id);
+      queue.push(r.id);
+    }
+  }
+  return out;
+}
+
+/**
+ * Archive or restore an item. **Archiving a set archives its whole subtree** (PD-723) — the confirm
+ * lives in the UI; restoring touches only the item itself, since a subtree may have been archived
+ * piecemeal before. Returns the item, or null if there is no such item.
+ */
 export function archiveItem(
   db: Database.Database,
   id: number,
   archived: boolean,
   now = Date.now(),
 ): HabitItemView | null {
-  const changed = db
-    .prepare(`UPDATE habit_items SET archived_at = ? WHERE id = ?`)
-    .run(archived ? now : null, id).changes;
-  return changed > 0 ? getItem(db, id) : null;
+  if (!getItem(db, id)) return null;
+  const ids = archived ? subtreeIds(db, id) : [id];
+  const update = db.prepare(`UPDATE habit_items SET archived_at = ? WHERE id = ?`);
+  db.transaction(() => {
+    for (const i of ids) update.run(archived ? now : null, i);
+  })();
+  return getItem(db, id);
+}
+
+/** The ancestor ids of `id`, nearest first (via `parent_id`). Loop-guarded against a stored cycle. */
+function ancestorIds(db: Database.Database, id: number): number[] {
+  const parentStmt = db.prepare(`SELECT parent_id FROM habit_items WHERE id = ?`);
+  const out: number[] = [];
+  const seen = new Set<number>([id]);
+  let row = parentStmt.get(id) as { parent_id: number | null } | undefined;
+  while (row && row.parent_id !== null && !seen.has(row.parent_id)) {
+    out.push(row.parent_id);
+    seen.add(row.parent_id);
+    row = parentStmt.get(row.parent_id) as { parent_id: number | null } | undefined;
+  }
+  return out;
+}
+
+/**
+ * Move `itemId` under `parentId` (null = top level) and renumber the destination sibling group to
+ * `siblingIds` order (PD-723). This is the one write behind "drag into / out of a set" and "reorder
+ * within a set" (D-069). Cycles are rejected: an item may not be nested under itself or any of its
+ * own descendants. A metric cannot contain items. Returns the full item list, or null if there is no
+ * such item.
+ */
+export function moveItem(
+  db: Database.Database,
+  itemId: number,
+  parentId: number | null,
+  siblingIds: unknown,
+): HabitItemView[] | null {
+  if (!Number.isInteger(itemId)) {
+    throw new HabitValidationError('itemId must be an item id.', 'invalid_item_id');
+  }
+  if (parentId !== null && !Number.isInteger(parentId)) {
+    throw new HabitValidationError('parentId must be an item id or null.', 'invalid_parent_id');
+  }
+  if (siblingIds !== undefined && (!Array.isArray(siblingIds) || !siblingIds.every((n) => Number.isInteger(n)))) {
+    throw new HabitValidationError('siblingIds must be an array of item ids.', 'invalid_sibling_ids');
+  }
+  if (!getItem(db, itemId)) return null;
+
+  if (parentId !== null) {
+    if (parentId === itemId) {
+      throw new HabitValidationError('An item cannot be its own parent.', 'cycle');
+    }
+    const parent = getItem(db, parentId);
+    if (!parent) {
+      throw new HabitValidationError('No such parent item.', 'invalid_parent_id');
+    }
+    if (parent.kind === 'metric') {
+      throw new HabitValidationError('A metric cannot contain items.', 'invalid_parent');
+    }
+    // Reject nesting a set under one of its own descendants: walk up from the new parent; if we meet
+    // the item being moved, the move would close a cycle.
+    if (ancestorIds(db, parentId).includes(itemId)) {
+      throw new HabitValidationError('That move would nest a set inside itself.', 'cycle');
+    }
+  }
+
+  const order = db.prepare(`UPDATE habit_items SET sort_order = ? WHERE id = ?`);
+  db.transaction(() => {
+    db.prepare(`UPDATE habit_items SET parent_id = ? WHERE id = ?`).run(parentId, itemId);
+    if (Array.isArray(siblingIds)) {
+      (siblingIds as number[]).forEach((sid, i) => order.run(i, sid));
+    }
+  })();
+  return listItems(db, { includeArchived: true });
 }
 
 /**
@@ -409,7 +504,7 @@ export function setSchedule(
 export function getTodayView(db: Database.Database, now = Date.now()): HabitTodayView {
   const settings = getSettings(db);
   const today = habitDay(now, settings);
-  const items = listItems(db); // active only
+  const items = listItems(db); // active only, ordered by sort_order
 
   const schedulesByItem = new Map<number, HabitSchedule[]>();
   for (const s of listAllSchedules(db)) {
@@ -428,18 +523,62 @@ export function getTodayView(db: Database.Database, now = Date.now()): HabitToda
     daysByItem.set(c.item_id, list);
   }
 
-  const rows: HabitTodayRow[] = items.map((item) => {
-    const schedules = schedulesByItem.get(item.id) ?? [];
-    const days = daysByItem.get(item.id) ?? [];
-    return {
-      item,
-      schedule: scheduleForDay(schedules, today),
-      due: isDue(schedules, today),
-      completedToday: days.includes(today),
-      perWeek: perWeekProgress(schedules, today, days),
-      streak: streak(schedules, days, today),
+  // Children of each item, in sibling order (active items only — an archived subtree is off Today).
+  const childrenOf = new Map<number | null, HabitItemView[]>();
+  for (const it of items) {
+    const list = childrenOf.get(it.parentId) ?? [];
+    list.push(it);
+    childrenOf.set(it.parentId, list);
+  }
+
+  // A set's derived state (due/done/progress/streak, PD-723) needs its whole subtree's schedules and
+  // completion history, so build a HabitHistoryNode once per item and memoise it.
+  const historyCache = new Map<number, HabitHistoryNode>();
+  const buildHistory = (it: HabitItemView): HabitHistoryNode => {
+    const cached = historyCache.get(it.id);
+    if (cached) return cached;
+    const node: HabitHistoryNode = {
+      kind: it.kind,
+      children: (childrenOf.get(it.id) ?? []).map(buildHistory),
+      schedules: schedulesByItem.get(it.id) ?? [],
+      completionDays: new Set(daysByItem.get(it.id) ?? []),
     };
-  });
+    historyCache.set(it.id, node);
+    return node;
+  };
+
+  // Flat rows carry parentId, so the client rebuilds the tree. Metrics are not on this surface yet.
+  const rows: HabitTodayRow[] = items
+    .filter((it) => it.kind !== 'metric')
+    .map((item) => {
+      const isSet = (childrenOf.get(item.id) ?? []).length > 0;
+      if (isSet) {
+        const history = buildHistory(item);
+        const dayNode = projectHabitDay(history, today);
+        return {
+          item,
+          schedule: null,
+          due: nodeDue(dayNode),
+          completedToday: nodeDone(dayNode),
+          perWeek: null,
+          streak: setStreak(history, today),
+          isSet: true,
+          progress: nodeProgress(dayNode),
+        };
+      }
+      const schedules = schedulesByItem.get(item.id) ?? [];
+      const days = daysByItem.get(item.id) ?? [];
+      return {
+        item,
+        schedule: scheduleForDay(schedules, today),
+        due: isDue(schedules, today),
+        completedToday: days.includes(today),
+        perWeek: perWeekProgress(schedules, today, days),
+        streak: streak(schedules, days, today),
+        isSet: false,
+        progress: null,
+      };
+    });
 
   return { day: today, rows };
 }

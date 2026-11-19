@@ -15,10 +15,15 @@
   import { toast } from '$lib/toast-store.svelte';
 
   /**
-   * The Habits manage tab (PD-721; schedules PD-722): add, rename, archive, delete and reorder
-   * habits, edit a habit's schedule, plus the two settings. Reorder is native HTML5 drag (D-069).
-   * Delete confirms with the completion count the list already carries ("Delete Gym and its 84
-   * completions?"). A schedule change applies from today (D-095).
+   * The Habits manage tab (PD-721; schedules PD-722; sets PD-723): add, rename, archive, delete and
+   * re-nest habits and sets, edit a leaf's schedule, plus the two settings.
+   *
+   * The list is the item **tree** (a set is an item with children). Native HTML5 drag (D-069) both
+   * reorders within a sibling group and moves an item into / out of a set: the drop zone within a row
+   * decides — its top edge drops the item *before* the row (same parent), its bottom edge *after* it,
+   * and its middle *into* it (nesting). Schedules belong to leaf habits only, so the schedule pill is
+   * hidden on a set. Archiving a set archives its whole subtree, behind a confirm (D-095 for the
+   * schedule-from-today rule).
    */
   let {
     items,
@@ -29,7 +34,7 @@
     onRename,
     onArchive,
     onDelete,
-    onReorder,
+    onMove,
     onSchedule,
     onSettings,
   }: {
@@ -41,12 +46,24 @@
     onRename: (id: number, name: string) => Promise<void>;
     onArchive: (id: number, archived: boolean) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
-    onReorder: (ids: number[]) => Promise<void>;
+    onMove: (itemId: number, parentId: number | null, siblingIds: number[]) => Promise<void>;
     onSchedule: (id: number, input: SetHabitScheduleInput) => Promise<void>;
     onSettings: (patch: Partial<HabitSettings>) => Promise<void>;
   } = $props();
 
-  // The schedule in force today for each item, for the summary label and the editor's initial state.
+  const active = $derived(items.filter((i) => i.archivedAt === null));
+  const archived = $derived(items.filter((i) => i.archivedAt !== null));
+
+  // Active children of a parent (null = top level), in stored sibling order.
+  const childrenOf = (parentId: number | null): HabitItemView[] =>
+    active.filter((i) => i.parentId === parentId);
+  const childIds = (parentId: number | null): number[] => childrenOf(parentId).map((i) => i.id);
+  // A set is an item with at least one active child.
+  const setIds = $derived(new Set(active.filter((i) => i.parentId !== null).map((i) => i.parentId)));
+  const isSet = (id: number): boolean => setIds.has(id);
+  const roots = $derived(childrenOf(null));
+
+  // The schedule in force today for a leaf, for the summary label and the editor's initial state.
   const currentSchedule = (itemId: number): HabitSchedule | null =>
     scheduleForDay(
       schedules.filter((s) => s.itemId === itemId),
@@ -65,9 +82,6 @@
       toast.show('Could not save the schedule.', 'error');
     }
   }
-
-  const active = $derived(items.filter((i) => i.archivedAt === null));
-  const archived = $derived(items.filter((i) => i.archivedAt !== null));
 
   // ── Add ────────────────────────────────────────────────────────────────────────
   let newName = $state('');
@@ -103,12 +117,30 @@
     }
   }
 
-  async function toggleArchive(item: HabitItemView) {
+  // ── Archive (sets confirm first — the whole subtree goes) ────────────────────────
+  let archiveTarget = $state<HabitItemView | null>(null);
+
+  function subtreeSize(id: number): number {
+    return childrenOf(id).reduce((n, c) => n + 1 + subtreeSize(c.id), 0);
+  }
+
+  async function doArchive(id: number, archived: boolean) {
     try {
-      await onArchive(item.id, item.archivedAt === null);
+      await onArchive(id, archived);
     } catch {
       toast.show('Could not update that habit.', 'error');
     }
+  }
+
+  function requestArchive(item: HabitItemView) {
+    if (isSet(item.id)) archiveTarget = item; // confirm — the subtree goes with it
+    else void doArchive(item.id, true);
+  }
+
+  async function confirmArchive() {
+    const target = archiveTarget;
+    archiveTarget = null;
+    if (target) await doArchive(target.id, true);
   }
 
   // ── Delete (confirm with count) ─────────────────────────────────────────────────
@@ -125,33 +157,59 @@
     }
   }
 
-  // ── Reorder (native drag, active items only) ────────────────────────────────────
+  // ── Drag: reorder, nest and un-nest (native D-069) ───────────────────────────────
+  type DropMode = 'before' | 'after' | 'into';
   let dragId = $state<number | null>(null);
   let dropTargetId = $state<number | null>(null);
+  let dropMode = $state<DropMode>('into');
 
-  function onDragOver(id: number, e: DragEvent) {
+  function onDragOver(item: HabitItemView, e: DragEvent) {
     e.preventDefault();
-    if (dragId !== null && dragId !== id) dropTargetId = id;
+    if (dragId === null || dragId === item.id) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const frac = rect.height === 0 ? 0.5 : (e.clientY - rect.top) / rect.height;
+    dropMode = frac < 0.25 ? 'before' : frac > 0.75 ? 'after' : 'into';
+    dropTargetId = item.id;
   }
 
-  async function onDrop(id: number, e: DragEvent) {
-    e.preventDefault();
-    const from = dragId;
+  function resetDrag() {
     dragId = null;
     dropTargetId = null;
-    if (from === null || from === id) return;
+  }
 
-    const order = active.map((i) => i.id);
-    const fromIdx = order.indexOf(from);
-    const toIdx = order.indexOf(id);
-    if (fromIdx === -1 || toIdx === -1) return;
-    order.splice(toIdx, 0, ...order.splice(fromIdx, 1));
+  async function onDrop(target: HabitItemView, e: DragEvent) {
+    e.preventDefault();
+    const from = dragId;
+    const mode = dropMode;
+    resetDrag();
+    if (from === null || from === target.id) return;
 
-    // Send every id so sort_order stays contiguous; archived ids keep their place after the active.
     try {
-      await onReorder([...order, ...archived.map((i) => i.id)]);
+      if (mode === 'into') {
+        // Nest `from` under `target`, appended to its children.
+        await onMove(from, target.id, [...childIds(target.id).filter((id) => id !== from), from]);
+      } else {
+        // Reorder within `target`'s sibling group, inserting before/after `target`.
+        const parentId = target.parentId;
+        const sibs = childIds(parentId).filter((id) => id !== from);
+        const idx = sibs.indexOf(target.id);
+        sibs.splice(mode === 'before' ? idx : idx + 1, 0, from);
+        await onMove(from, parentId, sibs);
+      }
     } catch {
-      toast.show('Could not reorder.', 'error');
+      toast.show('Could not move that item.', 'error');
+    }
+  }
+
+  async function onDropToTop(e: DragEvent) {
+    e.preventDefault();
+    const from = dragId;
+    resetDrag();
+    if (from === null) return;
+    try {
+      await onMove(from, null, [...childIds(null).filter((id) => id !== from), from]);
+    } catch {
+      toast.show('Could not move that item.', 'error');
     }
   }
 
@@ -197,61 +255,89 @@
   <form class="add-form" onsubmit={submitAdd}>
     <input
       type="text"
-      placeholder="New habit"
+      placeholder="New habit or set"
       aria-label="New habit name"
       bind:value={newName}
       maxlength="200"
     />
     <Button variant="primary" type="submit" disabled={newName.trim() === ''}>Add</Button>
   </form>
+  <p class="hint">Drag a habit onto another to make a set; drag it out to the top to leave the set.</p>
 
-  <ul class="item-list" aria-label="Habits">
-    {#each active as item (item.id)}
-      <li
-        class="item-row"
-        class:drop-target={dropTargetId === item.id}
-        class:dragging={dragId === item.id}
-        draggable="true"
-        ondragstart={() => (dragId = item.id)}
-        ondragover={(e) => onDragOver(item.id, e)}
-        ondrop={(e) => onDrop(item.id, e)}
-        ondragend={() => {
-          dragId = null;
-          dropTargetId = null;
-        }}
-      >
-        <span class="grip" aria-hidden="true">⋮⋮</span>
-        {#if editingId === item.id}
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="rename-input"
-            type="text"
-            aria-label="Rename habit"
-            bind:value={editingName}
-            maxlength="200"
-            autofocus
-            onblur={() => commitEdit(item)}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') commitEdit(item);
-              else if (e.key === 'Escape') editingId = null;
-            }}
-          />
-        {:else}
-          <button type="button" class="item-name" onclick={() => startEdit(item)}>{item.name}</button>
-        {/if}
+  {#snippet row(item: HabitItemView)}
+    {@const itemIsSet = isSet(item.id)}
+    <li
+      class="item-row"
+      class:drop-into={dropTargetId === item.id && dropMode === 'into'}
+      class:drop-before={dropTargetId === item.id && dropMode === 'before'}
+      class:drop-after={dropTargetId === item.id && dropMode === 'after'}
+      class:dragging={dragId === item.id}
+      class:is-set={itemIsSet}
+      draggable="true"
+      ondragstart={() => (dragId = item.id)}
+      ondragover={(e) => onDragOver(item, e)}
+      ondrop={(e) => onDrop(item, e)}
+      ondragend={resetDrag}
+    >
+      <span class="grip" aria-hidden="true">⋮⋮</span>
+      {#if editingId === item.id}
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="rename-input"
+          type="text"
+          aria-label="Rename habit"
+          bind:value={editingName}
+          maxlength="200"
+          autofocus
+          onblur={() => commitEdit(item)}
+          onkeydown={(e) => {
+            if (e.key === 'Enter') commitEdit(item);
+            else if (e.key === 'Escape') editingId = null;
+          }}
+        />
+      {:else}
+        <button type="button" class="item-name" onclick={() => startEdit(item)}>
+          {#if itemIsSet}<span class="set-tag" aria-hidden="true">▦</span>{/if}{item.name}
+        </button>
+      {/if}
+      {#if !itemIsSet}
         <button type="button" class="schedule-pill" onclick={() => (scheduleTarget = item)}>
           {scheduleLabel(currentSchedule(item.id))}
         </button>
-        <div class="item-actions">
-          <button type="button" class="link" onclick={() => toggleArchive(item)}>Archive</button>
-          <button type="button" class="link danger" onclick={() => (deleteTarget = item)}>Delete</button>
-        </div>
-      </li>
+      {/if}
+      <div class="item-actions">
+        <button type="button" class="link" onclick={() => requestArchive(item)}>Archive</button>
+        <button type="button" class="link danger" onclick={() => (deleteTarget = item)}>Delete</button>
+      </div>
+    </li>
+    {#if childrenOf(item.id).length > 0}
+      <ul class="item-list children">
+        {#each childrenOf(item.id) as child (child.id)}
+          {@render row(child)}
+        {/each}
+      </ul>
+    {/if}
+  {/snippet}
+
+  <ul class="item-list" aria-label="Habits">
+    {#each roots as item (item.id)}
+      {@render row(item)}
     {/each}
-    {#if active.length === 0}
+    {#if roots.length === 0}
       <li class="empty">No habits yet. Add one above.</li>
     {/if}
   </ul>
+
+  <!-- Drop here to pull an item out of its set, back to the top level. -->
+  <div
+    class="unnest-zone"
+    class:active={dragId !== null}
+    role="presentation"
+    ondragover={(e) => e.preventDefault()}
+    ondrop={onDropToTop}
+  >
+    Drop here to move out of a set
+  </div>
 
   {#if archived.length > 0}
     <section class="archived" aria-label="Archived habits">
@@ -261,7 +347,7 @@
           <li class="item-row archived-row">
             <span class="item-name muted">{item.name}</span>
             <div class="item-actions">
-              <button type="button" class="link" onclick={() => toggleArchive(item)}>Unarchive</button>
+              <button type="button" class="link" onclick={() => doArchive(item.id, false)}>Unarchive</button>
               <button type="button" class="link danger" onclick={() => (deleteTarget = item)}>Delete</button>
             </div>
           </li>
@@ -289,19 +375,31 @@
   </section>
 </div>
 
-<Modal
-  open={deleteTarget !== null}
-  title="Delete habit?"
-  onClose={() => (deleteTarget = null)}
->
+<Modal open={deleteTarget !== null} title="Delete habit?" onClose={() => (deleteTarget = null)}>
   {#if deleteTarget}
+    {@const nested = subtreeSize(deleteTarget.id)}
     <p>
       Delete <strong>{deleteTarget.name}</strong> and its {deleteTarget.completionCount}
-      {deleteTarget.completionCount === 1 ? 'completion' : 'completions'}?
+      {deleteTarget.completionCount === 1 ? 'completion' : 'completions'}{#if nested > 0}, plus its
+        {nested} nested {nested === 1 ? 'item' : 'items'}{/if}?
     </p>
     <div class="modal-actions">
       <Button variant="ghost" onclick={() => (deleteTarget = null)}>Cancel</Button>
       <Button variant="primary" accent onclick={confirmDelete}>Delete</Button>
+    </div>
+  {/if}
+</Modal>
+
+<Modal open={archiveTarget !== null} title="Archive set?" onClose={() => (archiveTarget = null)}>
+  {#if archiveTarget}
+    {@const nested = subtreeSize(archiveTarget.id)}
+    <p>
+      Archive <strong>{archiveTarget.name}</strong> and its {nested} nested
+      {nested === 1 ? 'item' : 'items'}? History is kept.
+    </p>
+    <div class="modal-actions">
+      <Button variant="ghost" onclick={() => (archiveTarget = null)}>Cancel</Button>
+      <Button variant="primary" onclick={confirmArchive}>Archive</Button>
     </div>
   {/if}
 </Modal>

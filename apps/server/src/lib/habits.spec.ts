@@ -12,6 +12,7 @@ import {
   HabitValidationError,
   listItems,
   listSchedules,
+  moveItem,
   patchSettings,
   renameItem,
   reorderItems,
@@ -229,6 +230,83 @@ describe('getTodayView (PD-722, D-095)', () => {
     expect(rows.map((r) => r.item.id)).toEqual([daily.id]);
     expect(rows[0].due).toBe(true); // no schedule → daily
     expect(rows[0].schedule).toBeNull();
+  });
+});
+
+describe('sets — moveItem + derived Today rows (PD-723)', () => {
+  const TUE = Date.UTC(2026, 10, 17, 15, 0); // 2026-11-17, a daily-due day
+
+  /** Morning Routine → Vitamins → (Vitamin D, B12), all daily. Returns the created ids. */
+  function morningRoutine() {
+    const mr = createItem(db, { name: 'Morning Routine' });
+    const vitamins = createItem(db, { name: 'Vitamins' });
+    const vitaminD = createItem(db, { name: 'Vitamin D' });
+    const b12 = createItem(db, { name: 'B12' });
+    moveItem(db, vitamins.id, mr.id, [vitamins.id]);
+    moveItem(db, vitaminD.id, vitamins.id, [vitaminD.id]);
+    moveItem(db, b12.id, vitamins.id, [vitaminD.id, b12.id]);
+    return { mr: mr.id, vitamins: vitamins.id, vitaminD: vitaminD.id, b12: b12.id };
+  }
+
+  it('nests items and reports a set row with derived progress', () => {
+    const { mr, vitamins } = morningRoutine();
+    const rows = getTodayView(db, TUE).rows;
+    const mrRow = rows.find((r) => r.item.id === mr)!;
+    const vitRow = rows.find((r) => r.item.id === vitamins)!;
+
+    expect(mrRow.isSet).toBe(true);
+    expect(mrRow.progress).toEqual({ done: 0, total: 1 }); // Vitamins counted as one child
+    expect(vitRow.isSet).toBe(true);
+    expect(vitRow.item.parentId).toBe(mr);
+  });
+
+  it('ticking both leaves makes Vitamins and Morning Routine done (nested set as one child)', () => {
+    const { mr, vitamins, vitaminD, b12 } = morningRoutine();
+    setCompletion(db, { itemId: vitaminD, day: '2026-11-17', done: true });
+    setCompletion(db, { itemId: b12, day: '2026-11-17', done: true });
+
+    const rows = getTodayView(db, TUE).rows;
+    expect(rows.find((r) => r.item.id === vitamins)!.completedToday).toBe(true);
+    expect(rows.find((r) => r.item.id === mr)!.completedToday).toBe(true);
+    expect(rows.find((r) => r.item.id === mr)!.progress).toEqual({ done: 1, total: 1 });
+  });
+
+  it('when B12 is not due, Vitamins is done once Vitamin D alone is done', () => {
+    const { vitamins, vitaminD, b12 } = morningRoutine();
+    // B12 due only Mon/Wed/Fri → not due on Tue 2026-11-17.
+    setSchedule(db, b12, { kind: 'days_of_week', daysMask: 1 | 4 | 16 }, TUE);
+    setCompletion(db, { itemId: vitaminD, day: '2026-11-17', done: true });
+
+    const vitRow = getTodayView(db, TUE).rows.find((r) => r.item.id === vitamins)!;
+    expect(vitRow.due).toBe(true);
+    expect(vitRow.completedToday).toBe(true);
+    expect(vitRow.progress).toEqual({ done: 1, total: 1 });
+  });
+
+  it('archiving a set archives its whole subtree', () => {
+    const { mr, vitamins, vitaminD, b12 } = morningRoutine();
+    archiveItem(db, mr, true);
+    const all = listItems(db, { includeArchived: true });
+    for (const id of [mr, vitamins, vitaminD, b12]) {
+      expect(all.find((i) => i.id === id)!.archivedAt).not.toBeNull();
+    }
+    expect(getTodayView(db, TUE).rows).toHaveLength(0);
+  });
+
+  it('rejects a cycle (nesting a set under its own descendant)', () => {
+    const { mr, vitamins } = morningRoutine();
+    expect(() => moveItem(db, mr, vitamins, [mr])).toThrow(HabitValidationError);
+    expect(() => moveItem(db, mr, mr, [mr])).toThrow(HabitValidationError);
+  });
+
+  it('moves an item back out to the top level', () => {
+    const { mr, vitamins } = morningRoutine();
+    moveItem(db, vitamins, null, [mr, vitamins]);
+    expect(listItems(db).find((i) => i.id === vitamins)!.parentId).toBeNull();
+  });
+
+  it('returns null for an unknown item', () => {
+    expect(moveItem(db, 9999, null, undefined)).toBeNull();
   });
 });
 

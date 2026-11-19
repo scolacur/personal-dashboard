@@ -277,30 +277,37 @@ function earliestDay(days: Set<string>, fallback: string): string {
   return seen ? min : fallback;
 }
 
-function daysOfWeekStreak(schedules: HabitSchedule[], done: Set<string>, today: string): StreakResult {
-  const dueOn = (day: string): boolean => weekdayInMask(maskOf(scheduleForDay(schedules, day)), habitWeekday(day));
-  const floor = earliestDay(done, today);
-
-  // Current: walk back over due days. A due day not done breaks it; not-due days and extras are
-  // skipped; an unfinished due *today* is in progress and neither counts nor breaks.
+/**
+ * The daily run logic, parameterised by `dueOn`/`doneOn` predicates so it is shared by days-of-week
+ * habits (schedule-driven) and by sets (whose due/done are *derived* from their subtree, PD-723).
+ *
+ * Current: walk back over due days from today. A due day not done breaks it; not-due days and extras
+ * are skipped; an unfinished due *today* is in progress and neither counts nor breaks. Longest: the
+ * best run of consecutive done due days over `[floor, today]`.
+ */
+function dailyStreak(
+  dueOn: (day: string) => boolean,
+  doneOn: (day: string) => boolean,
+  today: string,
+  floor: string,
+): StreakResult {
   let current = 0;
-  let day = dueOn(today) && !done.has(today) ? addHabitDays(today, -1) : today;
+  let day = dueOn(today) && !doneOn(today) ? addHabitDays(today, -1) : today;
   while (day >= floor) {
     if (!dueOn(day)) {
       day = addHabitDays(day, -1);
       continue;
     }
-    if (!done.has(day)) break;
+    if (!doneOn(day)) break;
     current += 1;
     day = addHabitDays(day, -1);
   }
 
-  // Longest: the best run of consecutive done due days over the recorded history.
   let longest = 0;
   let run = 0;
   for (let d = floor; d <= today; d = addHabitDays(d, 1)) {
     if (!dueOn(d)) continue;
-    if (done.has(d)) {
+    if (doneOn(d)) {
       run += 1;
       if (run > longest) longest = run;
     } else if (d !== today) {
@@ -308,6 +315,11 @@ function daysOfWeekStreak(schedules: HabitSchedule[], done: Set<string>, today: 
     }
   }
   return { current, longest: Math.max(longest, current) };
+}
+
+function daysOfWeekStreak(schedules: HabitSchedule[], done: Set<string>, today: string): StreakResult {
+  const dueOn = (day: string): boolean => weekdayInMask(maskOf(scheduleForDay(schedules, day)), habitWeekday(day));
+  return dailyStreak(dueOn, (d) => done.has(d), today, earliestDay(done, today));
 }
 
 function perWeekStreak(schedules: HabitSchedule[], done: Set<string>, today: string): StreakResult {
@@ -374,6 +386,115 @@ export function scheduleLabel(schedule: HabitSchedule | null): string {
   return HABIT_WEEKDAY_NAMES.filter((_, i) => weekdayInMask(mask, i)).join(', ');
 }
 
+/* ── Sets: nested habits and derived state (PD-723) ──────────────────────────────────
+ *
+ * A **set** is a habit with children, nested to any depth (glossary: Set, Set progress). Set-ness is
+ * structural — an item is a set exactly when it has children — so there is no stored flag. Schedules
+ * live on leaf habits only; a set derives everything from its subtree:
+ *   - due on a day  ⇔ any child is due that day;
+ *   - done on a day ⇔ it is due and every due child is done, recursively;
+ *   - progress      = due children done / due children, a nested set counting as one child;
+ *   - streak        = {@link dailyStreak} over the set's own derived due/done days.
+ * Metrics never count toward a set (never due, never done here; PD-724 keeps them out of progress).
+ *
+ * All of this is pure so the server (the Today view, D-095) and the client (optimistic ticking)
+ * agree. Two node shapes: {@link HabitDayNode} carries one day's leaf state for the due/done/progress
+ * trio, and {@link HabitHistoryNode} carries full leaf history for {@link setStreak}. */
+
+/** Progress through a set on one day: due children done out of due children. */
+export interface SetProgress {
+  done: number;
+  total: number;
+}
+
+/**
+ * A node for deriving a set's state on ONE day. A leaf carries its own `due`/`done` for that day; a
+ * set ignores them and derives from `children`.
+ */
+export interface HabitDayNode {
+  kind: HabitItemKind;
+  children: HabitDayNode[];
+  /** Leaf only: is this habit due on the day? */
+  due: boolean;
+  /** Leaf only: is this habit completed on the day? */
+  done: boolean;
+}
+
+/** True when the node has children — the structural definition of a set. */
+export function isSetNode(node: HabitDayNode): boolean {
+  return node.children.length > 0;
+}
+
+/** Whether the node is due on its day: a leaf by its own `due`, a set when any child is due. */
+export function nodeDue(node: HabitDayNode): boolean {
+  if (node.kind === 'metric') return false;
+  if (isSetNode(node)) return node.children.some(nodeDue);
+  return node.due;
+}
+
+/**
+ * Whether the node is done on its day: a leaf by its own `done`, a set when it is due and every due
+ * child is done (recursively). A set with no due child is not done.
+ */
+export function nodeDone(node: HabitDayNode): boolean {
+  if (node.kind === 'metric') return false;
+  if (isSetNode(node)) {
+    const due = node.children.filter(nodeDue);
+    return due.length > 0 && due.every(nodeDone);
+  }
+  return node.done;
+}
+
+/** A set's progress on its day: due children done over due children, a nested set counting as one. */
+export function nodeProgress(node: HabitDayNode): SetProgress {
+  const due = node.children.filter((c) => c.kind !== 'metric' && nodeDue(c));
+  return { done: due.filter(nodeDone).length, total: due.length };
+}
+
+/** A node for deriving a set's streak: full leaf schedule + completion history for its subtree. */
+export interface HabitHistoryNode {
+  kind: HabitItemKind;
+  children: HabitHistoryNode[];
+  /** Leaf only: the item's effective-dated schedules. */
+  schedules: HabitSchedule[];
+  /** Leaf only: the days the item was completed. */
+  completionDays: ReadonlySet<string>;
+}
+
+/** Project a history node to its single-day {@link HabitDayNode} on `day`, for due/done derivation. */
+export function projectHabitDay(node: HabitHistoryNode, day: string): HabitDayNode {
+  const leaf = node.children.length === 0;
+  return {
+    kind: node.kind,
+    children: node.children.map((c) => projectHabitDay(c, day)),
+    due: leaf ? isDue(node.schedules, day) : false,
+    done: leaf ? node.completionDays.has(day) : false,
+  };
+}
+
+function earliestHistoryDay(node: HabitHistoryNode, fallback: string): string {
+  let min: string | null = null;
+  const visit = (n: HabitHistoryNode): void => {
+    for (const d of n.completionDays) if (min === null || d < min) min = d;
+    n.children.forEach(visit);
+  };
+  visit(node);
+  return min ?? fallback;
+}
+
+/**
+ * A set's current/longest streak (PD-723): {@link dailyStreak} over the set's own derived due/done
+ * days. A day counts when the set is due and done, a not-due day neither counts nor breaks, and an
+ * unfinished due today does not break it. Judged day-by-day through {@link projectHabitDay}, so an
+ * effective-dated schedule change on any leaf is honoured.
+ */
+export function setStreak(node: HabitHistoryNode, today: string): StreakResult {
+  const floor = earliestHistoryDay(node, today);
+  const dueOn = (day: string): boolean => nodeDue(projectHabitDay(node, day));
+  const doneOn = (day: string): boolean => nodeDone(projectHabitDay(node, day));
+  return dailyStreak(dueOn, doneOn, today, floor);
+}
+
 /* ── The Today view (server-computed, D-095) ────────────────────────────────────────
  *
  * The server owns full completion history, so it computes each item's due state, per-week progress
@@ -383,14 +504,19 @@ export function scheduleLabel(schedule: HabitSchedule | null): string {
 /** One active item's standing on the current habit day. */
 export interface HabitTodayRow {
   item: HabitItemView;
-  /** The schedule in force today, or null (treated as daily). */
+  /** The schedule in force today, or null (treated as daily). Always null for a set. */
   schedule: HabitSchedule | null;
   /** Whether the item is on Today (per-week items are always on; days-of-week only on due days). */
   due: boolean;
+  /** Leaf: completed today. Set: derived done (every due child done). */
   completedToday: boolean;
-  /** Non-null only for a per-week item. */
+  /** Non-null only for a per-week leaf item. */
   perWeek: PerWeekProgress | null;
   streak: StreakResult;
+  /** True when the item has children (a set, PD-723). */
+  isSet: boolean;
+  /** Non-null only for a set: due children done / due children today. */
+  progress: SetProgress | null;
 }
 
 export interface HabitTodayView {
