@@ -261,6 +261,47 @@ describe('runRobotSession', () => {
     expect(res.turns).toBe(3); // the SDK's authoritative count still wins on the result
   });
 
+  // T-902: the SDK emits one assistant message per content block, so a single turn arrives as
+  // several messages sharing one `message.id`. The live count must advance per distinct id (per
+  // turn), not per message — otherwise it double-counts (the "119/100" overshoot Steve saw).
+  it('counts one turn per distinct message.id, not per content block', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'system', subtype: 'init', session_id: 's' } as never;
+      // Turn 1: three content blocks, one id → counts once.
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1' } } as never;
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1' } } as never;
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1' } } as never;
+      // A sub-agent message sharing nothing with the main loop — still excluded.
+      yield { type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_sub' } } as never;
+      // Turn 2: two content blocks, a different id → counts once more.
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_2' } } as never;
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_2' } } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 2 } as never;
+    }) as unknown as RunQuery;
+
+    const seen: number[] = [];
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake, (t) => seen.push(t));
+
+    expect(seen).toEqual([1, 2]); // five top-level blocks, two turns — never 5
+    expect(res.turns).toBe(2);
+  });
+
+  // T-902: defensive fallback — a message with no id can't be deduped, so it counts as before.
+  // This keeps an SDK shape change degrading to the old per-message behaviour, never to zero.
+  it('still counts top-level assistant messages that carry no id', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'assistant', parent_tool_use_id: null } as never; // no message.id
+      yield { type: 'assistant', parent_tool_use_id: null, message: {} } as never; // no id field
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 2 } as never;
+    }) as unknown as RunQuery;
+
+    const seen: number[] = [];
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake, (t) => seen.push(t));
+
+    expect(seen).toEqual([1, 2]);
+    expect(res.turns).toBe(2);
+  });
+
   it('never lets a failing progress callback kill the session', async () => {
     const fake: RunQuery = (async function* () {
       yield { type: 'assistant', parent_tool_use_id: null } as never;
