@@ -35,7 +35,14 @@ export interface AutostartConfig {
   enabled: boolean;
   /** No new auto-session starts while this many sessions are open. */
   openCap: number;
+  /** `owner/repo` of the worker's grounding checkout. Only tickets whose project points at this repo
+   *  are auto-refined: the board holds several projects, and a Refine agent grounded in this repo
+   *  cannot refine another project's ticket (the C-49 session said exactly that). Empty = none. */
+  repo: string;
 }
+
+/** Tickets in a project whose GitHub repo is the worker's checkout. `x` is the table alias. */
+const inRepoSql = (x: string) => `${x}.project_id IN (SELECT pr.id FROM agent_projects pr WHERE pr.github_repo = ?)`;
 
 /** `robot_state` key: the instant auto-start was first enabled (unix ms). */
 export const AUTOSTART_SINCE_KEY = 'refine_autostart_since';
@@ -73,14 +80,15 @@ export function openSessionCount(db: Database.Database): number {
 // work or Steve's own to-do), unrefined, live, created after the boundary, and never had a Refine
 // thread — so a parked or finished session is never restarted.
 const CANDIDATE_WHERE = `
+  ${inRepoSql('t')} AND
   t.archived_at IS NULL AND t.status = 'backlog' AND t.refined = 0 AND t.created_at >= ?
   AND NOT EXISTS (SELECT 1 FROM agent_ticket_events e
                    WHERE e.ticket_id = t.id AND e.type IN (?, ?))`;
 
-export function autostartQueue(db: Database.Database, since: number): number {
+export function autostartQueue(db: Database.Database, since: number, repo: string): number {
   const row = db
     .prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${CANDIDATE_WHERE}`)
-    .get(since, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent) as { n: number };
+    .get(repo, since, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent) as { n: number };
   return row.n;
 }
 
@@ -88,13 +96,14 @@ export function autostartQueue(db: Database.Database, since: number): number {
 export function nextAutostartCandidate(
   db: Database.Database,
   since: number,
+  repo: string,
 ): { id: number; displayId: string | null; title: string; body: string | null } | null {
   const row = db
     .prepare(
       `SELECT t.id, t.display_id, t.title, t.body FROM agent_tickets t WHERE ${CANDIDATE_WHERE}
         ORDER BY t.created_at ASC, t.id ASC LIMIT 1`,
     )
-    .get(since, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent) as
+    .get(repo, since, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent) as
     | { id: number; display_id: string | null; title: string; body: string | null }
     | undefined;
   return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
@@ -129,6 +138,7 @@ const noThreadSql = (x: string) => `NOT EXISTS (SELECT 1 FROM agent_ticket_event
    WHERE n.ticket_id = ${x}.id AND n.type IN ('refine_human', 'refine_agent'))`;
 
 const BACKFILL_WHERE = `
+  ${inRepoSql('t')} AND
   t.archived_at IS NULL AND t.status = 'backlog' AND t.refined = 0 AND t.created_at < ?
   AND ${noThreadSql('t')}
   AND NOT (${excludedSql('t')})
@@ -144,21 +154,22 @@ const BACKFILL_WHERE = `
 const PRIORITY_RANK = `CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3
   WHEN 'P4' THEN 4 WHEN 'P5' THEN 5 ELSE 9 END`;
 
-export function backfillRemaining(db: Database.Database, since: number): number {
-  return (db.prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${BACKFILL_WHERE}`).get(since) as { n: number }).n;
+export function backfillRemaining(db: Database.Database, since: number, repo: string): number {
+  return (db.prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${BACKFILL_WHERE}`).get(repo, since) as { n: number }).n;
 }
 
 /** The next backlog ticket to backfill, or null. */
 export function nextBackfillCandidate(
   db: Database.Database,
   since: number,
+  repo: string,
 ): { id: number; displayId: string | null; title: string; body: string | null } | null {
   const row = db
     .prepare(
       `SELECT t.id, t.display_id, t.title, t.body FROM agent_tickets t WHERE ${BACKFILL_WHERE}
         ORDER BY ${PRIORITY_RANK}, t.created_at ASC, t.id ASC LIMIT 1`,
     )
-    .get(since) as { id: number; display_id: string | null; title: string; body: string | null } | undefined;
+    .get(repo, since) as { id: number; display_id: string | null; title: string; body: string | null } | undefined;
   return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
 }
 
@@ -203,8 +214,8 @@ export function runAutostart(db: Database.Database, config: AutostartConfig, now
     return null;
   }
   const since = autostartSince(db, now);
-  const queued = autostartQueue(db, since);
-  backfill = backfillRemaining(db, since);
+  const queued = autostartQueue(db, since, config.repo);
+  backfill = backfillRemaining(db, since, config.repo);
 
   const hold = activeSessionLimitHold(db, now);
   if (hold) {
@@ -221,14 +232,14 @@ export function runAutostart(db: Database.Database, config: AutostartConfig, now
   }
 
   // New tickets first; the backlog backfill only when none is waiting (PD-748).
-  const candidate = nextAutostartCandidate(db, since) ?? nextBackfillCandidate(db, since);
+  const candidate = nextAutostartCandidate(db, since, config.repo) ?? nextBackfillCandidate(db, since, config.repo);
   if (!candidate) {
     publish(0, null);
     return null;
   }
   writeAutostartKickoff(db, candidate, now);
-  backfill = backfillRemaining(db, since);
-  publish(autostartQueue(db, since), null);
+  backfill = backfillRemaining(db, since, config.repo);
+  publish(autostartQueue(db, since, config.repo), null);
   logger.info({ ticketId: candidate.id, displayId: candidate.displayId, open: open + 1 }, 'refine: auto-started a session');
   return candidate.id;
 }

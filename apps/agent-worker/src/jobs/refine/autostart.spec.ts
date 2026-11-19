@@ -13,8 +13,11 @@ function freshDb(): Database.Database {
       id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, body TEXT,
       status TEXT NOT NULL DEFAULT 'backlog', refined INTEGER NOT NULL DEFAULT 0,
       archived_at INTEGER, created_at INTEGER NOT NULL,
-      priority TEXT NOT NULL DEFAULT 'none', is_epic INTEGER NOT NULL DEFAULT 0, epic_id INTEGER
+      priority TEXT NOT NULL DEFAULT 'none', is_epic INTEGER NOT NULL DEFAULT 0, epic_id INTEGER,
+      project_id INTEGER NOT NULL DEFAULT 1
     );
+    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT);
+    INSERT INTO agent_projects (id, github_repo) VALUES (1, 'scolacur/personal-dashboard'), (2, NULL);
     CREATE TABLE agent_ticket_events (
       id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL,
       detail TEXT, created_at INTEGER NOT NULL
@@ -24,7 +27,8 @@ function freshDb(): Database.Database {
   return db;
 }
 
-const ON = { enabled: true, openCap: 2 };
+const REPO = 'scolacur/personal-dashboard';
+const ON = { enabled: true, openCap: 2, repo: REPO };
 let db: Database.Database;
 let nextId = 1;
 
@@ -74,13 +78,13 @@ beforeEach(() => {
 describe('Refine auto-start (PD-747, D-096)', () => {
   it('does nothing while switched off, and says so', () => {
     ticket(2000);
-    expect(runAutostart(db, { enabled: false, openCap: 15 }, 1000)).toBeNull();
+    expect(runAutostart(db, { enabled: false, openCap: 15, repo: REPO }, 1000)).toBeNull();
     expect(status()).toMatchObject({ enabled: false, heldBy: expect.stringContaining('off') });
     expect(readStateNumber(db, AUTOSTART_SINCE_KEY)).toBe(0); // the boundary is not set until enabled
   });
 
   it('starts new tickets oldest first, one per cycle, ahead of anything older (PD-748 backfill)', () => {
-    const cap = { enabled: true, openCap: 15 };
+    const cap = { enabled: true, openCap: 15, repo: REPO };
     const before = ticket(500); // predates the boundary — backfill material
     expect(runAutostart(db, cap, 1000)).toBe(before); // nothing new yet, so the backfill runs
     const a = ticket(1100);
@@ -102,7 +106,7 @@ describe('Refine auto-start (PD-747, D-096)', () => {
     const parked = ticket(1100);
     event(parked, 'refine_human', 1110);
     event(parked, 'refine_parked', 1120);
-    expect(runAutostart(db, { enabled: true, openCap: 15 }, 1300)).toBeNull();
+    expect(runAutostart(db, { enabled: true, openCap: 15, repo: REPO }, 1300)).toBeNull();
     expect(status().queued).toBe(0);
   });
 
@@ -145,7 +149,7 @@ describe('Refine auto-start (PD-747, D-096)', () => {
 });
 
 describe('Refine backlog backfill (PD-748, D-096 §3)', () => {
-  const BIG = { enabled: true, openCap: 50 };
+  const BIG = { enabled: true, openCap: 50, repo: REPO };
   const excluded = (id: number, value: boolean, at: number) => event(id, 'refine_backfill_excluded', at, { excluded: value });
 
   it('drips older tickets in after new ones, highest priority first, then oldest', () => {
@@ -184,7 +188,7 @@ describe('Refine backlog backfill (PD-748, D-096 §3)', () => {
     const m = ticket(110, { priority: 'P4', epic_id: epic });
     excluded(epic, true, 120);
     expect(runAutostart(db, BIG, 1000)).toBeNull();
-    expect(backfillRemaining(db, 1000)).toBe(0);
+    expect(backfillRemaining(db, 1000, REPO)).toBe(0);
     excluded(epic, false, 1050);
     expect(runAutostart(db, BIG, 1100)).toBe(epic);
     expect(kickoffs(m)).toHaveLength(0);
@@ -197,5 +201,21 @@ describe('Refine backlog backfill (PD-748, D-096 §3)', () => {
     expect(status()).toMatchObject({ backfillRemaining: 1, queued: 0 });
     runAutostart(db, BIG, 1100);
     expect(status()).toMatchObject({ backfillRemaining: 0, queued: 0 });
+  });
+});
+
+describe('auto-start is scoped to the worker\'s repo', () => {
+  it('never starts another project\'s ticket, new or backfill', () => {
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, created_at, project_id) VALUES (900, 'C-1', 'core thing', 100, 2)").run();
+    runAutostart(db, { enabled: true, openCap: 50, repo: REPO }, 1000);
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, created_at, project_id) VALUES (901, 'C-2', 'core new', 1100, 2)").run();
+    expect(runAutostart(db, { enabled: true, openCap: 50, repo: REPO }, 1200)).toBeNull();
+    expect(kickoffs(900)).toHaveLength(0);
+    expect(kickoffs(901)).toHaveLength(0);
+  });
+
+  it('starts nothing when the worker has no repo configured', () => {
+    ticket(100);
+    expect(runAutostart(db, { enabled: true, openCap: 50, repo: '' }, 1000)).toBeNull();
   });
 });
