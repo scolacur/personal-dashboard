@@ -263,14 +263,7 @@ export async function evaluateOnePr(
 
   // One decision for the PR, from every lens. Any missing verdict means the PR cannot pass (D-076:
   // a failed evaluation is never approval); otherwise the worst verdict wins.
-  const all = [...reports.values()];
-  const combined: EvaluatorReport | null = all.some((r) => r === null)
-    ? null
-    : {
-        verdict: all.some((r) => r!.verdict === 'escalate') ? 'escalate' : all.some((r) => r!.verdict === 'revise') ? 'revise' : 'ship',
-        findings: all.flatMap((r) => r!.findings),
-        summary: all.map((r) => r!.summary).join(' '),
-      };
+  const combined = combineReports([...reports.values()]);
   // The round that matters is the highest among the lenses asking for changes.
   const reviseRound = Math.max(0, ...lenses.filter((l) => reports.get(l)?.verdict === 'revise').map((l) => rounds.get(l)!));
 
@@ -299,6 +292,18 @@ export async function evaluateOnePr(
 
   await gate(gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS));
   return combined;
+}
+
+/** One decision from every lens: any missing verdict means no pass (D-076: a failed evaluation is
+ *  never approval); otherwise the worst verdict wins. Shared with the all-PRs path (PD-712). */
+export function combineReports(all: (EvaluatorReport | null)[]): EvaluatorReport | null {
+  if (all.length === 0 || all.some((r) => r === null)) return null;
+  const rs = all as EvaluatorReport[];
+  return {
+    verdict: rs.some((r) => r.verdict === 'escalate') ? 'escalate' : rs.some((r) => r.verdict === 'revise') ? 'revise' : 'ship',
+    findings: rs.flatMap((r) => r.findings),
+    summary: rs.map((r) => r.summary).join(' '),
+  };
 }
 
 /** An urgent Notification Center entry for a secret found in a PR (PD-767). Never carries the value:
@@ -366,6 +371,16 @@ export async function runEvaluatePass(
     } catch (err) {
       // One bad PR must not strand the rest of the queue.
       logger.error({ err, ticketId: target.ticketId }, 'evaluator: evaluation threw — continuing');
+    }
+  }
+  // PD-712 (D-101): then one non-Robot PR per pass, on the same budget and ledger.
+  if (config.evaluator.allPrs) {
+    try {
+      const { evaluateNextOtherPr } = await import('./all-prs');
+      const verdict = await evaluateNextOtherPr(db, config, now, deps);
+      if (verdict) evaluated++;
+    } catch (err) {
+      logger.error({ err }, 'evaluator: non-Robot PR review threw — continuing');
     }
   }
   return evaluated;

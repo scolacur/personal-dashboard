@@ -63,7 +63,15 @@ jobs:
           if [ "$APPROVED" = "true" ]; then
             STATE=success; DESC="Approved by Steve"
           else
-            STATE=pending; DESC="Waiting for Steve's approval"
+            # PD-712 (D-101): the Evaluator also sets success on this commit when every lens ships.
+            # Without an approval, leave its success alone rather than reset it to pending; a review
+            # event (a comment, a dismissal) must not undo the Evaluator's verdict on the same commit.
+            CURRENT="$(gh api "repos/$REPO/commits/$SHA/statuses" \
+              --jq '[.[] | select(.context == "review-gate")][0] | "\(.state)|\(.description)"' || true)"
+            case "$CURRENT" in
+              success\|Evaluator:*) echo "PR #$PR @ $SHA: review-gate already success from the Evaluator; leaving it."; exit 0 ;;
+            esac
+            STATE=pending; DESC="Waiting for Steve's approval or an Evaluator ship"
           fi
           echo "PR #$PR @ $SHA: review-gate=$STATE ($DESC)"
           gh api --method POST "repos/$REPO/statuses/$SHA" \

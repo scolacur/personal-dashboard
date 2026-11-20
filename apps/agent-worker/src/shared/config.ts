@@ -115,6 +115,8 @@ export interface EvaluatorConfig {
   /** PD-763: base URL of the dashboard's ticket pages (e.g. `http://host:8088/devops/tickets`), so a
    *  status links to its ticket. Optional. */
   reviewGateTicketUrlBase: string;
+  /** PD-712 (D-101): also review every non-Robot PR to the repo. On by default; EVALUATOR_ALL_PRS=0 turns it off. */
+  allPrs: boolean;
 }
 
 /**
@@ -253,6 +255,7 @@ export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
     budgetTokens: Number(env.EVALUATOR_BUDGET_TOKENS ?? 0),
     securityEnabled: !(env.EVALUATOR_SECURITY_ENABLED === '0' || env.EVALUATOR_SECURITY_ENABLED === 'false'),
     reviewGateToken: env.REVIEW_GATE_TOKEN ?? '',
+    allPrs: !(env.EVALUATOR_ALL_PRS === '0' || env.EVALUATOR_ALL_PRS === 'false'),
     reviewGateTicketUrlBase: env.REVIEW_GATE_TICKET_URL_BASE ?? '',
   };
 }
