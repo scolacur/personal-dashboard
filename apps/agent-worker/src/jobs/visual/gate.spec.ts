@@ -10,6 +10,7 @@ import type { EvaluatorTurnResult } from '../evaluate/evaluate-agent';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
 import { visualGate, VISUAL_PENDING_DESCRIPTION } from './gate';
 import { releaseVisualDecisions } from './release';
+import { STATUS_MARKER } from './status';
 
 /**
  * The visual-review gate end to end on the worker side (PD-773 slice 2): a flag holds an Evaluator
@@ -21,9 +22,13 @@ const TARGET = { ticketId: 1, repo: 'scolacur/personal-dashboard', prNumber: 314
 const ship = '{"verdict":"ship","summary":"Good.","findings":[]}';
 const shipAskingVisual = '{"verdict":"ship","summary":"New page.","findings":[],"visualReview":"New Habits calendar layout"}';
 
-function config(): AgentWorkerConfig {
+function config(captureOn = true): AgentWorkerConfig {
   const base = loadConfig({});
-  return { ...base, evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, securityEnabled: false, allPrs: false, reviewGateToken: 'tok' } };
+  return {
+    ...base,
+    evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, securityEnabled: false, allPrs: false, reviewGateToken: 'tok' },
+    visual: { ...base.visual, enabled: captureOn },
+  };
 }
 const agent = (text: string) => vi.fn(async (): Promise<EvaluatorTurnResult> => ({ text, ok: true, turns: 2, tokens: 10 }));
 
@@ -109,5 +114,71 @@ describe('visual-review gate (PD-773)', () => {
     event('robot_visual_review_requested', { prNumber: 314, by: 'robot', reason: 'look' }, 50);
     event('robot_visual_reviewed', { prNumber: 314, approved: true }, 60);
     expect(visualGate(db, 1, 314, reviewBoundary(db, 1))).toBe('pending'); // boundary = hand-off at 100
+  });
+});
+
+describe('visual gate with capture off (PD-793)', () => {
+  let comments: string[];
+  const comment = async (_r: string, _n: number, b: string) => void comments.push(b);
+  const webDiff = 'diff --git a/apps/web/src/routes/habits/+page.svelte b/apps/web/src/routes/habits/+page.svelte\n+x';
+  const serverDiff = 'diff --git a/apps/server/src/x.ts b/apps/server/src/x.ts\n+x';
+  const rows = () => db.prepare('SELECT outcome, head_sha FROM visual_captures').all();
+  beforeEach(() => {
+    comments = [];
+  });
+
+  it('skips the gate: a requested ship posts success, notifies nobody, and the PR says capture is off', async () => {
+    await evaluateOnePr(db, config(false), TARGET, { ...deps(), fetchDiff: async () => webDiff, comment, runAgent: agent(shipAskingVisual) }, 200);
+    expect(posts.at(-1)?.state).toBe('success');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agent_notifications WHERE kind = 'agent_visual_review'").get()).toEqual({ n: 0 });
+    // The request is still on the ticket.
+    expect(visualGate(db, 1, 314, reviewBoundary(db, 1))).toBe('pending');
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain(STATUS_MARKER);
+    expect(comments[0]).toMatch(/Visual: capture is off/);
+    expect(comments[0]).toMatch(/visual check was asked for\. It was skipped/);
+    expect(rows()).toEqual([{ outcome: 'off', head_sha: SHA }]);
+    // Nothing for the release pass to do: the ship already posted success.
+    posts = [];
+    expect(await releaseVisualDecisions(db, config(false), 300, { boundary: reviewBoundary, ...deps(), comment })).toBe(0);
+    expect(posts).toEqual([]);
+  });
+
+  it('says capture is off for an unrequested web change, and no UI change for a server-only one', async () => {
+    await evaluateOnePr(db, config(false), TARGET, { ...deps(), fetchDiff: async () => webDiff, comment, runAgent: agent(ship) }, 200);
+    expect(comments.at(-1)).toMatch(/Visual: capture is off/);
+    expect(comments.at(-1)).not.toMatch(/asked for/);
+
+    db.exec('DELETE FROM visual_captures');
+    await evaluateOnePr(db, config(false), TARGET, { ...deps(), fetchDiff: async () => serverDiff, comment, runAgent: agent(ship) }, 300);
+    expect(comments.at(-1)).toMatch(/Visual: no UI change/);
+    expect(rows()).toEqual([{ outcome: 'skipped', head_sha: SHA }]);
+  });
+
+  it('comments once per head, however often the head is evaluated', async () => {
+    await evaluateOnePr(db, config(false), TARGET, { ...deps(), fetchDiff: async () => webDiff, comment, runAgent: agent(ship) }, 200);
+    await evaluateOnePr(db, config(false), TARGET, { ...deps(), fetchDiff: async () => webDiff, comment, runAgent: agent(ship) }, 300);
+    expect(comments).toHaveLength(1);
+  });
+
+  it('releases a PR the gate held before capture was known to be off, once, and says so on the PR', async () => {
+    await evaluateOnePr(db, config(true), TARGET, { ...deps(), runAgent: agent(shipAskingVisual) }, 200);
+    expect(posts.at(-1)?.state).toBe('pending');
+    posts = [];
+    const d = { boundary: reviewBoundary, ...deps(), comment };
+    expect(await releaseVisualDecisions(db, config(false), 400, d)).toBe(1);
+    expect(posts).toEqual([{ state: 'success', description: 'Evaluator: ship; visual check skipped (capture is off)' }]);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toMatch(/Visual: capture is off/);
+    expect(await releaseVisualDecisions(db, config(false), 500, d)).toBe(0);
+    expect(posts).toHaveLength(1);
+  });
+
+  it('with capture on, a held PR stays held', async () => {
+    await evaluateOnePr(db, config(true), TARGET, { ...deps(), runAgent: agent(shipAskingVisual) }, 200);
+    posts = [];
+    expect(await releaseVisualDecisions(db, config(true), 400, { boundary: reviewBoundary, ...deps(), comment })).toBe(0);
+    expect(posts).toEqual([]);
+    expect(comments).toEqual([]);
   });
 });

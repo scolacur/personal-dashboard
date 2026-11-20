@@ -16,6 +16,8 @@ import { buildContextPack } from '../../shared/context-pack';
 import { latestEventAt, logMilestone } from '../robot/events';
 import { notify } from '../robot/notify';
 import { visualGate, visualRequested, VISUAL_PENDING_DESCRIPTION } from '../visual/gate';
+import { defaultCommenter } from '../visual/pass';
+import { captureOffReleaseKey, recordCaptureOff, type Commenter } from '../visual/status';
 import { setAgentState } from '../robot/board';
 import { lastHandoffAt } from '../robot/runs';
 import { inReviewPrTargets } from '../robot/pr-state';
@@ -100,6 +102,8 @@ export interface EvaluatePassDeps {
   /** PD-763: injectable for tests; default to `gh` with the read / statuses-only tokens. */
   fetchHeadSha?: HeadShaFetcher;
   postStatus?: StatusPoster;
+  /** PD-793: the PR commenter for the "capture is off" / "no UI change" line. */
+  comment?: Commenter;
 }
 
 interface TicketRow {
@@ -303,7 +307,9 @@ export async function evaluateOnePr(
   let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS);
   // PD-773: a ship on a PR that waits for Steve's visual check holds the gate at pending. His approval
   // releases it (releaseVisualGates); until then he is told it is waiting.
-  if (status.state === 'success') {
+  // PD-793: only while capture is on. With it off there is nothing to look at, so the gate skips
+  // itself; the request stays on the ticket and the PR says the check was skipped (below).
+  if (status.state === 'success' && config.visual.enabled) {
     const vg = visualGate(db, target.ticketId, target.prNumber, since);
     if (vg === 'pending' || vg === 'rejected') {
       status = { state: 'pending', description: VISUAL_PENDING_DESCRIPTION };
@@ -319,6 +325,23 @@ export async function evaluateOnePr(
     }
   }
   await gate(status);
+
+  // PD-793: with capture off, the PR still says what happened with screenshots, once per head.
+  if (!config.visual.enabled) {
+    if (status.state === 'success') writeState(db, captureOffReleaseKey(target.ticketId), String(since), now);
+    // No write token means no PR comment is possible; the dashboard still shows "capture off" from
+    // the worker's heartbeat.
+    const sha = config.robot.writeToken || deps.comment
+      ? gateSha ?? (await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(target.repo, target.prNumber))
+      : null;
+    if (sha) {
+      await recordCaptureOff(db, target, sha, {
+        diff: rawDiff,
+        requested: visualRequested(db, target.ticketId, target.prNumber),
+        comment: deps.comment ?? defaultCommenter(config),
+      }, now);
+    }
+  }
   return combined;
 }
 
@@ -377,7 +400,12 @@ export async function runEvaluatePass(
   // must not leave an approved PR held or a rejected one un-reworked.
   try {
     const { releaseVisualDecisions } = await import('../visual/release');
-    await releaseVisualDecisions(db, config, now, { boundary: reviewBoundary, fetchHeadSha: deps.fetchHeadSha, postStatus: deps.postStatus });
+    await releaseVisualDecisions(db, config, now, {
+      boundary: reviewBoundary,
+      fetchHeadSha: deps.fetchHeadSha,
+      postStatus: deps.postStatus,
+      comment: deps.comment,
+    });
   } catch (err) {
     logger.error({ err }, 'evaluator: applying visual decisions threw — continuing');
   }

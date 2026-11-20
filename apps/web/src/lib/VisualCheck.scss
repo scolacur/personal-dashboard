@@ -19,6 +19,11 @@
 .vc-pending {
   color: var(--muted);
   font-size: var(--font-size-sm);
+
+  // PD-794: capture off / failed / unknown is something Steve should notice, not background text.
+  &.vc-warn {
+    color: var(--status-warn);
+  }
 }
 
 .vc-route {

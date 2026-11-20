@@ -8,6 +8,8 @@ import { inReviewPrTargets } from '../robot/pr-state';
 import { readStateNumber, writeState } from '../robot/state';
 import { defaultHeadShaFetcher, defaultStatusPoster, type HeadShaFetcher, type StatusPoster } from '../evaluate/review-gate';
 import { latestVisualDecision, visualRequested } from './gate';
+import { defaultCommenter } from './pass';
+import { captureOffReleaseKey, recordCaptureOff, type Commenter } from './status';
 
 /**
  * Act on Steve's visual decisions (PD-773 slice 2), once each:
@@ -17,6 +19,10 @@ import { latestVisualDecision, visualRequested } from './gate';
  *  - **rejected**: send the PR back to the Robot, with his note, which the next dispatch reads as part
  *    of its rework brief (`pendingEvaluatorBrief`).
  * "Once" is a robot_state key per ticket holding the decision's event id.
+ *
+ * PD-793: with capture off, a requested check with no decision is released the same way as an
+ * approval, once per review boundary: nothing will ever be photographed, so holding it only strands
+ * the PR. This unsticks PRs the gate held before it learned to skip itself.
  */
 
 export interface ReleaseDeps {
@@ -24,6 +30,7 @@ export interface ReleaseDeps {
   postStatus?: StatusPoster;
   /** The review boundary for a ticket (the Evaluator's `reviewBoundary`), injected to avoid a cycle. */
   boundary: (db: Database.Database, ticketId: number) => number;
+  comment?: Commenter;
 }
 
 /** Whether every lens's newest verdict on this ticket's Robot PR since `since` is `ship`. */
@@ -52,7 +59,10 @@ export async function releaseVisualDecisions(
     if (!visualRequested(db, t.ticketId, t.prNumber)) continue;
     const since = deps.boundary(db, t.ticketId);
     const decision = latestVisualDecision(db, t.ticketId, since);
-    if (!decision) continue;
+    if (!decision) {
+      if (!config.visual.enabled && (await releaseCaptureOff(db, config, t, since, lenses, now, deps))) acted++;
+      continue;
+    }
     const key = `visual_decision_applied:${t.ticketId}`;
     if (readStateNumber(db, key) === decision.id) continue;
 
@@ -82,4 +92,34 @@ export async function releaseVisualDecisions(
     }
   }
   return acted;
+}
+
+/** Release a held ship whose visual check can't happen because capture is off (PD-793). */
+async function releaseCaptureOff(
+  db: Database.Database,
+  config: AgentWorkerConfig,
+  t: { ticketId: number; repo: string; prNumber: number },
+  since: number,
+  lenses: string[],
+  now: number,
+  deps: ReleaseDeps,
+): Promise<boolean> {
+  const key = captureOffReleaseKey(t.ticketId);
+  if (readStateNumber(db, key) === since) return false;
+  if (!config.evaluator.reviewGateToken || !lastVerdictsShip(db, t.ticketId, since, lenses)) return false;
+  const sha = await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(t.repo, t.prNumber);
+  if (!sha) return false;
+  const ok = await (deps.postStatus ?? defaultStatusPoster(config))(
+    t.repo,
+    sha,
+    { state: 'success', description: 'Evaluator: ship; visual check skipped (capture is off)' },
+    null,
+  );
+  if (!ok) return false;
+  writeState(db, key, String(since), now);
+  if (config.robot.writeToken || deps.comment) {
+    await recordCaptureOff(db, t, sha, { diff: null, requested: true, comment: deps.comment ?? defaultCommenter(config) }, now);
+  }
+  logger.info({ ticketId: t.ticketId, prNumber: t.prNumber }, 'visual: capture is off — held review-gate released');
+  return true;
 }
