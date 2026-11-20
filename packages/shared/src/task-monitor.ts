@@ -1366,6 +1366,8 @@ export const ROBOT_EVENT = {
   // PD-774 (D-099): the conflict resolver merged main into the ticket's PR and resolved the conflicts
   // mechanically. It also marks a new review boundary: the Evaluator reviews the resolved head again.
   conflictResolved: 'robot_conflict_resolved',
+  // PD-773: screenshots of the PR's head were captured and are served by the dashboard.
+  visualCaptured: 'robot_visual_captured',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -1419,6 +1421,8 @@ export interface RobotEventDetail {
   prNumber?: number;
   /** PD-774: the files the conflict resolver resolved (`robot_conflict_resolved`). */
   files?: string[];
+  /** PD-773: the screenshots of a capture, each with its dashboard URL (`robot_visual_captured`). */
+  shots?: { route: string; viewport: string; scheme: string; file: string; url: string }[];
   /** How long a stalled run had been running before the watchdog parked it, ms (`robot_stalled`). */
   ageMs?: number;
   /** Terminal lane a manual close/complete moved the ticket to (`robot_session_ended`, PD-400). */

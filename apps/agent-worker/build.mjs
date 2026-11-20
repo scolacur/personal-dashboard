@@ -10,9 +10,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 //    importantly `better-sqlite3` (native .node binary) and the Claude Agent SDK,
 //    which ships its own runtime. The runtime image still installs node_modules.
 //  - The alias inlines `@dashboard/shared` from SOURCE (no dist) — DECISIONS D-024.
+// PD-773: the screenshot step runs as its own process (dropped to the Robot's uid), so it is its
+// own entry point: dist/capture-cli.js beside dist/index.js.
 await build({
-  entryPoints: [path.resolve(__dirname, 'src/index.ts')],
-  outfile: path.resolve(__dirname, 'dist/index.js'),
+  entryPoints: {
+    index: path.resolve(__dirname, 'src/index.ts'),
+    'capture-cli': path.resolve(__dirname, 'src/jobs/visual/capture-cli.ts'),
+  },
+  outdir: path.resolve(__dirname, 'dist'),
   bundle: true,
   platform: 'node',
   target: 'node20',
