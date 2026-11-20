@@ -1,6 +1,9 @@
 import type {
+  HabitChoiceOption,
   HabitCompletion,
   HabitItemView,
+  HabitMetricType,
+  HabitMetricValue,
   HabitSchedule,
   HabitSettings,
   HabitTodayView,
@@ -56,6 +59,16 @@ export async function fetchItems(includeArchived = false): Promise<HabitItemView
 
 export function createItem(name: string): Promise<HabitItemView> {
   return request<HabitItemView>('/items', withBody('POST', { name }));
+}
+
+/** Create a metric (kind `metric`) of the given type (PD-724). */
+export function createMetric(name: string, metricType: HabitMetricType): Promise<HabitItemView> {
+  return request<HabitItemView>('/items', withBody('POST', { name, kind: 'metric', metricType }));
+}
+
+/** Change a metric's type. The server refuses (RejectedError) once the metric has any value. */
+export function setMetricType(id: number, metricType: HabitMetricType): Promise<HabitItemView> {
+  return request<HabitItemView>(`/items/${id}/metric-type`, withBody('PUT', { metricType }));
 }
 
 export function renameItem(id: number, name: string): Promise<HabitItemView> {
@@ -128,6 +141,32 @@ export function setSchedule(id: number, input: SetHabitScheduleInput): Promise<H
  */
 export function setMetricValue(itemId: number, day: string, value: string | null): Promise<void> {
   return request<void>('/metric-values', withBody('PUT', { itemId, day, value }));
+}
+
+export async function fetchMetricValues(from: string, to: string): Promise<HabitMetricValue[]> {
+  const q = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  return (await request<{ values: HabitMetricValue[] }>(`/metric-values${q}`)).values;
+}
+
+export async function fetchChoiceOptions(itemId: number, includeArchived = false): Promise<HabitChoiceOption[]> {
+  const q = includeArchived ? '?includeArchived=1' : '';
+  return (await request<{ options: HabitChoiceOption[] }>(`/items/${itemId}/options${q}`)).options;
+}
+
+export function createChoiceOption(itemId: number, label: string): Promise<HabitChoiceOption> {
+  return request<HabitChoiceOption>(`/items/${itemId}/options`, withBody('POST', { label }));
+}
+
+export function renameChoiceOption(optionId: number, label: string): Promise<HabitChoiceOption> {
+  return request<HabitChoiceOption>(`/options/${optionId}`, withBody('PATCH', { label }));
+}
+
+export function setChoiceOptionArchived(optionId: number, archived: boolean): Promise<HabitChoiceOption> {
+  return request<HabitChoiceOption>(`/options/${optionId}/archive`, withBody('POST', { archived }));
+}
+
+export function deleteChoiceOption(optionId: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/options/${optionId}`, withBody('DELETE'));
 }
 
 export function fetchSettings(): Promise<HabitSettings> {

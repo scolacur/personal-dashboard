@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import {
     DEFAULT_DAY_BOUNDARY_MINUTES,
     DEFAULT_HABIT_TIMEZONE,
     habitDay,
+    type HabitChoiceOption,
     type HabitItemView,
+    type HabitMetricTodayRow,
+    type HabitMetricType,
     type HabitSchedule,
     type HabitSettings,
     type HabitTodayRow,
@@ -17,8 +20,12 @@
   import TodayList from '../routes/widgets/habit-tracker/TodayList.svelte';
   import HabitsManager from '../routes/widgets/habit-tracker/HabitsManager.svelte';
   import {
+    createChoiceOption,
     createItem,
+    createMetric,
+    deleteChoiceOption,
     deleteItem,
+    fetchChoiceOptions,
     fetchItems,
     fetchSchedules,
     fetchSettings,
@@ -26,13 +33,17 @@
     moveItem,
     patchSettings,
     RejectedError,
+    renameChoiceOption,
     renameItem,
     setArchived,
+    setChoiceOptionArchived,
+    setMetricType,
     setSchedule,
   } from '../routes/widgets/habit-tracker/api';
   import { buildHabitTree, dueLeaves, type HabitTreeNode } from '../routes/widgets/habit-tracker/tree';
   import {
     applyPendingCompletions,
+    applyPendingMetrics,
     pendingKey,
     QUEUE_KEY,
     sendHabitWrite,
@@ -62,8 +73,12 @@
   let schedules = $state<HabitSchedule[]>([]);
   // The Today view (due state, per-week progress, streaks) is computed server-side (D-095).
   let todayRows = $state<HabitTodayRow[]>([]);
+  // Active metrics for today (item + options); their values live in the optimistic `metricValues` map.
+  let metricRows = $state<HabitMetricTodayRow[]>([]);
   // SvelteSet so in-place add/delete are reactive (optimistic ticking mutates it directly).
   const completedToday = new SvelteSet<number>();
+  // Optimistic metric values: itemId → value ('HH:MM' | number string | JSON option ids), null = cleared.
+  const metricValues = new SvelteMap<number, string | null>();
   let loaded = $state(false);
   let pending = $state<PendingHabitWrite[]>([]);
 
@@ -95,6 +110,7 @@
   async function refreshToday() {
     const view = await fetchToday();
     todayRows = view.rows;
+    metricRows = view.metrics;
     completedToday.clear();
     // Fold any queued-but-unsynced ticks over the server's done-set, so an offline tick doesn't
     // visually revert on refresh (PROJECT.md §4). The server view already carries the streak /
@@ -102,6 +118,11 @@
     const serverDone = view.rows.filter((r) => r.completedToday).map((r) => r.item.id);
     for (const id of applyPendingCompletions(serverDone, outbox.pending(), view.day))
       completedToday.add(id);
+    // Same fold for metric values: an unsynced value must not revert to the server's older one.
+    metricValues.clear();
+    const serverValues = view.metrics.map((m) => [m.item.id, m.value] as const);
+    for (const [id, value] of applyPendingMetrics(serverValues, outbox.pending(), view.day))
+      metricValues.set(id, value);
   }
 
   async function load() {
@@ -121,6 +142,20 @@
   // Today's render tree (PD-723), rebuilt from the server rows + the optimistic done-set so a set's
   // done/progress recompute the instant a child is ticked. Set streaks come from the server rows.
   const tree = $derived(buildHabitTree(todayRows, completedToday));
+
+  // Metrics for Today (PD-724): the server rows (item + options) with the optimistic value folded in,
+  // so a just-logged value shows immediately and survives the next refresh.
+  const metrics = $derived(
+    metricRows.map((m) => ({
+      ...m,
+      value: metricValues.has(m.item.id) ? (metricValues.get(m.item.id) ?? null) : m.value,
+    })),
+  );
+
+  function queueMetric(itemId: number, value: string | null) {
+    metricValues.set(itemId, value); // optimistic
+    outbox.add({ kind: 'metric', itemId, day: today, value });
+  }
 
   function queueToggle(itemId: number, done: boolean) {
     if (done) completedToday.add(itemId);
@@ -196,6 +231,47 @@
     await refreshToday();
   }
 
+  // ── Metric-tab actions (PD-724) ─────────────────────────────────────────────────
+  async function addMetric(name: string, metricType: HabitMetricType) {
+    const created = await createMetric(name, metricType);
+    items = [...items, created];
+    await refreshToday();
+  }
+
+  async function changeMetricType(id: number, metricType: HabitMetricType) {
+    const updated = await setMetricType(id, metricType);
+    items = items.map((i) => (i.id === updated.id ? updated : i));
+    await refreshToday();
+  }
+
+  // Choice-option edits change what Today's multi-select offers, so each refreshes the Today view.
+  function listOptions(id: number): Promise<HabitChoiceOption[]> {
+    return fetchChoiceOptions(id, true);
+  }
+
+  async function addOption(id: number, label: string): Promise<HabitChoiceOption> {
+    const option = await createChoiceOption(id, label);
+    await refreshToday();
+    return option;
+  }
+
+  async function editOption(optionId: number, label: string): Promise<HabitChoiceOption> {
+    const option = await renameChoiceOption(optionId, label);
+    await refreshToday();
+    return option;
+  }
+
+  async function archiveOption(optionId: number, archived: boolean): Promise<HabitChoiceOption> {
+    const option = await setChoiceOptionArchived(optionId, archived);
+    await refreshToday();
+    return option;
+  }
+
+  async function removeOption(optionId: number): Promise<void> {
+    await deleteChoiceOption(optionId);
+    await refreshToday();
+  }
+
   const TABS = [
     { id: 'today', label: 'Today' },
     { id: 'log', label: 'Log' },
@@ -213,7 +289,15 @@
 </script>
 
 {#snippet todayPanel()}
-  <TodayList {tree} onToggleLeaf={toggle} onToggleSet={toggleSet} {loaded} {compact} />
+  <TodayList
+    {tree}
+    {metrics}
+    onToggleLeaf={toggle}
+    onToggleSet={toggleSet}
+    onMetric={queueMetric}
+    {loaded}
+    {compact}
+  />
   {#if pending.length > 0}
     <p class="pending" role="status">{pending.length} pending sync</p>
   {/if}
@@ -232,12 +316,19 @@
             {today}
             {settings}
             onAdd={addHabit}
+            onAddMetric={addMetric}
             onRename={rename}
             onArchive={archive}
             onDelete={remove}
             onMove={move}
             onSchedule={updateSchedule}
             onSettings={updateSettings}
+            onMetricType={changeMetricType}
+            onListOptions={listOptions}
+            onAddOption={addOption}
+            onEditOption={editOption}
+            onArchiveOption={archiveOption}
+            onDeleteOption={removeOption}
           />
         {:else if id === 'log'}
           <!-- Log views arrive in PD-725 / PD-726. -->

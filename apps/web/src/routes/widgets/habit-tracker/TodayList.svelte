@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { STREAK_BADGE_MIN } from '@dashboard/shared';
-  import { topLevelSets, type HabitTreeNode } from './tree';
+  import { STREAK_BADGE_MIN, type HabitMetricTodayRow } from '@dashboard/shared';
+  import { subtreeItemIds, topLevelSets, type HabitTreeNode } from './tree';
+  import MetricInput from './MetricInput.svelte';
 
   /**
    * The Today checklist (PD-721; schedules PD-722; sets PD-723). A tree of due habits and sets in
@@ -15,14 +16,18 @@
    */
   let {
     tree,
+    metrics = [],
     onToggleLeaf,
     onToggleSet,
+    onMetric,
     loaded = true,
     compact = false,
   }: {
     tree: HabitTreeNode[];
+    metrics?: HabitMetricTodayRow[];
     onToggleLeaf: (item: HabitTreeNode['item']) => void;
     onToggleSet: (node: HabitTreeNode) => void;
+    onMetric?: (itemId: number, value: string | null) => void;
     loaded?: boolean;
     compact?: boolean;
   } = $props();
@@ -72,6 +77,16 @@
   const roots = $derived(
     chip === 'all' ? tree.filter((n) => n.due) : tree.filter((n) => n.item.id === chip && n.due),
   );
+
+  // Metrics (PD-724) sit in their own section below the habits. Under a set chip they are filtered to
+  // that set — a metric belongs when its parent is anywhere in the set's subtree.
+  const selectedMetrics = $derived.by(() => {
+    if (chip === 'all') return metrics;
+    const node = sets.find((s) => s.item.id === chip);
+    if (!node) return [];
+    const ids = subtreeItemIds(node);
+    return metrics.filter((m) => m.item.parentId !== null && ids.has(m.item.parentId));
+  });
 
   function setCheckState(node: HabitTreeNode): 'done' | 'partial' | 'empty' {
     if (node.done) return 'done';
@@ -176,5 +191,14 @@
     </li>
   {/if}
 </ul>
+
+{#if !compact && onMetric && selectedMetrics.length > 0}
+  <section class="metrics" aria-label="Metrics">
+    <h3>Metrics</h3>
+    {#each selectedMetrics as metric (metric.item.id)}
+      <MetricInput {metric} {onMetric} />
+    {/each}
+  </section>
+{/if}
 
 <style lang="scss" src="./TodayList.scss"></style>

@@ -305,6 +305,9 @@ export type {
   SetProgress,
   HabitDayNode,
   HabitHistoryNode,
+  HabitMetricValue,
+  HabitChoiceOption,
+  HabitMetricTodayRow,
 } from './habits';
 export {
   DEFAULT_DAY_BOUNDARY_MINUTES,
@@ -337,6 +340,13 @@ export {
   nodeProgress,
   projectHabitDay,
   setStreak,
+  HABIT_TIME_VALUE_PATTERN,
+  HABIT_CHOICE_LABEL_MAX_LENGTH,
+  isValidTimeValue,
+  isValidNumberValue,
+  parseChoiceValue,
+  choiceValue,
+  isValidMetricValueFormat,
 } from './habits';
 export type {
   AwaitingRefineItem,

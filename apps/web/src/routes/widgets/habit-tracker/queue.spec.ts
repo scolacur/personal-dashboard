@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { collapseByKey } from '../../../lib/outbox';
 import {
   applyPendingCompletions,
+  applyPendingMetrics,
   pendingKey,
   type PendingHabitWrite,
 } from './queue';
@@ -79,5 +80,32 @@ describe('applyPendingCompletions', () => {
       'today',
     );
     expect([...done].sort()).toEqual([1, 2]);
+  });
+});
+
+describe('applyPendingMetrics', () => {
+  it('folds an unsynced metric value over the server value so it does not revert', () => {
+    const values = applyPendingMetrics([[5, '0']], [metric(5, 'today', '2')], 'today');
+    expect(values.get(5)).toBe('2');
+  });
+
+  it('a pending clear (null) overrides a server value, distinct from leaving it', () => {
+    const values = applyPendingMetrics([[5, '2']], [metric(5, 'today', null)], 'today');
+    expect(values.get(5)).toBeNull();
+    expect(values.has(5)).toBe(true);
+  });
+
+  it('applies pending in order, last write wins, and ignores other days / completions', () => {
+    const values = applyPendingMetrics(
+      [[5, '1']],
+      [
+        metric(5, 'today', '2'),
+        metric(5, 'today', '3'),
+        metric(5, 'yesterday', '9'),
+        completion(5, 'today', true),
+      ],
+      'today',
+    );
+    expect(values.get(5)).toBe('3');
   });
 });

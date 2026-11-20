@@ -4,7 +4,9 @@
     MINUTES_PER_DAY,
     scheduleForDay,
     scheduleLabel,
+    type HabitChoiceOption,
     type HabitItemView,
+    type HabitMetricType,
     type HabitSchedule,
     type HabitSettings,
     type SetHabitScheduleInput,
@@ -12,6 +14,7 @@
   import Button from '$lib/Button.svelte';
   import Modal from '$lib/Modal.svelte';
   import ScheduleEditor from './ScheduleEditor.svelte';
+  import MetricEditor from './MetricEditor.svelte';
   import { toast } from '$lib/toast-store.svelte';
 
   /**
@@ -31,24 +34,38 @@
     today,
     settings,
     onAdd,
+    onAddMetric,
     onRename,
     onArchive,
     onDelete,
     onMove,
     onSchedule,
     onSettings,
+    onMetricType,
+    onListOptions,
+    onAddOption,
+    onEditOption,
+    onArchiveOption,
+    onDeleteOption,
   }: {
     items: HabitItemView[];
     schedules: HabitSchedule[];
     today: string;
     settings: HabitSettings;
     onAdd: (name: string) => Promise<void>;
+    onAddMetric: (name: string, metricType: HabitMetricType) => Promise<void>;
     onRename: (id: number, name: string) => Promise<void>;
     onArchive: (id: number, archived: boolean) => Promise<void>;
     onDelete: (id: number) => Promise<void>;
     onMove: (itemId: number, parentId: number | null, siblingIds: number[]) => Promise<void>;
     onSchedule: (id: number, input: SetHabitScheduleInput) => Promise<void>;
     onSettings: (patch: Partial<HabitSettings>) => Promise<void>;
+    onMetricType: (id: number, metricType: HabitMetricType) => Promise<void>;
+    onListOptions: (id: number) => Promise<HabitChoiceOption[]>;
+    onAddOption: (id: number, label: string) => Promise<HabitChoiceOption>;
+    onEditOption: (optionId: number, label: string) => Promise<HabitChoiceOption>;
+    onArchiveOption: (optionId: number, archived: boolean) => Promise<HabitChoiceOption>;
+    onDeleteOption: (optionId: number) => Promise<void>;
   } = $props();
 
   const active = $derived(items.filter((i) => i.archivedAt === null));
@@ -83,19 +100,25 @@
     }
   }
 
-  // ── Add ────────────────────────────────────────────────────────────────────────
+  // ── Add (a habit, or a metric of a chosen type) ──────────────────────────────────
+  type AddKind = 'habit' | 'time' | 'number' | 'choice';
   let newName = $state('');
+  let newKind = $state<AddKind>('habit');
   async function submitAdd(e: Event) {
     e.preventDefault();
     const name = newName.trim();
     if (!name) return;
     try {
-      await onAdd(name);
+      if (newKind === 'habit') await onAdd(name);
+      else await onAddMetric(name, newKind);
       newName = '';
     } catch {
-      toast.show('Could not add that habit.', 'error');
+      toast.show(`Could not add that ${newKind === 'habit' ? 'habit' : 'metric'}.`, 'error');
     }
   }
+
+  // ── Metric editor (type + choice options) ────────────────────────────────────────
+  let metricTarget = $state<HabitItemView | null>(null);
 
   // ── Inline rename ────────────────────────────────────────────────────────────────
   let editingId = $state<number | null>(null);
@@ -255,11 +278,17 @@
   <form class="add-form" onsubmit={submitAdd}>
     <input
       type="text"
-      placeholder="New habit or set"
-      aria-label="New habit name"
+      placeholder={newKind === 'habit' ? 'New habit or set' : 'New metric'}
+      aria-label="New item name"
       bind:value={newName}
       maxlength="200"
     />
+    <select bind:value={newKind} aria-label="Item type">
+      <option value="habit">Habit</option>
+      <option value="time">Time metric</option>
+      <option value="number">Number metric</option>
+      <option value="choice">Choice metric</option>
+    </select>
     <Button variant="primary" type="submit" disabled={newName.trim() === ''}>Add</Button>
   </form>
   <p class="hint">Drag a habit onto another to make a set; drag it out to the top to leave the set.</p>
@@ -300,7 +329,11 @@
           {#if itemIsSet}<span class="set-tag" aria-hidden="true">▦</span>{/if}{item.name}
         </button>
       {/if}
-      {#if !itemIsSet}
+      {#if item.kind === 'metric'}
+        <button type="button" class="metric-pill" onclick={() => (metricTarget = item)}>
+          {item.metricType} metric
+        </button>
+      {:else if !itemIsSet}
         <button type="button" class="schedule-pill" onclick={() => (scheduleTarget = item)}>
           {scheduleLabel(currentSchedule(item.id))}
         </button>
@@ -410,6 +443,19 @@
     schedule={currentSchedule(scheduleTarget.id)}
     onSave={saveSchedule}
     onClose={() => (scheduleTarget = null)}
+  />
+{/if}
+
+{#if metricTarget}
+  <MetricEditor
+    item={metricTarget}
+    {onMetricType}
+    {onListOptions}
+    {onAddOption}
+    {onEditOption}
+    {onArchiveOption}
+    {onDeleteOption}
+    onClose={() => (metricTarget = null)}
   />
 {/if}
 

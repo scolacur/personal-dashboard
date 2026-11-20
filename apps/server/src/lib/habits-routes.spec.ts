@@ -214,6 +214,74 @@ describe('today route (PD-722, D-095)', () => {
   });
 });
 
+describe('metric routes (PD-724)', () => {
+  async function createMetric(name: string, metricType: 'time' | 'number' | 'choice'): Promise<HabitItemView> {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/habits/items',
+      payload: { name, kind: 'metric', metricType },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json() as HabitItemView;
+  }
+
+  it('PUTs a value (set-state) and clears it with null', async () => {
+    const drinks = await createMetric('Drinks', 'number');
+    const set = await app.inject({
+      method: 'PUT',
+      url: '/api/habits/metric-values',
+      payload: { itemId: drinks.id, day: '2026-11-20', value: '0' },
+    });
+    expect(set.statusCode).toBe(200);
+    expect((set.json() as { value: { value: string } }).value.value).toBe('0');
+
+    const cleared = await app.inject({
+      method: 'PUT',
+      url: '/api/habits/metric-values',
+      payload: { itemId: drinks.id, day: '2026-11-20', value: null },
+    });
+    expect((cleared.json() as { value: unknown }).value).toBeNull();
+  });
+
+  it('refuses a type change once the metric has a value (400 metric_type_locked)', async () => {
+    const drinks = await createMetric('Drinks', 'number');
+    await app.inject({
+      method: 'PUT',
+      url: '/api/habits/metric-values',
+      payload: { itemId: drinks.id, day: '2026-11-20', value: '2' },
+    });
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/api/habits/items/${drinks.id}/metric-type`,
+      payload: { metricType: 'time' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { code: string }).code).toBe('metric_type_locked');
+  });
+
+  it('runs choice options through CRUD and the Today view', async () => {
+    const drugs = await createMetric('Drugs', 'choice');
+    const weed = await app.inject({
+      method: 'POST',
+      url: `/api/habits/items/${drugs.id}/options`,
+      payload: { label: 'weed' },
+    });
+    expect(weed.statusCode).toBe(201);
+    const weedId = (weed.json() as { id: number }).id;
+
+    const list = await app.inject({ method: 'GET', url: `/api/habits/items/${drugs.id}/options` });
+    expect((list.json() as { options: { label: string }[] }).options.map((o) => o.label)).toEqual(['weed']);
+
+    const today = await app.inject({ method: 'GET', url: '/api/habits/today' });
+    const view = today.json() as HabitTodayView;
+    const drugsMetric = view.metrics.find((m) => m.item.id === drugs.id)!;
+    expect(drugsMetric.options.map((o) => o.id)).toEqual([weedId]);
+
+    const del = await app.inject({ method: 'DELETE', url: `/api/habits/options/${weedId}` });
+    expect(del.statusCode).toBe(200);
+  });
+});
+
 describe('settings routes', () => {
   it('reads defaults and patches', async () => {
     const got = await app.inject({ method: 'GET', url: '/api/habits/settings' });
