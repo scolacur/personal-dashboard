@@ -22,7 +22,12 @@ import { asOwnerOf, GitError, makeGitRunner, type GitRunner, type Worktree } fro
  *    treated as "nothing preserved".
  *
  * **Preserve only, no resume (D-094).** Nothing here makes the next dispatch start from the WIP ref;
- * PD-340's pristine-tree default stands. The ref exists for a human to `git fetch`, and for PD-737's
+ * PD-340's pristine-tree default stands. That includes the clone itself (PD-781): the WIP commit is
+ * made on the live `robot/t<id>` branch only long enough to push it, then undone with
+ * `reset --mixed` to the commit before it. The clone is kept and reused (PD-719), and reuse's
+ * `reset --hard HEAD` keeps commits; a WIP commit left behind would have been the next run's
+ * starting point, an automatic resume by the back door. Undone, the work is uncommitted debris
+ * again, which reuse discards, exactly as before PD-736. Commits the Robot made itself stay. The ref exists for a human to `git fetch`, and for PD-737's
  * human-chosen Continue to read — not for automatic resume, which would let a broken WIP poison every
  * retry.
  */
@@ -84,11 +89,16 @@ export async function pushWip(
   const dir = worktree.dir;
   const ref = wipRefName(ticketId);
   const owner = asOwnerOf(dir);
+  // PD-781: the commit to return the branch to once the WIP is pushed (or the push fails).
+  let preWip: string | null = null;
+  let committed = false;
   try {
+    preWip = (await git([...owner, 'rev-parse', 'HEAD']))?.toString().trim() || null;
+    if (!preWip) return null; // no HEAD to come back to: don't commit on a branch we can't restore
     // `.robot/` is gitignored, so `add -A` stages everything the run produced EXCEPT the hand-off
     // markers — exactly what we want excluded.
     await git([...owner, 'add', '-A']);
-    const committed = await commitIfStaged(git, owner, ticketId);
+    committed = await commitIfStaged(git, owner, ticketId);
     // Nothing to preserve: no new commit and the branch is still `main`. Skip the push so a run that
     // did nothing doesn't litter a ref pointing straight at main.
     if (!committed && !(await headDiffersFromMain(git, owner))) return null;
@@ -102,6 +112,15 @@ export async function pushWip(
     // Hard rule: a failed WIP push must not change the run's recorded outcome. Log and move on.
     logger.warn({ err, ticketId, ref }, 'robot: WIP push failed — the run outcome is unaffected');
     return null;
+  } finally {
+    if (committed && preWip) {
+      try {
+        await git([...owner, 'reset', '--mixed', preWip]);
+      } catch (err) {
+        // Loud: left in place, the next dispatch of this ticket would start on top of the WIP.
+        logger.error({ err, ticketId, preWip }, 'robot: could not undo the WIP commit — the next run of this ticket may resume from it');
+      }
+    }
   }
 }
 
