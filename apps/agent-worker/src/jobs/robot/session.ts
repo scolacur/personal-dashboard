@@ -100,31 +100,77 @@ export function extractMessageText(message: unknown): string {
   return text ? `${role} ${text}` : '';
 }
 
-/** The env handed to the coding subprocess. Inherits the loop env for PATH/ANTHROPIC_API_KEY
- *  (minus the worker's own NODE_ENV),
- *  then injects the WRITE token as GH_TOKEN and the proxy so git/gh/npm reach GitHub + the registry
- *  through squid. The read token is intentionally NOT forwarded — a Robot pushes with the write
- *  token or not at all. When the uid is dropped, HOME/USER are repointed at the coding user's
- *  home (inheriting root's HOME would be unreadable to the dropped uid). */
+/**
+ * What the coding session may inherit from the worker's env (PD-777, D-098). An ALLOWLIST: the
+ * worker's env holds its own secrets (the read token, the review-gate token, whatever is added to
+ * `agent-worker.env` next), and a denylist leaks every one somebody forgets to strip. Anything not
+ * named here never reaches the Robot.
+ *
+ * The model credential is on the list because the SDK subprocess cannot run without it; the Robot
+ * reading its own credential is inherent, and the egress allowlist keeps it from leaving.
+ */
+export const CODING_ENV_ALLOWED: readonly string[] = [
+  // System basics a shell, git, node and npm expect.
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LANGUAGE',
+  'TZ',
+  'TERM',
+  'TMPDIR',
+  // Model credential and SDK config (the session cannot run without one of the first two).
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'CLAUDE_CONFIG_DIR',
+  // Trust store, so TLS through the proxy verifies.
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'NODE_EXTRA_CA_CERTS',
+  // Hosts that bypass the proxy (the proxy URL itself is injected from config below).
+  'NO_PROXY',
+  'no_proxy',
+];
+
+/** Prefixes allowed wholesale: locale categories only. */
+const CODING_ENV_ALLOWED_PREFIXES: readonly string[] = ['LC_'];
+
+/** The allowed subset of `env`. Pure. */
+export function allowedCodingEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) continue;
+    if (CODING_ENV_ALLOWED.includes(k) || CODING_ENV_ALLOWED_PREFIXES.some((p) => k.startsWith(p))) out[k] = v;
+  }
+  return out;
+}
+
+/** The env handed to the coding subprocess: the allowlisted part of the loop env (PD-777), then
+ *  the WRITE token as GH_TOKEN and the proxy so git/gh/npm reach GitHub + the registry through
+ *  squid. The read token and the review-gate token are worker-only and never reach it (PD-763).
+ *  The worker's NODE_ENV=production is not on the list either: it made the Robot's `npm ci` omit
+ *  devDependencies, so verify could not build (found on PD-714's run, 2026-11-13). When the uid is
+ *  dropped, HOME/USER are repointed at the coding user's home (inheriting root's HOME would be
+ *  unreadable to the dropped uid). */
 export function codingEnv(config: AgentWorkerConfig): Record<string, string | undefined> {
   const { writeToken, codingUid, codingHome } = config.robot;
   const proxyVars = config.httpsProxy
-    ? { HTTPS_PROXY: config.httpsProxy, HTTP_PROXY: config.httpsProxy, NODE_USE_ENV_PROXY: '1' }
-    : { HTTPS_PROXY: undefined, HTTP_PROXY: undefined };
+    ? {
+        HTTPS_PROXY: config.httpsProxy,
+        HTTP_PROXY: config.httpsProxy,
+        https_proxy: config.httpsProxy,
+        http_proxy: config.httpsProxy,
+        NODE_USE_ENV_PROXY: '1',
+      }
+    : {};
   // Only override HOME when actually dropping privilege; in dev (no uid) the inherited HOME is right.
   const homeVars =
     codingUid !== undefined ? { HOME: codingHome, USER: 'robot', LOGNAME: 'robot' } : {};
   return {
-    ...process.env,
-    GITHUB_READ_TOKEN: undefined,
-    // PD-763: the review-gate token marks a Robot PR as reviewed. If the Robot could read it, it
-    // could approve its own work, so it never reaches the coding session.
-    REVIEW_GATE_TOKEN: undefined,
-    // The image sets NODE_ENV=production for the WORKER, and it leaked into the Robot's shell:
-    // `npm ci` then omits devDependencies (vite, vitest, svelte-check), so the prompt's plain
-    // `npm ci && npm run verify` could not build, and the Robot spent turns working around it
-    // (found on PD-714's run, 2026-11-13). The Robot is a developer running a dev verify.
-    NODE_ENV: undefined,
+    ...allowedCodingEnv(process.env),
     ...proxyVars,
     ...homeVars,
     ...(writeToken ? { GH_TOKEN: writeToken, GITHUB_TOKEN: writeToken } : {}),
