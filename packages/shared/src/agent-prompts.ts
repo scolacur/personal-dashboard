@@ -297,6 +297,8 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     '**Memory / Decisions:**',
     `- <the "Worth remembering" line from your ${MEMORY_RUNS_DIR}/ file, plus any D-NNN you added>`,
+    '',
+    'Visual: <the pages your change shows up on, e.g. /devops/decisions, /habits; or "none">',
     'BODY',
     '   )"',
     '   ```',
