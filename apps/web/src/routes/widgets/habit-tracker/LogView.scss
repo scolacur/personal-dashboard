@@ -1,0 +1,11 @@
+.log-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.placeholder {
+  color: var(--muted);
+  padding: var(--space-md);
+  font-size: var(--font-size-sm);
+}

@@ -24,6 +24,8 @@ interface AgentRunRow {
   turns: number | null;
   tokens: number | null;
   output_tail: string | null;
+  wip_ref?: string | null;
+  wip_sha?: string | null;
   started_at: number;
   finished_at: number | null;
 }
@@ -46,6 +48,9 @@ function rowToRun(r: AgentRunRow): AgentRun {
     // `?? null` rather than a bare read: a pre-PD-426 row selected by `SELECT *` has no
     // output_tail key at all, so the property would come back undefined instead of null.
     outputTail: r.output_tail ?? null,
+    // `?? null` rather than a bare read: a pre-T898 row selected by `SELECT *` has no wip_* keys.
+    wipRef: r.wip_ref ?? null,
+    wipSha: r.wip_sha ?? null,
     startedAt: r.started_at,
     finishedAt: r.finished_at,
   };

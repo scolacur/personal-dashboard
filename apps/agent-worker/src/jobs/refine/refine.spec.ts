@@ -78,6 +78,8 @@ const CONFIG: AgentWorkerConfig = {
   auditIntervalMs: 1,
   httpsProxy: '',
   robot: loadRobotConfig({}),
+  conflictResolver: { enabled: false, intervalMs: 1 },
+  visual: { enabled: false, intervalMs: 1, chromiumPath: '', publicUrl: '' },
   evaluator: loadEvaluatorConfig({}),
   maintenance: loadMaintenanceConfig({}),
 };

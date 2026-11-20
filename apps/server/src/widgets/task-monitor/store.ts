@@ -13,6 +13,7 @@ import type {
   RefineAnswerSet,
   RefineAutostartStatus,
   RefineCommitMode,
+  RefineInvalidationCause,
   RefineQuestionRound,
   EpicDerivedLane,
   EpicSummary,
@@ -491,6 +492,15 @@ export function updateTicket(
     next.ready = isReady(next.body);
   }
 
+  // D-097: a body edit to a *refined* ticket must say whether it stays refined. The API boundary
+  // (`refinedChoiceGuardFailure`) refuses a body-changing PATCH on a refined ticket that omits
+  // `refined` (409 REFINED_CHOICE_REQUIRED), so by the time any such write reaches here the choice
+  // is explicit — either from the caller or from a server-internal write that already states it
+  // (approveRefine, Populate). This flag drives the logging / Epic-invalidation below. Byte
+  // comparison: an identical body is not a change. A non-refined ticket has no claim to keep.
+  const bodyChanged = patch.body !== undefined && existing.body !== next.body;
+  const refinedBodyChoice = existing.refined && bodyChanged && patch.refined !== undefined;
+
   // D-054/D-058/D-080 epic invariants. An Epic never nests (its own epic_id is forced null); a
   // member's epic_id is validated against the target Epic.
   //
@@ -601,6 +611,14 @@ export function updateTicket(
   }
 
   const apply = db.transaction(() => {
+    // D-097: clearing `refined` on an EPIC via a body edit goes through the SAME membership-
+    // invalidation path (D-089 §6) — refine_stale = 1, armed members un-armed — only with
+    // `cause: 'body'`. It must run while the DB still shows refined = 1, i.e. BEFORE the main UPDATE
+    // (which writes refined = 0), or `invalidateEpicRefinement` would early-return as already clear.
+    // `opts` carries PD-611's "keep running" (pause) choice, exactly as the membership path does.
+    if (refinedBodyChoice && patch.refined === false && next.isEpic) {
+      invalidateEpicRefinement(db, id, { via: 'body' }, next.updatedAt, opts, 'body');
+    }
     db.prepare(
       `UPDATE agent_tickets
        SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, updated_at = ?
@@ -681,6 +699,18 @@ export function updateTicket(
         db.prepare('UPDATE agent_tickets SET refine_stale = 0 WHERE id = ?').run(id);
       }
       logEvent(db, id, REFINE_STATE_EVENT.marked, { wasStale: existing.refineStale, via: 'update' });
+    }
+
+    // D-097 + D-089 §8: record the body-edit choice so the decline rate is measurable. `refine_kept`
+    // (the prompt declined, claim retained) vs `refine_invalidated { cause: 'body' }` (claim cleared).
+    // On an Epic the invalidated event was already written above by `invalidateEpicRefinement`; here
+    // we only cover the Ticket's clear and the keep (which never touches the Epic machinery).
+    if (refinedBodyChoice) {
+      if (patch.refined === true) {
+        logEvent(db, id, REFINE_STATE_EVENT.kept, { cause: 'body' });
+      } else if (!next.isEpic) {
+        logEvent(db, id, REFINE_STATE_EVENT.invalidated, { cause: 'body' });
+      }
     }
 
     // D-083: clear the stale agent state on the way OUT of a terminal lane. `agent_state` is
@@ -1110,6 +1140,10 @@ function invalidateEpicRefinement(
   detail: Record<string, unknown>,
   now: number,
   opts: EpicInvalidationOpts = {},
+  // D-097: the body-edit path reuses this stale-and-un-arm machinery with `cause: 'body'`, while
+  // the membership triggers keep the default `cause: 'members'`. Same consequence (refine_stale +
+  // the pause), different precise trigger — the one-rule-two-triggers split D-089 §4 draws.
+  cause: RefineInvalidationCause = 'members',
 ): void {
   if (epicId === null) return;
   const epic = db
@@ -1120,7 +1154,7 @@ function invalidateEpicRefinement(
   if (!epic || epic.is_epic !== 1 || epic.refined !== 1) return;
 
   db.prepare('UPDATE agent_tickets SET refined = 0, refine_stale = 1, updated_at = ? WHERE id = ?').run(now, epicId);
-  logEvent(db, epicId, REFINE_STATE_EVENT.invalidated, { cause: 'members', ...detail });
+  logEvent(db, epicId, REFINE_STATE_EVENT.invalidated, { cause, ...detail });
 
   // The pause. An Epic reading `in_progress` is actively dispatching, and its description no longer
   // covers its members — so stop arming new work while leaving what is already running alone.

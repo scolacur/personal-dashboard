@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import { SvelteSet } from 'svelte/reactivity';
   import {
     DEFAULT_DAY_BOUNDARY_MINUTES,
@@ -16,6 +18,7 @@
   import { createOutbox } from '$lib/outbox';
   import TodayList from '../routes/widgets/habit-tracker/TodayList.svelte';
   import HabitsManager from '../routes/widgets/habit-tracker/HabitsManager.svelte';
+  import LogView from '../routes/widgets/habit-tracker/LogView.svelte';
   import {
     createItem,
     deleteItem,
@@ -135,6 +138,24 @@
   }
 
   /**
+   * Toggle a completion on an arbitrary habit day — the Log views' past-day edits (PD-726). Rides the
+   * same shared outbox as Today (PROJECT.md §4, D-093): never the write API directly. When the day is
+   * today, the Today tab's optimistic done-set is kept in sync too.
+   */
+  function toggleCompletionOnDay(itemId: number, day: string, done: boolean) {
+    if (day === today) {
+      if (done) completedToday.add(itemId);
+      else completedToday.delete(itemId);
+    }
+    outbox.add({ kind: 'completion', itemId, day, done });
+  }
+
+  /** Open Log › By Habit for an item (a deep link, so it is shareable and back-navigable). */
+  function openInCalendar(itemId: number) {
+    void goto(`?view=habit&item=${itemId}`, { keepFocus: true, noScroll: true });
+  }
+
+  /**
    * Ticking a set ticks all its due leaf descendants; unticking a done set unticks them. A partly
    * done set completes the remainder without clearing what's done (PD-723): if every due leaf is
    * already done we clear them, otherwise we complete the ones still outstanding.
@@ -203,6 +224,17 @@
   ];
   let tab = $state('today');
 
+  // Deep link: `?view=habit&item=<id>` opens the Log tab on the By Habit calendar for that item.
+  const deepView = $derived(page.url.searchParams.get('view'));
+  const deepItem = $derived.by(() => {
+    const raw = page.url.searchParams.get('item');
+    const n = raw === null ? null : Number(raw);
+    return n !== null && Number.isInteger(n) ? n : null;
+  });
+  $effect(() => {
+    if (deepView === 'habit') tab = 'log';
+  });
+
   onMount(() => {
     // `start` loads any persisted queue and wires the retry triggers; load() then folds that queue
     // over the server state, and a flush pushes anything already queued once the server answers.
@@ -213,7 +245,14 @@
 </script>
 
 {#snippet todayPanel()}
-  <TodayList {tree} onToggleLeaf={toggle} onToggleSet={toggleSet} {loaded} {compact} />
+  <TodayList
+    {tree}
+    onToggleLeaf={toggle}
+    onToggleSet={toggleSet}
+    onOpenItem={compact ? undefined : openInCalendar}
+    {loaded}
+    {compact}
+  />
   {#if pending.length > 0}
     <p class="pending" role="status">{pending.length} pending sync</p>
   {/if}
@@ -240,8 +279,16 @@
             onSettings={updateSettings}
           />
         {:else if id === 'log'}
-          <!-- Log views arrive in PD-725 / PD-726. -->
-          <p class="placeholder">The Log is coming soon.</p>
+          <LogView
+            {items}
+            {schedules}
+            {settings}
+            {today}
+            {pending}
+            initialView={deepView === 'habit' ? 'habit' : 'day'}
+            initialItemId={deepItem}
+            onToggle={toggleCompletionOnDay}
+          />
         {:else}
           {@render todayPanel()}
         {/if}

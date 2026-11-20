@@ -304,6 +304,9 @@ export async function pollInReviewPrs(
 
     const decision = decideReactivation(pr, lastHandoffAt(db, target.ticketId));
     if (!decision.reactivate) continue;
+    // PD-774 (D-099): with the conflict resolver on, a conflict is its to route. It resolves the
+    // mechanical shapes with no Robot run and re-queues the ticket itself when it cannot.
+    if (decision.reason === 'conflict' && config.conflictResolver.enabled) continue;
     setAgentState(db, target.ticketId, 'queued', now);
     logMilestone(
       db,

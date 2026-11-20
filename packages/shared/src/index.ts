@@ -116,6 +116,7 @@ export type {
   AgentProject,
   CreateProjectInput,
   NotificationKind,
+  AwaitingVisualItem,
   AgentNotification,
   TicketEvent,
   RefineRole,
@@ -185,6 +186,7 @@ export {
   epicQueueCriteria,
   queueEntryRefusals,
   NOTIFICATION_KINDS,
+  VISUAL_REVIEW_NOTIFICATION_PREFIX,
   HUMAN_REPLY_MARKER,
   REFINE_EVENT_TYPE,
   isRefineEventType,
@@ -223,6 +225,7 @@ export {
   VERIFY_OK_MARKER,
   SCM_JSON,
   ASK_HUMAN_MARKER,
+  VISUAL_REVIEW_MARKER,
   MEMORY_RUNS_DIR,
   robotSystemPrompt,
   buildTaskPrompt,
@@ -305,6 +308,8 @@ export type {
   SetProgress,
   HabitDayNode,
   HabitHistoryNode,
+  CompletionRate,
+  MonthSpan,
 } from './habits';
 export {
   DEFAULT_DAY_BOUNDARY_MINUTES,
@@ -337,6 +342,12 @@ export {
   nodeProgress,
   projectHabitDay,
   setStreak,
+  completionRate,
+  setCompletionRate,
+  COMPLETION_RATE_PERIODS,
+  habitWeeksEndingAt,
+  habitMonthSpans,
+  HABIT_MONTH_NAMES,
 } from './habits';
 export type {
   AwaitingRefineItem,

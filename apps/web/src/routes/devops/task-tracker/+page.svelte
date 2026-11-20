@@ -40,6 +40,7 @@
   import type { RefineFilter, AssigneeFilter } from '../filter-logic';
   import { compareTicketsInColumn } from '../sort-logic';
   import { buildCopyText, copyToClipboard } from '../copy-utils';
+  import { resolveUnrefineChoice } from '../refine-prompt';
   import {
     isStatusLocked,
     isReadOnly,
@@ -528,9 +529,17 @@
           maxTurns,
         }, joinOpts);
       } else {
+        const nextBody = form.body.trim() || null;
+        // D-097: editing a refined ticket's body must say whether it stays refined. Prompt (default
+        // Yes = clear), and send the answer as `refined` in the same PATCH — the server refuses a
+        // body-changing PATCH on a refined ticket that omits it (409 REFINED_CHOICE_REQUIRED).
+        const existingEdited = tickets.find((t) => t.id === editingId) ?? null;
+        const refinedChoice = existingEdited
+          ? resolveUnrefineChoice(existingEdited, nextBody, (m) => confirm(m))
+          : undefined;
         await api.updateTicket(editingId, {
           title,
-          body: form.body.trim() || null,
+          body: nextBody,
           priority: form.priority,
           projectId: form.projectId,
           assignee: form.assignee,
@@ -540,6 +549,7 @@
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: form.status }),
           ...(bypass ? { readyBypassed: true } : {}),
+          ...(refinedChoice !== undefined ? { refined: refinedChoice } : {}),
         }, joinOpts);
       }
       formOpen = false;

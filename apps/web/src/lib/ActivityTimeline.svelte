@@ -67,6 +67,10 @@
         return '🔍';
       case ROBOT_EVENT.evaluated:
         return '📋';
+      case ROBOT_EVENT.conflictResolved:
+        return '🔀';
+      case ROBOT_EVENT.visualCaptured:
+        return '📸';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -113,6 +117,10 @@
         return `Evaluator reviewing the PR${d.round && d.round > 1 ? ` (round ${d.round})` : ''}`;
       case ROBOT_EVENT.evaluated:
         return `Evaluator verdict: ${evaluatorVerdictLine(d)}`;
+      case ROBOT_EVENT.visualCaptured:
+        return `Screenshots of PR #${d.prNumber ?? '?'}${d.shots?.length ? `: ${new Set(d.shots.map((s) => s.route)).size} page(s), desktop and phone, light and dark` : ''}`;
+      case ROBOT_EVENT.conflictResolved:
+        return `Merged main and auto-resolved conflicts${d.files?.length ? ` in ${d.files.join(', ')}` : ''}; the Evaluator reviews it again`;
       case 'created':
         return 'Ticket created';
       case 'status_changed':
@@ -146,6 +154,17 @@
             <span class="ev-text">{describe(e)}</span>
             {#if e.type === ROBOT_EVENT.handoff && (e.detail as RobotEventDetail)?.prUrl}
               <a class="ev-link" href={(e.detail as RobotEventDetail).prUrl} target="_blank" rel="noreferrer">view PR</a>
+            {/if}
+            {#if e.type === ROBOT_EVENT.visualCaptured && (e.detail as RobotEventDetail)?.shots?.length}
+              <!-- PD-773: thumbnails of each capture, opening the full image. -->
+              <div class="ev-shots">
+                {#each (e.detail as RobotEventDetail).shots ?? [] as s (s.file)}
+                  <a class="ev-shot" href={s.url} target="_blank" rel="noreferrer" title="{s.route} · {s.viewport} · {s.scheme}">
+                    <img src={s.url} alt="{s.route} on {s.viewport}, {s.scheme} theme" loading="lazy" />
+                    <span class="ev-shot-label">{s.route} · {s.viewport} · {s.scheme}</span>
+                  </a>
+                {/each}
+              </div>
             {/if}
             <span class="ev-when">{fmt(e.createdAt)}</span>
           </div>

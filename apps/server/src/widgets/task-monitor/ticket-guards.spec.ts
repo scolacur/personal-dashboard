@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { AgentState, TicketStatus } from '@dashboard/shared';
-import { createGuardFailure, patchGuardFailure, reopenGuardFailure } from './ticket-guards';
+import {
+  createGuardFailure,
+  patchGuardFailure,
+  refinedChoiceGuardFailure,
+  reopenGuardFailure,
+} from './ticket-guards';
 
 function existing(
   over: Partial<{
@@ -209,5 +214,41 @@ describe('reopenGuardFailure', () => {
   it('refuses an Epic — its lane is derived, so there is nothing to reopen', () => {
     const fail = reopenGuardFailure(existing({ status: 'completed', isEpic: true }), undefined);
     expect(fail?.code).toBe('EPIC_NOT_REOPENABLE');
+  });
+});
+
+// D-097: a body edit to a refined ticket must carry an explicit `refined`, or the write is refused.
+describe('refinedChoiceGuardFailure (D-097)', () => {
+  const refined = { refined: true, body: 'original' };
+
+  it('refuses a body-changing patch on a refined ticket that omits `refined`', () => {
+    const fail = refinedChoiceGuardFailure(refined, { body: 'changed' });
+    expect(fail?.code).toBe('REFINED_CHOICE_REQUIRED');
+    expect(fail?.message).toMatch(/refined/i);
+  });
+
+  it('accepts the same patch once `refined` is stated, either way', () => {
+    expect(refinedChoiceGuardFailure(refined, { body: 'changed', refined: true })).toBeNull();
+    expect(refinedChoiceGuardFailure(refined, { body: 'changed', refined: false })).toBeNull();
+  });
+
+  it('is silent on a byte-identical body — that is not a change', () => {
+    expect(refinedChoiceGuardFailure(refined, { body: 'original' })).toBeNull();
+  });
+
+  it('is silent when the patch carries no body', () => {
+    expect(refinedChoiceGuardFailure(refined, { refined: undefined })).toBeNull();
+    expect(refinedChoiceGuardFailure(refined, {})).toBeNull();
+  });
+
+  it('never fires on a non-refined ticket, however the body changes', () => {
+    expect(refinedChoiceGuardFailure({ refined: false, body: 'original' }, { body: 'changed' })).toBeNull();
+  });
+
+  it('treats null/empty bodies by byte comparison', () => {
+    expect(refinedChoiceGuardFailure({ refined: true, body: null }, { body: '' })?.code).toBe(
+      'REFINED_CHOICE_REQUIRED',
+    );
+    expect(refinedChoiceGuardFailure({ refined: true, body: null }, { body: null })).toBeNull();
   });
 });

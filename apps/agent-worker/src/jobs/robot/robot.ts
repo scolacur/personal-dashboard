@@ -11,6 +11,7 @@ import {
 } from './select';
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, pruneWorktrees, removeWorktree, worktreeDirFor, type Worktree } from './workspace';
+import { pushWip, deleteWipRef, type WipRef } from './wip';
 import { runRobotSession, type RobotSessionResult } from './session';
 import type { ResumeContext } from '@dashboard/shared';
 import {
@@ -20,6 +21,8 @@ import {
   failedRunsForTicket,
   hashBody,
   updateRunProgress,
+  ticketsWithTerminalWipRef,
+  clearWipRef,
 } from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
 import {
@@ -76,6 +79,13 @@ export interface RobotDeps {
   removeWorktree?: (config: AgentWorkerConfig, wt: Worktree) => Promise<void>;
   /** PD-719: injectable so tests can observe pruning without touching a real worktrees dir. */
   pruneWorktrees?: (config: AgentWorkerConfig, keepDirs: ReadonlySet<string>) => string[];
+  /** PD-737/T898: push a non-hand-off run's WIP to `robot-wip/t<id>` before the clone is dropped.
+   *  Injectable so orchestration tests never shell out to git. Returns the ref+sha preserved, or
+   *  null when nothing was worth preserving / the push failed. */
+  pushWip?: (config: AgentWorkerConfig, wt: Worktree, ticketId: number) => Promise<WipRef | null>;
+  /** PD-737/T898: delete a ticket's WIP ref once it hands off / goes terminal. Injectable so tests
+   *  don't shell out. `cwd` is a clone with `origin` configured. */
+  deleteWip?: (config: AgentWorkerConfig, ticketId: number, cwd: string) => Promise<void>;
   /** Injectable so tests never spawn a real coding session. Receives the resume context (C5) the
    *  loop derived for this dispatch (ask_human answer to inject), or undefined for a fresh run. */
   runSession?: (
@@ -162,6 +172,8 @@ export async function processRobotQueue(
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
   const doPrune = deps.pruneWorktrees ?? ((c, keep) => pruneWorktrees(c, keep));
+  const doPushWip = deps.pushWip ?? ((c, w, id) => pushWip(c, w, id));
+  const doDeleteWip = deps.deleteWip ?? ((c, id, cwd) => deleteWipRef(c, id, cwd));
   // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot, `onProgress` in
   // the 6th and the DB handle in the 7th, so `deps.runSession` (whose 5th arg IS onProgress)
   // cannot be passed positionally. `db` is closed over from this cycle — PD-564 needs it to build
@@ -201,6 +213,15 @@ export async function processRobotQueue(
   // Drop the clones of tickets the Robot no longer has. Before any dispatch, and cycles never
   // overlap, so no clone here is in use.
   doPrune(config, new Set(robotClaimedBranches(db).map((b) => worktreeDirFor(config, b))));
+
+  // PD-737/T898: the remote counterpart of the clone prune — delete the `robot-wip/t<id>` refs of
+  // tickets that reached a terminal lane (incl. a manual close that never handed off), so scratch
+  // refs don't pile up. `clearWipRef` forgets the record after, so this acts once per ticket. The
+  // hand-off path deletes a ticket's WIP ref promptly; this is the backstop for the rest.
+  for (const ticketId of ticketsWithTerminalWipRef(db)) {
+    await doDeleteWip(config, ticketId, config.checkoutDir);
+    clearWipRef(db, ticketId);
+  }
 
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
   const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);
@@ -293,9 +314,13 @@ export async function processRobotQueue(
       // `outputTail` (PD-426) is the evidence a failed run leaves behind. The catch path below
       // has no session result and passes none, which stores null — correct: nothing was captured.
       metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
+      // PD-737/T898: the WIP ref this run preserved its work to (or null). Recorded on the run row
+      // and surfaced in whichever milestone this failure writes, so a human can `git fetch` it.
+      wip: WipRef | null = null,
     ): void => {
       const cls = classifyFault({ verifyOk: false, error }, now());
       const decision = decideFault(cls, failures, policy, bodyHash, now());
+      const wipDetail = wip ? { wipRef: wip.ref, wipSha: wip.sha } : {};
       finishRun(
         db,
         runId,
@@ -309,6 +334,8 @@ export async function processRobotQueue(
           turns: metrics.turns,
           tokens: metrics.tokens,
           outputTail: metrics.outputTail,
+          wipRef: wip?.ref ?? null,
+          wipSha: wip?.sha ?? null,
         },
         now(),
       );
@@ -317,7 +344,7 @@ export async function processRobotQueue(
         // ticket goes back to queued; the whole loop pauses so no other ticket burns budget either.
         pauseDispatch(db, decision.reason, now());
         setAgentState(db, candidate.id, 'queued', now());
-        logMilestone(db, candidate.id, ROBOT_EVENT.paused, { tier: decision.tier, reason: decision.reason }, now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.paused, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
         logger.error({ ticketId: candidate.id, reason: decision.reason }, 'robot: system-wide fault — PAUSING dispatch (no burn)');
       } else if (decision.action === 'wait') {
         // PD-470: zero per-ticket burn (the run is recorded but `countable` ignores this signature)
@@ -331,7 +358,7 @@ export async function processRobotQueue(
           db,
           candidate.id,
           ROBOT_EVENT.paused,
-          { tier: decision.tier, reason: decision.reason, until: decision.until, sessionLimit: true },
+          { tier: decision.tier, reason: decision.reason, until: decision.until, sessionLimit: true, ...wipDetail },
           now(),
         );
         logger.warn(
@@ -340,12 +367,12 @@ export async function processRobotQueue(
         );
       } else if (decision.action === 'park') {
         setAgentState(db, candidate.id, 'stuck', now());
-        logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason }, now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
         notifyNeedsHuman(db, candidate.id, 'Robot ticket stuck', decision.reason, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: fault → parking (stuck)');
       } else {
         setAgentState(db, candidate.id, 'queued', now());
-        logMilestone(db, candidate.id, ROBOT_EVENT.fault, { tier: decision.tier, reason: decision.reason }, now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.fault, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: transient fault → will retry');
       }
     };
@@ -354,6 +381,22 @@ export async function processRobotQueue(
     // PD-719: only a hand-off (the work is on GitHub) deletes the clone. A park, a fault or a
     // no-verify keeps it, so the commits survive into the next dispatch of this ticket.
     let handedOff = false;
+
+    // PD-737/T898: preserve a non-hand-off run's WIP to `robot-wip/t<id>` before the clone is
+    // dropped/reused. The clone is kept locally (PD-719), but a crashed run's UNCOMMITTED work is
+    // discarded on the next reuse, and the local clone isn't reachable by a human or by PD-737's
+    // Continue — so the work is also committed + pushed to a dedicated remote ref. Must never throw
+    // (the real `pushWip` already swallows), and a null result just means nothing was preserved.
+    const preserveWip = async (): Promise<WipRef | null> => {
+      if (!worktree) return null;
+      try {
+        return await doPushWip(config, worktree, candidate.id);
+      } catch (err) {
+        logger.warn({ err, ticketId: candidate.id }, 'robot: WIP push raised — ignored, run outcome unaffected');
+        return null;
+      }
+    };
+
     try {
       worktree = await doEnsure(config, branch);
       // PD-230: persist live turn progress so the board shows a working run closing on the cap.
@@ -368,10 +411,17 @@ export async function processRobotQueue(
       if (result.askHuman) {
         // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a
         // question. Not a failure — burns no budget; a human answers (Notification Center) and the
-        // resume sweep re-queues it next cycle.
-        finishRun(db, runId, { status: 'ask-human', sessionId: result.sessionId, faultReason: result.askHuman, ...metrics }, now());
+        // resume sweep re-queues it next cycle. Preserve WIP too (PD-737/T898): the next dispatch's
+        // reuse discards any uncommitted work, and the question may have come after real edits.
+        const wip = await preserveWip();
+        finishRun(
+          db,
+          runId,
+          { status: 'ask-human', sessionId: result.sessionId, faultReason: result.askHuman, wipRef: wip?.ref ?? null, wipSha: wip?.sha ?? null, ...metrics },
+          now(),
+        );
         setAgentState(db, candidate.id, 'awaiting-human', now());
-        logMilestone(db, candidate.id, ROBOT_EVENT.askHuman, { question: result.askHuman }, now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.askHuman, { question: result.askHuman, ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}) }, now());
         notifyAwaitingHuman(db, candidate.id, 'Robot asked a question', result.askHuman, now());
         logger.info({ ticketId: candidate.id, question: result.askHuman.slice(0, 200) }, 'robot: ask_human — parked (awaiting-human)');
       } else if (result.ok && result.verifyOk && result.prNumber !== undefined) {
@@ -381,20 +431,33 @@ export async function processRobotQueue(
         setAgentState(db, candidate.id, 'in-review', now());
         dispatched++;
         logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
+        // PD-773: the Robot asked for Steve's visual check; the PR waits for it (see visual/gate.ts).
+        if (result.visualReview) {
+          logMilestone(db, candidate.id, ROBOT_EVENT.visualReviewRequested, { prNumber: result.prNumber, by: 'robot', reason: result.visualReview }, now());
+        }
         logger.info({ ticketId: candidate.id, branch, prUrl }, 'robot: handed off PR');
       } else if (result.ok && !result.verifyOk) {
-        // D-046 gate: the session ended without a green verify — leave WIP, don't publish a red PR.
-        handleFailure('no-verify', result.sessionId, undefined, metrics);
+        // D-046 gate: the session ended without a green verify — withhold the red PR. The WIP is NOT
+        // lost: preserve it to robot-wip/t<id> (PD-737/T898) before the clone could be reused/pruned,
+        // so a human can `git fetch` it and PD-737's Continue can resume from it.
+        handleFailure('no-verify', result.sessionId, undefined, metrics, await preserveWip());
       } else {
-        handleFailure('error', result.sessionId, result.error, metrics);
+        handleFailure('error', result.sessionId, result.error, metrics, await preserveWip());
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ err, ticketId: candidate.id }, 'robot: dispatch failed');
-      handleFailure('error', undefined, msg);
+      // A thrown session may still have left work in the clone (if ensureWorktree got far enough).
+      handleFailure('error', undefined, msg, {}, await preserveWip());
     } finally {
-      if (worktree && handedOff) await doRemove(config, worktree);
-      else if (worktree) logger.info({ ticketId: candidate.id, dir: worktree.dir }, 'robot: keeping the clone for the next dispatch (no hand-off)');
+      if (worktree && handedOff) {
+        // The work is on GitHub as a PR now, so the WIP ref is superseded — delete it (best-effort)
+        // while the clone still exists, then drop the clone (PD-737/T898, PD-719).
+        await doDeleteWip(config, candidate.id, worktree.dir);
+        await doRemove(config, worktree);
+      } else if (worktree) {
+        logger.info({ ticketId: candidate.id, dir: worktree.dir }, 'robot: keeping the clone for the next dispatch (no hand-off)');
+      }
     }
   }
 

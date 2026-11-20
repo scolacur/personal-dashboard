@@ -25,6 +25,7 @@
   } from '@dashboard/shared';
   import * as api from '../../api';
   import { projectIdColor } from '../../api';
+  import { resolveUnrefineChoice } from '../../refine-prompt';
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import TicketThread from '$lib/TicketThread.svelte';
   import RunHistory from '$lib/RunHistory.svelte';
@@ -256,8 +257,16 @@
   async function updateField(patch: UpdateTicketInput) {
     if (!ticket || !ticketId) return;
     error = null;
+    // D-097: whenever this page edits the body (the description edit arrives via PD-396), a refined
+    // ticket must say whether it stays refined. Routing every write through the same helper means the
+    // detail page and the board card prompt identically, and a patch without a body is untouched.
+    let effective = patch;
+    if (patch.body !== undefined && patch.refined === undefined) {
+      const refinedChoice = resolveUnrefineChoice(ticket, patch.body, (m) => confirm(m));
+      if (refinedChoice !== undefined) effective = { ...patch, refined: refinedChoice };
+    }
     try {
-      await api.updateTicket(ticket.id, patch);
+      await api.updateTicket(ticket.id, effective);
       await load(ticketId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);

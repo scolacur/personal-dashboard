@@ -54,8 +54,12 @@ ARG GH_VERSION=2.63.2
 # python3: the Robot runs the repo's full `npm run verify`, and ops-helpers.spec.ts drives the
 # robot-* helpers' Python formatter. Without it here (it was only in the build stage) 10 tests fail
 # with `spawnSync python3 ENOENT` and no Robot run can go green (found on PD-714, 2026-11-13).
+# chromium + fonts (PD-773): the visual-capture job photographs a Robot PR's pages with playwright-core
+# driving Debian's Chromium. Debian's build, not Playwright's download: the egress proxy does not
+# allow Playwright's CDN, and apt runs at image-build time. Fonts so pages don't render as boxes.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates curl python3 \
+     chromium fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/* \
   && arch="$(dpkg --print-architecture)" \
   && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${arch}.tar.gz" -o /tmp/gh.tgz \

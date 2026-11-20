@@ -47,16 +47,44 @@ export function pendingEvaluatorBrief(db: Database.Database, ticketId: number): 
     // Evaluator ⇒ no brief, which is exactly right.
     return null;
   }
+  // PD-773: Steve's visual rejection since the last dispatch rides along in the same brief.
+  const visual = visualRejectionSince(db, ticketId, lastDispatch);
   // A revise at or before the last dispatch was already consumed by that dispatch (the query bound).
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return visual;
 
   const report: EvaluatorReport = {
     verdict: 'revise',
     findings: rows.flatMap((r) => parseFindings(r.findings)),
     summary: rows.map((r) => r.summary ?? '').filter(Boolean).join(' '),
   };
-  if (report.findings.length === 0) return null;
-  return reworkBrief(report);
+  if (report.findings.length === 0) return visual;
+  return visual ? `${reworkBrief(report)}\n\n${visual}` : reworkBrief(report);
+}
+
+/** Steve's newest visual "request changes" after `since`, as a brief section; null when none. */
+export function visualRejectionSince(db: Database.Database, ticketId: number, since: number): string | null {
+  const row = db
+    .prepare(
+      `SELECT detail FROM agent_ticket_events
+        WHERE ticket_id = ? AND type = 'robot_visual_reviewed' AND created_at > ?
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(ticketId, since) as { detail: string | null } | undefined;
+  if (!row) return null;
+  let d: { approved?: boolean; note?: string } = {};
+  try {
+    d = JSON.parse(row.detail ?? '{}');
+  } catch {
+    return null;
+  }
+  if (d.approved !== false) return null;
+  return [
+    "## Steve's visual check: changes requested",
+    '',
+    d.note?.trim() || '(no note) He looked at the screenshots of your PR and asked for changes; ask him what if it is unclear.',
+    '',
+    'Fix this on the same branch. The PR is photographed again and waits for his visual check again.',
+  ].join('\n');
 }
 
 /** Newest `robot_dispatched` timestamp, or 0. Mirrors `latestEventAt` without importing the robot
