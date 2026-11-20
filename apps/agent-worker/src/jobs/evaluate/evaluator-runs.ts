@@ -63,20 +63,45 @@ export function ensureEvaluatorRunsTable(db: Database.Database): void {
   if (!cols.some((c) => c.name === 'lens')) {
     db.exec("ALTER TABLE evaluator_runs ADD COLUMN lens TEXT NOT NULL DEFAULT 'code'");
   }
+  // PD-712: the head commit a review of a non-Robot PR judged, so a new push is a new review. Robot
+  // runs leave it null: their cycle is bounded by hand-offs instead (see reviewBoundary).
+  if (!cols.some((c) => c.name === 'head_sha')) {
+    db.exec('ALTER TABLE evaluator_runs ADD COLUMN head_sha TEXT');
+  }
+}
+
+/** `ticket_id` for a review of a PR with no linked ticket (PD-712). The column predates such PRs and
+ *  is NOT NULL; no ticket has id 0. */
+export const NO_TICKET = 0;
+
+/** Whether this exact head of a non-Robot PR has been reviewed (PD-712). */
+export function headEvaluated(db: Database.Database, prNumber: number, headSha: string): boolean {
+  return (
+    (db
+      .prepare("SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha = ? AND lens = 'code'")
+      .get(prNumber, headSha) as { n: number }).n > 0
+  );
+}
+
+/** How many heads of a non-Robot PR have been reviewed by this lens: its round count (PD-712). */
+export function prRounds(db: Database.Database, prNumber: number, lens: EvaluatorLens = 'code'): number {
+  return (db
+    .prepare('SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha IS NOT NULL AND lens = ?')
+    .get(prNumber, lens) as { n: number }).n;
 }
 
 /** Open a run row and return its id. Written BEFORE the agent starts so a crashed evaluation leaves
  *  evidence rather than nothing — the same reason `agent_runs` claims a row up front. */
 export function startEvaluatorRun(
   db: Database.Database,
-  input: { ticketId: number; prNumber: number; round: number; model: string; lens?: EvaluatorLens },
+  input: { ticketId: number; prNumber: number; round: number; model: string; lens?: EvaluatorLens; headSha?: string },
   now: number = Date.now(),
 ): number {
   const res = db
     .prepare(
-      `INSERT INTO evaluator_runs (ticket_id, pr_number, round, model, started_at, lens) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO evaluator_runs (ticket_id, pr_number, round, model, started_at, lens, head_sha) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(input.ticketId, input.prNumber, input.round, input.model, now, input.lens ?? 'code');
+    .run(input.ticketId, input.prNumber, input.round, input.model, now, input.lens ?? 'code', input.headSha ?? null);
   return Number(res.lastInsertRowid);
 }
 

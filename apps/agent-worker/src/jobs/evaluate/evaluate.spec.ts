@@ -16,7 +16,8 @@ function config(over: Partial<AgentWorkerConfig['evaluator']> = {}): AgentWorker
   const base = loadConfig({});
   // The security lens (PD-767) is off here so these tests keep exercising the code reviewer alone;
   // the two-lens behaviour has its own describe block below.
-  return { ...base, evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, securityEnabled: false, ...over } };
+  // The all-PRs path (PD-712) is off too: it has its own spec, and here it would reach for `gh`.
+  return { ...base, evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, securityEnabled: false, allPrs: false, ...over } };
 }
 
 /** An agent stand-in returning canned text. Nothing here spawns a real session. */
