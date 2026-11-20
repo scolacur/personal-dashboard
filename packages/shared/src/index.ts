@@ -117,6 +117,8 @@ export type {
   CreateProjectInput,
   NotificationKind,
   AwaitingVisualItem,
+  VisualShot,
+  VisualStepFailure,
   VisualCaptureState,
   AgentNotification,
   TicketEvent,

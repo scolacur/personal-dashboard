@@ -17,6 +17,7 @@ import { registerShellLayoutRoutes } from './lib/shell-layout-routes';
 import { bootstrapDecisionIdsSchema } from './lib/decision-ids';
 import { registerDecisionIdRoutes } from './lib/decision-ids-routes';
 import { bootstrapHabitsSchema } from './lib/habits';
+import { seedVisualFixturesFromEnv } from './visual-fixtures';
 import { registerHabitRoutes } from './lib/habits-routes';
 import type { BackendWidget } from './types';
 import { widget as musicTrackerWidget } from './widgets/music-tracker/index';
@@ -73,6 +74,11 @@ bootstrapHabitsSchema(db);
 for (const widget of widgets) {
   widget.bootstrapSchema?.(db);
 }
+
+// PD-798: sample data for a visual capture's scratch database. A no-op unless the worker's capture
+// step set VISUAL_FIXTURES=1, and each fixture only writes into its own empty tables.
+const seededFixtures = seedVisualFixturesFromEnv(db);
+if (seededFixtures.length > 0) app.log.info({ seededFixtures }, 'visual fixtures seeded');
 
 for (const widget of widgets) {
   widget.registerRoutes(app);

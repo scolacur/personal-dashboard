@@ -115,6 +115,7 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
     prUrl,
     reasons: requests.map((r) => ({ by: parse(r).by ?? 'robot', reason: parse(r).reason ?? '' })),
     shots: latestCapture ? (parse(latestCapture).shots ?? []) : [],
+    stepFailures: latestCapture ? (parse(latestCapture).failures ?? []) : [],
     capturedAt: latestCapture ? latestCapture.created_at : null,
     requestedAt: requests[requests.length - 1].created_at,
     capture: captureStateFor(db, prNumber, boundary, now),

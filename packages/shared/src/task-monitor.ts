@@ -664,6 +664,25 @@ export function queueEntryRefusals(criteria: readonly QueueCriterion[]): QueueCr
 export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
+/** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
+ *  `click "Add metric"`; absent for the page as it first loaded. */
+export interface VisualShot {
+  route: string;
+  viewport: string;
+  scheme: string;
+  file: string;
+  url: string;
+  step?: string;
+  stepIndex?: number;
+}
+
+/** A click step that could not run during a capture (PD-798). */
+export interface VisualStepFailure {
+  route: string;
+  step: string;
+  reason: string;
+}
+
 export interface AwaitingVisualItem {
   ticketId: number;
   displayId: string | null;
@@ -673,7 +692,9 @@ export interface AwaitingVisualItem {
   /** Who asked, and what to look at. */
   reasons: { by: 'robot' | 'evaluator'; reason: string }[];
   /** The newest capture of this PR; empty until the capture job has photographed it. */
-  shots: { route: string; viewport: string; scheme: string; file: string; url: string }[];
+  shots: VisualShot[];
+  /** PD-798: click steps from the PR's `Visual:` line that could not run, with why. */
+  stepFailures: VisualStepFailure[];
   capturedAt: number | null;
   requestedAt: number;
   /** PD-794: what actually happened with capture for the PR's current head. */
@@ -1477,7 +1498,9 @@ export interface RobotEventDetail {
   approved?: boolean;
   note?: string;
   /** PD-773: the screenshots of a capture, each with its dashboard URL (`robot_visual_captured`). */
-  shots?: { route: string; viewport: string; scheme: string; file: string; url: string }[];
+  shots?: VisualShot[];
+  /** PD-798: on `robot_visual_captured`, the click steps that could not run. */
+  failures?: VisualStepFailure[];
   /** How long a stalled run had been running before the watchdog parked it, ms (`robot_stalled`). */
   ageMs?: number;
   /** Terminal lane a manual close/complete moved the ticket to (`robot_session_ended`, PD-400). */

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AwaitingVisualItem } from '@dashboard/shared';
-  import { askedBy, captureNotice, rejectBlocked, shotsByRoute } from './visual-check-logic';
+  import { askedBy, captureNotice, rejectBlocked, shotsByRoute, stepFailureLines } from './visual-check-logic';
 
   /**
    * One Robot PR waiting for Steve's visual check (PD-773): what was asked, the screenshots, and
@@ -19,6 +19,7 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
   const groups = $derived(shotsByRoute(item.shots));
+  const failed = $derived(stepFailureLines(item));
   const blocked = $derived(rejectBlocked(note));
   // The list refetches on its own cadence; `now` here is when this card rendered that data.
   const notice = $derived(captureNotice(item, Date.now()));
@@ -50,17 +51,24 @@
     <p class="vc-pending" class:vc-warn={notice.tone === 'warn'} role={notice.tone === 'warn' ? 'status' : undefined}>{notice.text}</p>
   {/if}
   {#if groups.length > 0}
-    {#each groups as g (g.route)}
-      <h4 class="vc-route">{g.route}</h4>
+    {#each groups as g (g.key)}
+      <h4 class="vc-route">{g.heading}</h4>
       <div class="vc-shots">
         {#each g.shots as s (s.file)}
           <a class="vc-shot" href={s.url} target="_blank" rel="noreferrer">
-            <img src={s.url} alt="{g.route} on {s.viewport}, {s.scheme} theme" loading="lazy" />
+            <img src={s.url} alt="{g.heading} on {s.viewport}, {s.scheme} theme" loading="lazy" />
             <span>{s.viewport} · {s.scheme}</span>
           </a>
         {/each}
       </div>
     {/each}
+  {/if}
+
+  {#if failed.length > 0}
+    <div class="vc-failed" role="status">
+      <p>{failed.length === 1 ? 'A click step' : `${failed.length} click steps`} could not run, so some of what was asked for is not pictured:</p>
+      <ul>{#each failed as f, i (i)}<li>{f}</li>{/each}</ul>
+    </div>
   {/if}
 
   <label class="vc-note-label" for="vc-note-{item.ticketId}">What to change (needed to request changes)</label>

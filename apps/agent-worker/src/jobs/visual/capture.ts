@@ -4,14 +4,17 @@ import path from 'node:path';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { authHeaderValue, proxyGitArgs } from '../../shared/checkout';
 import { defaultExec, droppedEnv, type Exec } from '../conflicts/resolve';
+import type { CaptureTarget } from './routes';
 
 /**
  * One visual capture (PD-773): build a PR's head, serve it, photograph the routes.
  *
  *   1. clone the PR head (read token), `npm ci`, build the web app and the server;
- *   2. start the PR's server on a free port with an EMPTY scratch data dir: the pages show the UI on
- *      empty data, and the real board (`/data/dashboard.db`) is never in reach;
- *   3. run `capture-cli` against it: desktop and phone, light and dark;
+ *   2. start the PR's server on a free port with an EMPTY scratch data dir and `VISUAL_FIXTURES=1`,
+ *      so the PR's own fixtures (`apps/server/src/visual-fixtures/`, PD-798) seed sample data into
+ *      it; the real board (`/data/dashboard.db`) is never in reach;
+ *   3. run `capture-cli` against it: desktop and phone, light and dark, each page then each of its
+ *      click steps;
  *   4. copy the PNGs to `<dataDir>/visual-captures/pr-<n>/<sha7>/` with a `manifest.json`, which the
  *      dashboard serves.
  * Steps 1-3 run the PR's own code (and a browser rendering it), so they run DROPPED to the Robot's
@@ -23,12 +26,24 @@ export interface Shot {
   viewport: string;
   scheme: string;
   file: string;
+  /** PD-798: the click step this shot was taken after (`click "Add metric"`); absent for the page as loaded. */
+  step?: string;
+  /** 1-based position of that step on its route. */
+  stepIndex?: number;
+}
+/** A step that could not run (PD-798): recorded, never silently skipped. */
+export interface StepFailure {
+  route: string;
+  step: string;
+  reason: string;
 }
 export interface CaptureManifest {
   prNumber: number;
   headSha: string;
   routes: string[];
   shots: Shot[];
+  /** PD-798: steps that failed, once per route (the first viewport that hit it). */
+  failures?: StepFailure[];
   createdAt: number;
 }
 
@@ -56,7 +71,7 @@ export function defaultServerStarter(config: AgentWorkerConfig): ServerStarter {
   return (cwd, port, dataDir) => {
     const child = spawn('node', ['apps/server/dist/index.js'], {
       cwd,
-      env: { ...droppedEnv(config), PORT: String(port), DATA_DIR: dataDir, NODE_ENV: 'production' },
+      env: { ...droppedEnv(config), PORT: String(port), DATA_DIR: dataDir, NODE_ENV: 'production', VISUAL_FIXTURES: '1' },
       stdio: 'ignore',
       ...(codingUid !== undefined ? { uid: codingUid, gid: codingGid ?? codingUid } : {}),
     });
@@ -91,7 +106,7 @@ export interface CaptureDeps {
 
 export async function captureVisuals(
   config: AgentWorkerConfig,
-  target: { repo: string; prNumber: number; headSha: string; routes: string[] },
+  target: { repo: string; prNumber: number; headSha: string; targets: CaptureTarget[] },
   deps: CaptureDeps = {},
   now: number = Date.now(),
 ): Promise<CaptureOutcome> {
@@ -139,12 +154,15 @@ export async function captureVisuals(
     }
 
     const cli = deps.cliPath ?? path.join(__dirname, 'capture-cli.js');
-    const args = { baseUrl, routes: target.routes, outDir: shots, chromiumPath: config.visual.chromiumPath };
+    const args = { baseUrl, targets: target.targets, outDir: shots, chromiumPath: config.visual.chromiumPath };
     const cap = await exec('node', [cli, JSON.stringify(args)], { cwd: work, dropped: true, timeoutMs: 10 * 60_000 });
     if (cap.code !== 0) return { kind: 'failed', reason: `capture failed: ${tail(cap.stderr)}` };
     let written: Shot[];
+    let failures: StepFailure[];
     try {
-      written = JSON.parse(cap.stdout) as Shot[];
+      const out = JSON.parse(cap.stdout) as { shots: Shot[]; failures?: StepFailure[] };
+      written = out.shots;
+      failures = out.failures ?? [];
     } catch {
       return { kind: 'failed', reason: `capture printed no manifest: ${tail(cap.stdout)}` };
     }
@@ -154,7 +172,9 @@ export async function captureVisuals(
     mkdirSync(dest, { recursive: true });
     const kept = written.filter((s) => /^[A-Za-z0-9-]+\.png$/.test(s.file) && existsSync(path.join(shots, s.file)));
     for (const s of kept) cpSync(path.join(shots, s.file), path.join(dest, s.file));
-    const manifest: CaptureManifest = { prNumber: target.prNumber, headSha: target.headSha, routes: target.routes, shots: kept, createdAt: now };
+    const manifest: CaptureManifest = {
+      prNumber: target.prNumber, headSha: target.headSha, routes: target.targets.map((t) => t.route), shots: kept, failures, createdAt: now,
+    };
     writeFileSync(path.join(dest, 'manifest.json'), JSON.stringify(manifest, null, 2));
     return { kind: 'captured', dir: dest, manifest };
   } finally {

@@ -7,17 +7,38 @@ import { VISUAL_CAPTURE_ENV, type AwaitingVisualItem } from '@dashboard/shared';
 
 export type Shot = AwaitingVisualItem['shots'][number];
 
-/** Shots grouped by route, in a fixed viewport × scheme order, for a grid per page. */
-export function shotsByRoute(shots: readonly Shot[]): { route: string; shots: Shot[] }[] {
+/**
+ * Shots grouped by page and step (PD-798) in capture order: the page as it loaded, then the result of
+ * each click step. Within a group, a fixed viewport × scheme order. `heading` names the group:
+ * `/widgets/habit-tracker`, then `/widgets/habit-tracker › click "Habits"`.
+ */
+export function shotsByRoute(shots: readonly Shot[]): { route: string; heading: string; key: string; shots: Shot[] }[] {
   const order = ['desktop-light', 'desktop-dark', 'phone-light', 'phone-dark'];
+  const groups: { route: string; heading: string; key: string; idx: number; shots: Shot[] }[] = [];
   const routes: string[] = [];
-  for (const s of shots) if (!routes.includes(s.route)) routes.push(s.route);
-  return routes.map((route) => ({
+  for (const s of shots) {
+    if (!routes.includes(s.route)) routes.push(s.route);
+    const idx = s.stepIndex ?? 0;
+    const key = `${s.route}#${idx}`;
+    let g = groups.find((x) => x.key === key);
+    if (!g) {
+      g = { route: s.route, heading: idx === 0 ? s.route : `${s.route} › ${s.step ?? `step ${idx}`}`, key, idx, shots: [] };
+      groups.push(g);
+    }
+    g.shots.push(s);
+  }
+  groups.sort((a, b) => routes.indexOf(a.route) - routes.indexOf(b.route) || a.idx - b.idx);
+  return groups.map(({ route, heading, key, shots: gs }) => ({
     route,
-    shots: shots
-      .filter((s) => s.route === route)
-      .sort((a, b) => order.indexOf(`${a.viewport}-${a.scheme}`) - order.indexOf(`${b.viewport}-${b.scheme}`)),
+    heading,
+    key,
+    shots: [...gs].sort((a, b) => order.indexOf(`${a.viewport}-${a.scheme}`) - order.indexOf(`${b.viewport}-${b.scheme}`)),
   }));
+}
+
+/** The click steps that could not run, as the card lists them (PD-798). */
+export function stepFailureLines(item: Pick<AwaitingVisualItem, 'stepFailures'>): string[] {
+  return (item.stepFailures ?? []).map((f) => `${f.route} › ${f.step}: ${f.reason}`);
 }
 
 /** Why Request changes is not allowed yet, or null when it is: a rejection must say what to change. */

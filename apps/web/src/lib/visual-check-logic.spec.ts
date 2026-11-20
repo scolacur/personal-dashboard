@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VisualCaptureState } from '@dashboard/shared';
-import { askedBy, captureNotice, rejectBlocked, shotsByRoute, waitedFor, type Shot } from './visual-check-logic';
+import { askedBy, captureNotice, rejectBlocked, shotsByRoute, stepFailureLines, waitedFor, type Shot } from './visual-check-logic';
 
 const shot = (route: string, viewport: string, scheme: string): Shot => ({ route, viewport, scheme, file: `${route}-${viewport}-${scheme}.png`, url: '/x' });
 
@@ -9,6 +9,32 @@ describe('visual check logic (PD-773)', () => {
     const g = shotsByRoute([shot('/a', 'phone', 'dark'), shot('/b', 'desktop', 'light'), shot('/a', 'desktop', 'light'), shot('/a', 'desktop', 'dark')]);
     expect(g.map((x) => x.route)).toEqual(['/a', '/b']);
     expect(g[0].shots.map((s) => `${s.viewport}-${s.scheme}`)).toEqual(['desktop-light', 'desktop-dark', 'phone-dark']);
+  });
+
+  it('gives each click step its own group after its page, captioned with the step (PD-798)', () => {
+    const step = (route: string, idx: number, label: string, viewport = 'desktop'): Shot => ({
+      ...shot(route, viewport, 'light'),
+      file: `${route}-s${idx}-${viewport}.png`,
+      step: label,
+      stepIndex: idx,
+    });
+    const g = shotsByRoute([
+      step('/h', 2, 'click "Add metric"'),
+      shot('/b', 'desktop', 'light'),
+      step('/h', 1, 'click "Habits"', 'phone'),
+      shot('/h', 'desktop', 'light'),
+      step('/h', 1, 'click "Habits"'),
+    ]);
+    expect(g.map((x) => x.heading)).toEqual(['/h', '/h › click "Habits"', '/h › click "Add metric"', '/b']);
+    expect(g[1].shots.map((s) => s.viewport)).toEqual(['desktop', 'phone']);
+    expect(new Set(g.map((x) => x.key)).size).toBe(g.length);
+  });
+
+  it('lists the click steps that could not run', () => {
+    expect(stepFailureLines({ stepFailures: [{ route: '/h', step: 'click "Nope"', reason: 'nothing on the page is named "Nope"' }] })).toEqual([
+      '/h › click "Nope": nothing on the page is named "Nope"',
+    ]);
+    expect(stepFailureLines({ stepFailures: [] })).toEqual([]);
   });
 
   it('requires a note to request changes', () => {
