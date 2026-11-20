@@ -1312,6 +1312,11 @@ export interface AgentRun {
    *  evidence that makes a `no-verify` run diagnosable from the board after its worktree is gone.
    *  Null for older rows and for sessions that produced no output. */
   outputTail: string | null;
+  /** PD-737/T898: the WIP ref (`robot-wip/t<id>`) a non-hand-off run pushed its work to, plus the
+   *  commit sha at its tip, so a human can `git fetch` it. Null when the run handed off, preserved
+   *  nothing, or the WIP push failed (and cleared once the ticket goes terminal). */
+  wipRef: string | null;
+  wipSha: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -1440,4 +1445,8 @@ export interface RobotEventDetail {
    *  from an auth/credit pause (which needs a human), and `until` is when dispatch resumes. */
   sessionLimit?: boolean;
   until?: number;
+  /** PD-737/T898: on a `robot_fault`/`robot_parked`/`robot_paused`/`robot_ask_human` event whose run
+   *  preserved its work — the WIP ref (`robot-wip/t<id>`) and the commit sha at its tip. */
+  wipRef?: string;
+  wipSha?: string;
 }

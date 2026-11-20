@@ -81,6 +81,14 @@
   td.when {
     color: var(--muted);
   }
+
+  // PD-737/T898: the preserved WIP ref — monospace, muted, nowrap so the table stays compact.
+  td.wip code {
+    font-family: monospace;
+    font-size: 0.85em;
+    color: var(--muted);
+    white-space: nowrap;
+  }
 }
 
 .status-badge,

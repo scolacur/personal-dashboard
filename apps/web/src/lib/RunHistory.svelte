@@ -71,7 +71,7 @@
   }
 
   /** Columns in the runs table — keeps the expanded row's colspan honest if a column is added. */
-  const RUN_COLUMNS = 10;
+  const RUN_COLUMNS = 11;
 </script>
 
 {#if !loading && runs.length > 0}
@@ -93,7 +93,7 @@
           <tr>
             <th><span class="sr-only">Output</span></th>
             <th>#</th><th>Status</th><th>Fault</th><th>Reason</th>
-            <th>Turns</th><th>Tokens</th><th>Dur</th><th>PR</th><th>Started</th>
+            <th>Turns</th><th>Tokens</th><th>Dur</th><th>PR</th><th>WIP</th><th>Started</th>
           </tr>
         </thead>
         <tbody>
@@ -122,6 +122,9 @@
               <td class="num">{r.tokens != null ? r.tokens.toLocaleString() : '—'}</td>
               <td class="num">{duration(r)}</td>
               <td>{#if r.prUrl}<a href={r.prUrl} target="_blank" rel="noreferrer">PR</a>{:else}—{/if}</td>
+              <!-- PD-737/T898: a non-hand-off run's preserved WIP ref — `git fetch origin <ref>` to
+                   inspect or continue it. The sha is in the title. -->
+              <td class="wip">{#if r.wipRef}<code title={r.wipSha ? `${r.wipRef} @ ${r.wipSha}` : r.wipRef}>{r.wipRef}</code>{:else}—{/if}</td>
               <td class="when">{fmt(r.startedAt)}</td>
             </tr>
             {#if hasOutput && isOpen}

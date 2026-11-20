@@ -78,6 +78,10 @@ function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
     ensureWorktree: async (_c, branch) => ({ dir: `/wt/${branch.replace('/', '-')}`, branch }),
     removeWorktree: async () => {},
     pruneWorktrees: () => [],
+    // PD-737/T898: no-op by default so orchestration tests never shell out to git; the WIP tests
+    // override these to observe/record.
+    pushWip: async () => null,
+    deleteWip: async () => {},
     runSession: async () => ({ ok: true, sessionId: 'sess-1', verifyOk: true, prNumber: 314, ...sessionResult }),
     now: () => 1000,
   };
@@ -552,6 +556,87 @@ describe('processRobotQueue', () => {
     await processRobotQueue(db, config, d);
     expect(kept).toEqual(['/wt/robot-1', '/wt/robot-t2']);
     expect(prunedBeforeDispatch).toBe(true);
+  });
+
+  // ── PD-737/T898: preserve a non-hand-off run's WIP to robot-wip/t<id> ─────────
+
+  function eventDetail(db: Database.Database, ticketId: number, type: string): Record<string, unknown> {
+    const row = db
+      .prepare('SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = ? ORDER BY id DESC LIMIT 1')
+      .get(ticketId, type) as { detail: string } | undefined;
+    return row ? (JSON.parse(row.detail) as Record<string, unknown>) : {};
+  }
+
+  it('preserves WIP on a no-verify run — ref+sha on the run row and the fault event', async () => {
+    addQueued(db, 1);
+    const d: RobotDeps = {
+      ...deps({ ok: true, verifyOk: false, prNumber: undefined }),
+      pushWip: async (_c, _wt, id) => ({ ref: `robot-wip/t${id}`, sha: 'deadbeef' }),
+    };
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    const [run] = listRunsForTicket(db, 1);
+    expect(run).toMatchObject({ status: 'no-verify', wipRef: 'robot-wip/t1', wipSha: 'deadbeef' });
+    expect(eventDetail(db, 1, 'robot_fault')).toMatchObject({ wipRef: 'robot-wip/t1', wipSha: 'deadbeef' });
+  });
+
+  it('pushes WIP on every non-hand-off exit (no-verify, session error, ask-human)', async () => {
+    const pushed: Array<{ ticketId: number; status: string }> = [];
+    const mk = (id: number, result: Partial<RobotSessionResult>) => {
+      addQueued(db, id);
+      const d: RobotDeps = {
+        ...deps(result),
+        pushWip: async (_c, _wt, ticketId) => {
+          pushed.push({ ticketId, status: 'x' });
+          return { ref: `robot-wip/t${ticketId}`, sha: 's' };
+        },
+      };
+      return d;
+    };
+    await processRobotQueue(db, cfgNoBackoff({ ROBOT_ALLOWLIST: '1' }), mk(1, { ok: true, verifyOk: false, prNumber: undefined }));
+    await processRobotQueue(db, cfgNoBackoff({ ROBOT_ALLOWLIST: '2' }), mk(2, { ok: false, verifyOk: false, error: 'boom' }));
+    await processRobotQueue(db, cfgNoBackoff({ ROBOT_ALLOWLIST: '3' }), mk(3, { ok: true, verifyOk: false, prNumber: undefined, askHuman: 'A or B?' }));
+    expect(pushed.map((p) => p.ticketId).sort()).toEqual([1, 2, 3]);
+  });
+
+  it('a failed WIP push (null) does not change the recorded outcome', async () => {
+    addQueued(db, 1);
+    const d: RobotDeps = { ...deps({ ok: true, verifyOk: false, prNumber: undefined }), pushWip: async () => null };
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('no-verify'); // outcome unchanged
+    expect(run.wipRef).toBeNull();
+    expect(agentState(db, 1)).toBe('queued'); // still re-queued for retry
+  });
+
+  it('the hand-off path pushes no WIP ref and deletes any lingering one', async () => {
+    addQueued(db, 1);
+    let pushCalls = 0;
+    const deleted: number[] = [];
+    const d: RobotDeps = {
+      ...deps(),
+      pushWip: async () => {
+        pushCalls++;
+        return null;
+      },
+      deleteWip: async (_c, id) => void deleted.push(id),
+    };
+    await processRobotQueue(db, cfg(), d);
+    expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
+    expect(pushCalls).toBe(0); // never preserve WIP when the work is on GitHub
+    expect(deleted).toEqual([1]); // the superseded WIP ref is cleaned up
+  });
+
+  it('deletes WIP refs of terminal tickets and clears the record (cleanup sweep)', async () => {
+    db.prepare(`INSERT INTO agent_tickets (id, title, status, assignee, project_id, github_issue_number) VALUES (7, 'done', 'completed', 'robot', 1, 7)`).run();
+    db.prepare(
+      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, started_at, wip_ref, wip_sha) VALUES (7, 7, 'robot/7', 'no-verify', 1, 'robot-wip/t7', 'cafe')`,
+    ).run();
+    const deleted: number[] = [];
+    const d: RobotDeps = { ...deps(), deleteWip: async (_c, id) => void deleted.push(id) };
+    await processRobotQueue(db, cfg(), d);
+    expect(deleted).toContain(7);
+    const row = db.prepare('SELECT wip_ref AS r FROM agent_runs WHERE ticket_id = 7').get() as { r: string | null };
+    expect(row.r).toBeNull(); // forgotten so the sweep acts once, not every cycle
   });
 
   it('ask_human parks awaiting-human and is not counted as a failure', async () => {
