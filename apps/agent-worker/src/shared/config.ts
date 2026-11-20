@@ -47,6 +47,8 @@ export interface AgentWorkerConfig {
   robot: RobotConfig;
   /** The Evaluator (PD-487, D-076) — post-hand-off PR review. Off by default. */
   evaluator: EvaluatorConfig;
+  /** PD-774 (D-099): the mechanical merge-conflict resolver. Off by default: it pushes to PR branches. */
+  conflictResolver: { enabled: boolean; intervalMs: number };
   /** The decision-numbering cycle (PD-498, D-078) — deterministic, no LLM. Off by default. */
   maintenance: MaintenanceConfig;
 }
@@ -273,6 +275,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     httpsProxy: env.HTTPS_PROXY ?? env.https_proxy ?? '',
     robot: loadRobotConfig(env),
     evaluator: loadEvaluatorConfig(env),
+    conflictResolver: {
+      enabled: env.CONFLICT_RESOLVER_ENABLED === '1' || env.CONFLICT_RESOLVER_ENABLED === 'true',
+      intervalMs: Number(env.CONFLICT_RESOLVER_INTERVAL_MS ?? 5 * 60_000),
+    },
     maintenance: loadMaintenanceConfig(env),
   };
 }

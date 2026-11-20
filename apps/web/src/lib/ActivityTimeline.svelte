@@ -67,6 +67,8 @@
         return '🔍';
       case ROBOT_EVENT.evaluated:
         return '📋';
+      case ROBOT_EVENT.conflictResolved:
+        return '🔀';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -113,6 +115,8 @@
         return `Evaluator reviewing the PR${d.round && d.round > 1 ? ` (round ${d.round})` : ''}`;
       case ROBOT_EVENT.evaluated:
         return `Evaluator verdict: ${evaluatorVerdictLine(d)}`;
+      case ROBOT_EVENT.conflictResolved:
+        return `Merged main and auto-resolved conflicts${d.files?.length ? ` in ${d.files.join(', ')}` : ''}; the Evaluator reviews it again`;
       case 'created':
         return 'Ticket created';
       case 'status_changed':

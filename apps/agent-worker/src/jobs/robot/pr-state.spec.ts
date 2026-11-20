@@ -137,6 +137,13 @@ describe('pollInReviewPrs', () => {
     expect(types).toContain('robot_reactivated');
   });
 
+  it('leaves a conflict to the conflict resolver when it is on (PD-774)', async () => {
+    const fetcher: PrFetcher = async () => ({ ...EMPTY, mergeable: 'CONFLICTING' });
+    const n = await pollInReviewPrs(db, loadConfig({ ROBOT_PR_POLL_INTERVAL_MS: '0', CONFLICT_RESOLVER_ENABLED: '1' }), 5000, fetcher);
+    expect(n).toBe(0);
+    expect((db.prepare('SELECT agent_state AS s FROM agent_tickets WHERE id = 1').get() as { s: string }).s).toBe('in-review');
+  });
+
   it('leaves a clean in-review ticket alone', async () => {
     const fetcher: PrFetcher = async () => EMPTY;
     const n = await pollInReviewPrs(db, cfg(), 5000, fetcher);
