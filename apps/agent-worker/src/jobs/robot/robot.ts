@@ -431,6 +431,10 @@ export async function processRobotQueue(
         setAgentState(db, candidate.id, 'in-review', now());
         dispatched++;
         logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
+        // PD-773: the Robot asked for Steve's visual check; the PR waits for it (see visual/gate.ts).
+        if (result.visualReview) {
+          logMilestone(db, candidate.id, ROBOT_EVENT.visualReviewRequested, { prNumber: result.prNumber, by: 'robot', reason: result.visualReview }, now());
+        }
         logger.info({ ticketId: candidate.id, branch, prUrl }, 'robot: handed off PR');
       } else if (result.ok && !result.verifyOk) {
         // D-046 gate: the session ended without a green verify — withhold the red PR. The WIP is NOT

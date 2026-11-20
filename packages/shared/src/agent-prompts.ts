@@ -35,6 +35,8 @@ export const SCM_JSON = `${MARKER_DIR}/scm.json`;
 /** The Robot writes its blocking question here to park the ticket for a human (C2, PD-343). Its
  *  contents become the awaiting-human reason. A deliberate park, NOT a failure — it burns no budget. */
 export const ASK_HUMAN_MARKER = `${MARKER_DIR}/ask-human`;
+/** PD-773: the Robot asks for Steve's visual check before its PR merges. The file's text says what to look at. */
+export const VISUAL_REVIEW_MARKER = `${MARKER_DIR}/visual-review`;
 
 /**
  * Where a Robot writes its run memory (PD-306) — ONE FILE PER RUN, committed on its branch.
@@ -303,6 +305,10 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '   )"',
     '   ```',
     '',
+    `   If your change is visually distinct (a new page or layout, a redesigned component), also write`,
+    `   what Steve should look at to \`${VISUAL_REVIEW_MARKER}\` — e.g. \`echo "New Habits calendar, both themes" > ${VISUAL_REVIEW_MARKER}\`.`,
+    '   The PR then waits for his visual check before it can merge. Skip it for small tweaks.',
+    '',
     '6. **Write the hand-off manifest** so the loop can locate your PR:',
     '   ```sh',
     `   PR_NUMBER="$(gh pr view ${branch} --repo ${repo} --json number --jq .number)"`,
@@ -555,6 +561,8 @@ export interface EvaluatorReport {
   findings: EvaluatorFinding[];
   /** One paragraph a human reads on the ticket timeline without opening the PR. */
   summary: string;
+  /** PD-773: set when the change is visually distinct enough that Steve should look before merge. */
+  visualReview?: string;
 }
 
 /**
@@ -643,6 +651,10 @@ export function evaluatorSystemPrompt(contextPack: string): string {
     '                    "blocking": true|false, "where": "<path:line>", "what": "<one sentence>",',
     '                    "insteadUse": "<existing thing to use instead — redundancy only>" } ] }',
     'A `revise` verdict MUST carry at least one finding with "blocking": true.',
+    'OPTIONAL "visualReview": "<what Steve should look at>" when the change is visually distinct (a new',
+    'page, a new layout, a redesigned component) so Steve should see it before it merges. Leave it out',
+    'for small tweaks and for anything not visible. It never changes the verdict; screenshots are',
+    'captured for him automatically.',
     '',
     'Project context:',
     contextPack,

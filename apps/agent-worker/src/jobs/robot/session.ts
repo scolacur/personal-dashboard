@@ -7,7 +7,7 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { buildOrientation } from './orientation';
 import { makeCodingSpawn } from './privilege';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, type ResumeContext } from '@dashboard/shared';
+import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, VISUAL_REVIEW_MARKER, type ResumeContext } from '@dashboard/shared';
 import { buildDocsToolServer } from './docs-tool';
 import { buildDecisionToolServer } from './decision-tool';
 import type { Worktree } from './workspace';
@@ -36,6 +36,8 @@ export interface RobotSessionResult {
   prNumber?: number;
   /** The Robot's blocking question from `.robot/ask-human`, when it deliberately parked (C2). */
   askHuman?: string;
+  /** PD-773: what the Robot wants Steve to look at, from `.robot/visual-review`, when it asked. */
+  visualReview?: string;
   /** SDK turns the session used, from the result message (observability, C3). */
   turns?: number;
   /** Total tokens the session used (input+output, from the result usage; C3). */
@@ -178,7 +180,7 @@ export function codingEnv(config: AgentWorkerConfig): Record<string, string | un
 }
 
 /** Read the hand-off signals the Robot left in its worktree. */
-export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?: number; askHuman?: string } {
+export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?: number; askHuman?: string; visualReview?: string } {
   const verifyOk = existsSync(path.join(worktreeDir, VERIFY_OK_MARKER));
   let prNumber: number | undefined;
   try {
@@ -194,7 +196,14 @@ export function readHandoff(worktreeDir: string): { verifyOk: boolean; prNumber?
   } catch {
     // no ask-human marker — the Robot didn't park for a human
   }
-  return { verifyOk, prNumber, askHuman };
+  let visualReview: string | undefined;
+  try {
+    const v = readFileSync(path.join(worktreeDir, VISUAL_REVIEW_MARKER), 'utf8').trim();
+    if (v) visualReview = v.slice(0, 500);
+  } catch {
+    // no visual-review marker — the Robot did not ask for a visual check
+  }
+  return { verifyOk, prNumber, askHuman, ...(visualReview ? { visualReview } : {}) };
 }
 
 /**

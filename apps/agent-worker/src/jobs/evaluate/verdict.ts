@@ -93,8 +93,10 @@ export function parseEvaluatorReport(text: string): EvaluatorReport | null {
     ? obj.findings.map(toFinding).filter((f): f is EvaluatorFinding => f !== null)
     : [];
   const summary = typeof obj.summary === 'string' ? obj.summary.trim() : '';
+  // PD-773: an optional request for Steve's visual check. Never changes the verdict.
+  const visualReview = typeof obj.visualReview === 'string' && obj.visualReview.trim() !== '' ? obj.visualReview.trim().slice(0, 500) : undefined;
 
-  return normalizeReport({ verdict: obj.verdict, findings, summary });
+  return normalizeReport({ verdict: obj.verdict, findings, summary, ...(visualReview ? { visualReview } : {}) });
 }
 
 /**
@@ -114,6 +116,7 @@ export function normalizeReport(report: EvaluatorReport): EvaluatorReport {
   const blocking = report.findings.filter((f) => f.blocking);
   if (report.verdict === 'revise' && blocking.length === 0) {
     return {
+      ...report,
       verdict: 'ship',
       findings: report.findings,
       summary: report.summary

@@ -75,6 +75,7 @@ import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audi
 import { listRunsForTicket } from './runs-store';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
+import { listAwaitingVisual, recordVisualReview } from './visual-review';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -724,6 +725,34 @@ export function registerRoutes(
   app.get(`${base}/refine/awaiting`, async () => {
     const items = listAwaitingRefine(db);
     return { items, count: items.length };
+  });
+
+  // PD-773: Robot PRs waiting for Steve's visual check, and his answer.
+  app.get(`${base}/visual-review/awaiting`, async () => {
+    const items = listAwaitingVisual(db);
+    return { items, count: items.length };
+  });
+
+  app.post(`${base}/tickets/:id/visual-review`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const body = (request.body ?? {}) as { approved?: unknown; note?: unknown };
+    if (typeof body.approved !== 'boolean') {
+      return reply.status(400).send({ error: 'approved must be true or false', code: 'INVALID_BODY' });
+    }
+    if (body.note !== undefined && typeof body.note !== 'string') {
+      return reply.status(400).send({ error: 'note must be a string', code: 'INVALID_BODY' });
+    }
+    const note = typeof body.note === 'string' ? body.note : '';
+    if (!body.approved && note.trim() === '') {
+      return reply.status(400).send({ error: 'say what to change', code: 'NOTE_REQUIRED' });
+    }
+    const result = recordVisualReview(db, id, body.approved, note);
+    if (!result.ok) {
+      return result.reason === 'not_found'
+        ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
+        : reply.status(409).send({ error: 'this ticket is not waiting for a visual check', code: 'NOT_WAITING' });
+    }
+    return reply.status(201).send({ eventId: result.eventId });
   });
 
   // PD-748: switch an Epic in or out of the Refine backfill; its members inherit it.

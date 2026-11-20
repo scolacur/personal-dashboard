@@ -1,0 +1,106 @@
+// The visual-check card (PD-773). Tokens only — see global.scss.
+
+.vc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.vc-asked {
+  margin: 0;
+}
+
+.vc-reasons {
+  margin: 0;
+  padding-left: var(--space-lg);
+  color: var(--text);
+}
+
+.vc-pending {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.vc-route {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono, monospace);
+}
+
+.vc-shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-sm);
+}
+
+.vc-shot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 0.75em;
+  text-decoration: none;
+
+  img {
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    object-fit: cover;
+    object-position: top;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--surface-2, transparent);
+  }
+
+  &:hover img {
+    border-color: var(--accent);
+  }
+}
+
+.vc-note-label {
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.vc-note {
+  width: 100%;
+  font: inherit;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface, transparent);
+  color: var(--text);
+}
+
+.vc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}
+
+.vc-approve {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.vc-reject {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}
+
+.vc-error {
+  color: var(--status-error, #c53030);
+  font-size: var(--font-size-sm);
+}
