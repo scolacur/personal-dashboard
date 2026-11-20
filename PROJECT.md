@@ -455,7 +455,9 @@ it mid-step ([[D-046]]); the `after_run` hook is only a backstop.
 **verify-ok marker**:
 `.robot/verify-ok`, written the instant `npm run verify` goes green. The one positive signal the
 `after_run` safety-net trusts (the **hand-off-earned gate**, D-046): no marker ⇒ the turn ended
-before a green verify ⇒ the backstop leaves the WIP for retry instead of opening a red PR.
+before a green verify ⇒ the backstop withholds the red PR. The work itself is **not** discarded:
+on every non-hand-off exit the loop preserves it to a `robot-wip/t<id>` ref (PD-737/T898) before the
+clone is reused or pruned — "no marker" withholds the PR, it does not lose the WIP.
 
 **scm.json**:
 `.robot/scm.json` — the small record (`pr_number` / owner / repo / branch / sha) that lets the

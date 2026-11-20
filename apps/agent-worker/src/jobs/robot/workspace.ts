@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { AgentWorkerConfig } from '../../shared/config';
-import { authArgs, authHeaderValue, cloneUrl, proxyGitArgs } from '../../shared/checkout';
+import { authHeaderValue, cloneUrl, proxyGitArgs } from '../../shared/checkout';
 import { logger } from '../../shared/logger';
 
 const run = promisify(execFile);
@@ -61,12 +61,19 @@ export type GitRunner = (args: string[]) => Promise<string | void>;
 /** Recursively chowns the clone to the coding uid (no-op in dev). Injectable for tests. */
 export type ChownRunner = (dir: string) => Promise<void>;
 
-/** Default runner: real git with the read token + proxy attached inline (never persisted to
- *  `.git/config`), failing fast instead of prompting. Mirrors checkout.ts's runGit. */
-export function defaultGitRunner(config: AgentWorkerConfig): GitRunner {
-  const secrets = [config.githubReadToken, authHeaderValue(config.githubReadToken)].filter(Boolean);
+/**
+ * Build a GitRunner authenticated with `token`, proxy attached inline (never persisted to
+ * `.git/config`), failing fast instead of prompting, secrets redacted on failure. Mirrors
+ * checkout.ts's runGit. `defaultGitRunner` uses the READ token (clone/fetch/ls-remote); the WIP
+ * push (wip.ts, PD-737/T898) needs the WRITE token, since a Robot pushes with the write token or
+ * not at all.
+ */
+export function makeGitRunner(config: AgentWorkerConfig, token: string): GitRunner {
+  const header = authHeaderValue(token);
+  const auth = header ? ['-c', `http.extraHeader=Authorization: Basic ${header}`] : [];
+  const secrets = [token, header].filter(Boolean);
   return async (args: string[]) => {
-    const full = [...authArgs(config), ...proxyGitArgs(config), ...args];
+    const full = [...auth, ...proxyGitArgs(config), ...args];
     try {
       const { stdout } = await run('git', full, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
       return stdout;
@@ -77,6 +84,11 @@ export function defaultGitRunner(config: AgentWorkerConfig): GitRunner {
       throw new GitError(msg, typeof code === 'number' ? code : null);
     }
   };
+}
+
+/** Default runner: real git with the read-only grounding token. See `makeGitRunner`. */
+export function defaultGitRunner(config: AgentWorkerConfig): GitRunner {
+  return makeGitRunner(config, config.githubReadToken);
 }
 
 /** Default chown: hand the clone to the coding uid/gid so the dropped Robot owns it. A no-op when
@@ -106,7 +118,7 @@ const MARKER_DIR = '.robot';
  * would fail closed and quietly become a fresh clone, which is the bug PD-719 fixes. Scoped to the
  * one directory, passed per call, never written to any config.
  */
-const asOwnerOf = (dir: string): string[] => ['-c', `safe.directory=${dir}`, '-C', dir];
+export const asOwnerOf = (dir: string): string[] => ['-c', `safe.directory=${dir}`, '-C', dir];
 
 /**
  * The branch checked out in `dir`, or null when it is not a usable clone. Any failure (missing,

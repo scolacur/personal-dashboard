@@ -18,7 +18,7 @@ import type { FailedRun, FaultTier } from './faults';
 export type RunStatus =
   | 'running'
   | 'handed-off' // green verify → pushed branch + PR (the success path)
-  | 'no-verify' // turn ended before a green verify → WIP left for retry (D-046 gate)
+  | 'no-verify' // turn ended before a green verify → red PR withheld (D-046 gate); WIP pushed to robot-wip/t<id> (PD-737/T898)
   | 'ask-human' // the Robot posted a question and parked (awaiting-human) — not a failure (C2)
   | 'error'; // the coding session itself failed (spawn/SDK/crash)
 
@@ -48,6 +48,11 @@ export interface RunRow {
   /** PD-426: bounded tail of the session's output, so a `no-verify` run is diagnosable from the
    *  board after the worktree is gone. Null for older rows / sessions that produced nothing. */
   outputTail: string | null;
+  /** PD-737/T898: the WIP ref (`robot-wip/t<id>`) a non-hand-off run pushed its work to, and the
+   *  commit sha at its tip — so a human can `git fetch` it. Null when the run handed off, preserved
+   *  nothing, or the WIP push failed. */
+  wipRef: string | null;
+  wipSha: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -99,6 +104,9 @@ export function ensureRunsTable(db: Database.Database): void {
   addColumnIfMissing(db, 'agent_runs', 'body_hash', 'TEXT');
   // PD-426: bounded tail of the coding session's output — the evidence a failed run leaves behind.
   addColumnIfMissing(db, 'agent_runs', 'output_tail', 'TEXT');
+  // PD-737/T898: where a non-hand-off run's WIP was preserved (`robot-wip/t<id>` + its tip sha).
+  addColumnIfMissing(db, 'agent_runs', 'wip_ref', 'TEXT');
+  addColumnIfMissing(db, 'agent_runs', 'wip_sha', 'TEXT');
 }
 
 /** Stable hash of a ticket body, for the PD-406 unchanged-body check. `null`/empty bodies hash to a
@@ -158,6 +166,9 @@ export interface FinishRunInput {
   tokens?: number | null;
   /** PD-426: bounded tail of the session's output. Clamped to `OUTPUT_TAIL_MAX` on write. */
   outputTail?: string | null;
+  /** PD-737/T898: the WIP ref + sha a non-hand-off run preserved its work to. */
+  wipRef?: string | null;
+  wipSha?: string | null;
 }
 
 /** Close out a run with its terminal outcome. */
@@ -176,7 +187,7 @@ export function finishRun(
     `UPDATE agent_runs
         SET status = ?, session_id = ?, pr_url = ?, error = ?,
             fault_tier = ?, fault_signature = ?, fault_reason = ?,
-            turns = ?, tokens = ?, output_tail = ?, finished_at = ?
+            turns = ?, tokens = ?, output_tail = ?, wip_ref = ?, wip_sha = ?, finished_at = ?
       WHERE id = ?`,
   ).run(
     input.status,
@@ -189,6 +200,8 @@ export function finishRun(
     input.turns ?? null,
     input.tokens ?? null,
     boundedTail,
+    input.wipRef ?? null,
+    input.wipSha ?? null,
     now,
     runId,
   );
@@ -311,6 +324,8 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     maxTurns: (r.max_turns as number | null) ?? null,
     tokens: (r.tokens as number | null) ?? null,
     outputTail: (r.output_tail as string | null) ?? null,
+    wipRef: (r.wip_ref as string | null) ?? null,
+    wipSha: (r.wip_sha as string | null) ?? null,
     startedAt: r.started_at as number,
     finishedAt: (r.finished_at as number | null) ?? null,
   };
@@ -322,4 +337,31 @@ export function listRunsForTicket(db: Database.Database, ticketId: number): RunR
     .prepare('SELECT * FROM agent_runs WHERE ticket_id = ? ORDER BY started_at DESC, id DESC')
     .all(ticketId) as Record<string, unknown>[];
   return rows.map(rowToRun);
+}
+
+/**
+ * Tickets that still carry a recorded WIP ref (PD-737/T898) but have reached a terminal lane
+ * (`completed`/`closed`) or been archived — the loop deletes those scratch refs and then clears the
+ * record (`clearWipRef`) so the sweep doesn't re-push a delete every cycle. Tolerates a pre-T898
+ * table (no `wip_ref` column) → none. */
+export function ticketsWithTerminalWipRef(db: Database.Database): number[] {
+  try {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT r.ticket_id AS id
+           FROM agent_runs r JOIN agent_tickets t ON t.id = r.ticket_id
+          WHERE r.wip_ref IS NOT NULL
+            AND (t.status IN ('completed', 'closed') OR t.archived_at IS NOT NULL)`,
+      )
+      .all() as { id: number }[];
+    return rows.map((r) => r.id);
+  } catch {
+    return [];
+  }
+}
+
+/** Forget a ticket's WIP ref on its run rows, after the remote ref has been deleted — so the
+ *  terminal-cleanup sweep acts once per ticket, not every cycle. */
+export function clearWipRef(db: Database.Database, ticketId: number): void {
+  db.prepare('UPDATE agent_runs SET wip_ref = NULL, wip_sha = NULL WHERE ticket_id = ?').run(ticketId);
 }
