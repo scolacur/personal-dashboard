@@ -4,12 +4,6 @@
   margin: 0 auto;
 }
 
-.placeholder {
-  color: var(--muted);
-  padding: var(--space-lg) 0;
-  text-align: center;
-}
-
 /* Live count of writes queued offline, shown under Today on both the card and the page. */
 .pending {
   margin: var(--space-xs) 0 0;

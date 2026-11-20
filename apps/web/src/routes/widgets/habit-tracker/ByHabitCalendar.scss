@@ -1,0 +1,194 @@
+.by-habit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  .picker-label {
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+  }
+
+  select {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    min-width: 12rem;
+  }
+}
+
+.stats {
+  display: flex;
+  gap: var(--space-lg);
+  margin: 0;
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    dt {
+      font-size: var(--font-size-xs);
+      color: var(--muted);
+    }
+
+    dd {
+      margin: 0;
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
+
+.no-stats {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.empty {
+  color: var(--muted);
+  padding: var(--space-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+}
+
+.scroller {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: 3.75rem repeat(7, minmax(1.75rem, 1fr));
+  gap: 3px;
+  padding: var(--space-sm);
+}
+
+.weekday {
+  grid-row: 1;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  padding-bottom: var(--space-xs);
+}
+
+/* Left gutter: a month name with a line spanning the rows that hold its days. */
+.month {
+  grid-column: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  .month-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .month-year {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .month-line {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    background: var(--border);
+    border-radius: 1px;
+  }
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-height: 1.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0;
+  font: inherit;
+
+  .day-num {
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    opacity: 0.6;
+  }
+
+  /* Done + due: a solid accent fill. */
+  &.done {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+
+    .day-num {
+      opacity: 0.85;
+    }
+  }
+
+  /* Extra: done on a day it wasn't due — a lighter accent fill. */
+  &.extra {
+    background: color-mix(in srgb, var(--accent) 35%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    color: var(--text);
+  }
+
+  /* Due but not done: an open, clearly tappable cell. */
+  &.due {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  /* Not due: muted, still tappable (recording an extra). */
+  &.notdue {
+    background: var(--surface-2);
+    border-style: dashed;
+  }
+
+  /* Set partially done: an accent outline, no fill. */
+  &.partial {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Days outside the item's range / in the future: blank. */
+  &.future {
+    background: transparent;
+    border-color: transparent;
+  }
+}
+
+button.cell {
+  cursor: pointer;
+
+  &:hover:not(.future) {
+    border-color: var(--accent);
+  }
+}

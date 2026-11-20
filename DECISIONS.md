@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-102](DECISIONS/D-102-by-habit-calendar-completion-rate-window-and-today-open-affordance.md)** — By Habit completion-rate is a floored, in-progress-excluded window; Today opens the calendar from a dedicated control, not the name text
 - **[D-101](DECISIONS/D-101-the-evaluator-reviews-every-pr-and-its-ship-opens-review-gate.md)** — The Evaluator reviews every PR, and a ship from every lens opens review-gate as Steve's approval does
 - **[D-099](DECISIONS/D-099-mechanical-merge-conflicts-are-resolved-by-the-worker-by-merging-main.md)** — Mechanical merge conflicts are resolved by the worker, by merging main in, and a resolved Robot PR is reviewed again
 - **[D-098](DECISIONS/D-098-robot-prs-are-gated-by-a-review-gate-status-the-evaluator-sets.md)** — Robot PRs are gated by a `review-gate` status the Evaluator sets with a statuses-only token the Robot never holds
