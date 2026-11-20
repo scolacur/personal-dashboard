@@ -2184,3 +2184,133 @@ describe('epic refinement staleness (PD-610)', () => {
     });
   });
 });
+
+/**
+ * D-097: a body edit to a refined ticket must say whether it stays refined. The store applies the
+ * stated choice and logs it; the 409 refusal for a body edit that OMITS the choice lives at the
+ * route boundary (`refinedChoiceGuardFailure`), tested there and in routes.spec.ts.
+ */
+describe('body edit on a refined ticket (D-097)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  const stateOf = (id: number) => {
+    const t = getTicket(db, id)!;
+    return { refined: t.refined, stale: t.refineStale };
+  };
+  const refineEvents = (id: number) =>
+    listTicketEvents(db, id).filter((e) =>
+      [REFINE_STATE_EVENT.kept, REFINE_STATE_EVENT.invalidated].includes(e.type as never),
+    );
+
+  function refinedTicket(body = 'original body') {
+    const t = createTicket(db, { title: 'a ticket', projectId: pd, body });
+    return markTicketRefined(db, t.id)!;
+  }
+
+  it('keeps refined and logs refine_kept when refined:true accompanies the body change', () => {
+    const t = refinedTicket();
+    updateTicket(db, t.id, { body: 'changed body', refined: true });
+    expect(stateOf(t.id)).toEqual({ refined: true, stale: false });
+    const [ev] = refineEvents(t.id);
+    expect(ev.type).toBe(REFINE_STATE_EVENT.kept);
+    expect((ev.detail as Record<string, unknown>).cause).toBe('body');
+  });
+
+  it('clears refined and logs refine_invalidated{cause:body} when refined:false accompanies it', () => {
+    const t = refinedTicket();
+    updateTicket(db, t.id, { body: 'changed body', refined: false });
+    expect(stateOf(t.id)).toEqual({ refined: false, stale: false });
+    const [ev] = refineEvents(t.id);
+    expect(ev.type).toBe(REFINE_STATE_EVENT.invalidated);
+    expect((ev.detail as Record<string, unknown>).cause).toBe('body');
+  });
+
+  // The byte-identical case is the one a caller sends WITHOUT `refined` (the UI omits it, and the
+  // route guard does not require it): the flag is left exactly as it was and nothing is logged.
+  it('an identical body logs nothing and leaves the flag untouched', () => {
+    const t = refinedTicket('same body');
+    updateTicket(db, t.id, { body: 'same body' });
+    expect(stateOf(t.id)).toEqual({ refined: true, stale: false });
+    expect(refineEvents(t.id)).toHaveLength(0);
+  });
+
+  it('a non-refined ticket is unaffected by a body change', () => {
+    const t = createTicket(db, { title: 'plain', projectId: pd, body: 'b1' });
+    updateTicket(db, t.id, { body: 'b2' });
+    expect(stateOf(t.id)).toEqual({ refined: false, stale: false });
+    expect(refineEvents(t.id)).toHaveLength(0);
+  });
+
+  it('a patch without a body never logs a choice, even on a refined ticket', () => {
+    const t = refinedTicket();
+    updateTicket(db, t.id, { title: 'renamed' });
+    expect(stateOf(t.id)).toEqual({ refined: true, stale: false });
+    expect(refineEvents(t.id)).toHaveLength(0);
+  });
+
+  // D-091: un-refining a queued ticket does not dequeue it — the loop skips it until re-marked.
+  it('does not move a queued ticket out of the Queue when clearing refined', () => {
+    const epic = createTicket(db, { title: 'e', projectId: pd, isEpic: true });
+    const t = createTicket(db, { title: 'm', projectId: pd, epicId: epic.id, body: ROBOT_BODY, assignee: 'robot' });
+    markTicketRefined(db, epic.id);
+    markTicketRefined(db, t.id);
+    updateTicket(db, t.id, { status: 'queue' });
+    expect(getTicket(db, t.id)!.status).toBe('queue');
+
+    updateTicket(db, t.id, { body: ROBOT_BODY + '\nmore', refined: false });
+    expect(getTicket(db, t.id)!.status).toBe('queue');
+    expect(stateOf(t.id)).toEqual({ refined: false, stale: false });
+  });
+
+  describe('on an Epic', () => {
+    /** A refined, queued Epic with `members` robot members already armed. */
+    function refinedQueuedEpic(members: number) {
+      const epic = createTicket(db, { title: 'epic', projectId: pd, isEpic: true, priority: 'P1', body: 'epic body' });
+      const ids: number[] = [];
+      for (let i = 0; i < members; i += 1) {
+        const m = createTicket(db, { title: `m${i}`, projectId: pd, epicId: epic.id, body: ROBOT_BODY, assignee: 'robot' });
+        markTicketRefined(db, m.id);
+        ids.push(m.id);
+      }
+      updateTicket(db, epic.id, { status: 'queue' });
+      markTicketRefined(db, epic.id);
+      return { epicId: epic.id, members: ids };
+    }
+
+    it('clearing via a body edit goes stale and un-arms the members (reusing the membership path)', () => {
+      const { epicId, members } = refinedQueuedEpic(2);
+      for (const m of members) expect(getTicket(db, m)!.status).toBe('queue');
+
+      updateTicket(db, epicId, { body: 'rewritten epic body', refined: false });
+
+      expect(stateOf(epicId)).toEqual({ refined: false, stale: true });
+      for (const m of members) expect(getTicket(db, m)!.status).toBe('backlog');
+      expect(getTicket(db, epicId)!.status).toBe('queue');
+      const inval = listTicketEvents(db, epicId).filter((e) => e.type === REFINE_STATE_EVENT.invalidated);
+      expect((inval[inval.length - 1].detail as Record<string, unknown>).cause).toBe('body');
+    });
+
+    it('keeping (refined:true) on a body edit leaves the members armed', () => {
+      const { epicId, members } = refinedQueuedEpic(1);
+      updateTicket(db, epicId, { body: 'rewritten', refined: true });
+      expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
+      expect(getTicket(db, members[0])!.status).toBe('queue');
+    });
+  });
+
+  // Server-internal writes already state `refined` (approveRefine, Populate), so they are unaffected
+  // — they never trip the choice and the approve keeps working end to end.
+  it('leaves approveRefine (which states refined) working', () => {
+    const t = createTicket(db, { title: 'r', projectId: pd, body: 'old' });
+    seedProposal(db, t.id, { mode: 'refine_in_place', body: 'proposed new body' });
+    const res = approveRefine(db, t.id);
+    expect(res.ok).toBe(true);
+    expect(getTicket(db, t.id)!.refined).toBe(true);
+    expect(getTicket(db, t.id)!.body).toBe('proposed new body');
+  });
+});

@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
 import { registerRoutes, type TaskMonitorRouteDeps } from './routes';
-import { createNotification, createTicket, getProjectBySlug } from './store';
+import { createNotification, createTicket, getProjectBySlug, markTicketRefined } from './store';
 
 function freshSetup(deps?: TaskMonitorRouteDeps) {
   const db = new Database(':memory:');
@@ -249,6 +249,75 @@ describe('PATCH /api/widgets/task-monitor/tickets/:id — assignee', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().code).toBe('INVALID_ASSIGNEE');
+  });
+});
+
+describe('PATCH — a body edit to a refined ticket must state the choice (D-097)', () => {
+  async function refinedTicket(app: ReturnType<typeof freshSetup>['app'], db: Database.Database, body: string) {
+    const pid = projectId(db, 'personal-dashboard');
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 'refineme', projectId: pid, epicId: anEpic(db, pid), body },
+    });
+    const id: number = create.json().id;
+    markTicketRefined(db, id);
+    return id;
+  }
+
+  const patch = (app: ReturnType<typeof freshSetup>['app'], id: number, payload: Record<string, unknown>) =>
+    app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload });
+
+  it('refuses a body-changing patch without `refined` — 409 REFINED_CHOICE_REQUIRED', async () => {
+    const { app, db } = freshSetup();
+    const id = await refinedTicket(app, db, 'original');
+    const res = await patch(app, id, { body: 'changed' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('REFINED_CHOICE_REQUIRED');
+  });
+
+  it('keeps refined when refined:true is passed', async () => {
+    const { app, db } = freshSetup();
+    const id = await refinedTicket(app, db, 'original');
+    const res = await patch(app, id, { body: 'changed', refined: true });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().refined).toBe(true);
+  });
+
+  it('clears refined when refined:false is passed', async () => {
+    const { app, db } = freshSetup();
+    const id = await refinedTicket(app, db, 'original');
+    const res = await patch(app, id, { body: 'changed', refined: false });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().refined).toBe(false);
+  });
+
+  it('does not 409 on a byte-identical body', async () => {
+    const { app, db } = freshSetup();
+    const id = await refinedTicket(app, db, 'same');
+    const res = await patch(app, id, { body: 'same' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().refined).toBe(true);
+  });
+
+  it('does not 409 for a non-refined ticket', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 'plain', projectId: pid, epicId: anEpic(db, pid), body: 'b1' },
+    });
+    const res = await patch(app, create.json().id, { body: 'b2' });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('does not 409 on a non-body edit of a refined ticket', async () => {
+    const { app, db } = freshSetup();
+    const id = await refinedTicket(app, db, 'original');
+    const res = await patch(app, id, { title: 'renamed' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().refined).toBe(true);
   });
 });
 
