@@ -1,20 +1,28 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import {
+  archiveChoiceOption,
   archiveItem,
+  createChoiceOption,
   createItem,
+  deleteChoiceOption,
   deleteItem,
   getCompletions,
+  getMetricValues,
   getSettings,
   getTodayView,
   HabitValidationError,
   listAllSchedules,
+  listChoiceOptions,
   listItems,
   moveItem,
   patchSettings,
+  renameChoiceOption,
   renameItem,
   reorderItems,
   setCompletion,
+  setMetricType,
+  setMetricValue,
   setSchedule,
 } from './habits';
 
@@ -49,7 +57,7 @@ export function registerHabitRoutes(app: FastifyInstance, db: Database.Database)
 
   app.post(`${BASE}/items`, async (request, reply) => {
     try {
-      return reply.code(201).send(createItem(db, (request.body ?? {}) as { name?: unknown }));
+      return reply.code(201).send(createItem(db, (request.body ?? {}) as Record<string, unknown>));
     } catch (e) {
       return sendValidation(reply, e);
     }
@@ -127,6 +135,99 @@ export function registerHabitRoutes(app: FastifyInstance, db: Database.Database)
     } catch (e) {
       return sendValidation(reply, e);
     }
+  });
+
+  /* ── Metrics (PD-724) ─────────────────────── */
+
+  /** Change a metric's type. Refused (400 `metric_type_locked`) once the metric has any value. */
+  app.put(`${BASE}/items/:id/metric-type`, async (request, reply) => {
+    const id = parseId((request.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    const body = (request.body ?? {}) as { metricType?: unknown };
+    try {
+      const item = setMetricType(db, id, body.metricType);
+      if (!item) return reply.code(404).send({ error: 'No such item.', code: 'not_found' });
+      return item;
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  /** Set a metric's value on a day. Set-state and idempotent (D-092); `value: null` clears it. */
+  app.put(`${BASE}/metric-values`, async (request, reply) => {
+    try {
+      const result = setMetricValue(db, (request.body ?? {}) as Record<string, unknown>);
+      if ('notFound' in result) {
+        return reply.code(404).send({ error: 'No such item.', code: 'not_found' });
+      }
+      return result;
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  app.get(`${BASE}/metric-values`, async (request, reply) => {
+    const q = request.query as { from?: string; to?: string };
+    try {
+      return { values: getMetricValues(db, q.from, q.to) };
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  /* ── Choice options (PD-724) ──────────────── */
+
+  app.get(`${BASE}/items/:id/options`, async (request, reply) => {
+    const id = parseId((request.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    const q = request.query as { includeArchived?: string };
+    const includeArchived = q.includeArchived === '1' || q.includeArchived === 'true';
+    return { options: listChoiceOptions(db, id, { includeArchived }) };
+  });
+
+  app.post(`${BASE}/items/:id/options`, async (request, reply) => {
+    const id = parseId((request.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    const body = (request.body ?? {}) as { label?: unknown };
+    try {
+      const option = createChoiceOption(db, id, body.label);
+      if (!option) return reply.code(404).send({ error: 'No such item.', code: 'not_found' });
+      return reply.code(201).send(option);
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  app.patch(`${BASE}/options/:optionId`, async (request, reply) => {
+    const optionId = parseId((request.params as { optionId: string }).optionId);
+    if (optionId === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    const body = (request.body ?? {}) as { label?: unknown };
+    try {
+      const option = renameChoiceOption(db, optionId, body.label);
+      if (!option) return reply.code(404).send({ error: 'No such option.', code: 'not_found' });
+      return option;
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
+
+  app.post(`${BASE}/options/:optionId/archive`, async (request, reply) => {
+    const optionId = parseId((request.params as { optionId: string }).optionId);
+    if (optionId === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    const body = (request.body ?? {}) as { archived?: unknown };
+    const archived = body.archived !== false;
+    const option = archiveChoiceOption(db, optionId, archived);
+    if (!option) return reply.code(404).send({ error: 'No such option.', code: 'not_found' });
+    return option;
+  });
+
+  app.delete(`${BASE}/options/:optionId`, async (request, reply) => {
+    const optionId = parseId((request.params as { optionId: string }).optionId);
+    if (optionId === null) return reply.code(400).send({ error: 'invalid id', code: 'invalid_id' });
+    if (!deleteChoiceOption(db, optionId)) {
+      return reply.code(404).send({ error: 'No such option.', code: 'not_found' });
+    }
+    return { deleted: true };
   });
 
   /* ── Today view (PD-722, D-095) ───────────── */

@@ -704,6 +704,8 @@ export interface HabitTodayView {
   /** The current habit day the rows were computed for. */
   day: string;
   rows: HabitTodayRow[];
+  /** Active metrics, with today's value and (for choice) their options (PD-724). */
+  metrics: HabitMetricTodayRow[];
 }
 
 /** Input for setting a habit's schedule (applied from today). One kind's fields, the other's null. */
@@ -715,3 +717,100 @@ export interface SetHabitScheduleInput {
 
 /** 🔥 is shown on a Today row from this streak length up (spec §2, "from 🔥2 upward"). */
 export const STREAK_BADGE_MIN = 2;
+
+/* ── Metrics: typed daily values (PD-724) ───────────────────────────────────────────
+ *
+ * A **metric** is an optional, typed daily value logged beside the habits (glossary: Metric). It is
+ * never due, has no streak, and never counts toward a set's progress. Its `metricType` fixes how its
+ * value is shaped and, once a value exists, cannot change (enforced in the store):
+ *   - `time`   → a wall-clock time of day, `'HH:MM'` (e.g. "Morning Routine Done By");
+ *   - `number` → a decimal string; `"0"` is a logged zero, distinct from null / not-logged (drinks);
+ *   - `choice` → a JSON array of `habit_choice_options` ids the user picked that day (Drugs).
+ *
+ * The value always travels as a **string** (or null = cleared), so one `(item, day)` set-state
+ * message (PROJECT.md §4) carries every type and the offline outbox stays type-agnostic. These
+ * validators are pure so the server (the metric route) and the client (optimistic logging) agree. */
+
+/** One logged metric value on one habit day. PK is `(itemId, day)`. A missing row = not logged. */
+export interface HabitMetricValue {
+  itemId: number;
+  /** A habit day `YYYY-MM-DD`. */
+  day: string;
+  /** `'HH:MM'` | a decimal string | a JSON array of option ids. Never the empty string. */
+  value: string;
+  /** Unix ms the value was last written. */
+  updatedAt: number;
+}
+
+/** One selectable option of a `choice` metric. One row of `habit_choice_options`. */
+export interface HabitChoiceOption {
+  id: number;
+  itemId: number;
+  label: string;
+  /** Manual order among the metric's options, ascending. */
+  sortOrder: number;
+  /** Unix ms when archived (kept for history), or null while active. */
+  archivedAt: number | null;
+}
+
+/** One active metric's standing on the current habit day — what the Today view carries per metric. */
+export interface HabitMetricTodayRow {
+  item: HabitItemView;
+  /** Today's logged value, or null when not logged (distinct from a logged `"0"`). */
+  value: string | null;
+  /** The metric's active options, in order. Empty for `time` / `number`. */
+  options: HabitChoiceOption[];
+}
+
+/** `HH:MM`, 24-hour. */
+export const HABIT_TIME_VALUE_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isValidTimeValue(value: unknown): value is string {
+  return typeof value === 'string' && HABIT_TIME_VALUE_PATTERN.test(value);
+}
+
+/** A number metric value: a non-empty decimal string of a finite number. `"0"` is valid and logged. */
+export function isValidNumberValue(value: unknown): value is string {
+  if (typeof value !== 'string' || value.trim() === '') return false;
+  return Number.isFinite(Number(value));
+}
+
+/**
+ * Parse a choice metric value (a JSON array of option ids) into the id list, or null when it is not
+ * a JSON array of integers. An empty array is valid (parses to `[]`). Membership of the ids in the
+ * metric's own options is checked by the store, which holds them.
+ */
+export function parseChoiceValue(value: unknown): number[] | null {
+  if (typeof value !== 'string') return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || !parsed.every((n) => Number.isInteger(n))) return null;
+  return parsed as number[];
+}
+
+/** Serialise a choice selection to its stored value. */
+export function choiceValue(optionIds: number[]): string {
+  return JSON.stringify(optionIds);
+}
+
+/**
+ * Whether `value` is well-formed for a metric of `type`, ignoring choice-option membership (the store
+ * checks that). A format gate shared by the client and the server; `null` (cleared) is handled by the
+ * caller, not here.
+ */
+export function isValidMetricValueFormat(type: HabitMetricType, value: unknown): boolean {
+  switch (type) {
+    case 'time':
+      return isValidTimeValue(value);
+    case 'number':
+      return isValidNumberValue(value);
+    case 'choice':
+      return parseChoiceValue(value) !== null;
+  }
+}
+
+export const HABIT_CHOICE_LABEL_MAX_LENGTH = 100;

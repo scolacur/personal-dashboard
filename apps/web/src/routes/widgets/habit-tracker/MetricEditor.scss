@@ -1,0 +1,137 @@
+.metric-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.type-toggle {
+  display: flex;
+  gap: var(--space-xs);
+
+  button {
+    flex: 1 1 0;
+    padding: var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    text-transform: capitalize;
+    cursor: pointer;
+
+    &.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--on-accent);
+    }
+  }
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.options {
+  h4 {
+    margin: var(--space-sm) 0 var(--space-xs);
+    font-size: var(--font-size-sm);
+  }
+}
+
+.option-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  &.archived {
+    opacity: 0.6;
+  }
+}
+
+.option-label {
+  flex: 1 1 auto;
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  .tag {
+    color: var(--muted);
+  }
+}
+
+.option-input {
+  flex: 1 1 auto;
+  padding: 2px var(--space-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.option-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &.danger {
+    color: var(--status-stuck);
+  }
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.empty {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.add-option {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+
+  input {
+    flex: 1 1 auto;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-base);
+  }
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}

@@ -88,6 +88,21 @@ export function topLevelSets(tree: HabitTreeNode[]): HabitTreeNode[] {
   return tree.filter((n) => n.isSet);
 }
 
+/**
+ * Every item id in the subtree rooted at `node`, including `node` itself. Used to filter the Metrics
+ * section to a selected set chip (PD-724): a metric belongs to the chip when its `parentId` is one of
+ * these ids (a set contains metrics nested at any depth).
+ */
+export function subtreeItemIds(node: HabitTreeNode): Set<number> {
+  const ids = new Set<number>();
+  const walk = (n: HabitTreeNode): void => {
+    ids.add(n.item.id);
+    n.children.forEach(walk);
+  };
+  walk(node);
+  return ids;
+}
+
 /** Flatten a forest depth-first into an in-order list (used by the Habits manage tab's drag list). */
 export function flattenTree(nodes: HabitTreeNode[]): HabitTreeNode[] {
   const out: HabitTreeNode[] = [];

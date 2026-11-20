@@ -2,25 +2,32 @@ import type Database from 'better-sqlite3';
 import {
   DEFAULT_DAY_BOUNDARY_MINUTES,
   DEFAULT_HABIT_TIMEZONE,
+  HABIT_CHOICE_LABEL_MAX_LENGTH,
   HABIT_NAME_MAX_LENGTH,
   habitDay,
   isDue,
   isHabitDay,
   isValidDayBoundaryMinutes,
   isValidDaysMask,
+  isValidMetricValueFormat,
   isValidPerWeekN,
   isValidTimezone,
   nodeDone,
   nodeDue,
   nodeProgress,
+  parseChoiceValue,
   perWeekProgress,
   projectHabitDay,
   scheduleForDay,
   setStreak,
   streak,
+  type HabitChoiceOption,
   type HabitCompletion,
   type HabitHistoryNode,
   type HabitItemView,
+  type HabitMetricTodayRow,
+  type HabitMetricType,
+  type HabitMetricValue,
   type HabitSchedule,
   type HabitScheduleKind,
   type HabitSettings,
@@ -83,6 +90,29 @@ interface HabitScheduleRow {
   kind: string;
   days_mask: number | null;
   per_week_n: number | null;
+}
+
+interface HabitMetricValueRow {
+  item_id: number;
+  day: string;
+  value: string;
+  updated_at: number;
+}
+
+interface HabitChoiceOptionRow {
+  id: number;
+  item_id: number;
+  label: string;
+  sort_order: number;
+  archived_at: number | null;
+}
+
+function rowToMetricValue(r: HabitMetricValueRow): HabitMetricValue {
+  return { itemId: r.item_id, day: r.day, value: r.value, updatedAt: r.updated_at };
+}
+
+function rowToChoiceOption(r: HabitChoiceOptionRow): HabitChoiceOption {
+  return { id: r.id, itemId: r.item_id, label: r.label, sortOrder: r.sort_order, archivedAt: r.archived_at };
 }
 
 function rowToSchedule(r: HabitScheduleRow): HabitSchedule {
@@ -164,6 +194,35 @@ export function bootstrapHabitsSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_habit_schedules_item
       ON habit_schedules (item_id, effective_from_day);
 
+    /* Typed daily metric values (PD-724). One row per (metric, habit day); a missing row is
+       not-logged, distinct from a logged '0'. The value is always stored as TEXT: 'HH:MM' for a
+       time metric, a decimal string for a number metric, or a JSON array of option ids for a choice
+       metric. Clearing a value deletes the row. */
+    CREATE TABLE IF NOT EXISTS habit_metric_values (
+      item_id    INTEGER NOT NULL REFERENCES habit_items(id) ON DELETE CASCADE,
+      day        TEXT    NOT NULL,
+      value      TEXT    NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (item_id, day)
+    );
+
+    /* Range reads for Today and (later) the Log pull metric values by day. */
+    CREATE INDEX IF NOT EXISTS idx_habit_metric_values_day
+      ON habit_metric_values (day);
+
+    /* The options a choice metric offers (PD-724). User-edited and archivable: archiving keeps an
+       option in history while removing it from new picks; a stored value references option ids. */
+    CREATE TABLE IF NOT EXISTS habit_choice_options (
+      id          INTEGER PRIMARY KEY,
+      item_id     INTEGER NOT NULL REFERENCES habit_items(id) ON DELETE CASCADE,
+      label       TEXT    NOT NULL,
+      sort_order  INTEGER NOT NULL,
+      archived_at INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_habit_choice_options_item
+      ON habit_choice_options (item_id, sort_order);
+
     /* Single-row settings. The id check pins it to one row forever. */
     CREATE TABLE IF NOT EXISTS habit_settings (
       id                  INTEGER PRIMARY KEY CHECK (id = ${SETTINGS_ID}),
@@ -194,6 +253,25 @@ function validDay(raw: unknown): string {
   return raw;
 }
 
+const METRIC_TYPES: readonly HabitMetricType[] = ['time', 'number', 'choice'];
+
+function validMetricType(raw: unknown): HabitMetricType {
+  if (typeof raw !== 'string' || !METRIC_TYPES.includes(raw as HabitMetricType)) {
+    throw new HabitValidationError("metricType must be 'time', 'number' or 'choice'.", 'invalid_metric_type');
+  }
+  return raw as HabitMetricType;
+}
+
+function validLabel(raw: unknown): string {
+  if (typeof raw !== 'string') throw new HabitValidationError('label must be a string.', 'invalid_label');
+  const label = raw.trim();
+  if (label === '') throw new HabitValidationError('label is empty.', 'invalid_label');
+  if (label.length > HABIT_CHOICE_LABEL_MAX_LENGTH) {
+    throw new HabitValidationError(`label is at most ${HABIT_CHOICE_LABEL_MAX_LENGTH} characters.`, 'invalid_label');
+  }
+  return label;
+}
+
 /* ── Items ──────────────────────────────────── */
 
 const ITEM_SELECT = `
@@ -221,22 +299,30 @@ export function listItems(
   return rows.map(rowToItem);
 }
 
-/** Create a top-level habit at the end of the list. Sets/metrics are later slices. */
+/**
+ * Create a top-level item at the end of the list. A plain habit by default; passing
+ * `kind: 'metric'` with a `metricType` creates a metric (PD-724). Nesting is a separate `moveItem`.
+ */
 export function createItem(
   db: Database.Database,
-  input: { name?: unknown },
+  input: { name?: unknown; kind?: unknown; metricType?: unknown },
   now = Date.now(),
 ): HabitItemView {
   const name = validName(input.name);
+  const kind = input.kind === undefined ? 'habit' : input.kind;
+  if (kind !== 'habit' && kind !== 'metric') {
+    throw new HabitValidationError("kind must be 'habit' or 'metric'.", 'invalid_kind');
+  }
+  const metricType = kind === 'metric' ? validMetricType(input.metricType) : null;
   const nextOrder =
     (db.prepare(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM habit_items`).get() as { n: number })
       .n;
   const id = Number(
     db
       .prepare(
-        `INSERT INTO habit_items (kind, name, sort_order, created_at) VALUES ('habit', ?, ?, ?)`,
+        `INSERT INTO habit_items (kind, metric_type, name, sort_order, created_at) VALUES (?, ?, ?, ?, ?)`,
       )
-      .run(name, nextOrder, now).lastInsertRowid,
+      .run(kind, metricType, name, nextOrder, now).lastInsertRowid,
   );
   return getItem(db, id) as HabitItemView;
 }
@@ -427,6 +513,192 @@ export function getCompletions(
   return rows.map(rowToCompletion);
 }
 
+/* ── Metrics: typed daily values + choice options (PD-724) ── */
+
+/** The item, asserted to be a metric. Throws a validation error otherwise, or returns null if absent. */
+function getMetricItem(db: Database.Database, itemId: number): HabitItemView | null {
+  const item = getItem(db, itemId);
+  if (!item) return null;
+  if (item.kind !== 'metric' || item.metricType === null) {
+    throw new HabitValidationError('That item is not a metric.', 'not_a_metric');
+  }
+  return item;
+}
+
+function metricValueCount(db: Database.Database, itemId: number): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS n FROM habit_metric_values WHERE item_id = ?`).get(itemId) as { n: number }
+  ).n;
+}
+
+/**
+ * Change a metric's type. **Refused once the metric has any value** (PD-724) — the stored values are
+ * shaped for the old type, so a late type change would strand them. Returns the updated item, or null
+ * if there is no such item.
+ */
+export function setMetricType(db: Database.Database, itemId: number, rawType: unknown): HabitItemView | null {
+  if (!Number.isInteger(itemId)) {
+    throw new HabitValidationError('itemId must be an item id.', 'invalid_item_id');
+  }
+  const item = getMetricItem(db, itemId);
+  if (!item) return null;
+  const metricType = validMetricType(rawType);
+  if (metricType !== item.metricType && metricValueCount(db, itemId) > 0) {
+    throw new HabitValidationError(
+      "A metric's type cannot change once it has values.",
+      'metric_type_locked',
+    );
+  }
+  db.prepare(`UPDATE habit_items SET metric_type = ? WHERE id = ?`).run(metricType, itemId);
+  return getItem(db, itemId);
+}
+
+/** Active option ids for a choice metric — the set a stored value must be a subset of. */
+function optionIdSet(db: Database.Database, itemId: number): Set<number> {
+  const rows = db.prepare(`SELECT id FROM habit_choice_options WHERE item_id = ?`).all(itemId) as {
+    id: number;
+  }[];
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Set metric `itemId`'s value on habit day `day`. **Idempotent set-state** (PROJECT.md §4, D-092): a
+ * replay is harmless and the last write wins. `value` is a string shaped for the metric's type, or
+ * `null` to clear it — clearing deletes the row, and is distinct from a logged `'0'`. The value is
+ * validated against the metric's type (and, for choice, against its option ids). Returns the resulting
+ * value (null when cleared), or `{ notFound: true }` when there is no such item.
+ */
+export function setMetricValue(
+  db: Database.Database,
+  input: { itemId?: unknown; day?: unknown; value?: unknown },
+  now = Date.now(),
+): { value: HabitMetricValue | null } | { notFound: true } {
+  if (!Number.isInteger(input.itemId)) {
+    throw new HabitValidationError('itemId must be an item id.', 'invalid_item_id');
+  }
+  const day = validDay(input.day);
+  const itemId = input.itemId as number;
+  const item = getMetricItem(db, itemId);
+  if (!item) return { notFound: true };
+
+  const raw = input.value;
+  if (raw === null) {
+    db.prepare(`DELETE FROM habit_metric_values WHERE item_id = ? AND day = ?`).run(itemId, day);
+    return { value: null };
+  }
+
+  const metricType = item.metricType as HabitMetricType;
+  if (!isValidMetricValueFormat(metricType, raw)) {
+    throw new HabitValidationError('value is not valid for this metric type.', 'invalid_metric_value');
+  }
+  if (metricType === 'choice') {
+    const ids = parseChoiceValue(raw) as number[];
+    const valid = optionIdSet(db, itemId);
+    if (!ids.every((id) => valid.has(id))) {
+      throw new HabitValidationError('value references an unknown choice option.', 'invalid_metric_value');
+    }
+  }
+
+  const value = raw as string;
+  db.prepare(
+    `INSERT INTO habit_metric_values (item_id, day, value, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (item_id, day) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(itemId, day, value, now);
+  const row = db
+    .prepare(`SELECT * FROM habit_metric_values WHERE item_id = ? AND day = ?`)
+    .get(itemId, day) as HabitMetricValueRow;
+  return { value: rowToMetricValue(row) };
+}
+
+/** Metric values whose day is in `[from, to]` inclusive. Both are habit days (`YYYY-MM-DD`). */
+export function getMetricValues(db: Database.Database, from: unknown, to: unknown): HabitMetricValue[] {
+  const fromDay = validDay(from);
+  const toDay = validDay(to);
+  const rows = db
+    .prepare(`SELECT * FROM habit_metric_values WHERE day >= ? AND day <= ? ORDER BY day, item_id`)
+    .all(fromDay, toDay) as HabitMetricValueRow[];
+  return rows.map(rowToMetricValue);
+}
+
+/** A metric's choice options in order. `includeArchived` false (the default) returns active ones only. */
+export function listChoiceOptions(
+  db: Database.Database,
+  itemId: number,
+  opts: { includeArchived?: boolean } = {},
+): HabitChoiceOption[] {
+  const where = opts.includeArchived ? '' : 'AND archived_at IS NULL';
+  const rows = db
+    .prepare(`SELECT * FROM habit_choice_options WHERE item_id = ? ${where} ORDER BY sort_order, id`)
+    .all(itemId) as HabitChoiceOptionRow[];
+  return rows.map(rowToChoiceOption);
+}
+
+/** Add a choice option at the end of the metric's option list. Returns it, or null if no such metric. */
+export function createChoiceOption(
+  db: Database.Database,
+  itemId: number,
+  rawLabel: unknown,
+): HabitChoiceOption | null {
+  if (!Number.isInteger(itemId)) {
+    throw new HabitValidationError('itemId must be an item id.', 'invalid_item_id');
+  }
+  const item = getMetricItem(db, itemId);
+  if (!item) return null;
+  if (item.metricType !== 'choice') {
+    throw new HabitValidationError('Only a choice metric has options.', 'not_a_choice_metric');
+  }
+  const label = validLabel(rawLabel);
+  const nextOrder = (
+    db
+      .prepare(`SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM habit_choice_options WHERE item_id = ?`)
+      .get(itemId) as { n: number }
+  ).n;
+  const id = Number(
+    db
+      .prepare(`INSERT INTO habit_choice_options (item_id, label, sort_order) VALUES (?, ?, ?)`)
+      .run(itemId, label, nextOrder).lastInsertRowid,
+  );
+  return rowToChoiceOption(
+    db.prepare(`SELECT * FROM habit_choice_options WHERE id = ?`).get(id) as HabitChoiceOptionRow,
+  );
+}
+
+function getChoiceOption(db: Database.Database, optionId: number): HabitChoiceOption | null {
+  const row = db.prepare(`SELECT * FROM habit_choice_options WHERE id = ?`).get(optionId) as
+    | HabitChoiceOptionRow
+    | undefined;
+  return row ? rowToChoiceOption(row) : null;
+}
+
+/** Rename a choice option. Returns it, or null if there is no such option. */
+export function renameChoiceOption(
+  db: Database.Database,
+  optionId: number,
+  rawLabel: unknown,
+): HabitChoiceOption | null {
+  const label = validLabel(rawLabel);
+  const changed = db.prepare(`UPDATE habit_choice_options SET label = ? WHERE id = ?`).run(label, optionId).changes;
+  return changed > 0 ? getChoiceOption(db, optionId) : null;
+}
+
+/** Archive or restore a choice option (kept for history). Returns it, or null if there is no such option. */
+export function archiveChoiceOption(
+  db: Database.Database,
+  optionId: number,
+  archived: boolean,
+  now = Date.now(),
+): HabitChoiceOption | null {
+  const changed = db
+    .prepare(`UPDATE habit_choice_options SET archived_at = ? WHERE id = ?`)
+    .run(archived ? now : null, optionId).changes;
+  return changed > 0 ? getChoiceOption(db, optionId) : null;
+}
+
+/** Delete a choice option. Past values keep its id (shown without a label). Returns true if removed. */
+export function deleteChoiceOption(db: Database.Database, optionId: number): boolean {
+  return db.prepare(`DELETE FROM habit_choice_options WHERE id = ?`).run(optionId).changes > 0;
+}
+
 /* ── Schedules (PD-722, D-095) ──────────────── */
 
 /** Every schedule row for one item, oldest effective day first. */
@@ -547,7 +819,7 @@ export function getTodayView(db: Database.Database, now = Date.now()): HabitToda
     return node;
   };
 
-  // Flat rows carry parentId, so the client rebuilds the tree. Metrics are not on this surface yet.
+  // Flat rows carry parentId, so the client rebuilds the tree. Metrics are a separate section below.
   const rows: HabitTodayRow[] = items
     .filter((it) => it.kind !== 'metric')
     .map((item) => {
@@ -580,7 +852,23 @@ export function getTodayView(db: Database.Database, now = Date.now()): HabitToda
       };
     });
 
-  return { day: today, rows };
+  // Metrics (PD-724): active metrics with today's value and, for choice, their active options. They
+  // are never due and have no streak, so they ride a separate array rather than a HabitTodayRow.
+  const valueToday = new Map<number, string>();
+  for (const r of db
+    .prepare(`SELECT item_id, value FROM habit_metric_values WHERE day = ?`)
+    .all(today) as { item_id: number; value: string }[]) {
+    valueToday.set(r.item_id, r.value);
+  }
+  const metrics: HabitMetricTodayRow[] = items
+    .filter((it) => it.kind === 'metric')
+    .map((item) => ({
+      item,
+      value: valueToday.get(item.id) ?? null,
+      options: item.metricType === 'choice' ? listChoiceOptions(db, item.id) : [],
+    }));
+
+  return { day: today, rows, metrics };
 }
 
 /* ── Settings ───────────────────────────────── */

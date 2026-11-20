@@ -73,3 +73,22 @@ export function applyPendingCompletions(
   }
   return done;
 }
+
+/**
+ * Fold pending metric writes for `day` over the server's values (itemId → value, null = cleared), so
+ * an unsynced metric value survives a reload instead of reverting (PROJECT.md §4). Applied in order,
+ * last write wins — the same end state the server reaches once the queue flushes. Completion and
+ * other-day entries are ignored.
+ */
+export function applyPendingMetrics(
+  serverValues: Iterable<readonly [number, string | null]>,
+  pending: PendingHabitWrite[],
+  day: string,
+): Map<number, string | null> {
+  const values = new Map<number, string | null>(serverValues);
+  for (const entry of pending) {
+    if (entry.kind !== 'metric' || entry.day !== day) continue;
+    values.set(entry.itemId, entry.value);
+  }
+  return values;
+}

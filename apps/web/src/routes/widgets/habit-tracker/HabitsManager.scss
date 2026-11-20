@@ -17,6 +17,16 @@
     color: var(--text);
     font-size: var(--font-size-base);
   }
+
+  select {
+    flex: 0 0 auto;
+    padding: var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
 }
 
 .item-list {
@@ -126,7 +136,8 @@
   font-size: var(--font-size-base);
 }
 
-.schedule-pill {
+.schedule-pill,
+.metric-pill {
   flex: 0 0 auto;
   padding: 2px var(--space-sm);
   background: var(--surface-2);
@@ -141,6 +152,10 @@
     color: var(--text);
     border-color: var(--accent);
   }
+}
+
+.metric-pill {
+  text-transform: capitalize;
 }
 
 .item-actions {
