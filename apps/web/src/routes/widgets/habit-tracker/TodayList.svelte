@@ -20,6 +20,7 @@
     onToggleLeaf,
     onToggleSet,
     onMetric,
+    onOpenItem,
     loaded = true,
     compact = false,
   }: {
@@ -28,6 +29,8 @@
     onToggleLeaf: (item: HabitTreeNode['item']) => void;
     onToggleSet: (node: HabitTreeNode) => void;
     onMetric?: (itemId: number, value: string | null) => void;
+    /** Open Log › By Habit for the item (PD-726). Omitted on the card, where there is no Log tab. */
+    onOpenItem?: (id: number) => void;
     loaded?: boolean;
     compact?: boolean;
   } = $props();
@@ -146,6 +149,17 @@
             <span class="streak" title={`${node.streak.current}-period streak`}>🔥{node.streak.current}</span>
           {/if}
         </button>
+        {#if onOpenItem}
+          <button
+            type="button"
+            class="open-cal"
+            title="Open calendar"
+            aria-label={`Open ${node.item.name} calendar`}
+            onclick={() => onOpenItem?.(node.item.id)}
+          >
+            📅
+          </button>
+        {/if}
       </div>
       {#if open}
         <ul class="children">
@@ -176,6 +190,17 @@
           <span class="streak" title={`${node.streak.current}-period streak`}>🔥{node.streak.current}</span>
         {/if}
       </button>
+      {#if onOpenItem}
+        <button
+          type="button"
+          class="open-cal"
+          title="Open calendar"
+          aria-label={`Open ${node.item.name} calendar`}
+          onclick={() => onOpenItem?.(node.item.id)}
+        >
+          📅
+        </button>
+      {/if}
     </li>
   {/if}
 {/snippet}

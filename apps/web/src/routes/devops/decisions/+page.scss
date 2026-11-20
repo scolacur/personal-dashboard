@@ -152,3 +152,9 @@
     padding: var(--space-sm);
   }
 }
+
+// PD-773: section headings once visual checks share the page with Refine questions.
+.decisions-section {
+  margin: var(--space-lg) 0 var(--space-sm);
+  font-size: 1.1rem;
+}

@@ -6,6 +6,7 @@ import {
   evaluatorSystemPrompt,
   ROBOT_EVENT,
   securityEvaluatorSystemPrompt,
+  VISUAL_REVIEW_NOTIFICATION_PREFIX,
   type EvaluatorLens,
   type EvaluatorReport,
 } from '@dashboard/shared';
@@ -13,6 +14,8 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { buildContextPack } from '../../shared/context-pack';
 import { latestEventAt, logMilestone } from '../robot/events';
+import { notify } from '../robot/notify';
+import { visualGate, visualRequested, VISUAL_PENDING_DESCRIPTION } from '../visual/gate';
 import { setAgentState } from '../robot/board';
 import { lastHandoffAt } from '../robot/runs';
 import { inReviewPrTargets } from '../robot/pr-state';
@@ -263,14 +266,14 @@ export async function evaluateOnePr(
 
   // One decision for the PR, from every lens. Any missing verdict means the PR cannot pass (D-076:
   // a failed evaluation is never approval); otherwise the worst verdict wins.
-  const all = [...reports.values()];
-  const combined: EvaluatorReport | null = all.some((r) => r === null)
-    ? null
-    : {
-        verdict: all.some((r) => r!.verdict === 'escalate') ? 'escalate' : all.some((r) => r!.verdict === 'revise') ? 'revise' : 'ship',
-        findings: all.flatMap((r) => r!.findings),
-        summary: all.map((r) => r!.summary).join(' '),
-      };
+  const combined = combineReports([...reports.values()]);
+
+  // PD-773: the Evaluator may ask for Steve's visual check. Recorded once per PR; it never changes
+  // the verdict, only what a ship does to review-gate below.
+  const visualAsk = [...reports.values()].find((r) => r?.visualReview)?.visualReview;
+  if (visualAsk && !visualRequested(db, target.ticketId, target.prNumber)) {
+    logMilestone(db, target.ticketId, ROBOT_EVENT.visualReviewRequested, { prNumber: target.prNumber, by: 'evaluator', reason: visualAsk }, now);
+  }
   // The round that matters is the highest among the lenses asking for changes.
   const reviseRound = Math.max(0, ...lenses.filter((l) => reports.get(l)?.verdict === 'revise').map((l) => rounds.get(l)!));
 
@@ -297,8 +300,38 @@ export async function evaluateOnePr(
     logger.info({ ticketId: target.ticketId, verdict: combined.verdict }, 'evaluator: verdict recorded');
   }
 
-  await gate(gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS));
+  let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS);
+  // PD-773: a ship on a PR that waits for Steve's visual check holds the gate at pending. His approval
+  // releases it (releaseVisualGates); until then he is told it is waiting.
+  if (status.state === 'success') {
+    const vg = visualGate(db, target.ticketId, target.prNumber, since);
+    if (vg === 'pending' || vg === 'rejected') {
+      status = { state: 'pending', description: VISUAL_PENDING_DESCRIPTION };
+      const displayId = displayIdFor(db, target.ticketId);
+      notify(
+        db,
+        'agent_visual_review',
+        target.ticketId,
+        `${VISUAL_REVIEW_NOTIFICATION_PREFIX} PR #${target.prNumber}${displayId ? ` (${displayId})` : ''}`,
+        'The Evaluator shipped it, and it was flagged for your visual check. Approve or request changes in Decisions.',
+        now,
+      );
+    }
+  }
+  await gate(status);
   return combined;
+}
+
+/** One decision from every lens: any missing verdict means no pass (D-076: a failed evaluation is
+ *  never approval); otherwise the worst verdict wins. Shared with the all-PRs path (PD-712). */
+export function combineReports(all: (EvaluatorReport | null)[]): EvaluatorReport | null {
+  if (all.length === 0 || all.some((r) => r === null)) return null;
+  const rs = all as EvaluatorReport[];
+  return {
+    verdict: rs.some((r) => r.verdict === 'escalate') ? 'escalate' : rs.some((r) => r.verdict === 'revise') ? 'revise' : 'ship',
+    findings: rs.flatMap((r) => r.findings),
+    summary: rs.map((r) => r.summary).join(' '),
+  };
 }
 
 /** An urgent Notification Center entry for a secret found in a PR (PD-767). Never carries the value:
@@ -340,6 +373,15 @@ export async function runEvaluatePass(
 
   ensureEvaluatorRunsTable(db);
 
+  // PD-773: act on Steve's visual decisions first. They cost no review budget, so a spent budget
+  // must not leave an approved PR held or a rejected one un-reworked.
+  try {
+    const { releaseVisualDecisions } = await import('../visual/release');
+    await releaseVisualDecisions(db, config, now, { boundary: reviewBoundary, fetchHeadSha: deps.fetchHeadSha, postStatus: deps.postStatus });
+  } catch (err) {
+    logger.error({ err }, 'evaluator: applying visual decisions threw — continuing');
+  }
+
   const budget = evaluatorBudgetVerdict(
     db,
     {
@@ -366,6 +408,16 @@ export async function runEvaluatePass(
     } catch (err) {
       // One bad PR must not strand the rest of the queue.
       logger.error({ err, ticketId: target.ticketId }, 'evaluator: evaluation threw — continuing');
+    }
+  }
+  // PD-712 (D-101): then one non-Robot PR per pass, on the same budget and ledger.
+  if (config.evaluator.allPrs) {
+    try {
+      const { evaluateNextOtherPr } = await import('./all-prs');
+      const verdict = await evaluateNextOtherPr(db, config, now, deps);
+      if (verdict) evaluated++;
+    } catch (err) {
+      logger.error({ err }, 'evaluator: non-Robot PR review threw — continuing');
     }
   }
   return evaluated;

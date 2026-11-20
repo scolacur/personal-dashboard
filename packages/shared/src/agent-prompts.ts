@@ -35,6 +35,8 @@ export const SCM_JSON = `${MARKER_DIR}/scm.json`;
 /** The Robot writes its blocking question here to park the ticket for a human (C2, PD-343). Its
  *  contents become the awaiting-human reason. A deliberate park, NOT a failure — it burns no budget. */
 export const ASK_HUMAN_MARKER = `${MARKER_DIR}/ask-human`;
+/** PD-773: the Robot asks for Steve's visual check before its PR merges. The file's text says what to look at. */
+export const VISUAL_REVIEW_MARKER = `${MARKER_DIR}/visual-review`;
 
 /**
  * Where a Robot writes its run memory (PD-306) — ONE FILE PER RUN, committed on its branch.
@@ -297,9 +299,15 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     '**Memory / Decisions:**',
     `- <the "Worth remembering" line from your ${MEMORY_RUNS_DIR}/ file, plus any D-NNN you added>`,
+    '',
+    'Visual: <the pages your change shows up on, e.g. /devops/decisions, /habits; or "none">',
     'BODY',
     '   )"',
     '   ```',
+    '',
+    `   If your change is visually distinct (a new page or layout, a redesigned component), also write`,
+    `   what Steve should look at to \`${VISUAL_REVIEW_MARKER}\` — e.g. \`echo "New Habits calendar, both themes" > ${VISUAL_REVIEW_MARKER}\`.`,
+    '   The PR then waits for his visual check before it can merge. Skip it for small tweaks.',
     '',
     '6. **Write the hand-off manifest** so the loop can locate your PR:',
     '   ```sh',
@@ -406,6 +414,15 @@ export function refineSystemPrompt(contextPack: string, maxTurns: number): strin
     'always do some up-front planning, and GROUND every claim in the real codebase — use your',
     'read-only Read/Grep/Glob tools against the checkout, and check whether a tool/widget already',
     'exists before proposing new work. You only read, plan, and propose; you never write or edit.',
+    '',
+    'You can see the live board (PD-433), read-only, through search_tickets, get_ticket,',
+    'list_relations and list_epic_members. Use them; do not say you cannot reach the board.',
+    '- BEFORE proposing any new ticket (a split child, a follow-up), search for one that already',
+    '  covers it, and point Steve at it instead of duplicating it.',
+    '- When you name a ticket, Epic or relation, look it up and use its real id and title. Never',
+    '  guess an id.',
+    '- Before populating or splitting under an Epic, list its members so you know the siblings.',
+    '- Search narrowly (1-3 distinctive words). Results are capped; never try to enumerate the board.',
     '',
     'How to ask (PD-744, D-096). Ask Steve through the ask_questions tool, never as questions in your',
     'reply: he answers with clicks on the ticket page or in a Decisions inbox, often many tickets in',
@@ -544,6 +561,8 @@ export interface EvaluatorReport {
   findings: EvaluatorFinding[];
   /** One paragraph a human reads on the ticket timeline without opening the PR. */
   summary: string;
+  /** PD-773: set when the change is visually distinct enough that Steve should look before merge. */
+  visualReview?: string;
 }
 
 /**
@@ -632,6 +651,10 @@ export function evaluatorSystemPrompt(contextPack: string): string {
     '                    "blocking": true|false, "where": "<path:line>", "what": "<one sentence>",',
     '                    "insteadUse": "<existing thing to use instead — redundancy only>" } ] }',
     'A `revise` verdict MUST carry at least one finding with "blocking": true.',
+    'OPTIONAL "visualReview": "<what Steve should look at>" when the change is visually distinct (a new',
+    'page, a new layout, a redesigned component) so Steve should see it before it merges. Leave it out',
+    'for small tweaks and for anything not visible. It never changes the verdict; screenshots are',
+    'captured for him automatically.',
     '',
     'Project context:',
     contextPack,

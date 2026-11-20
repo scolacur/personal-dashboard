@@ -495,6 +495,187 @@ export function setStreak(node: HabitHistoryNode, today: string): StreakResult {
   return dailyStreak(dueOn, doneOn, today, floor);
 }
 
+/* ── Completion rate (PD-726, D-102 header stats) ───────────────────────────────────
+ *
+ * The By Habit view's header shows, beside the streak, a completion rate "over the last N due
+ * periods" (spec §3). Semantics are settled in D-102: a due period is a due **day** for a
+ * days-of-week habit (and for a set, whose due/done are derived), and a **week** for a per-week
+ * habit — the same period model the streak functions use, so the two figures stay consistent. The
+ * current period, if it is still in progress (due today but not yet done, or an unmet current week),
+ * is excluded exactly as the streak treats it: it is neither a success nor a miss until it closes.
+ * History is floored at the earliest completion, the way the streak functions floor, so a habit's
+ * untracked past is never counted as a run of misses. */
+
+export interface CompletionRate {
+  /** Periods met in the window. */
+  done: number;
+  /** Due periods in the window (≤ the requested count). */
+  total: number;
+  /** done / total, or null when the window holds no closed due period. */
+  rate: number | null;
+}
+
+/** Default window: the last 30 due periods (spec §3). */
+export const COMPLETION_RATE_PERIODS = 30;
+
+/** The rate over the last `periods` daily due periods, parameterised by due/done like `dailyStreak`. */
+function dailyRate(
+  dueOn: (day: string) => boolean,
+  doneOn: (day: string) => boolean,
+  today: string,
+  floor: string,
+  periods: number,
+): CompletionRate {
+  const dueDays: string[] = [];
+  for (let d = floor; d <= today; d = addHabitDays(d, 1)) {
+    if (!dueOn(d)) continue;
+    if (d === today && !doneOn(d)) continue; // the current period is still in progress
+    dueDays.push(d);
+  }
+  const recent = dueDays.slice(-periods);
+  const done = recent.filter(doneOn).length;
+  return { done, total: recent.length, rate: recent.length > 0 ? done / recent.length : null };
+}
+
+function daysOfWeekRate(
+  schedules: HabitSchedule[],
+  done: Set<string>,
+  today: string,
+  periods: number,
+): CompletionRate {
+  const dueOn = (day: string): boolean => weekdayInMask(maskOf(scheduleForDay(schedules, day)), habitWeekday(day));
+  return dailyRate(dueOn, (d) => done.has(d), today, earliestDay(done, today), periods);
+}
+
+function perWeekRate(
+  schedules: HabitSchedule[],
+  done: Set<string>,
+  today: string,
+  periods: number,
+): CompletionRate {
+  const targetFor = (weekStart: string): number => scheduleForDay(schedules, weekStart)?.perWeekN ?? 1;
+  const met = (weekStart: string): boolean => {
+    const end = addHabitDays(weekStart, 6);
+    let count = 0;
+    for (const d of done) if (d >= weekStart && d <= end) count += 1;
+    return count >= targetFor(weekStart);
+  };
+  const floorWeek = habitWeekStart(earliestDay(done, today));
+  const currentWeek = habitWeekStart(today);
+  const weeks: boolean[] = [];
+  for (let wk = floorWeek; wk <= currentWeek; wk = addHabitDays(wk, 7)) {
+    if (wk === currentWeek && !met(wk)) continue; // current week still in progress
+    weeks.push(met(wk));
+  }
+  const recent = weeks.slice(-periods);
+  const doneCount = recent.filter(Boolean).length;
+  return { done: doneCount, total: recent.length, rate: recent.length > 0 ? doneCount / recent.length : null };
+}
+
+/**
+ * A leaf habit's completion rate over the last `periods` due periods, judged by the schedule in force
+ * on each period (D-095): due days for a days-of-week habit, weeks meeting N for a per-week habit.
+ * Mirrors {@link streak}'s period model so the header's two figures agree.
+ */
+export function completionRate(
+  schedules: HabitSchedule[],
+  completionDays: Iterable<string>,
+  today: string,
+  periods: number = COMPLETION_RATE_PERIODS,
+): CompletionRate {
+  const done = new Set<string>(completionDays);
+  const kind = scheduleForDay(schedules, today)?.kind ?? 'days_of_week';
+  return kind === 'per_week'
+    ? perWeekRate(schedules, done, today, periods)
+    : daysOfWeekRate(schedules, done, today, periods);
+}
+
+/**
+ * A set's completion rate over the last `periods` derived due days (PD-723 period model), mirroring
+ * {@link setStreak}: a day counts as due/done by the set's own derived state, judged day-by-day
+ * through {@link projectHabitDay} so effective-dated leaf schedules are honoured.
+ */
+export function setCompletionRate(
+  node: HabitHistoryNode,
+  today: string,
+  periods: number = COMPLETION_RATE_PERIODS,
+): CompletionRate {
+  const floor = earliestHistoryDay(node, today);
+  const dueOn = (day: string): boolean => nodeDue(projectHabitDay(node, day));
+  const doneOn = (day: string): boolean => nodeDone(projectHabitDay(node, day));
+  return dailyRate(dueOn, doneOn, today, floor, periods);
+}
+
+/* ── By Habit calendar layout (PD-726) ──────────────────────────────────────────────
+ *
+ * The By Habit calendar is a grid of habit-week rows (Mon–Sun), newest at the bottom, with month
+ * names in a left gutter. These pure helpers turn a window of weeks into the row set to render and
+ * the month spans for the gutter, so the geometry is unit-testable away from the DOM. */
+
+/** Short month abbreviations for the calendar's left gutter (Jan … Dec), indexed by month-1. */
+export const HABIT_MONTH_NAMES = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
+
+/**
+ * The `count` habit-week starts ending at (and including) `lastWeekStart`, oldest first — the rows
+ * the calendar renders top-to-bottom with the newest week at the bottom. `count ≤ 0` yields `[]`.
+ */
+export function habitWeeksEndingAt(lastWeekStart: string, count: number): string[] {
+  const out: string[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) out.push(addHabitDays(lastWeekStart, -7 * i));
+  return out;
+}
+
+/** A month's vertical span in the gutter: the rows (week indices) its days occupy, inclusive. */
+export interface MonthSpan {
+  year: number;
+  /** 1–12. */
+  month: number;
+  /** Short month name, e.g. 'Nov'. */
+  monthName: string;
+  /** First week row (index into the `weekStarts` passed in) containing a day of this month. */
+  startRow: number;
+  /** Last week row containing a day of this month. */
+  endRow: number;
+}
+
+/**
+ * The month spans for a run of week rows (each a Mon week-start, oldest first). Walks every day of
+ * every week in order, so a month that starts or ends mid-week still spans exactly the rows holding
+ * its days — a boundary week belongs to both adjacent months. Returned in chronological order.
+ */
+export function habitMonthSpans(weekStarts: string[]): MonthSpan[] {
+  const byKey = new Map<string, MonthSpan>();
+  const order: string[] = [];
+  weekStarts.forEach((weekStart, row) => {
+    for (let i = 0; i < 7; i += 1) {
+      const day = addHabitDays(weekStart, i);
+      const [year, month] = day.split('-').map(Number);
+      const key = `${year}-${month}`;
+      const existing = byKey.get(key);
+      if (existing) {
+        existing.endRow = row;
+      } else {
+        byKey.set(key, { year, month, monthName: HABIT_MONTH_NAMES[month - 1], startRow: row, endRow: row });
+        order.push(key);
+      }
+    }
+  });
+  return order.map((k) => byKey.get(k) as MonthSpan);
+}
+
 /* ── The Today view (server-computed, D-095) ────────────────────────────────────────
  *
  * The server owns full completion history, so it computes each item's due state, per-week progress

@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { ROBOT_MAX_TURNS_LIMIT, coerceTicketStatus } from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal, RefineQuestionRound } from '@dashboard/shared';
+import type Database from 'better-sqlite3';
 import { buildAskQuestionsTool } from './ask-tool';
+import { buildBoardTools } from './board-tools';
 
 /**
  * The `propose_commit` SDK tool (D-044, PD-269). The agent-worker NEVER writes tickets — when a
@@ -143,7 +145,7 @@ export function validateProposalShape(
  */
 export function buildProposeToolServer(
   onProposal: (proposal: RefineProposal) => void,
-  opts: { targetIsEpic?: boolean; onRound?: (round: RefineQuestionRound) => void } = {},
+  opts: { targetIsEpic?: boolean; onRound?: (round: RefineQuestionRound) => void; board?: Database.Database } = {},
 ) {
   const proposeCommit = tool(
     'propose_commit',
@@ -196,6 +198,11 @@ export function buildProposeToolServer(
     },
   );
 
-  const tools = opts.onRound ? [proposeCommit, buildAskQuestionsTool(opts.onRound)] : [proposeCommit];
+  const tools = [
+    proposeCommit,
+    ...(opts.onRound ? [buildAskQuestionsTool(opts.onRound)] : []),
+    // PD-433: read-only board tools, when the worker hands over its DB handle.
+    ...(opts.board ? buildBoardTools(opts.board) : []),
+  ];
   return createSdkMcpServer({ name: 'refine', version: '0.0.1', tools });
 }

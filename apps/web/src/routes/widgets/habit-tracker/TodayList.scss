@@ -60,11 +60,42 @@
   }
 }
 
+.leaf {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+// A small, unobtrusive link to Log › By Habit — kept out of the toggle target so the whole row
+// still ticks (PD-726, D-102: open from a dedicated control, not the name text).
+.open-cal {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+
+  &:hover {
+    opacity: 1;
+    background: var(--surface-2);
+    border-color: var(--border);
+  }
+}
+
 .today-row {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   padding: var(--space-sm) var(--space-md);
   background: var(--surface);
   border: 1px solid var(--border);
