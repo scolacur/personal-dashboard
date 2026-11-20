@@ -19,6 +19,8 @@
   import QueueGateModal from './QueueGateModal.svelte';
   import EpicRollbackModal from './EpicRollbackModal.svelte';
   import SpinOffModal from './SpinOffModal.svelte';
+  import StatusActionModal from './StatusActionModal.svelte';
+  import { isStatusActionState } from './status-action';
   import { emptyTicketForm, epicRequired, ticketToForm, type TicketFormState } from './ticket-form';
   import { planSpinOff, type SpinOffPlan } from '../epic-spinoff';
   import { computeBadges, type RelationAction, type RelationBadges } from '../relation-logic';
@@ -149,6 +151,10 @@
   let glossaryOpen = $state(false);
   let glossaryTab = $state<'priority' | 'refinement' | 'robot'>('priority');
   let glossaryHighlightState = $state<AgentState | null>(null);
+
+  // T900: the "needs you" modal — clicking an input-needed pill opens this on the board rather than
+  // navigating. Holds the clicked ticket; null = closed.
+  let statusActionTicket = $state<AgentTicket | null>(null);
 
   let tickets = $state<AgentTicket[]>([]);
   let projects = $state<AgentProject[]>([]);
@@ -1166,6 +1172,12 @@
   onClose={() => (glossaryOpen = false)}
 />
 
+<StatusActionModal
+  ticket={statusActionTicket}
+  onClose={() => (statusActionTicket = null)}
+  onUpdate={() => load(true)}
+/>
+
 {#if loading}
   <p class="muted">Loading…</p>
 {:else}
@@ -1228,9 +1240,15 @@
     onDelete={() => remove(ticket)}
     onRefine={() => refine(ticket)}
     onOpenStatusLegend={(state) => {
-      glossaryHighlightState = state;
-      glossaryTab = 'robot';
-      glossaryOpen = true;
+      // T900: input-needed states open the "needs you" modal on the board; every other state's
+      // pill keeps its PD-619 destination (here, the robot-status glossary).
+      if (isStatusActionState(state)) {
+        statusActionTicket = ticket;
+      } else {
+        glossaryHighlightState = state;
+        glossaryTab = 'robot';
+        glossaryOpen = true;
+      }
     }}
     onUpdate={() => load(true)}
   />
