@@ -8,7 +8,7 @@ import { logMilestone } from '../robot/events';
 import { inReviewPrTargets } from '../robot/pr-state';
 import { readStateNumber, writeState } from '../robot/state';
 import { captureVisuals, type CaptureDeps, type CaptureOutcome } from './capture';
-import { captureRoutes, touchesWeb } from './routes';
+import { captureTargets, touchesWeb, type CaptureTarget } from './routes';
 import { captureFailedComment, ensureVisualCapturesTable, headSettled, noUiChangeComment, recordCapture, type Commenter } from './status';
 
 export { ensureVisualCapturesTable };
@@ -33,7 +33,7 @@ export type { Commenter };
 
 export interface VisualPassDeps extends CaptureDeps {
   viewPr?: PrViewer;
-  capture?: (target: { repo: string; prNumber: number; headSha: string; routes: string[] }) => Promise<CaptureOutcome>;
+  capture?: (target: { repo: string; prNumber: number; headSha: string; targets: CaptureTarget[] }) => Promise<CaptureOutcome>;
   comment?: Commenter;
 }
 
@@ -81,21 +81,33 @@ export function captureUrl(prNumber: number, headSha: string, file: string): str
 export function captureComment(publicUrl: string, prNumber: number, headSha: string, outcome: Extract<CaptureOutcome, { kind: 'captured' }>): string {
   const lines = [
     '<!-- visual:captures -->',
-    `**Visual: captured ${outcome.manifest.shots.length} screenshot${outcome.manifest.shots.length === 1 ? '' : 's'}** of ${headSha.slice(0, 7)} (PD-773), built from this PR and served on an empty database.`,
+    `**Visual: captured ${outcome.manifest.shots.length} screenshot${outcome.manifest.shots.length === 1 ? '' : 's'}** of ${headSha.slice(0, 7)} (PD-773), built from this PR and served with its visual fixtures (PD-798).`,
     '',
   ];
+  const failures = outcome.manifest.failures ?? [];
+  const failureLines =
+    failures.length === 0
+      ? []
+      : ['', `**${failures.length} step${failures.length === 1 ? '' : 's'} could not run:**`, ...failures.map((f) => `- \`${f.route}\` › ${f.step}: ${f.reason}`)];
   if (!publicUrl) {
-    lines.push('They are on the ticket timeline in the dashboard (no DASHBOARD_PUBLIC_URL is set for links here).');
+    lines.push('They are on the ticket timeline in the dashboard (no DASHBOARD_PUBLIC_URL is set for links here).', ...failureLines);
     return lines.join('\n');
   }
-  lines.push('| Route | Desktop light | Desktop dark | Phone light | Phone dark |', '|---|---|---|---|---|');
+  lines.push('| Page | Desktop light | Desktop dark | Phone light | Phone dark |', '|---|---|---|---|---|');
   for (const route of outcome.manifest.routes) {
-    const cell = (vp: string, scheme: string) => {
-      const s = outcome.manifest.shots.find((x) => x.route === route && x.viewport === vp && x.scheme === scheme);
-      return s ? `[view](${publicUrl}${captureUrl(prNumber, headSha, s.file)})` : '—';
-    };
-    lines.push(`| \`${route}\` | ${cell('desktop', 'light')} | ${cell('desktop', 'dark')} | ${cell('phone', 'light')} | ${cell('phone', 'dark')} |`);
+    const onRoute = outcome.manifest.shots.filter((x) => x.route === route);
+    const stepIndexes = [...new Set(onRoute.map((x) => x.stepIndex ?? 0))].sort((a, b) => a - b);
+    for (const idx of stepIndexes) {
+      const row = onRoute.filter((x) => (x.stepIndex ?? 0) === idx);
+      const cell = (vp: string, scheme: string) => {
+        const s = row.find((x) => x.viewport === vp && x.scheme === scheme);
+        return s ? `[view](${publicUrl}${captureUrl(prNumber, headSha, s.file)})` : '—';
+      };
+      const label = idx === 0 ? `\`${route}\`` : `\`${route}\` › ${row[0]?.step ?? `step ${idx}`}`;
+      lines.push(`| ${label} | ${cell('desktop', 'light')} | ${cell('desktop', 'dark')} | ${cell('phone', 'light')} | ${cell('phone', 'dark')} |`);
+    }
   }
+  lines.push(...failureLines);
   lines.push('', 'Links open on the tailnet only.');
   return lines.join('\n');
 }
@@ -123,11 +135,11 @@ export async function runVisualPass(
       await comment(target.repo, target.prNumber, noUiChangeComment(pr.headRefOid));
       continue;
     }
-    const routes = captureRoutes(files, pr.body);
-    if (routes.length === 0) routes.push('/');
-    logger.info({ prNumber: target.prNumber, routes }, 'visual: capturing');
+    const targets = captureTargets(files, pr.body);
+    if (targets.length === 0) targets.push({ route: '/', steps: [] });
+    logger.info({ prNumber: target.prNumber, targets }, 'visual: capturing');
     const outcome = await (deps.capture ?? ((t) => captureVisuals(config, t, deps, now)))({
-      repo: target.repo, prNumber: target.prNumber, headSha: pr.headRefOid, routes,
+      repo: target.repo, prNumber: target.prNumber, headSha: pr.headRefOid, targets,
     });
     recordCapture(db, {
       ticketId: target.ticketId, prNumber: target.prNumber, headSha: pr.headRefOid,
@@ -137,6 +149,7 @@ export async function runVisualPass(
       logMilestone(db, target.ticketId, ROBOT_EVENT.visualCaptured, {
         prNumber: target.prNumber,
         shots: outcome.manifest.shots.map((s) => ({ ...s, url: captureUrl(target.prNumber, pr.headRefOid, s.file) })),
+        failures: outcome.manifest.failures ?? [],
       }, now);
       await comment(target.repo, target.prNumber, captureComment(config.visual.publicUrl, target.prNumber, pr.headRefOid, outcome));
     } else {

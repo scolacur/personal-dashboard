@@ -26,6 +26,21 @@
   }
 }
 
+.vc-failed {
+  // PD-798: a step that could not run means part of the request is not pictured.
+  color: var(--status-warn);
+  font-size: var(--font-size-sm);
+
+  p,
+  ul {
+    margin: 0;
+  }
+
+  ul {
+    padding-left: var(--space-md);
+  }
+}
+
 .vc-route {
   margin: var(--space-sm) 0 0;
   font-size: var(--font-size-sm);

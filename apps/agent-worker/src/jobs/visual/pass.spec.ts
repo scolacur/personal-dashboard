@@ -5,6 +5,7 @@ import { ensureRunsTable, finishRun, startRun } from '../robot/runs';
 import { ensureRobotStateTable } from '../robot/state';
 import type { CaptureOutcome } from './capture';
 import { captureComment, ensureVisualCapturesTable, runVisualPass, type PrView } from './pass';
+import type { CaptureTarget } from './routes';
 import { recordCapture, recordCaptureHeartbeat } from './status';
 
 const SHA = 'abc1234def';
@@ -45,15 +46,15 @@ describe('runVisualPass (PD-773)', () => {
   const view = (files: string[], body = ''): (() => Promise<PrView>) => async () => ({ headRefOid: SHA, body, files: files.map((path) => ({ path })) });
 
   it('captures a web PR once per head, logs thumbnails on the ticket, and comments links', async () => {
-    const targets: { routes: string[] }[] = [];
+    const targets: { targets: CaptureTarget[] }[] = [];
     const comments: string[] = [];
     const deps = {
       viewPr: view(['apps/web/src/routes/habits/+page.svelte']),
-      capture: async (t: { routes: string[] }) => (targets.push(t), captured),
+      capture: async (t: { targets: CaptureTarget[] }) => (targets.push(t), captured),
       comment: async (_r: string, _n: number, b: string) => void comments.push(b),
     };
     expect(await runVisualPass(db, cfg(), 1000, deps)).toBe('captured');
-    expect(targets[0].routes).toEqual(['/habits']);
+    expect(targets[0].targets).toEqual([{ route: '/habits', steps: [] }]);
     const ev = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_visual_captured'").get() as { detail: string };
     expect(JSON.parse(ev.detail).shots[0].url).toBe('/api/visual-captures/pr-314/abc1234/habits-desktop-light.png');
     expect(comments[0]).toContain('[view](http://nas:8088/api/visual-captures/pr-314/abc1234/habits-desktop-light.png)');
@@ -111,5 +112,33 @@ describe('runVisualPass (PD-773)', () => {
 
   it('comments without links when no public URL is set', () => {
     expect(captureComment('', 314, SHA, captured as Extract<CaptureOutcome, { kind: 'captured' }>)).toMatch(/ticket timeline/);
+  });
+  it('passes the Visual: line\'s click steps to the capture and records step failures on the ticket (PD-798)', async () => {
+    const seen: { targets: CaptureTarget[] }[] = [];
+    const withSteps: CaptureOutcome = {
+      ...captured,
+      manifest: {
+        ...captured.manifest,
+        routes: ['/widgets/habit-tracker'],
+        shots: [
+          { route: '/widgets/habit-tracker', viewport: 'desktop', scheme: 'light', file: 'a.png' },
+          { route: '/widgets/habit-tracker', viewport: 'desktop', scheme: 'light', file: 'b.png', step: 'click "Habits"', stepIndex: 1 },
+        ],
+        failures: [{ route: '/widgets/habit-tracker', step: 'click "Add metric"', reason: 'nothing on the page is named "Add metric"' }],
+      },
+    };
+    const comments: string[] = [];
+    await runVisualPass(db, cfg(), 1000, {
+      viewPr: view(['apps/web/src/routes/widgets/habit-tracker/TodayList.svelte'], 'Visual: /widgets/habit-tracker > click "Habits" > click "Add metric"'),
+      capture: async (t: { targets: CaptureTarget[] }) => (seen.push(t), withSteps),
+      comment: async (_r: string, _n: number, b: string) => void comments.push(b),
+    });
+    expect(seen[0].targets).toEqual([
+      { route: '/widgets/habit-tracker', steps: [{ kind: 'click', label: 'Habits' }, { kind: 'click', label: 'Add metric' }] },
+    ]);
+    const ev = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_visual_captured'").get() as { detail: string };
+    expect(JSON.parse(ev.detail).failures).toHaveLength(1);
+    expect(comments[0]).toContain('`/widgets/habit-tracker` › click "Habits"');
+    expect(comments[0]).toContain('**1 step could not run:**');
   });
 });
