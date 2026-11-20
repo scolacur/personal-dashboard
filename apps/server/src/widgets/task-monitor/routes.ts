@@ -69,6 +69,7 @@ import {
   createGuardFailure,
   patchGuardFailure,
   queueGuardFailure,
+  refinedChoiceGuardFailure,
   reopenGuardFailure,
 } from './ticket-guards';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
@@ -416,6 +417,14 @@ export function registerRoutes(
     const patchFail = patchGuardFailure(existingForGuard, patch as Record<string, unknown>);
     if (patchFail) {
       return reply.status(409).send({ error: patchFail.message, code: patchFail.code });
+    }
+    // D-097: a body edit to a refined ticket must carry an explicit `refined` (true to keep, false to
+    // clear). Never defaulted — refuse so no caller un-refines or keeps by accident.
+    const refinedChoiceFail = refinedChoiceGuardFailure(existingForGuard, patch);
+    if (refinedChoiceFail) {
+      return reply
+        .status(409)
+        .send({ error: refinedChoiceFail.message, code: refinedChoiceFail.code });
     }
     // D-091 (PD-632): robot work enters the Queue only refined. The blocker list goes back in full so
     // the board renders the server's answer rather than re-deriving it (PD-633).

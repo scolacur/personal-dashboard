@@ -192,6 +192,35 @@ export function reopenGuardFailure(
   return null;
 }
 
+/**
+ * D-097: a body edit to a *refined* ticket must say whether it stays refined.
+ *
+ * Why refuse rather than default: un-refining silently would stall queued work with nobody having
+ * chosen it, and keeping silently is the stale claim D-091 exists to stop being dispatched. A
+ * refusal makes every caller — the board, the detail page, an agent, a `curl` — decide once, in
+ * code where the choice can be read. Returns a failure only when all of: the ticket is currently
+ * refined, the patch carries a `body`, that body differs byte-for-byte from the stored one, and
+ * `refined` was NOT supplied. An identical body is not a change; a non-refined ticket has no claim.
+ *
+ * Route-level like the other guards (and for the same PD-542 reason): the server's own internal
+ * writes — `approveRefine`, Populate — already state `refined` explicitly, so they are unaffected,
+ * and the Robot loop never comes through here at all.
+ */
+export function refinedChoiceGuardFailure(
+  existing: Pick<AgentTicket, 'refined' | 'body'>,
+  patch: { body?: string | null; refined?: boolean },
+): GuardFailure | null {
+  if (!existing.refined) return null;
+  if (patch.body === undefined) return null;
+  if (patch.body === existing.body) return null;
+  if (patch.refined !== undefined) return null;
+  return {
+    message:
+      'This ticket is refined and its body changed. Pass `refined: true` to keep it refined, or `refined: false` to clear it (D-097).',
+    code: 'REFINED_CHOICE_REQUIRED',
+  };
+}
+
 // ── D-091 (PD-632): the Queue gate ───────────────────────────────────────────
 
 /** What the gate needs to read, injected so this module stays free of the DB (the store builds it). */
