@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
-import { GitError, type GitRunner, type Worktree } from './workspace';
+import { GitError, makeGitRunner, type GitRunner, type Worktree } from './workspace';
 import { deleteWipRef, pushWip, wipRefName } from './wip';
 
 const config: AgentWorkerConfig = loadConfig({});
@@ -90,5 +94,62 @@ describe('deleteWipRef', () => {
   it('never throws when the ref does not exist / delete fails', async () => {
     const { git } = fakeGit({ pushFails: true });
     await expect(deleteWipRef(config, 42, '/some/clone', git)).resolves.toBeUndefined();
+  });
+});
+
+describe('pushWip against real git: the reused branch never keeps the WIP (PD-781)', () => {
+  const g = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], { cwd, encoding: 'utf8' }).trim();
+
+  let root: string;
+  let origin: string;
+  let clone: string;
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), 'wip-'));
+    origin = path.join(root, 'origin.git');
+    clone = path.join(root, 'robot-t42');
+    g(root, 'init', '--bare', origin);
+    g(root, 'clone', origin, clone);
+    g(clone, 'config', 'user.name', 't');
+    g(clone, 'config', 'user.email', 't@t');
+    writeFileSync(path.join(clone, 'a.ts'), 'base\n');
+    g(clone, 'add', '.');
+    g(clone, 'commit', '-m', 'base');
+    g(clone, 'push', 'origin', 'HEAD:main');
+    g(clone, 'fetch', 'origin');
+    g(clone, 'checkout', '-b', 'robot/t42');
+    // A commit the Robot made itself: PD-719 keeps these across reuse.
+    writeFileSync(path.join(clone, 'a.ts'), 'robot commit\n');
+    g(clone, 'commit', '-am', 'robot work');
+    // Then the run ends without a hand-off, leaving uncommitted work.
+    writeFileSync(path.join(clone, 'a.ts'), 'half-finished\n');
+    writeFileSync(path.join(clone, 'new.ts'), 'untracked\n');
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('pushes the WIP to robot-wip/t42, then leaves robot/t42 on the Robot’s own last commit', async () => {
+    const robotCommit = g(clone, 'rev-parse', 'HEAD');
+    const out = await pushWip(loadConfig({}), { dir: clone, branch: 'robot/t42' }, 42, makeGitRunner(loadConfig({}), ''));
+
+    expect(out?.ref).toBe('robot-wip/t42');
+    // The work is preserved on the WIP ref…
+    expect(g(root, '--git-dir', origin, 'show', 'robot-wip/t42:a.ts')).toBe('half-finished');
+    expect(g(root, '--git-dir', origin, 'show', 'robot-wip/t42:new.ts')).toBe('untracked');
+    // …and the live branch is back on the Robot's own commit, the work uncommitted again.
+    expect(g(clone, 'rev-parse', 'HEAD')).toBe(robotCommit);
+    expect(g(clone, 'status', '--porcelain')).toContain('a.ts');
+
+    // What reuse does on the next dispatch (ensureWorktree): it starts pristine, not from the WIP.
+    g(clone, 'reset', '--hard', 'HEAD');
+    g(clone, 'clean', '-fd');
+    expect(readFileSync(path.join(clone, 'a.ts'), 'utf8')).toBe('robot commit\n');
+  });
+
+  it('undoes the WIP commit even when the push fails', async () => {
+    const robotCommit = g(clone, 'rev-parse', 'HEAD');
+    g(clone, 'remote', 'set-url', 'origin', path.join(root, 'missing.git'));
+    const out = await pushWip(loadConfig({}), { dir: clone, branch: 'robot/t42' }, 42, makeGitRunner(loadConfig({}), ''));
+    expect(out).toBeNull();
+    expect(g(clone, 'rev-parse', 'HEAD')).toBe(robotCommit);
   });
 });
