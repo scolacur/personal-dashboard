@@ -305,6 +305,8 @@ export type {
   SetProgress,
   HabitDayNode,
   HabitHistoryNode,
+  CompletionRate,
+  MonthSpan,
 } from './habits';
 export {
   DEFAULT_DAY_BOUNDARY_MINUTES,
@@ -337,6 +339,12 @@ export {
   nodeProgress,
   projectHabitDay,
   setStreak,
+  completionRate,
+  setCompletionRate,
+  COMPLETION_RATE_PERIODS,
+  habitWeeksEndingAt,
+  habitMonthSpans,
+  HABIT_MONTH_NAMES,
 } from './habits';
 export type {
   AwaitingRefineItem,

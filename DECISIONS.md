@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-102](DECISIONS/D-102-by-habit-calendar-completion-rate-window-and-today-open-affordance.md)** — By Habit completion-rate is a floored, in-progress-excluded window; Today opens the calendar from a dedicated control, not the name text
 - **[D-099](DECISIONS/D-099-mechanical-merge-conflicts-are-resolved-by-the-worker-by-merging-main.md)** — Mechanical merge conflicts are resolved by the worker, by merging main in, and a resolved Robot PR is reviewed again
 - **[D-098](DECISIONS/D-098-robot-prs-are-gated-by-a-review-gate-status-the-evaluator-sets.md)** — Robot PRs are gated by a `review-gate` status the Evaluator sets with a statuses-only token the Robot never holds
 - **[D-097](DECISIONS/D-097-a-body-edit-to-a-refined-ticket-must-say-whether-it-stays-refined.md)** — A body edit to a refined ticket must say whether it stays refined, in the UI as a prompt and in the API as a required field

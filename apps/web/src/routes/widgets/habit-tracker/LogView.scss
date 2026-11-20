@@ -1,0 +1,36 @@
+.log-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.view-switch {
+  display: inline-flex;
+  gap: var(--space-xs);
+}
+
+.switch {
+  padding: var(--space-xs) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--surface-2);
+  }
+
+  &.selected {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--on-accent);
+  }
+}
+
+.placeholder {
+  color: var(--muted);
+  padding: var(--space-md);
+  font-size: var(--font-size-sm);
+}
