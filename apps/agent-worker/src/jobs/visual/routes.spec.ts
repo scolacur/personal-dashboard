@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureRoutes, MAX_ROUTES, routeForFile, routeSlug, routesFromBody, touchesWeb } from './routes';
+import { captureRoutes, MAX_ROUTES, routeForComponent, routeForFile, routeSlug, routesFromBody, touchesWeb } from './routes';
 
 describe('visual routes (PD-773)', () => {
   it('maps a changed SvelteKit page to its route, dropping groups and skipping dynamic segments', () => {
@@ -8,6 +8,29 @@ describe('visual routes (PD-773)', () => {
     expect(routeForFile('apps/web/src/routes/(app)/habits/+page.ts')).toBe('/habits');
     expect(routeForFile('apps/web/src/routes/devops/tickets/[ticketId]/+page.svelte')).toBeNull();
     expect(routeForFile('apps/web/src/lib/Button.svelte')).toBeNull();
+  });
+
+  it('maps a changed component colocated in a route folder to that folder\'s route', () => {
+    expect(routeForComponent('apps/web/src/routes/widgets/habit-tracker/TodayList.svelte')).toBe('/widgets/habit-tracker');
+    expect(routeForComponent('apps/web/src/routes/(app)/habits/Row.scss')).toBe('/habits');
+    expect(routeForComponent('apps/web/src/routes/widgets/habit-tracker/api.ts')).toBe('/widgets/habit-tracker');
+    expect(routeForComponent('apps/web/src/routes/widgets/habit-tracker/queue.spec.ts')).toBeNull();
+    expect(routeForComponent('apps/web/src/routes/widgets/habit-tracker/+page.svelte')).toBeNull();
+    expect(routeForComponent('apps/web/src/routes/devops/tickets/[ticketId]/Thread.svelte')).toBeNull();
+    expect(routeForComponent('apps/web/src/lib/Button.svelte')).toBeNull();
+  });
+
+  it('photographs the page whose components changed, not the home page (#449)', () => {
+    const files = [
+      'apps/server/src/lib/habits.ts',
+      'apps/web/src/lib/HabitTracker.svelte',
+      'apps/web/src/routes/widgets/habit-tracker/MetricEditor.svelte',
+      'apps/web/src/routes/widgets/habit-tracker/TodayList.scss',
+      'apps/web/src/routes/widgets/habit-tracker/queue.spec.ts',
+    ];
+    expect(captureRoutes(files, '')).toEqual(['/widgets/habit-tracker']);
+    // a changed page outranks a page reached only through its components
+    expect(captureRoutes(['apps/web/src/routes/b/X.svelte', 'apps/web/src/routes/a/+page.svelte'], '')).toEqual(['/a', '/b']);
   });
 
   it('reads the Visual: line, ignoring placeholders and "none"', () => {

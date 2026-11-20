@@ -6,7 +6,11 @@
  *     visual (it knows which pages it touched, including ones only a shared component reaches);
  *  2. every changed SvelteKit page (`apps/web/src/routes/<path>/+page.svelte`), with route groups
  *     like `(app)` dropped. Dynamic segments (`[id]`) cannot be filled in, so those pages are left
- *     to the `Visual:` line.
+ *     to the `Visual:` line;
+ *  3. every route folder whose colocated components changed (`routes/widgets/habit-tracker/
+ *     TodayList.svelte` → `/widgets/habit-tracker`). Every route folder here that holds components
+ *     also has its own `+page.svelte`, so the folder IS the page that renders them. Without this, a
+ *     PR that only touched a page's components photographed the home page instead (#449, 2026-11-20).
  * Capped, because each route costs four screenshots.
  */
 
@@ -16,6 +20,19 @@ const ROUTE_FILE = /^apps\/web\/src\/routes\/(.*?)\/?\+page(?:\.svelte|\.ts|\.sc
 
 export function routeForFile(path: string): string | null {
   const m = ROUTE_FILE.exec(path);
+  if (!m) return null;
+  const segments = m[1].split('/').filter((s) => s !== '' && !/^\(.*\)$/.test(s));
+  if (segments.some((s) => s.includes('['))) return null;
+  return `/${segments.join('/')}`;
+}
+
+const ROUTE_COMPONENT = /^apps\/web\/src\/routes\/(.*)\/[^/+][^/]*\.(?:svelte|scss|ts)$/;
+const TEST_FILE = /\.(?:spec|test)\.ts$/;
+
+/** A changed component colocated in a route folder → that folder's route; null otherwise. */
+export function routeForComponent(path: string): string | null {
+  if (TEST_FILE.test(path)) return null;
+  const m = ROUTE_COMPONENT.exec(path);
   if (!m) return null;
   const segments = m[1].split('/').filter((s) => s !== '' && !/^\(.*\)$/.test(s));
   if (segments.some((s) => s.includes('['))) return null;
@@ -33,7 +50,7 @@ export function routesFromBody(body: string): string[] {
 
 export function captureRoutes(files: readonly string[], body: string): string[] {
   const out: string[] = [];
-  for (const r of [...routesFromBody(body), ...files.map(routeForFile)]) {
+  for (const r of [...routesFromBody(body), ...files.map(routeForFile), ...files.map(routeForComponent)]) {
     if (r && !out.includes(r)) out.push(r);
   }
   return out.slice(0, MAX_ROUTES);
