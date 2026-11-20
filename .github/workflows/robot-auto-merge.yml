@@ -149,6 +149,28 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Squash-merge, retrying only GitHub's "Base branch was modified" refusal. That one means a
+          # sibling run merged another PR into main in the same second (two approvals at once on
+          # 2026-11-20: #447 merged, #449 was refused and nothing re-fired, so it sat CLEAN and
+          # unmerged). A fresh attempt after main settles is the whole fix. Any other refusal is
+          # branch protection speaking, and is returned as-is.
+          merge_pr() {
+            local pr="$1" out attempt
+            for attempt in 1 2 3 4; do
+              if out=$(gh pr merge "$pr" --repo "$REPO" --squash 2>&1); then
+                [ -n "$out" ] && echo "$out"
+                return 0
+              fi
+              echo "$out"
+              if ! grep -q "Base branch was modified" <<<"$out"; then
+                return 1
+              fi
+              echo "PR #$pr: main moved under this merge (attempt $attempt) — retrying in 15s."
+              sleep 15
+            done
+            return 1
+          }
+
           BOT_LOGIN="sortie-bot-55"
           EVENT="${{ github.event_name }}"
 
@@ -324,7 +346,7 @@ jobs:
               # Branch protection still arbitrates: a refusal here means our reading was wrong,
               # which is information, not a failure — log it and leave the PR open.
               echo "PR #$PR: $MERGE_STATE is this bridge's own in-flight check (PD-424); every other check is green — attempting merge."
-              if gh pr merge "$PR" --repo "$REPO" --squash; then
+              if merge_pr "$PR"; then
                 echo "PR #$PR merged successfully."
               else
                 echo "PR #$PR: GitHub refused the merge — branch protection is the authority; leaving it open."
@@ -335,7 +357,7 @@ jobs:
               else
                 echo "PR #$PR is CLEAN with an authorized APPROVED review — squash-merging."
               fi
-              gh pr merge "$PR" --repo "$REPO" --squash
+              merge_pr "$PR"
               echo "PR #$PR merged successfully."
             fi
           done
