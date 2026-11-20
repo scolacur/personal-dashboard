@@ -33,7 +33,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  review-gate:
+  # NOT named `review-gate`. A job's check run takes the job's name, and branch protection matches a
+  # required check by name against check runs AND commit statuses alike. A job called `review-gate`
+  # (skipped on every Robot PR, green after posting `pending` on others) would itself satisfy the
+  # required `review-gate`, standing in for the Evaluator's verdict or Steve's approval. The
+  # requirement must be met only by the commit STATUS this job and the agent-worker post.
+  post-status:
+    name: post review-gate status
     # Robot PRs are the agent-worker's to gate.
     if: ${{ !startsWith(github.event.pull_request.head.ref, 'robot/') }}
     runs-on: ubuntu-latest
