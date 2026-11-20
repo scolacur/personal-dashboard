@@ -612,7 +612,7 @@ export function setCompletionRate(
  * names in a left gutter. These pure helpers turn a window of weeks into the row set to render and
  * the month spans for the gutter, so the geometry is unit-testable away from the DOM. */
 
-/** Monday-indexed short weekday headers for the calendar columns (Mon … Sun). */
+/** Short month abbreviations for the calendar's left gutter (Jan … Dec), indexed by month-1. */
 export const HABIT_MONTH_NAMES = [
   'Jan',
   'Feb',

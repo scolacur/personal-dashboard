@@ -74,9 +74,18 @@
     if (initialItemId !== null && ids.has(initialItemId)) selectedId = initialItemId;
     else selectedId = options.active[0]?.item.id ?? options.archived[0]?.id ?? null;
   });
-  // Follow a fresh deep link even if something is already selected.
+  // Follow a *fresh* deep link even if something is already selected — but only once per link, so a
+  // later server refresh of `items` can't snap the dropdown back after the user picked something else.
+  let lastAppliedLink = $state<number | null>(null);
   $effect(() => {
-    if (initialItemId !== null && items.some((i) => i.id === initialItemId)) selectedId = initialItemId;
+    if (
+      initialItemId !== null &&
+      initialItemId !== lastAppliedLink &&
+      items.some((i) => i.id === initialItemId)
+    ) {
+      selectedId = initialItemId;
+      lastAppliedLink = initialItemId;
+    }
   });
 
   const selected = $derived(items.find((i) => i.id === selectedId) ?? null);

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { HabitItemView, HabitSchedule, HabitSettings } from '@dashboard/shared';
   import type { PendingHabitWrite } from './queue';
+  import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import ByHabitCalendar from './ByHabitCalendar.svelte';
 
   /**
@@ -35,20 +36,18 @@
   // new link arrives, but the view-switch buttons can override it locally in between.
   let view = $derived<'day' | 'habit'>(initialView);
 
-  const VIEWS: { id: 'day' | 'habit'; label: string }[] = [
-    { id: 'day', label: 'By Day' },
-    { id: 'habit', label: 'By Habit' },
+  const VIEWS: { value: 'day' | 'habit'; label: string }[] = [
+    { value: 'day', label: 'By Day' },
+    { value: 'habit', label: 'By Habit' },
   ];
 </script>
 
 <div class="log-view">
-  <div class="view-switch" role="group" aria-label="Log view">
-    {#each VIEWS as v (v.id)}
-      <button type="button" class="switch" class:selected={view === v.id} onclick={() => (view = v.id)}>
-        {v.label}
-      </button>
-    {/each}
-  </div>
+  <SegmentedToggle
+    label="Log view"
+    options={VIEWS}
+    value={view}
+    onChange={(v) => (view = v)} />
 
   {#if view === 'habit'}
     <ByHabitCalendar {items} {schedules} {settings} {today} {pending} {initialItemId} {onToggle} />
