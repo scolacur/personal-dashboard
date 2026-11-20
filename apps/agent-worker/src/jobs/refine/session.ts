@@ -1,8 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { refineSystemPrompt, type RefineProposal, type RefineQuestionRound } from '@dashboard/shared';
+import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { ASK_TOOL_NAME } from './ask-tool';
+import { BOARD_TOOL_NAMES } from './board-tools';
 import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
 
 /** Read-only built-in tools — the agent-worker grounds against the checkout, never edits. */
@@ -23,6 +25,8 @@ export interface RefineTurnInput {
   /** PD-744: called when the agent invokes ask_questions; stages the round for this turn. A warm
    *  session binds this once, on open, so it must not close over per-turn state. */
   onRound?: (round: RefineQuestionRound) => void;
+  /** PD-433: the worker's DB handle, which exposes the read-only board tools. */
+  db?: Database.Database;
 }
 
 export interface RefineTurnResult {
@@ -64,8 +68,11 @@ function refineOptions(
   onProposal?: (proposal: RefineProposal) => void,
   targetIsEpic?: boolean,
   onRound?: (round: RefineQuestionRound) => void,
+  db?: Database.Database,
 ) {
-  const refineTools = onProposal ? [PROPOSE_TOOL_NAME, ...(onRound ? [ASK_TOOL_NAME] : [])] : [];
+  const refineTools = onProposal
+    ? [PROPOSE_TOOL_NAME, ...(onRound ? [ASK_TOOL_NAME] : []), ...(db ? BOARD_TOOL_NAMES : [])]
+    : [];
   return {
     model: config.model,
     cwd: config.checkoutDir,
@@ -80,7 +87,7 @@ function refineOptions(
     allowedTools: [...READ_ONLY_TOOLS, ...refineTools],
     // Headless: deny any tool outside the allowlist without prompting (would hang).
     permissionMode: 'dontAsk' as const,
-    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic, onRound }) } } : {}),
+    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic, onRound, board: db }) } } : {}),
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 }
@@ -108,6 +115,7 @@ export async function runRefineTurn(input: RefineTurnInput): Promise<RefineTurnR
       input.onProposal,
       input.targetIsEpic,
       input.onRound,
+      input.db,
     ),
   })) {
     if (message.type === 'result') result = resultFrom(message);
@@ -148,6 +156,8 @@ export interface OpenSessionInput {
   /** PD-744: called when the agent invokes ask_questions; stages the round for this turn. A warm
    *  session binds this once, on open, so it must not close over per-turn state. */
   onRound?: (round: RefineQuestionRound) => void;
+  /** PD-433: the worker's DB handle, which exposes the read-only board tools. */
+  db?: Database.Database;
 }
 
 /** Factory type so the warm-session manager and its tests can swap the real SDK out. */
@@ -234,6 +244,7 @@ export const openWarmSession: OpenRefineSession = (input) => {
       input.onProposal,
       input.targetIsEpic,
       input.onRound,
+      input.db,
     ),
   });
 

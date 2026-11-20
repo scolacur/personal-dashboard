@@ -660,13 +660,33 @@ export function queueEntryRefusals(criteria: readonly QueueCriterion[]): QueueCr
 /** `agent_auto_merged` (PD-765): the merge bridge merged a Robot PR with no human approval, on the
  *  strength of its required checks and the `review-gate` status (D-098). Informational, not a call
  *  to act. */
-export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged';
+/** `agent_visual_review` (PD-773): a PR is held for Steve's visual check. Links to Decisions. */
+export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review';
+
+/** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
+export interface AwaitingVisualItem {
+  ticketId: number;
+  displayId: string | null;
+  title: string;
+  prNumber: number;
+  prUrl: string | null;
+  /** Who asked, and what to look at. */
+  reasons: { by: 'robot' | 'evaluator'; reason: string }[];
+  /** The newest capture of this PR; empty until the capture job has photographed it. */
+  shots: { route: string; viewport: string; scheme: string; file: string; url: string }[];
+  capturedAt: number | null;
+  requestedAt: number;
+}
+
+/** The title prefix of a visual-check notification, followed by "PR #N (PD-x)". */
+export const VISUAL_REVIEW_NOTIFICATION_PREFIX = 'Visual check waiting:';
 
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_awaiting_human',
   'agent_needs_human',
   'agent_refine',
   'agent_auto_merged',
+  'agent_visual_review',
 ] as const;
 
 export interface AgentNotification {
@@ -1366,6 +1386,11 @@ export const ROBOT_EVENT = {
   // PD-774 (D-099): the conflict resolver merged main into the ticket's PR and resolved the conflicts
   // mechanically. It also marks a new review boundary: the Evaluator reviews the resolved head again.
   conflictResolved: 'robot_conflict_resolved',
+  // PD-773: screenshots of the PR's head were captured and are served by the dashboard.
+  visualCaptured: 'robot_visual_captured',
+  // PD-773 slice 2: the Robot or the Evaluator asked for Steve's visual check of a PR, and his answer.
+  visualReviewRequested: 'robot_visual_review_requested',
+  visualReviewed: 'robot_visual_reviewed',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -1419,6 +1444,13 @@ export interface RobotEventDetail {
   prNumber?: number;
   /** PD-774: the files the conflict resolver resolved (`robot_conflict_resolved`). */
   files?: string[];
+  /** PD-773: who asked for a visual check (`robot_visual_review_requested`). */
+  by?: 'robot' | 'evaluator';
+  /** PD-773: Steve's visual verdict and note (`robot_visual_reviewed`). */
+  approved?: boolean;
+  note?: string;
+  /** PD-773: the screenshots of a capture, each with its dashboard URL (`robot_visual_captured`). */
+  shots?: { route: string; viewport: string; scheme: string; file: string; url: string }[];
   /** How long a stalled run had been running before the watchdog parked it, ms (`robot_stalled`). */
   ageMs?: number;
   /** Terminal lane a manual close/complete moved the ticket to (`robot_session_ended`, PD-400). */

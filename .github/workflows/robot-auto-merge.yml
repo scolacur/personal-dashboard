@@ -10,6 +10,8 @@
 #     approval requirement.
 #   - the bridge itself reads `review-gate` == success on the head commit. It does not rely on branch
 #     protection requiring that status, so a mis-set protection rule cannot let an ungated PR through.
+# PD-712 (D-101): any OTHER PR merges the same way, without an approval, once the Evaluator has
+# shipped it (review-gate success) — behind its own switch, AUTO_MERGE_ALL, off unless exactly `on`.
 # A CHANGES_REQUESTED review decision also blocks it. Path-guard (D-047) is a required check, so a
 # sensitive-path PR waits for Steve's ack exactly as before.
 #
@@ -130,6 +132,9 @@ jobs:
       REPO: ${{ github.repository }}
       # PD-765 kill switch: only the exact value `on` enables gated (approval-less) Robot merges.
       AUTO_MERGE_ROBOT: ${{ vars.AUTO_MERGE_ROBOT }}
+      # PD-712 (D-101): the same for every OTHER PR, gated by an Evaluator ship. Separate so session
+      # and hand-built PRs can be held to Steve's merge while Robot PRs flow.
+      AUTO_MERGE_ALL: ${{ vars.AUTO_MERGE_ALL }}
     steps:
       # PD-764: the shared approval script. Pinned to the default branch, never the PR's head, so a PR
       # cannot change the rule that decides whether it may merge.
@@ -197,11 +202,11 @@ jobs:
             if [ "$AUTHORIZED_APPROVED" != "true" ]; then
               HEAD_REF="$(echo "$DATA" | jq -r .headRefName)"
               case "$HEAD_REF" in
-                robot/*) ;;
-                *) echo "PR #$PR: no authorized standing APPROVED review — skip."; continue ;;
+                robot/*) SWITCH_NAME=AUTO_MERGE_ROBOT; SWITCH="$AUTO_MERGE_ROBOT" ;;
+                *) SWITCH_NAME=AUTO_MERGE_ALL; SWITCH="$AUTO_MERGE_ALL" ;;
               esac
-              if [ "$AUTO_MERGE_ROBOT" != "on" ]; then
-                echo "PR #$PR: Robot PR without approval, and AUTO_MERGE_ROBOT is '${AUTO_MERGE_ROBOT:-unset}' (not 'on') — skip."
+              if [ "$SWITCH" != "on" ]; then
+                echo "PR #$PR: no approval, and $SWITCH_NAME is '${SWITCH:-unset}' (not 'on') — skip."
                 continue
               fi
               # The commit status for the head commit; the rollup holds only each context's latest.
@@ -210,7 +215,7 @@ jobs:
                 | sort_by(.startedAt // .createdAt // "") | last | (.state // "MISSING")
               ')"
               if [ "$REVIEW_GATE" != "SUCCESS" ]; then
-                echo "PR #$PR: Robot PR without approval, review-gate=$REVIEW_GATE — skip until the Evaluator ships it."
+                echo "PR #$PR: no approval, review-gate=$REVIEW_GATE — skip until the Evaluator ships it."
                 continue
               fi
               if [ "$(echo "$DATA" | jq -r '.reviewDecision // ""')" = "CHANGES_REQUESTED" ]; then
@@ -218,7 +223,7 @@ jobs:
                 continue
               fi
               GATED="yes"
-              echo "PR #$PR: Robot PR with review-gate=SUCCESS and AUTO_MERGE_ROBOT=on — checking mergeability."
+              echo "PR #$PR: review-gate=SUCCESS and $SWITCH_NAME=on — checking mergeability."
             else
               echo "PR #$PR has an authorized APPROVED review — checking mergeability."
             fi

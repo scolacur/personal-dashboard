@@ -1,6 +1,7 @@
 import type {
   AgentProject,
   AwaitingRefineItem,
+  AwaitingVisualItem,
   RefineAnswerSet,
   AgentRun,
   AgentTicket,
@@ -301,6 +302,23 @@ export async function postRefineAnswers(id: number, answers: RefineAnswerSet): P
 }
 
 /** Every Refine session waiting on Steve, with its latest round (PD-746, the Decisions inbox). */
+/** Robot PRs waiting for Steve's visual check (PD-773). */
+export async function fetchAwaitingVisual(): Promise<{ items: AwaitingVisualItem[]; count: number }> {
+  const res = await fetch('/api/widgets/task-monitor/visual-review/awaiting');
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ items: AwaitingVisualItem[]; count: number }>;
+}
+
+/** Steve's visual verdict on a ticket's PR (PD-773). A rejection needs a note. Throws on 4xx. */
+export async function postVisualReview(id: number, approved: boolean, note = ''): Promise<void> {
+  const res = await fetch(`${BASE}/${id}/visual-review`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ approved, note }),
+  });
+  if (!res.ok) return parseError(res);
+}
+
 export async function fetchAwaitingRefine(): Promise<{ items: AwaitingRefineItem[]; count: number }> {
   const res = await fetch('/api/widgets/task-monitor/refine/awaiting');
   if (!res.ok) return parseError(res);

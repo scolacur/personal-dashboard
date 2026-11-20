@@ -7,6 +7,7 @@ import { CronRegistry } from './cron';
 import { registerBackupJob } from './backup';
 import { bootstrapJobRunsSchema } from './lib/job-runs';
 import { registerJobRunRoutes } from './lib/job-runs-routes';
+import { registerVisualCaptureRoutes } from './lib/visual-captures-routes';
 import { HOLD_WINDOW_MS } from '@dashboard/shared';
 import { bootstrapMaintenanceHoldsSchema, closeStaleHolds } from './lib/maintenance-holds';
 import { bootstrapMaintenanceJobRequestsSchema } from './lib/maintenance-job-requests';
@@ -94,6 +95,9 @@ registerBackupJob(cron, app.log, db, path.join(dataDir, 'backups'));
 
 // APP_VERSION is baked into the image at build time (git short SHA via deploy.yml);
 // 'dev' locally. Lets you confirm which build is live and verify a deploy landed.
+// PD-773: the agent-worker's screenshots of Robot UI PRs, read from the shared data dir.
+registerVisualCaptureRoutes(app, dataDir);
+
 app.get('/api/health', async () => ({ ok: true, version: process.env.APP_VERSION ?? 'dev' }));
 
 // Fetched once at startup from GitHub API (fire-and-forget; cached for process lifetime).

@@ -44,3 +44,38 @@
 .ev-link {
   font-size: 0.85em;
 }
+
+// PD-773: a capture's thumbnails, wrapping under the event line.
+.ev-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm, 8px);
+  width: 100%;
+  margin-top: var(--space-xs, 4px);
+}
+
+.ev-shot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 120px;
+  text-decoration: none;
+
+  img {
+    width: 120px;
+    height: 80px;
+    object-fit: cover;
+    object-position: top;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 6px);
+    background: var(--surface-2, transparent);
+  }
+}
+
+.ev-shot-label {
+  color: var(--muted);
+  font-size: 0.75em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

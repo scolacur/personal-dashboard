@@ -49,6 +49,15 @@ export interface AgentWorkerConfig {
   evaluator: EvaluatorConfig;
   /** PD-774 (D-099): the mechanical merge-conflict resolver. Off by default: it pushes to PR branches. */
   conflictResolver: { enabled: boolean; intervalMs: number };
+  /** PD-773: screenshots of Robot UI PRs. Off by default: it builds and serves PR code. */
+  visual: {
+    enabled: boolean;
+    intervalMs: number;
+    /** The browser binary (Debian's `chromium` in the worker image). Empty = playwright's own lookup. */
+    chromiumPath: string;
+    /** The dashboard's base URL as Steve reaches it, for links in PR comments; empty = no links. */
+    publicUrl: string;
+  };
   /** The decision-numbering cycle (PD-498, D-078) — deterministic, no LLM. Off by default. */
   maintenance: MaintenanceConfig;
 }
@@ -115,6 +124,8 @@ export interface EvaluatorConfig {
   /** PD-763: base URL of the dashboard's ticket pages (e.g. `http://host:8088/devops/tickets`), so a
    *  status links to its ticket. Optional. */
   reviewGateTicketUrlBase: string;
+  /** PD-712 (D-101): also review every non-Robot PR to the repo. On by default; EVALUATOR_ALL_PRS=0 turns it off. */
+  allPrs: boolean;
 }
 
 /**
@@ -253,6 +264,7 @@ export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
     budgetTokens: Number(env.EVALUATOR_BUDGET_TOKENS ?? 0),
     securityEnabled: !(env.EVALUATOR_SECURITY_ENABLED === '0' || env.EVALUATOR_SECURITY_ENABLED === 'false'),
     reviewGateToken: env.REVIEW_GATE_TOKEN ?? '',
+    allPrs: !(env.EVALUATOR_ALL_PRS === '0' || env.EVALUATOR_ALL_PRS === 'false'),
     reviewGateTicketUrlBase: env.REVIEW_GATE_TICKET_URL_BASE ?? '',
   };
 }
@@ -278,6 +290,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     conflictResolver: {
       enabled: env.CONFLICT_RESOLVER_ENABLED === '1' || env.CONFLICT_RESOLVER_ENABLED === 'true',
       intervalMs: Number(env.CONFLICT_RESOLVER_INTERVAL_MS ?? 5 * 60_000),
+    },
+    visual: {
+      enabled: env.VISUAL_CAPTURE_ENABLED === '1' || env.VISUAL_CAPTURE_ENABLED === 'true',
+      intervalMs: Number(env.VISUAL_CAPTURE_INTERVAL_MS ?? 2 * 60_000),
+      chromiumPath: env.VISUAL_CHROMIUM_PATH ?? '/usr/bin/chromium',
+      publicUrl: (env.DASHBOARD_PUBLIC_URL ?? '').replace(/\/+$/, ''),
     },
     maintenance: loadMaintenanceConfig(env),
   };
