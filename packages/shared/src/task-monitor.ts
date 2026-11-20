@@ -1358,6 +1358,9 @@ export const ROBOT_EVENT = {
   // human most wants to know before merging.
   evaluating: 'robot_evaluating',
   evaluated: 'robot_evaluated',
+  // PD-774 (D-099): the conflict resolver merged main into the ticket's PR and resolved the conflicts
+  // mechanically. It also marks a new review boundary: the Evaluator reviews the resolved head again.
+  conflictResolved: 'robot_conflict_resolved',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -1407,8 +1410,10 @@ export interface RobotEventDetail {
   state?: string;
   /** The human's answer text (`robot_human_reply`). */
   text?: string;
-  /** PR number a rework was triggered from (`robot_reactivated`). */
+  /** PR number a rework was triggered from (`robot_reactivated`), or resolved (`robot_conflict_resolved`). */
   prNumber?: number;
+  /** PD-774: the files the conflict resolver resolved (`robot_conflict_resolved`). */
+  files?: string[];
   /** How long a stalled run had been running before the watchdog parked it, ms (`robot_stalled`). */
   ageMs?: number;
   /** Terminal lane a manual close/complete moved the ticket to (`robot_session_ended`, PD-400). */

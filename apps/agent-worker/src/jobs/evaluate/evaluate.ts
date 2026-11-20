@@ -12,7 +12,7 @@ import {
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { buildContextPack } from '../../shared/context-pack';
-import { logMilestone } from '../robot/events';
+import { latestEventAt, logMilestone } from '../robot/events';
 import { setAgentState } from '../robot/board';
 import { lastHandoffAt } from '../robot/runs';
 import { inReviewPrTargets } from '../robot/pr-state';
@@ -111,6 +111,15 @@ function ticketFor(db: Database.Database, ticketId: number): TicketRow | null {
   return row ?? null;
 }
 
+/**
+ * Where the current review cycle starts: the last hand-off, or a later mechanical conflict
+ * resolution (PD-774, D-099). The resolved head is new code on the branch, so it is reviewed again,
+ * with a fresh pair of rounds, exactly as a fresh hand-off would be.
+ */
+export function reviewBoundary(db: Database.Database, ticketId: number): number {
+  return Math.max(lastHandoffAt(db, ticketId), latestEventAt(db, ticketId, ROBOT_EVENT.conflictResolved));
+}
+
 function displayIdFor(db: Database.Database, ticketId: number): string | null {
   const row = db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(ticketId) as
     | { display_id: string | null }
@@ -152,7 +161,7 @@ export async function evaluateOnePr(
   // PD-767: the reviewers this PR gets. Each has its own rubric, ledger rows and round count; they
   // share the diff, the pinned SHA and the decision below.
   const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
-  const since = lastHandoffAt(db, target.ticketId);
+  const since = reviewBoundary(db, target.ticketId);
   const rounds = new Map(lenses.map((l) => [l, evaluationRounds(db, target.ticketId, since, l) + 1]));
   const round = Math.max(...rounds.values());
 
@@ -349,7 +358,7 @@ export async function runEvaluatePass(
 
   let evaluated = 0;
   for (const target of inReviewPrTargets(db)) {
-    const since = lastHandoffAt(db, target.ticketId);
+    const since = reviewBoundary(db, target.ticketId);
     if (alreadyEvaluated(db, target.ticketId, target.prNumber, since)) continue;
     try {
       const report = await evaluateOnePr(db, config, target, deps, now);
