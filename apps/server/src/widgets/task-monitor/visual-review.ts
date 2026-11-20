@@ -1,5 +1,12 @@
 import type Database from 'better-sqlite3';
-import { ROBOT_EVENT, type AwaitingVisualItem, type RobotEventDetail } from '@dashboard/shared';
+import {
+  ROBOT_EVENT,
+  VISUAL_CAPTURE_ENABLED_KEY,
+  VISUAL_CAPTURE_HEARTBEAT_STALE_MS,
+  type AwaitingVisualItem,
+  type RobotEventDetail,
+  type VisualCaptureState,
+} from '@dashboard/shared';
 
 /**
  * Steve's side of the visual-review gate (PD-773 slice 2): which Robot PRs are waiting for his
@@ -37,8 +44,41 @@ interface TicketRow {
   title: string;
 }
 
+const tableExists = (db: Database.Database, name: string): boolean =>
+  !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name);
+
+/**
+ * What actually happened with capture for a PR's current head (PD-794). Both tables are worker-owned,
+ * so either may not exist yet.
+ *
+ * The server never sees the head SHA, but every new head starts a new review boundary (a hand-off or
+ * a conflict resolution), so the newest `visual_captures` row after the boundary is this head's.
+ * An `off` row, or none, falls through to the worker's heartbeat: the server can't read the worker's
+ * env, so the worker records whether capture is on in `robot_state` each tick.
+ */
+export function captureStateFor(db: Database.Database, prNumber: number, boundary: number, now: number): VisualCaptureState {
+  if (tableExists(db, 'visual_captures')) {
+    const row = db
+      .prepare(
+        `SELECT outcome, detail FROM visual_captures WHERE pr_number = ? AND created_at >= ?
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(prNumber, boundary) as { outcome: string; detail: string | null } | undefined;
+    if (row?.outcome === 'captured') return { kind: 'captured' };
+    if (row?.outcome === 'failed') return { kind: 'failed', reason: row.detail?.trim() || 'no reason recorded' };
+    if (row?.outcome === 'skipped') return { kind: 'skipped', reason: row.detail?.trim() || 'no reason recorded' };
+  }
+  const beat = tableExists(db, 'robot_state')
+    ? (db.prepare('SELECT value, updated_at FROM robot_state WHERE key = ?').get(VISUAL_CAPTURE_ENABLED_KEY) as
+        | { value: string | null; updated_at: number }
+        | undefined)
+    : undefined;
+  if (!beat || now - beat.updated_at > VISUAL_CAPTURE_HEARTBEAT_STALE_MS) return { kind: 'unknown', lastSeen: beat?.updated_at ?? null };
+  return beat.value === '1' ? { kind: 'capturing', since: boundary } : { kind: 'off' };
+}
+
 /** The pending visual check for one in-review ticket, or null. */
-function pendingFor(db: Database.Database, t: TicketRow): AwaitingVisualItem | null {
+function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingVisualItem | null {
   const events = db
     .prepare(
       `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
@@ -77,10 +117,11 @@ function pendingFor(db: Database.Database, t: TicketRow): AwaitingVisualItem | n
     shots: latestCapture ? (parse(latestCapture).shots ?? []) : [],
     capturedAt: latestCapture ? latestCapture.created_at : null,
     requestedAt: requests[requests.length - 1].created_at,
+    capture: captureStateFor(db, prNumber, boundary, now),
   };
 }
 
-export function listAwaitingVisual(db: Database.Database): AwaitingVisualItem[] {
+export function listAwaitingVisual(db: Database.Database, now: number = Date.now()): AwaitingVisualItem[] {
   const tickets = db
     .prepare(
       `SELECT id, display_id, title FROM agent_tickets
@@ -88,7 +129,7 @@ export function listAwaitingVisual(db: Database.Database): AwaitingVisualItem[] 
     )
     .all() as TicketRow[];
   return tickets
-    .map((t) => pendingFor(db, t))
+    .map((t) => pendingFor(db, t, now))
     .filter((x): x is AwaitingVisualItem => x !== null)
     .sort((a, b) => a.requestedAt - b.requestedAt);
 }
@@ -109,7 +150,7 @@ export function recordVisualReview(
     | TicketRow
     | undefined;
   if (!t) return { ok: false, reason: 'not_found' };
-  const pending = pendingFor(db, t);
+  const pending = pendingFor(db, t, now);
   if (!pending) return { ok: false, reason: 'not_waiting' };
   const detail: RobotEventDetail = { prNumber: pending.prNumber, approved, ...(note.trim() ? { note: note.trim().slice(0, 2000) } : {}) };
   const res = db

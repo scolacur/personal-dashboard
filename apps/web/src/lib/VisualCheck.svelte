@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AwaitingVisualItem } from '@dashboard/shared';
-  import { askedBy, rejectBlocked, shotsByRoute } from './visual-check-logic';
+  import { askedBy, captureNotice, rejectBlocked, shotsByRoute } from './visual-check-logic';
 
   /**
    * One Robot PR waiting for Steve's visual check (PD-773): what was asked, the screenshots, and
@@ -20,6 +20,8 @@
   let error = $state<string | null>(null);
   const groups = $derived(shotsByRoute(item.shots));
   const blocked = $derived(rejectBlocked(note));
+  // The list refetches on its own cadence; `now` here is when this card rendered that data.
+  const notice = $derived(captureNotice(item, Date.now()));
 
   async function decide(approved: boolean) {
     if (busy || (!approved && blocked)) return;
@@ -44,9 +46,10 @@
     {#each item.reasons as r, i (i)}<li>{r.reason}</li>{/each}
   </ul>
 
-  {#if groups.length === 0}
-    <p class="vc-pending">Screenshots are still being captured; they appear here within a few minutes.</p>
-  {:else}
+  {#if notice}
+    <p class="vc-pending" class:vc-warn={notice.tone === 'warn'} role={notice.tone === 'warn' ? 'status' : undefined}>{notice.text}</p>
+  {/if}
+  {#if groups.length > 0}
     {#each groups as g (g.route)}
       <h4 class="vc-route">{g.route}</h4>
       <div class="vc-shots">

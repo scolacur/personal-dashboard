@@ -676,7 +676,34 @@ export interface AwaitingVisualItem {
   shots: { route: string; viewport: string; scheme: string; file: string; url: string }[];
   capturedAt: number | null;
   requestedAt: number;
+  /** PD-794: what actually happened with capture for the PR's current head. */
+  capture: VisualCaptureState;
 }
+
+/**
+ * The capture state of a PR's current head (PD-794), from its newest `visual_captures` row after the
+ * review boundary and the worker's capture heartbeat:
+ *  - `captured`: screenshots exist for this head.
+ *  - `capturing`: capture is on and this head is still queued; `since` is when the head arrived.
+ *  - `off`: `VISUAL_CAPTURE_ENABLED` is not set on the worker, so nothing is coming.
+ *  - `failed`: the capture ran and failed; `reason` is why.
+ *  - `skipped`: capture was not attempted for a recorded reason (e.g. no web changes).
+ *  - `unknown`: the worker has not reported in recently, so whether capture is on is not known.
+ */
+export type VisualCaptureState =
+  | { kind: 'captured' }
+  | { kind: 'capturing'; since: number }
+  | { kind: 'off' }
+  | { kind: 'failed'; reason: string }
+  | { kind: 'skipped'; reason: string }
+  | { kind: 'unknown'; lastSeen: number | null };
+
+/** The `robot_state` key the worker writes on every visual-job tick: '1' when capture is on, '0' off. */
+export const VISUAL_CAPTURE_ENABLED_KEY = 'visual_capture_enabled';
+/** Past this age the heartbeat is stale and the card says the capture state is unknown. */
+export const VISUAL_CAPTURE_HEARTBEAT_STALE_MS = 10 * 60_000;
+/** The env var that switches capture on, named in the UI and PR comments. */
+export const VISUAL_CAPTURE_ENV = 'VISUAL_CAPTURE_ENABLED';
 
 /** The title prefix of a visual-check notification, followed by "PR #N (PD-x)". */
 export const VISUAL_REVIEW_NOTIFICATION_PREFIX = 'Visual check waiting:';
