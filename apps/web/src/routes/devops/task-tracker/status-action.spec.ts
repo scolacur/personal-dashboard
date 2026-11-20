@@ -27,6 +27,8 @@ function run(partial: Partial<AgentRun> = {}): AgentRun {
     turns: null,
     tokens: null,
     outputTail: null,
+    wipRef: null,
+    wipSha: null,
     startedAt: 1000,
     finishedAt: null,
     ...partial,
