@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapHabitsSchema, createItem, getTodayView } from '../lib/habits';
+import { autoQueueEligibility } from '@dashboard/shared';
 import { bootstrapSchema } from '../widgets/task-monitor/schema';
 import { listTickets } from '../widgets/task-monitor/store';
 import { seedVisualFixtures, seedVisualFixturesFromEnv, VISUAL_FIXTURES, type VisualFixture } from './index';
@@ -46,6 +47,23 @@ describe('visual fixtures (PD-798)', () => {
     }
     expect(tickets.some((t) => t.refineState === 'awaiting-human')).toBe(true);
     expect(tickets.some((t) => t.isEpic && t.refined)).toBe(true);
+  });
+
+  it('includes one auto-queue-ELIGIBLE ticket so the D-103 checklist has a green verdict to show', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const tickets = listTickets(db);
+    const eligible = tickets.find((t) => t.title === 'Floating Pomodoro button')!;
+    const epic = tickets.find((t) => t.id === eligible.epicId)!;
+    const members = tickets.filter((t) => t.epicId === epic.id);
+    const verdict = autoQueueEligibility({
+      ticket: eligible,
+      epic: { ...epic, autoQueueExcluded: epic.autoQueueExcluded ?? false },
+      members,
+      openBlockerIds: [],
+      project: { robotEnabled: true, githubRepo: 'scolacur/personal-dashboard' },
+    }).verdict;
+    expect(verdict).toBe('eligible');
   });
 
   it('never writes into tables that already hold data', () => {

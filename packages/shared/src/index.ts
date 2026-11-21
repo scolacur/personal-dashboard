@@ -175,6 +175,7 @@ export type {
   AutoQueueCapacity,
   AutoQueueEligibilityResponse,
   AutoQueueBoardEligibility,
+  AutoQueueMode,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,
@@ -203,6 +204,12 @@ export {
   autoQueueEligibility,
   autoQueueEpicEligibility,
   AUTO_QUEUE_CRITERIA,
+  AUTO_QUEUE_VERDICT_SHORT,
+  parseAutoQueueMode,
+  autoQueueModeNote,
+  autoQueueVerdictLine,
+  autoQueueEpicVerdictLine,
+  autoQueueMemberRollup,
   AUTO_QUEUE_REVIEW_WIP_LIMIT,
   AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT,
   AUTO_QUEUE_QUEUE_DEPTH_FACTOR,
