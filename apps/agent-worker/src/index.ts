@@ -5,7 +5,7 @@ import { openDb } from './shared/db';
 import { logger } from './shared/logger';
 import { startRefineJob } from './jobs/refine';
 import { startAuditJob } from './jobs/audit';
-import { startRobotJob } from './jobs/robot';
+import { startRobotJob, type RobotLoopHandle } from './jobs/robot';
 import { startEvaluatorJob } from './jobs/evaluate';
 import { startConflictJob } from './jobs/conflicts';
 import { startVisualJob } from './jobs/visual';
@@ -52,13 +52,45 @@ async function main(): Promise<void> {
   // Job dispatch — start each agent-worker job over the shared infra above.
   startRefineJob(db, config);
   startAuditJob(db, config);
-  startRobotJob(db, config);
+  const robot = startRobotJob(db, config);
   startEvaluatorJob(db, config);
   startConflictJob(db, config);
   startVisualJob(db, config);
   startMaintenanceCoordinator(db, config);
 
+  // PD-784/D-104: graceful stop. A deploy recreates this container with SIGTERM → (grace) → SIGKILL.
+  // Before this, SIGKILL killed the worker mid-run, stranding `running` rows and skipping PD-736's
+  // WIP push. Now SIGTERM asks the Robot loop to stop dispatching and abort its in-flight sessions;
+  // each aborted session closes its run as a transient `interrupted` fault and pushes WIP (time-boxed)
+  // — so nothing is left for the next boot's ownership sweep to reclaim. We wait, bounded, for the
+  // drain and then exit; the bound must fit inside the compose `stop_grace_period`.
+  installGracefulStop(robot, config.robot.shutdownDrainMs);
+
   logger.info('agent-worker ready');
+}
+
+/** Install the SIGTERM/SIGINT handler that drains the Robot loop then exits (PD-784/D-104). */
+function installGracefulStop(robot: RobotLoopHandle, drainMs: number): void {
+  let stopping = false;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    if (stopping) return; // a second signal during the drain — let the first one finish
+    stopping = true;
+    logger.warn({ signal }, 'agent-worker: stop signal — draining the Robot loop');
+    robot.shutdown.request(); // refuse new dispatch + abort in-flight sessions
+
+    const deadline = Date.now() + drainMs;
+    const poll = setInterval(() => {
+      const drained = !robot.busy();
+      if (drained || Date.now() >= deadline) {
+        clearInterval(poll);
+        logger.info({ drained }, 'agent-worker: Robot loop drained — exiting');
+        process.exit(0);
+      }
+    }, 200);
+    poll.unref(); // a pending drain poll must not, by itself, keep the process alive
+  };
+  process.once('SIGTERM', onSignal);
+  process.once('SIGINT', onSignal);
 }
 
 main().catch((err) => {
