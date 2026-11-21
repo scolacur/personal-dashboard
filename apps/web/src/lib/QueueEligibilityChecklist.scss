@@ -76,6 +76,11 @@
     color: var(--text);
   }
 
+  // Definitions mode (PD-810): no marks, so the term carries the emphasis instead.
+  &.qec-defs .label {
+    font-weight: 600;
+  }
+
   .reason {
     color: var(--muted);
 

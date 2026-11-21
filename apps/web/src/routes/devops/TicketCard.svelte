@@ -23,6 +23,8 @@
     isLocked,
     isFrozen = false,
     badges,
+    eligible = false,
+    capacityWait = null,
     onDragStart,
     onDragEnd,
     onEdit,
@@ -45,6 +47,10 @@
     /** D-083: terminal — the work is over, so nothing here may change it. */
     isFrozen?: boolean;
     badges: RelationBadges;
+    /** D-103 (PD-810): the auto-queue promoter would queue this Backlog ticket (verdict `eligible`). */
+    eligible?: boolean;
+    /** In the Eligible view only: the capacity limit holding an eligible ticket back, or null. */
+    capacityWait?: string | null;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
     onEdit: () => void;
@@ -191,6 +197,16 @@
       {/if}
       {#if badges.split}
         <a class="rel-badge rel-split" href={detailHref} draggable="false" title="Part of a split lineage">{badges.splitOrigin === 'agent' ? 'auto-split 🤖' : 'split'}</a>
+      {/if}
+    </div>
+  {/if}
+  {#if eligible}
+    <!-- D-103 (PD-810): the promoter would queue this ticket. In the Eligible view a capacity note
+         says what (if anything) is holding it back right now. -->
+    <div class="card-eligible">
+      <span class="eligible-badge" title="Auto-queue: every criterion is met — the promoter would queue this as capacity allows.">✓ eligible</span>
+      {#if capacityWait}
+        <span class="eligible-wait" title="Waiting on capacity: {capacityWait}">waiting — {capacityWait}</span>
       {/if}
     </div>
   {/if}

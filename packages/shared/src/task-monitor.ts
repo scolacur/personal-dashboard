@@ -963,6 +963,38 @@ export const ROBOT_CAPACITY_POLICY_KEY = 'capacity_policy';
 /** Fallback concurrency when the worker has not published a policy yet (matches the env default). */
 export const ROBOT_CONCURRENCY_DEFAULT = 1;
 
+/** Static definition (id + label + description) of each board/worker-wide capacity limb. Exported so
+ *  `computeAutoQueueCapacity` (the live rows), the detail-page checklist and the board's criteria
+ *  modal render from ONE source — the same single-source pattern as `AUTO_QUEUE_CRITERIA` (D-103
+ *  §consequences, PD-810). Order matches `AutoQueueCapacityId`. The descriptions embed the limit
+ *  constants above so they can never contradict the numbers the predicate enforces. */
+export const AUTO_QUEUE_CAPACITY_DEFS: readonly {
+  id: AutoQueueCapacityId;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: 'queue-depth',
+    label: 'Queue depth',
+    description: `Dispatchable robot tickets in the Queue stay below ROBOT_CONCURRENCY × ${AUTO_QUEUE_QUEUE_DEPTH_FACTOR}.`,
+  },
+  {
+    id: 'review-wip',
+    label: 'Review WIP',
+    description: `Robot tickets awaiting review stay below ${AUTO_QUEUE_REVIEW_WIP_LIMIT}.`,
+  },
+  {
+    id: 'epic-in-flight',
+    label: 'Epic in flight',
+    description: `At most ${AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT} member of this Epic is in flight at once.`,
+  },
+  {
+    id: 'worker-healthy',
+    label: 'Worker healthy',
+    description: 'Dispatch is not paused or held, the budget has headroom, and the worker is alive.',
+  },
+] as const;
+
 // ── Auto-queue: mode + verdict wording (D-103 §4, PD-809) ────────────────────
 // The promoter ships behind `AUTO_QUEUE=off|dry-run|on` (D-103 §4). The checklist surfaces the mode
 // so Steve can tell, on any ticket, whether the ✓/✗ he is reading actually drives anything yet, and
