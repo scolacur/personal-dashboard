@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-105](DECISIONS/D-105-deploy-drain-hold-is-its-own-robot-state-slot.md)** — The deploy-drain hold is its own `robot_state` slot, not a reason on the maintenance hold (PD-802)
 - **[D-104](DECISIONS/D-104-worker-restart-orphans-reclaimed-by-ownership-not-age.md)** — Worker-restart orphans are reclaimed by ownership, not age; graceful interrupts never count, unclean restarts count against their own cap and a restart breaker
 - **[D-103](DECISIONS/D-103-auto-promotion-into-the-queue-is-a-deterministic-rule-executing-steves-epic-choice.md)** — Auto-promotion into the Queue is a deterministic rule executing Steve's Epic choice — Epic-scoped, computed not stored, capacity-throttled
 - **[D-102](DECISIONS/D-102-by-habit-calendar-completion-rate-window-and-today-open-affordance.md)** — By Habit completion-rate is a floored, in-progress-excluded window; Today opens the calendar from a dedicated control, not the name text
