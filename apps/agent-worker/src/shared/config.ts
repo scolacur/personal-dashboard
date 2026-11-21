@@ -196,6 +196,12 @@ export interface RobotConfig {
    *  but tokens-per-turn swings by model, so this stays opt-in rather than shipping a number that
    *  quietly goes wrong after a model change. */
   budgetTokens: number;
+  /** PD-784/D-104: on a graceful stop (SIGTERM), the cap on each in-flight run's WIP push so a hung
+   *  `git push` can't eat the container's stop-grace window. Default 8s. */
+  shutdownWipTimeoutMs: number;
+  /** PD-784/D-104: how long the entrypoint waits for the Robot loop to drain in-flight runs after a
+   *  stop signal before exiting. Must fit inside the compose `stop_grace_period`. Default 20s. */
+  shutdownDrainMs: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -250,6 +256,8 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     budgetWindowMs: Number(env.ROBOT_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
     budgetTurns: Number(env.ROBOT_BUDGET_TURNS ?? 500),
     budgetTokens: Number(env.ROBOT_BUDGET_TOKENS ?? 0),
+    shutdownWipTimeoutMs: Number(env.ROBOT_SHUTDOWN_WIP_TIMEOUT_MS ?? 8_000),
+    shutdownDrainMs: Number(env.ROBOT_SHUTDOWN_DRAIN_MS ?? 20_000),
   };
 }
 

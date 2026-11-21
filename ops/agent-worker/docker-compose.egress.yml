@@ -38,6 +38,11 @@ services:
     image: agent-worker-dashboard
     container_name: agent-worker
     restart: unless-stopped
+    # PD-784/D-104: give the Robot loop time to drain in-flight runs on SIGTERM (abort sessions,
+    # push WIP time-boxed, close runs as `interrupted`) before SIGKILL. Must exceed the worker's
+    # ROBOT_SHUTDOWN_DRAIN_MS (default 20s). Docker's default is only 10s, which SIGKILLed the
+    # worker mid-drain — the 2026-11-20 orphan incident.
+    stop_grace_period: 30s
     depends_on: [agent-worker-proxy]
     networks: [egress_internal]          # internal ONLY — no direct egress
     env_file:

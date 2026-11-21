@@ -268,6 +268,10 @@ export async function runRobotSession(
   // `robot.spec.ts` guards that it does — an absent handle silently costs the Robot its ability to
   // record a decision, which is the kind of loss nothing else would report.
   db?: Database.Database,
+  // PD-784/D-104: aborts the SDK query on a graceful stop (SIGTERM). The loop creates one per
+  // dispatch, registers it in the ownership registry, and triggers it from the shutdown coordinator.
+  // Optional/last so existing positional call sites are untouched.
+  abortController?: AbortController,
 ): Promise<RobotSessionResult> {
   const prompt = buildTaskPrompt({
     title: candidate.title,
@@ -310,6 +314,9 @@ export async function runRobotSession(
       options: {
         model: config.model,
         cwd: worktree.dir,
+        // PD-784/D-104: a graceful stop aborts this; the SDK stops the query and the loop closes the
+        // run as a transient `interrupted` fault.
+        ...(abortController ? { abortController } : {}),
         systemPrompt: robotSystemPrompt(
           buildOrientation({
             repoDir: worktree.dir,

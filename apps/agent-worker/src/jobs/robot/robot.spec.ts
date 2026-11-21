@@ -11,6 +11,8 @@ import {
   pauseDispatch,
 } from './state';
 import { SESSION_LIMIT_FALLBACK_MS } from './faults';
+import { createRunOwnership } from './ownership';
+import { RobotShutdown } from './shutdown';
 import type { RobotSessionResult } from './session';
 
 const READY = ['## Context', 'c', '## Task', 't', '## Done When', 'd', '## Out of scope', 'o'].join('\n');
@@ -739,5 +741,124 @@ describe('processRobotQueue', () => {
     expect(agentState(db, 1)).toBe('in-review');
     // The robot_resumed milestone is on the timeline.
     expect(eventTypes(db, 1)).toContain('robot_resumed');
+  });
+
+  // ── PD-784/D-104: graceful stop + ownership-based orphan reclaim ────────────────
+  describe('graceful stop (SIGTERM) and ownership reclaim', () => {
+    it('closes an interrupted in-flight run as a transient `interrupted` fault, attempts WIP, re-queues', async () => {
+      addQueued(db, 1);
+      const ownership = createRunOwnership(500);
+      const shutdown = new RobotShutdown(ownership);
+      let wipAttempts = 0;
+      const d: RobotDeps = {
+        ...deps(),
+        ownership,
+        shutdown,
+        pushWip: async () => {
+          wipAttempts++;
+          return { ref: 'robot-wip/t1', sha: 'abc' };
+        },
+        // Simulate SIGTERM arriving mid-session: request the stop (which aborts the controller) and
+        // let the session throw as an aborted query would.
+        runSession: async (_c, _cand, _wt, _resume, _onProgress, abort) => {
+          shutdown.request();
+          expect(abort?.signal.aborted).toBe(true); // the stop aborted this run's controller
+          throw new Error('aborted');
+        },
+      };
+
+      const n = await processRobotQueue(db, cfg(), d);
+      expect(n).toBe(0); // nothing handed off
+      expect(wipAttempts).toBe(1); // PD-736 WIP push was attempted on the way down
+      expect(agentState(db, 1)).toBe('queued'); // re-queued, not stranded `working`
+      const [run] = listRunsForTicket(db, 1);
+      expect(run.status).toBe('error');
+      expect(run.faultTier).toBe('transient');
+      expect(run.faultSignature).toBe('interrupted');
+      expect(run.wipRef).toBe('robot-wip/t1');
+    });
+
+    it('a graceful stop then a boot reclaims nothing twice and dispatches the ticket exactly once', async () => {
+      addQueued(db, 1);
+      // Cycle 1: interrupted by a graceful stop.
+      const own1 = createRunOwnership(500);
+      const sd1 = new RobotShutdown(own1);
+      await processRobotQueue(db, cfg(), {
+        ...deps(),
+        ownership: own1,
+        shutdown: sd1,
+        runSession: async () => {
+          sd1.request();
+          throw new Error('aborted');
+        },
+      });
+      expect(agentState(db, 1)).toBe('queued');
+      expect(listRunsForTicket(db, 1)).toHaveLength(1); // one interrupted run
+
+      // Cycle 2: a fresh worker boots (fresh, empty ownership). Its stall sweep must NOT re-reclaim
+      // the already-terminal interrupted run, and it must dispatch the re-queued ticket exactly once.
+      let dispatches = 0;
+      const d2 = deps();
+      d2.now = () => 5000;
+      d2.ownership = createRunOwnership(4000);
+      d2.shutdown = new RobotShutdown(d2.ownership);
+      d2.runSession = async () => {
+        dispatches++;
+        return { ok: true, sessionId: 's2', verifyOk: true, prNumber: 9 };
+      };
+      const n = await processRobotQueue(db, cfg(), d2);
+      expect(n).toBe(1);
+      expect(dispatches).toBe(1); // dispatched once — never twice
+      expect(agentState(db, 1)).toBe('in-review');
+      const runs = listRunsForTicket(db, 1);
+      expect(runs).toHaveLength(2); // the interrupted run + the fresh successful one — no extra reclaim row
+      expect(runs.filter((r) => r.status === 'error')).toHaveLength(1);
+    });
+
+    it('reclaims a prior worker\'s orphaned `running` run on the first cycle, then dispatches it', async () => {
+      // A run left `running` + `working` by a dead incarnation (not owned by this process).
+      addQueued(db, 1);
+      db.prepare('UPDATE agent_tickets SET agent_state = ? WHERE id = 1').run('working');
+      startRun(db, { ticketId: 1, issueNumber: 1, branch: 'robot/1' }, 10);
+
+      let dispatches = 0;
+      const d = deps();
+      d.now = () => 5000;
+      d.ownership = createRunOwnership(4000); // fresh worker — owns nothing
+      d.shutdown = new RobotShutdown(d.ownership);
+      d.runSession = async () => {
+        dispatches++;
+        return { ok: true, sessionId: 's', verifyOk: true, prNumber: 11 };
+      };
+
+      const n = await processRobotQueue(db, cfg(), d);
+      // The reconcile at cycle start re-queued the orphan; the same cycle then dispatched it.
+      expect(dispatches).toBe(1);
+      expect(n).toBe(1);
+      const runs = listRunsForTicket(db, 1);
+      expect(runs.find((r) => r.status === 'error')?.faultSignature).toBe('process-restart-orphan');
+      expect(runs.find((r) => r.status === 'handed-off')).toBeTruthy();
+    });
+
+    it('once a stop is requested, a later cycle dispatches nothing new', async () => {
+      addQueued(db, 1);
+      const ownership = createRunOwnership(500);
+      const shutdown = new RobotShutdown(ownership);
+      shutdown.request(); // stop already under way before this cycle
+      let dispatches = 0;
+      const d: RobotDeps = {
+        ...deps(),
+        ownership,
+        shutdown,
+        runSession: async () => {
+          dispatches++;
+          return { ok: true, sessionId: 's', verifyOk: true, prNumber: 1 };
+        },
+      };
+      const n = await processRobotQueue(db, cfg(), d);
+      expect(n).toBe(0);
+      expect(dispatches).toBe(0);
+      expect(agentState(db, 1)).toBeNull(); // untouched — never entered a run this cycle
+    });
   });
 });

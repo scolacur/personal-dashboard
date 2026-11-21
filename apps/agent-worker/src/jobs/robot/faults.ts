@@ -168,6 +168,25 @@ export function parseRateLimitReset(error: string, now: number): number | null {
 /** "Reached maximum number of turns (N)" — the Agent SDK's per-run turn-ceiling error. */
 const MAX_TURNS_PATTERN = /maximum number of turns|max_turns|reached the turn limit/i;
 
+/* ── Infrastructure faults (PD-784, D-104) ─────────────────────────────────────
+ * A worker restart that orphaned an in-flight run, and a graceful SIGTERM that interrupted one, are
+ * not the ticket's fault — the same posture as a session limit, but a wait is wrong: the work just
+ * needs to run again, now. So they are their own tier of signal: always `retry` (never park, never
+ * hold), and — crucially — NEVER counted or promoted. A burst of deploys (the incident had four in
+ * an hour) would otherwise interrupt the same ticket twice and, at `promoteAfter = 2`, strand it in
+ * a deterministic park for a deploy it had nothing to do with. The stall reconciler and the loop's
+ * shutdown path set these signatures explicitly (not via `normalizeSignature`) so the exclusion is
+ * a stable key, not a phrase match. */
+
+/** A `running` run reclaimed because the worker process that started it is gone (PD-784). */
+export const PROCESS_RESTART_SIGNATURE = 'process-restart-orphan';
+/** An in-flight run closed because a graceful stop (SIGTERM) aborted its session (PD-784). */
+export const INTERRUPTED_SIGNATURE = 'interrupted';
+
+/** Signatures that mean "infrastructure moved under the run", not "this ticket failed". Retried
+ *  immediately, never counted, never promoted (D-104). */
+const INFRA_SIGNATURES: ReadonlySet<string> = new Set([PROCESS_RESTART_SIGNATURE, INTERRUPTED_SIGNATURE]);
+
 /** Tunable policy (all env-driven via RobotConfig). */
 export interface FaultPolicy {
   /** Max countable (non-system-wide) failures before a transient ticket parks. */
@@ -275,9 +294,12 @@ export function backoffMs(attempt: number, policy: FaultPolicy): number {
  *  so are session limits (PD-470): the account ran out of quota, which is not evidence of anything
  *  about this ticket. Excluding them here is ALSO what structurally prevents the deterministic
  *  promotion that stranded PD-420 for ~12h — two identical session-limit signatures are one
- *  transient cause seen twice, and neither one is ever counted. */
+ *  transient cause seen twice, and neither one is ever counted. Infra faults (a worker restart orphan
+ *  or a graceful interrupt, D-104) are excluded for the same reason: a deploy is not a ticket fault. */
 function countable(failures: FailedRun[]): FailedRun[] {
-  return failures.filter((f) => f.tier !== 'system-wide' && !HOLD_SIGNATURES.has(f.signature));
+  return failures.filter(
+    (f) => f.tier !== 'system-wide' && !HOLD_SIGNATURES.has(f.signature) && !INFRA_SIGNATURES.has(f.signature),
+  );
 }
 
 /** Signatures that mean "wait", not "this ticket failed". Never counted, never promoted — two
@@ -335,6 +357,11 @@ export function decideFault(
 ): FaultDecision {
   if (cls.tier === 'system-wide') return { action: 'pause', ...cls };
   if (cls.tier === 'deterministic') return { action: 'park', ...cls };
+
+  // D-104: a worker restart orphan or a graceful interrupt always re-queues immediately — no count,
+  // no promotion, no park. Decided before every counting rule below so a pre-existing real-fault
+  // history can never push an infra event over the cap (the infra event did nothing wrong).
+  if (INFRA_SIGNATURES.has(cls.signature)) return { action: 'retry', ...cls };
 
   // A session limit (PD-470) or a GitHub throttle (PD-248) is a WAIT, not a failure. Decided before
   // every counting rule below so no repeat count, cap or promotion can reach it — the ticket keeps

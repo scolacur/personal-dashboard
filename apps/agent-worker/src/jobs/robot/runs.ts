@@ -285,25 +285,28 @@ export interface OrphanRun {
 }
 
 /**
- * Runs still marked `running` whose ticket is still `working` and that started before `cutoff` —
- * the stall watchdog's targets (C5/PD-346). Because the loop runs sessions sequentially and awaits
- * each one, no session of THIS process is in flight at a cycle boundary; so a `running` row past the
- * cutoff is an orphan (the process died/restarted mid-run, leaving a zombie run + a `working` ticket
- * that `robotQueueCandidates` will never re-pick). This is the Robot loop's in-process
- * in-progress staleness sweep (it replaced the retired sortie-watchdog.yml Action).
+ * Every run still marked `running` whose ticket is still `working` — the candidate set the stall
+ * reconciler (stall.ts) classifies (C5/PD-346, PD-784/D-104).
+ *
+ * This no longer pre-filters by age. The reconciler decides each row by **ownership**, not age: a
+ * `running` row the live worker does not own was started by a dead incarnation (a process-restart
+ * orphan, reclaimed at once); a row it owns is reclaimed only if its SESSION has hung (no progress
+ * past the threshold), never merely because the row is old. Runs are concurrent — a run can outlive
+ * the cycle that started it — so the old "no session of this process is in flight at a cycle
+ * boundary, therefore any aged `running` row is an orphan" reasoning no longer holds. See
+ * `RunOwnership` for why the honest test is ownership rather than `started_at`.
  */
-export function orphanedRunningRuns(db: Database.Database, cutoff: number): OrphanRun[] {
+export function orphanedRunningRuns(db: Database.Database): OrphanRun[] {
   const rows = db
     .prepare(
       `SELECT r.id AS id, r.ticket_id AS ticket_id, r.branch AS branch, r.issue_number AS n, r.started_at AS started_at
          FROM agent_runs r
          JOIN agent_tickets t ON t.id = r.ticket_id
         WHERE r.status = 'running'
-          AND r.started_at < ?
           AND t.agent_state = 'working'
         ORDER BY r.started_at ASC`,
     )
-    .all(cutoff) as { id: number; ticket_id: number; branch: string; n: number | null; started_at: number }[];
+    .all() as { id: number; ticket_id: number; branch: string; n: number | null; started_at: number }[];
   return rows.map((r) => ({ runId: r.id, ticketId: r.ticket_id, branch: r.branch, issueNumber: r.n, startedAt: r.started_at }));
 }
 
