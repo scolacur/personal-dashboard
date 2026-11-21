@@ -40,8 +40,9 @@ services:
     restart: unless-stopped
     # PD-784/D-104: give the Robot loop time to drain in-flight runs on SIGTERM (abort sessions,
     # push WIP time-boxed, close runs as `interrupted`) before SIGKILL. Must exceed the worker's
-    # ROBOT_SHUTDOWN_DRAIN_MS (default 20s). Docker's default is only 10s, which SIGKILLed the
-    # worker mid-drain — the 2026-11-20 orphan incident.
+    # ROBOT_SHUTDOWN_DRAIN_MS (default 20s). Docker's default is only 10s. (Before PD-784 the worker
+    # had no SIGTERM handler at all — node as PID 1 ignored it and was SIGKILLed at 10s, orphaning
+    # whatever run was in flight: the 2026-11-20 incident.)
     stop_grace_period: 30s
     depends_on: [agent-worker-proxy]
     networks: [egress_internal]          # internal ONLY — no direct egress

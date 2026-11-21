@@ -1,5 +1,5 @@
 import { logger } from '../../shared/logger';
-import type { RunOwnership } from './ownership';
+import { ABORT_SHUTDOWN, type RunOwnership } from './ownership';
 
 /** Resolve to `fallback` after `ms`. Used with `Promise.race` to time-box a possibly-hung async step
  *  (a WIP `git push`) against the container's stop-grace window (PD-784/D-104). The timer is
@@ -47,7 +47,7 @@ export class RobotShutdown {
     logger.warn({ inFlight: inFlight.length }, 'robot: graceful stop requested — aborting in-flight sessions');
     for (const run of inFlight) {
       try {
-        run.abort.abort();
+        run.abort.abort(ABORT_SHUTDOWN);
       } catch (err) {
         logger.warn({ err, ticketId: run.ticketId }, 'robot: aborting in-flight session raised — ignored');
       }

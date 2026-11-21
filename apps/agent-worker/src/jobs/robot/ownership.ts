@@ -5,27 +5,35 @@ import type { Worktree } from './workspace';
  *
  * The stall watchdog used to decide "is this `running` row an orphan?" from AGE alone: a run whose
  * `started_at` was older than `stallThresholdMs` (default 2h) was reclaimed, anything younger was
- * left. That is wrong in both directions now that a run can outlive a cycle:
+ * left. That is wrong in both directions:
  *
- *  - **Too slow on a restart.** When the container is recreated (every deploy), the new worker does
- *    not own the runs the dead one left `running`, yet each waits out the full 2h from its own
- *    `started_at` before being reclaimed — filling every slot and dispatching nothing meanwhile
- *    (the 2026-11-20 incident: four runs stranded ~1.5h).
- *  - **Too eager on a live run.** A run of the LIVE process that legitimately passes 2h gets closed
- *    as an orphan and its ticket re-queued while the session is still working — a double dispatch.
+ *  - **Too slow on a restart (today's bug).** When the worker dies mid-run, the next incarnation
+ *    leaves the dead one's `running` row alone until it is 2h old. Meanwhile its ticket sits in
+ *    `working`, which `robotQueueCandidates` never re-picks, and the maintenance hold's drain check
+ *    (`inFlightRunCount`) counts it as in flight, so no hold can open. (It does not block other
+ *    dispatch: slots are not computed from `running` rows.)
+ *  - **Too eager on a live run (once runs outlive a cycle).** Today the loop awaits each session
+ *    inside the cycle and the sweep runs at cycle start, so the live process never owns anything
+ *    when the sweep looks. Once dispatch stops blocking the cycle (concurrency > 1), a live run past
+ *    2h would be closed as an orphan and its ticket re-queued while still working — a double
+ *    dispatch.
  *
  * The honest question is ownership, not age: *does the process now running own this run?* Only the
- * live worker writes `agent_runs`, and it knows exactly which run ids it is executing (this
- * registry). A `running` row whose id this registry does not hold was started by a previous
- * incarnation that is gone — a **process-restart orphan**, reclaimable immediately. A run it DOES
- * hold is never an orphan, however old; age survives only as a hung-session backstop, measured from
- * the last observed progress (not `started_at`), so a session that is still making turns is never
- * touched.
+ * worker writes `agent_runs`, and it knows exactly which run ids it is executing (this registry). A
+ * `running` row this registry does not hold was started by an incarnation that is gone. A run it
+ * DOES hold is never an orphan, however old; age survives only as a hung-session backstop, measured
+ * from the last observed progress (not `started_at`).
  *
  * In-memory on purpose: the one fact that cannot be recovered after a restart is "which runs is THIS
  * process executing", and after a restart the answer is "none" — which is exactly what makes every
  * pre-existing `running` row an orphan. Nothing here is persisted.
  */
+
+/** `AbortController.abort()` reasons, so the loop can tell WHY a session it awaited was aborted. */
+/** A graceful stop (SIGTERM): the loop closes the run as a transient `interrupted` fault. */
+export const ABORT_SHUTDOWN = 'shutdown';
+/** The stall reconciler's hung-session backstop: it has ALREADY closed the run, so the loop must not. */
+export const ABORT_HUNG = 'hung';
 
 /** Bookkeeping the live worker keeps for one run it is executing. */
 export interface OwnedRun {

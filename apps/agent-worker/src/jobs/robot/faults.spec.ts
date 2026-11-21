@@ -141,13 +141,35 @@ describe('decideFault', () => {
 describe('infrastructure faults (PD-784/D-104)', () => {
   const infra = (signature: string): FaultClassification => ({ tier: 'transient', signature, reason: 'stalled' });
 
-  it('a process-restart orphan always retries, never parks — even at an exhausted cap', () => {
+  it('a process-restart orphan ignores the ordinary retry cap', () => {
     const tiny: FaultPolicy = { ...policy, retryCap: 1 };
     const prior: FailedRun[] = [
       { tier: 'transient', signature: 'real-fault', finishedAt: 1, bodyHash: null },
       { tier: 'transient', signature: 'real-fault', finishedAt: 2, bodyHash: null },
     ];
     expect(decideFault(infra(PROCESS_RESTART_SIGNATURE), prior, tiny).action).toBe('retry');
+  });
+
+  it('a process-restart orphan parks at its own cap (default 3)', () => {
+    const orphan: FailedRun = { tier: 'transient', signature: PROCESS_RESTART_SIGNATURE, finishedAt: 1 };
+    expect(decideFault(infra(PROCESS_RESTART_SIGNATURE), [orphan], policy).action).toBe('retry'); // 2nd
+    const third = decideFault(infra(PROCESS_RESTART_SIGNATURE), [orphan, orphan], policy);
+    expect(third.action).toBe('park');
+    expect(third.reason).toMatch(/orphan cap 3/);
+    expect(decideFault(infra(PROCESS_RESTART_SIGNATURE), [orphan], { ...policy, orphanCap: 2 }).action).toBe('park');
+  });
+
+  it('preflight parks a ticket that already reached the orphan cap', () => {
+    const orphan: FailedRun = { tier: 'transient', signature: PROCESS_RESTART_SIGNATURE, finishedAt: 1 };
+    expect(preflight([orphan, orphan], policy, 10).action).toBe('go');
+    expect(preflight([orphan, orphan, orphan], policy, 10)).toMatchObject({ action: 'park' });
+  });
+
+  it('a graceful interrupt never counts, however many times it repeats', () => {
+    const interrupted: FailedRun = { tier: 'transient', signature: INTERRUPTED_SIGNATURE, finishedAt: 1 };
+    const many = Array.from({ length: 10 }, () => interrupted);
+    expect(decideFault(infra(INTERRUPTED_SIGNATURE), many, { ...policy, orphanCap: 1 }).action).toBe('retry');
+    expect(preflight(many, policy, 10).action).toBe('go');
   });
 
   it('a graceful interrupt always retries', () => {

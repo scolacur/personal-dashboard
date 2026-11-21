@@ -291,10 +291,10 @@ export interface OrphanRun {
  * This no longer pre-filters by age. The reconciler decides each row by **ownership**, not age: a
  * `running` row the live worker does not own was started by a dead incarnation (a process-restart
  * orphan, reclaimed at once); a row it owns is reclaimed only if its SESSION has hung (no progress
- * past the threshold), never merely because the row is old. Runs are concurrent — a run can outlive
- * the cycle that started it — so the old "no session of this process is in flight at a cycle
- * boundary, therefore any aged `running` row is an orphan" reasoning no longer holds. See
- * `RunOwnership` for why the honest test is ownership rather than `started_at`.
+ * past the threshold), never merely because the row is old. Today the loop awaits each session
+ * inside the cycle, so at a cycle boundary this process owns nothing and every row here is an
+ * orphan; the ownership test keeps that right once a run can outlive its cycle (concurrency > 1),
+ * where an age cutoff would reclaim live runs. See `RunOwnership`.
  */
 export function orphanedRunningRuns(db: Database.Database): OrphanRun[] {
   const rows = db

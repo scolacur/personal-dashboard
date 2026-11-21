@@ -13,29 +13,35 @@ import { failedRunsForTicket, finishRun, orphanedRunningRuns, type OrphanRun } f
 import { logMilestone } from './events';
 import { notifyNeedsHuman } from './notify';
 import { setAgentState } from './board';
-import type { RunOwnership } from './ownership';
+import { ABORT_HUNG, type RunOwnership } from './ownership';
+import { recordUncleanRestart } from './restart-breaker';
 
 /**
  * In-process stall watchdog (D-055, C5/PD-346; reworked for ownership-based reclaim in PD-784/D-104)
  * — the Robot loop's DB-native stall detection (it replaced the retired `sortie-watchdog.yml`
  * Action).
  *
- * That old watchdog was an EXTERNAL, label-age-based Actions job because the retired runtime was a
- * closed process the board couldn't see into. The loop IS the process now, so detection is native —
- * but it keys off **ownership, not age** (D-104). Runs are concurrent and a run can outlive the
- * cycle that started it, so "any aged `running` row is an orphan" no longer holds. Each `running`
- * row whose ticket is still `working` is classified:
+ * It keys off **ownership, not age** (D-104). Each `running` row whose ticket is still `working` is
+ * classified:
  *
- *  - **not owned by the live worker** → a *process-restart orphan*: the incarnation that opened it is
- *    gone (a deploy recreated the container). Reclaimed immediately, whatever its age — no 2h wait —
- *    through the SAME fault guardrail (C2) as an infra fault (D-104): always a transient re-queue,
- *    never counted against the ticket's budget, so a burst of deploys can't strand it.
+ *  - **not owned by the live worker** → a *process-restart orphan*: the incarnation that opened it
+ *    died without a graceful stop (a graceful stop closes its runs as `interrupted` first). Reclaimed
+ *    immediately, whatever its age — no 2h wait — outside the ordinary retry budget but against the
+ *    per-ticket orphan cap (faults.ts). An incarnation that finds any orphans also records one
+ *    unclean restart for the worker-wide restart breaker (restart-breaker.ts).
  *  - **owned but hung** → the live worker is still executing it, but its session has made no progress
- *    past `stallThresholdMs` (measured from the LAST reported turn, not `started_at`). This is the
- *    age threshold's only remaining job: a genuine hang. Reclaimed through the ordinary stall path
- *    (a real transient fault that counts and promotes on repeat), its session aborted so the zombie
- *    is torn down.
- *  - **owned and progressing** → left alone, however old. A run still emitting turns is healthy.
+ *    past `stallThresholdMs` (measured from the LAST reported turn, not `started_at`). Reclaimed as
+ *    an ordinary transient fault (counts, promotes on repeat); its session is aborted with reason
+ *    `hung` so the loop knows the run is already closed and does not close it again.
+ *  - **owned and progressing** → left alone, however old.
+ *
+ * **Today the owned branches never fire.** With `ROBOT_CONCURRENCY = 1` and every session awaited
+ * inside the cycle, this sweep (which runs at cycle start) always sees an empty ownership registry,
+ * so every row it finds is an orphan — and a genuinely hung session blocks the cycle, this sweep
+ * included, so nothing detects it. The owned branches are kept, and tested, because they become live
+ * the moment a run can outlive the cycle that started it (concurrency > 1 with non-blocking
+ * dispatch); at that point "unowned ⇒ orphan" is still exactly right, while age alone would reclaim a
+ * live run.
  *
  * The old watchdog's queued-staleness sweep and label-rescue job are intentionally dropped: a
  * "dispatcher down" state cannot happen when the loop itself is the dispatcher, and there are no
@@ -74,17 +80,19 @@ export function reconcileStalledRuns(
     return 1;
   };
 
+  let orphans = 0;
   for (const orphan of orphanedRunningRuns(db)) {
     if (!ownership.owns(orphan.runId)) {
-      // The worker that opened this `running` row is gone — reclaim at once, as an infra fault that
-      // re-queues and never burns budget (D-104).
+      // The worker that opened this `running` row died uncleanly — reclaim at once, outside the
+      // ordinary budget but against the per-ticket orphan cap (D-104).
       const ageMs = now - orphan.startedAt;
       const cls: FaultClassification = {
         tier: 'transient',
         signature: PROCESS_RESTART_SIGNATURE,
-        reason: 'stalled: process restart orphan (started by a previous worker incarnation)',
+        reason: 'stalled: process restart orphan (started by a worker incarnation that died uncleanly)',
       };
       parked += reclaim(orphan, cls, ageMs);
+      orphans++;
       continue;
     }
 
@@ -98,10 +106,21 @@ export function reconcileStalledRuns(
     // A genuine hang IS a ticket signal: classify through the normal path (a normalized signature)
     // so repeated hangs count and promote transient→deterministic, unlike the infra orphan above.
     const cls = classifyFault({ verifyOk: false, error: `stalled: run made no progress for ${ageMin}m` }, now);
-    // Tear the zombie session down so it can't keep writing after we've re-queued the ticket.
-    ownership.get(orphan.runId)?.abort.abort();
+    // Tear the zombie session down so it can't keep writing after we've re-queued the ticket. The
+    // `hung` reason tells the loop this run is already closed here, so it must not close it again.
+    ownership.get(orphan.runId)?.abort.abort(ABORT_HUNG);
     ownership.end(orphan.runId);
     parked += reclaim(orphan, cls, staleMs);
+  }
+
+  // One unclean restart per incarnation, however many runs it orphaned (D-104).
+  if (orphans > 0) {
+    recordUncleanRestart(
+      db,
+      ownership.processStartedAt,
+      { count: config.robot.restartBreakerCount, windowMs: config.robot.restartBreakerWindowMs },
+      now,
+    );
   }
   return parked;
 }

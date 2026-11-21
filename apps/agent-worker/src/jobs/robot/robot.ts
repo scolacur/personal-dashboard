@@ -25,7 +25,7 @@ import {
   clearWipRef,
 } from './runs';
 import { classifyFault, decideFault, preflight, INTERRUPTED_SIGNATURE, type FaultClassification, type FaultPolicy } from './faults';
-import { createRunOwnership, type RunOwnership } from './ownership';
+import { ABORT_HUNG, ABORT_SHUTDOWN, createRunOwnership, type RunOwnership } from './ownership';
 import { RobotShutdown, timeout } from './shutdown';
 import {
   activeMaintenanceHold,
@@ -65,8 +65,8 @@ export { setAgentState, branchFor };
 
 /** Derive the fault policy from config (faults.ts is pure; this is the only adapter). */
 function faultPolicy(config: AgentWorkerConfig): FaultPolicy {
-  const { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs } = config.robot;
-  return { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs };
+  const { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs, orphanCap } = config.robot;
+  return { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs, orphanCap };
 }
 
 /** The loop-wide budget ceiling this config enforces (PD-463). */
@@ -434,6 +434,33 @@ export async function processRobotQueue(
       }
     };
 
+    // PD-784/D-104: why (if at all) this run's session was aborted. Read off the controller, not off
+    // `shutdown.requested`, and checked on BOTH exits of the session — `runRobotSession` catches the
+    // SDK's abort error itself and RETURNS `{ ok: false }`, so an aborted run usually never reaches
+    // the `catch` below.
+    const abortReason = (): string | null => (abort.signal.aborted ? String(abort.signal.reason) : null);
+    /** Close a run a graceful stop aborted: a transient `interrupted` fault — re-queued, never counted
+     *  (D-104) — after a time-boxed WIP push, so a deploy neither strands nor loses the work. */
+    const closeInterrupted = async (
+      sessionId: string | undefined,
+      error: string | undefined,
+      metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
+    ): Promise<void> => {
+      logger.warn({ ticketId: candidate.id }, 'robot: in-flight session interrupted by graceful stop — re-queuing');
+      handleFailure('error', sessionId, error, metrics, await preserveWip(), {
+        tier: 'transient',
+        signature: INTERRUPTED_SIGNATURE,
+        reason: 'interrupted: worker graceful stop (SIGTERM)',
+      });
+    };
+    /** The hung-session backstop (stall.ts) already closed this run and re-queued its ticket; closing
+     *  it again would double-write it. Only salvage the WIP. Unreachable while sessions are awaited
+     *  inside the cycle — live once a run can outlive its cycle. */
+    const leaveReclaimed = async (): Promise<void> => {
+      logger.warn({ ticketId: candidate.id, runId }, 'robot: session aborted as hung — run already reclaimed, not closing it again');
+      await preserveWip();
+    };
+
     try {
       worktree = await doEnsure(config, branch);
       ownership.attachWorktree(runId, worktree); // PD-784: so a graceful stop can reach it for WIP
@@ -454,8 +481,15 @@ export async function processRobotQueue(
       // Spread into finishRun on every terminal path, so the captured tail (PD-426) lands on the
       // run row before the `finally` below removes the worktree.
       const metrics = { turns: result.turns, tokens: result.tokens, outputTail: result.outputTail };
+      const handoffReady = result.ok && result.verifyOk && result.prNumber !== undefined;
 
-      if (result.askHuman) {
+      if (abortReason() === ABORT_HUNG) {
+        await leaveReclaimed();
+      } else if (abortReason() === ABORT_SHUTDOWN && !handoffReady && !result.askHuman) {
+        // A session that finished its hand-off (or asked its question) before the abort landed keeps
+        // that outcome below; anything else the stop cut short is an interrupt, not a ticket failure.
+        await closeInterrupted(result.sessionId, result.error, metrics);
+      } else if (result.askHuman) {
         // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a
         // question. Not a failure — burns no budget; a human answers (Notification Center) and the
         // resume sweep re-queues it next cycle. Preserve WIP too (PD-737/T898): the next dispatch's
@@ -471,7 +505,7 @@ export async function processRobotQueue(
         logMilestone(db, candidate.id, ROBOT_EVENT.askHuman, { question: result.askHuman, ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}) }, now());
         notifyAwaitingHuman(db, candidate.id, 'Robot asked a question', result.askHuman, now());
         logger.info({ ticketId: candidate.id, question: result.askHuman.slice(0, 200) }, 'robot: ask_human — parked (awaiting-human)');
-      } else if (result.ok && result.verifyOk && result.prNumber !== undefined) {
+      } else if (handoffReady && result.prNumber !== undefined) {
         const prUrl = `https://github.com/${candidate.repo}/pull/${result.prNumber}`;
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
         handedOff = true;
@@ -493,19 +527,10 @@ export async function processRobotQueue(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // PD-784/D-104: when a graceful stop aborted the session, this throw IS the stop — record it as
-      // a transient `interrupted` infra fault (re-queued, never counted) rather than letting
-      // `classifyFault` read the raw abort error. WIP is still preserved (time-boxed, above), so a
-      // deploy does not lose the work. On the next boot the run is already terminal, so the ownership
-      // sweep finds no orphan and never dispatches this ticket twice.
-      if (shutdown.requested) {
-        logger.warn({ ticketId: candidate.id }, 'robot: in-flight session interrupted by graceful stop — re-queuing');
-        const wip = await preserveWip();
-        handleFailure('error', undefined, msg, {}, wip, {
-          tier: 'transient',
-          signature: INTERRUPTED_SIGNATURE,
-          reason: 'interrupted: worker graceful stop (SIGTERM)',
-        });
+      if (abortReason() === ABORT_HUNG) {
+        await leaveReclaimed();
+      } else if (abortReason() === ABORT_SHUTDOWN) {
+        await closeInterrupted(undefined, msg);
       } else {
         logger.error({ err, ticketId: candidate.id }, 'robot: dispatch failed');
         // A thrown session may still have left work in the clone (if ensureWorktree got far enough).

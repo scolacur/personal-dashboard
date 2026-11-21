@@ -11,7 +11,7 @@ import {
   pauseDispatch,
 } from './state';
 import { SESSION_LIMIT_FALLBACK_MS } from './faults';
-import { createRunOwnership } from './ownership';
+import { ABORT_HUNG, createRunOwnership } from './ownership';
 import { RobotShutdown } from './shutdown';
 import type { RobotSessionResult } from './session';
 
@@ -745,7 +745,7 @@ describe('processRobotQueue', () => {
 
   // ── PD-784/D-104: graceful stop + ownership-based orphan reclaim ────────────────
   describe('graceful stop (SIGTERM) and ownership reclaim', () => {
-    it('closes an interrupted in-flight run as a transient `interrupted` fault, attempts WIP, re-queues', async () => {
+    it('closes an in-flight run whose session THROWS on abort as a transient `interrupted` fault, attempts WIP, re-queues', async () => {
       addQueued(db, 1);
       const ownership = createRunOwnership(500);
       const shutdown = new RobotShutdown(ownership);
@@ -776,6 +776,98 @@ describe('processRobotQueue', () => {
       expect(run.faultTier).toBe('transient');
       expect(run.faultSignature).toBe('interrupted');
       expect(run.wipRef).toBe('robot-wip/t1');
+    });
+
+    // The REAL session shape: `runRobotSession` catches the SDK abort error itself and RETURNS
+    // `{ ok: false, error }` — it does not throw. The interrupt must be recognised on this path too,
+    // or every deploy counts against the ticket and two of them park it (promoteAfter = 2).
+    it('closes an aborted session that RETURNS ok:false (the real shape) as `interrupted`, never counted', async () => {
+      addQueued(db, 1);
+      const ownership = createRunOwnership(500);
+      const shutdown = new RobotShutdown(ownership);
+      let wipAttempts = 0;
+      const d: RobotDeps = {
+        ...deps(),
+        ownership,
+        shutdown,
+        pushWip: async () => {
+          wipAttempts++;
+          return { ref: 'robot-wip/t1', sha: 'abc' };
+        },
+        runSession: async (_c, _cand, _wt, _resume, _onProgress, abort) => {
+          shutdown.request();
+          expect(abort?.signal.aborted).toBe(true);
+          return { ok: false, sessionId: 's1', verifyOk: false, error: 'Claude Code process aborted by user' };
+        },
+      };
+
+      await processRobotQueue(db, cfg(), d);
+      expect(wipAttempts).toBe(1);
+      expect(agentState(db, 1)).toBe('queued');
+      const [run] = listRunsForTicket(db, 1);
+      expect(run.faultSignature).toBe('interrupted');
+      expect(run.faultTier).toBe('transient');
+      expect(run.wipRef).toBe('robot-wip/t1');
+    });
+
+    it('two deploys interrupting the same ticket never park it', async () => {
+      addQueued(db, 1);
+      for (let i = 0; i < 2; i++) {
+        const own = createRunOwnership(500 + i);
+        const sd = new RobotShutdown(own);
+        await processRobotQueue(db, cfg(), {
+          ...deps(),
+          ownership: own,
+          shutdown: sd,
+          runSession: async () => {
+            sd.request();
+            return { ok: false, sessionId: `s${i}`, verifyOk: false, error: 'aborted' };
+          },
+        });
+        expect(agentState(db, 1)).toBe('queued'); // re-queued each time, never `stuck`
+      }
+      expect(listRunsForTicket(db, 1).map((r) => r.faultSignature)).toEqual(['interrupted', 'interrupted']);
+    });
+
+    it('keeps a hand-off that completed before the stop landed', async () => {
+      addQueued(db, 1);
+      const ownership = createRunOwnership(500);
+      const shutdown = new RobotShutdown(ownership);
+      const n = await processRobotQueue(db, cfg(), {
+        ...deps(),
+        ownership,
+        shutdown,
+        runSession: async () => {
+          shutdown.request(); // SIGTERM arrives just as the session finishes its PR
+          return { ok: true, sessionId: 's', verifyOk: true, prNumber: 42 };
+        },
+      });
+      expect(n).toBe(1);
+      expect(agentState(db, 1)).toBe('in-review');
+      expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
+    });
+
+    it('does not re-close a run the hung-session backstop already reclaimed (abort reason `hung`)', async () => {
+      // Unreachable while sessions are awaited inside the cycle; live once a run outlives its cycle.
+      // Simulate the reconciler acting mid-session: it closes the run, re-queues, aborts as `hung`.
+      addQueued(db, 1);
+      const ownership = createRunOwnership(500);
+      await processRobotQueue(db, cfg(), {
+        ...deps(),
+        ownership,
+        shutdown: new RobotShutdown(ownership),
+        runSession: async (_c, _cand, _wt, _resume, _onProgress, abort) => {
+          const [run] = listRunsForTicket(db, 1);
+          finishRun(db, run.id, { status: 'error', faultTier: 'transient', faultSignature: 'stalled-hung', faultReason: 'hung' }, 1);
+          db.prepare("UPDATE agent_tickets SET agent_state = 'queued' WHERE id = 1").run();
+          abort?.abort(ABORT_HUNG);
+          return { ok: false, sessionId: 's', verifyOk: false, error: 'aborted' };
+        },
+      });
+      const runs = listRunsForTicket(db, 1);
+      expect(runs).toHaveLength(1);
+      expect(runs[0].faultSignature).toBe('stalled-hung'); // the reconciler's close stands
+      expect(agentState(db, 1)).toBe('queued');
     });
 
     it('a graceful stop then a boot reclaims nothing twice and dispatches the ticket exactly once', async () => {

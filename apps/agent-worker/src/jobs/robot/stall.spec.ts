@@ -4,7 +4,9 @@ import { loadConfig } from '../../shared/config';
 import type { FaultPolicy } from './faults';
 import { reconcileStalledRuns } from './stall';
 import { ensureRunsTable, startRun, finishRun, listRunsForTicket } from './runs';
-import { createRunOwnership, type RunOwnership } from './ownership';
+import { createRunOwnership, ABORT_HUNG, type RunOwnership } from './ownership';
+import { ensureRobotStateTable, dispatchPauseState } from './state';
+import { uncleanRestarts } from './restart-breaker';
 
 const POLICY: FaultPolicy = { retryCap: 3, promoteAfter: 2, backoffBaseMs: 0, backoffMaxMs: 0 };
 
@@ -16,6 +18,7 @@ function db(): Database.Database {
     CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
   `);
   ensureRunsTable(d);
+  ensureRobotStateTable(d);
   return d;
 }
 function working(d: Database.Database, id: number): void {
@@ -54,13 +57,71 @@ describe('reconcileStalledRuns (ownership-based, D-104)', () => {
     expect(types).toContain('robot_stalled');
   });
 
-  it('never parks a restart orphan, even under an exhausted retry cap (infra faults always re-queue)', () => {
+  it('an orphan ignores the ordinary retry cap (it is not counted against it)', () => {
     working(d, 1);
     startRun(d, { ticketId: 1, issueNumber: 1, branch: 'robot/1' }, 10);
-    // retryCap 1 would park an ordinary transient — but an infra orphan is never counted.
+    // retryCap 1 would park an ordinary transient — an orphan only answers to the orphan cap.
     const parked = reconcileStalledRuns(d, cfg({ ROBOT_RETRY_CAP: '1' }), { ...POLICY, retryCap: 1 }, createRunOwnership(100_000), 100_000);
     expect(parked).toBe(0);
     expect(state(d, 1)).toBe('queued');
+  });
+
+  it('parks a ticket whose runs keep getting orphaned once it reaches the orphan cap', () => {
+    working(d, 1);
+    // Two earlier incarnations died during this ticket's runs.
+    for (const t of [10, 20]) {
+      const id = startRun(d, { ticketId: 1, issueNumber: 1, branch: 'robot/1' }, t);
+      finishRun(d, id, { status: 'error', faultTier: 'transient', faultSignature: 'process-restart-orphan' }, t + 1);
+    }
+    startRun(d, { ticketId: 1, issueNumber: 1, branch: 'robot/1' }, 30); // the third, orphaned now
+    const parked = reconcileStalledRuns(d, cfg(), { ...POLICY, orphanCap: 3 }, createRunOwnership(100_000), 100_000);
+    expect(parked).toBe(1);
+    expect(state(d, 1)).toBe('stuck');
+    expect(listRunsForTicket(d, 1).find((r) => r.startedAt === 30)?.faultReason).toMatch(/died uncleanly during this ticket's run 3×/);
+  });
+
+  describe('restart breaker', () => {
+    const orphanOne = (id: number, at: number): void => {
+      working(d, id);
+      startRun(d, { ticketId: id, issueNumber: id, branch: `robot/${id}` }, at);
+    };
+    const breaker = { ROBOT_RESTART_BREAKER_COUNT: '3', ROBOT_RESTART_BREAKER_WINDOW_MS: '1000000' };
+
+    it('records ONE unclean restart per incarnation, however many runs it orphaned', () => {
+      orphanOne(1, 10);
+      orphanOne(2, 11); // concurrency > 1: one death orphans several runs
+      const own = createRunOwnership(5_000);
+      reconcileStalledRuns(d, cfg(breaker), POLICY, own, 5_000);
+      reconcileStalledRuns(d, cfg(breaker), POLICY, own, 6_000); // a later cycle of the same process
+      expect(uncleanRestarts(d)).toEqual([5_000]);
+      expect(dispatchPauseState(d).paused).toBe(false);
+    });
+
+    it('records nothing when a boot finds no orphans (a graceful stop left none)', () => {
+      reconcileStalledRuns(d, cfg(breaker), POLICY, createRunOwnership(5_000), 5_000);
+      expect(uncleanRestarts(d)).toEqual([]);
+    });
+
+    it('pauses dispatch when unclean restarts reach the count within the window', () => {
+      [1, 2, 3].forEach((id, i) => {
+        orphanOne(id, 10 + i);
+        const startedAt = 1_000 * (i + 1);
+        reconcileStalledRuns(d, cfg(breaker), POLICY, createRunOwnership(startedAt), startedAt);
+      });
+      const pause = dispatchPauseState(d);
+      expect(pause.paused).toBe(true);
+      expect(pause.reason).toMatch(/restart breaker/);
+    });
+
+    it('forgets restarts that fell out of the window', () => {
+      [1, 2, 3].forEach((id, i) => {
+        orphanOne(id, 10 + i);
+        const startedAt = 1 + i * 2_000_000; // each one window apart
+        reconcileStalledRuns(d, cfg(breaker), POLICY, createRunOwnership(startedAt), startedAt);
+      });
+      expect(dispatchPauseState(d).paused).toBe(false);
+      expect(uncleanRestarts(d)).toHaveLength(1);
+    });
   });
 
   it('does NOT reclaim an owned run that is still making progress, however old', () => {
@@ -85,6 +146,8 @@ describe('reconcileStalledRuns (ownership-based, D-104)', () => {
     expect(run.status).toBe('error');
     expect(run.faultReason).toMatch(/made no progress/);
     expect(aborted.signal.aborted).toBe(true); // the zombie session was torn down
+    expect(aborted.signal.reason).toBe(ABORT_HUNG); // so the loop knows not to close it again
+    expect(uncleanRestarts(d)).toEqual([]); // a hang is not an unclean restart
     expect(ownership.owns(runId)).toBe(false); // and forgotten
   });
 
