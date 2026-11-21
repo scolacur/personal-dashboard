@@ -18,6 +18,8 @@ import {
   RefineBackoff,
   roundOnlyText,
   WarmSessions,
+  turnNeedsNudge,
+  REFINE_NUDGE,
 } from './refine';
 import { ensureRobotStateTable, sessionLimitHold, holdForSessionLimit } from '../robot/state';
 
@@ -255,7 +257,8 @@ describe('processPendingRefines (orchestration)', () => {
   it('reuses the WARM session across turns — one open, no per-turn resume', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q1' });
-    const fake = fakeSessions('a1', 'sess-1');
+    // Ends in a question, so the PD-844 backstop does not add a nudge between the two turns.
+    const fake = fakeSessions('a1 — which one?', 'sess-1');
     const sessions = new WarmSessions(fake.open);
 
     await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
@@ -509,7 +512,7 @@ describe('ask_questions path (PD-744, D-096)', () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
     const fake = askingSessions([
-      { ask: false, text: 'grounding first' },
+      { ask: false, text: 'grounding first — shall I go on?' },
       { ask: true, text: 'now my questions' },
     ]);
     const sessions = new WarmSessions(fake.open);
@@ -526,7 +529,7 @@ describe('ask_questions path (PD-744, D-096)', () => {
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
     const fake = askingSessions([
       { ask: true, text: 'rate limited', ok: false },
-      { ask: false, text: 'plain reply' },
+      { ask: false, text: 'plain reply — anything else?' },
     ]);
     const sessions = new WarmSessions(fake.open);
     let t = 0;
@@ -695,5 +698,142 @@ describe('a provider session limit stops every refine turn (PD-618)', () => {
     });
     expect(handled).toBe(1);
     expect(sessionLimitHold(db)).toBeNull(); // self-cleared on read
+  });
+});
+
+/**
+ * PD-844. PD-284 and PD-799 ended turns with "I'll wait for the explorers" — no round, no proposal —
+ * and derived state parked them on Steve with nothing to answer. One automatic nudge, then persist.
+ */
+describe('no-question backstop (PD-844)', () => {
+  const ROUND: RefineQuestionRound = {
+    questions: [
+      {
+        id: 'q',
+        question: 'Which?',
+        why: 'It decides the split.',
+        options: [
+          { label: 'A', description: 'a' },
+          { label: 'B', description: 'b' },
+        ],
+        recommended: 0,
+      },
+    ],
+    assumptions: [],
+  };
+
+  describe('turnNeedsNudge (pure)', () => {
+    it('nudges a turn with no round, no proposal and no closing question', () => {
+      expect(turnNeedsNudge({ text: "I'll wait for the explorers to report back.", proposed: false })).toBe(true);
+      expect(turnNeedsNudge({ text: '', proposed: false })).toBe(true);
+      // A question mid-reply is not a question TO Steve at the end of the turn.
+      expect(turnNeedsNudge({ text: 'Is it wired? Yes. Waiting on explorers.', proposed: false })).toBe(true);
+    });
+    it('leaves a turn alone when it staged a round or recorded a proposal', () => {
+      expect(turnNeedsNudge({ text: 'grounding', round: ROUND, proposed: false })).toBe(false);
+      expect(turnNeedsNudge({ text: 'here is the plan.', proposed: true })).toBe(false);
+    });
+    it('leaves a turn alone when the reply ends in a question, ignoring trailing markdown and quotes', () => {
+      expect(turnNeedsNudge({ text: 'Should I split it?', proposed: false })).toBe(false);
+      expect(turnNeedsNudge({ text: '**Should I split it?**  \n', proposed: false })).toBe(false);
+      expect(turnNeedsNudge({ text: 'Do you mean "the inbox?"', proposed: false })).toBe(false);
+      expect(turnNeedsNudge({ text: '(local only?)', proposed: false })).toBe(false);
+    });
+  });
+
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+    seq = 0;
+  });
+
+  /** A session that plays `plan` turn by turn, calling the tools through the callbacks bound AT OPEN. */
+  function scriptedSessions(plan: { text: string; ok?: boolean; ask?: boolean; propose?: boolean }[]) {
+    const sends: string[] = [];
+    const open: OpenRefineSession = (input: OpenSessionInput) => ({
+      get sessionId() {
+        return 'sess-1';
+      },
+      lastUsedAt: Date.now(),
+      async send(prompt: string): Promise<RefineTurnResult> {
+        const p = plan[sends.length];
+        sends.push(prompt);
+        if (!p) throw new Error(`unscripted send #${sends.length}: ${prompt}`);
+        if (p.ask) input.onRound?.(ROUND);
+        if (p.propose) input.onProposal?.({ mode: 'refine_in_place', body: 'b' });
+        return { text: p.text, ok: p.ok ?? true, sessionId: 'sess-1' };
+      },
+      async close() {},
+    });
+    return { open, sends };
+  }
+  const agentTurns = () =>
+    listTicketEvents(db, 1)
+      .filter((e) => e.type === REFINE_EVENT_TYPE.agent)
+      .map((e) => e.detail as { text: string; round?: RefineQuestionRound });
+  const run = (open: OpenRefineSession, sessions = new WarmSessions(open)) =>
+    processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+
+  it('nudges exactly once and persists only the nudged turn', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const fake = scriptedSessions([{ text: "I'll wait for the explorers." }, { text: 'grounded; my questions', ask: true }]);
+    await run(fake.open);
+    expect(fake.sends).toEqual(['refine me', REFINE_NUDGE]);
+    const turns = agentTurns();
+    expect(turns).toHaveLength(1);
+    expect(turns[0].text).toBe('grounded; my questions');
+    expect(turns[0].round?.questions[0].id).toBe('q');
+  });
+
+  it('caps at one nudge: a nudged turn that still has neither is persisted as-is', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    // A third send would throw ("unscripted"), so a loop would surface as a missing turn.
+    const fake = scriptedSessions([{ text: 'waiting.' }, { text: 'still waiting.' }]);
+    await run(fake.open);
+    expect(fake.sends).toEqual(['refine me', REFINE_NUDGE]);
+    expect(agentTurns().map((t) => t.text)).toEqual(['still waiting.']);
+  });
+
+  it('does not nudge a turn that asked, proposed, or ended in a question', async () => {
+    for (const [i, turn] of [
+      { text: 'grounding', ask: true },
+      { text: 'plan recorded.', propose: true },
+      { text: 'Which bar are we clearing?' },
+    ].entries()) {
+      db = freshDb();
+      addTicket(db, 1, `PD-${i}`);
+      addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+      const fake = scriptedSessions([turn]);
+      await run(fake.open);
+      expect(fake.sends).toEqual(['refine me']);
+      expect(agentTurns()).toHaveLength(1);
+    }
+  });
+
+  it('a proposal from an EARLIER turn does not exempt this one', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const fake = scriptedSessions([
+      { text: 'plan recorded.', propose: true },
+      { text: 'ok, noted.' },
+      { text: 'Want me to split it instead?' },
+    ]);
+    const sessions = new WarmSessions(fake.open);
+    await run(fake.open, sessions);
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'thanks' });
+    await run(fake.open, sessions);
+    expect(fake.sends).toEqual(['refine me', 'thanks', REFINE_NUDGE]);
+    expect(agentTurns().map((t) => t.text)).toEqual(['plan recorded.', 'Want me to split it instead?']);
+  });
+
+  it('keeps the original turn when the nudge fails', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
+    const fake = scriptedSessions([{ text: 'waiting.' }, { text: 'rate limited', ok: false }]);
+    await run(fake.open);
+    expect(fake.sends).toEqual(['refine me', REFINE_NUDGE]);
+    expect(agentTurns().map((t) => t.text)).toEqual(['waiting.']);
   });
 });
