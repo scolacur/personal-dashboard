@@ -1,14 +1,15 @@
 <script lang="ts">
-  import type { HabitItemView, HabitSchedule, HabitSettings } from '@dashboard/shared';
+  import type { HabitItemView, HabitMetricTodayRow, HabitSchedule, HabitSettings } from '@dashboard/shared';
   import type { PendingHabitWrite } from './queue';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import ByHabitCalendar from './ByHabitCalendar.svelte';
+  import ByDayGrid from './ByDayGrid.svelte';
 
   /**
    * The Log tab (PD-725 / PD-726), with two views: **By Day** (a grid of days, PD-725) and **By
-   * Habit** (a calendar for one item, PD-726). This slice ships By Habit and the view switcher; By
-   * Day is a placeholder until PD-725. The active view is seeded from the deep link
-   * (`?view=habit&item=<id>`, read by `HabitTracker.svelte`) and otherwise defaults to By Day.
+   * Habit** (a calendar for one item, PD-726). The active view is seeded from the deep link
+   * (`?view=day&day=<YYYY-MM-DD>` or `?view=habit&item=<id>`, read by `HabitTracker.svelte`) and
+   * otherwise defaults to By Day.
    */
   interface Props {
     items: HabitItemView[];
@@ -16,9 +17,13 @@
     settings: HabitSettings;
     today: string;
     pending: PendingHabitWrite[];
+    metricRows: HabitMetricTodayRow[];
     initialView?: 'day' | 'habit';
     initialItemId?: number | null;
+    initialDay?: string | null;
     onToggle: (itemId: number, day: string, done: boolean) => void;
+    onMetricWrite: (itemId: number, day: string, value: string | null) => void;
+    onOpenItem: (itemId: number) => void;
   }
 
   let {
@@ -27,9 +32,13 @@
     settings,
     today,
     pending,
+    metricRows,
     initialView = 'day',
     initialItemId = null,
+    initialDay = null,
     onToggle,
+    onMetricWrite,
+    onOpenItem,
   }: Props = $props();
 
   // A writable `$derived`: `view` follows the deep link (`initialView`) and resets to it whenever a
@@ -52,7 +61,16 @@
   {#if view === 'habit'}
     <ByHabitCalendar {items} {schedules} {settings} {today} {pending} {initialItemId} {onToggle} />
   {:else}
-    <p class="placeholder">By Day arrives in PD-725.</p>
+    <ByDayGrid
+      {items}
+      {schedules}
+      {today}
+      {pending}
+      {metricRows}
+      {initialDay}
+      {onToggle}
+      {onMetricWrite}
+      {onOpenItem} />
   {/if}
 </div>
 
