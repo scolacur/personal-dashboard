@@ -696,6 +696,10 @@ export interface AutoQueueCriterion {
   met: boolean;
   /** Present only when `met` is false — why this criterion fails right now. */
   reason?: string;
+  /** Present only when `met` is false and the criterion has a structured fix — carried from the
+   *  Queue gate (`queueBlockers`) so the checklist can link the reason to the Epic or the blocker
+   *  (D-103, PD-809). `ticketId` is the ticket to open. */
+  remedy?: { kind: QueueRemedyKind; ticketId?: number };
 }
 
 /**
@@ -736,9 +740,21 @@ export const AUTO_QUEUE_CRITERIA: readonly {
 
 const AUTO_QUEUE_CRITERION_BY_ID = new Map(AUTO_QUEUE_CRITERIA.map((d) => [d.id, d] as const));
 
-function autoQueueCriterion(id: AutoQueueCriterionId, met: boolean, reason: string): AutoQueueCriterion {
+function autoQueueCriterion(
+  id: AutoQueueCriterionId,
+  met: boolean,
+  reason: string,
+  remedy?: { kind: QueueRemedyKind; ticketId?: number },
+): AutoQueueCriterion {
   const def = AUTO_QUEUE_CRITERION_BY_ID.get(id)!;
-  return { id, label: def.label, description: def.description, met, ...(met ? {} : { reason }) };
+  return {
+    id,
+    label: def.label,
+    description: def.description,
+    met,
+    ...(met ? {} : { reason }),
+    ...(met || !remedy ? {} : { remedy }),
+  };
 }
 
 /** A ticket as the eligibility predicate reads it. */
@@ -783,7 +799,7 @@ export function autoQueueEligibility(input: {
   // refined").
   const fromGate = (id: AutoQueueCriterionId & QueueCriterionId): AutoQueueCriterion => {
     const g = gateById.get(id)!;
-    return autoQueueCriterion(id, g.met, g.label);
+    return autoQueueCriterion(id, g.met, g.label, g.remedy);
   };
 
   const epicActive = epic != null && epic.status === 'queue';
@@ -801,12 +817,18 @@ export function autoQueueEligibility(input: {
       'epic-active',
       epicActive,
       epic ? 'Its Epic is not active — Steve has not queued it.' : 'It has no Epic to activate.',
+      epic ? { kind: 'open-epic', ticketId: epic.id } : undefined,
     ),
     autoQueueCriterion('assigned-robot', assignedRobot, 'It is not assigned to the Robot.'),
     fromGate('ready'),
     fromGate('unblocked'),
     autoQueueCriterion('refine-settled', refineSettled, 'A Refine session is waiting on you.'),
-    autoQueueCriterion('epic-not-excluded', epicNotExcluded, 'Its Epic is excluded from auto-queue.'),
+    autoQueueCriterion(
+      'epic-not-excluded',
+      epicNotExcluded,
+      'Its Epic is excluded from auto-queue.',
+      epic ? { kind: 'open-epic', ticketId: epic.id } : undefined,
+    ),
     autoQueueCriterion(
       'robot-project',
       robotProject,
@@ -872,12 +894,15 @@ export function autoQueueEpicEligibility(input: {
     gateMembers,
   );
 
+  // Every Epic-level criterion is fixed on the Epic itself; its remedy points back here so the
+  // board's criteria modal can link to the Epic (the detail page suppresses the self-link).
+  const self = { kind: 'open-epic' as const, ticketId: epic.id };
   const criteria: AutoQueueCriterion[] = [
-    autoQueueCriterion('epic-refined', epic.refined, 'This Epic is not refined.'),
-    autoQueueCriterion('epic-not-stale', !epic.refineStale, "This Epic's membership changed since it was refined — re-refine it."),
-    autoQueueCriterion('members-refined', membersRefined.met, membersRefined.label),
-    autoQueueCriterion('epic-active', epic.status === 'queue', 'This Epic is not active — queue it to activate its members.'),
-    autoQueueCriterion('epic-not-excluded', !epic.autoQueueExcluded, 'This Epic is excluded from auto-queue.'),
+    autoQueueCriterion('epic-refined', epic.refined, 'This Epic is not refined.', self),
+    autoQueueCriterion('epic-not-stale', !epic.refineStale, "This Epic's membership changed since it was refined — re-refine it.", self),
+    autoQueueCriterion('members-refined', membersRefined.met, membersRefined.label, self),
+    autoQueueCriterion('epic-active', epic.status === 'queue', 'This Epic is not active — queue it to activate its members.', self),
+    autoQueueCriterion('epic-not-excluded', !epic.autoQueueExcluded, 'This Epic is excluded from auto-queue.', self),
   ];
 
   const memberVerdicts: AutoQueueMemberVerdict[] = members.map((m) => ({
@@ -938,10 +963,79 @@ export const ROBOT_CAPACITY_POLICY_KEY = 'capacity_policy';
 /** Fallback concurrency when the worker has not published a policy yet (matches the env default). */
 export const ROBOT_CONCURRENCY_DEFAULT = 1;
 
+// ── Auto-queue: mode + verdict wording (D-103 §4, PD-809) ────────────────────
+// The promoter ships behind `AUTO_QUEUE=off|dry-run|on` (D-103 §4). The checklist surfaces the mode
+// so Steve can tell, on any ticket, whether the ✓/✗ he is reading actually drives anything yet, and
+// renders a single verdict line from the same pure taxonomy the predicate produces.
+
+/** The promoter's run mode (D-103 §4): `off` promotes nothing, `dry-run` logs without applying,
+ *  `on` promotes. Defaults to `off`. */
+export type AutoQueueMode = 'off' | 'dry-run' | 'on';
+
+/** Parse the `AUTO_QUEUE` env value into a mode, defaulting to `off` for anything unrecognised. */
+export function parseAutoQueueMode(raw: string | null | undefined): AutoQueueMode {
+  return raw === 'on' || raw === 'dry-run' ? raw : 'off';
+}
+
+/** The muted note shown under the verdict while the promoter is not live; `null` when `on`. */
+export function autoQueueModeNote(mode: AutoQueueMode): string | null {
+  if (mode === 'off') return 'Auto-queue is off — nothing is promoted automatically.';
+  if (mode === 'dry-run') return 'Auto-queue is in dry-run — promotions are logged, not applied.';
+  return null;
+}
+
+/** The one-line verdict shown above a member Ticket's criteria (D-103 §consequences). `assignee`
+ *  splits the two `human-work` cases; `unmetCount` fills the `not-eligible` count. */
+export function autoQueueVerdictLine(
+  verdict: AutoQueueVerdict,
+  assignee: TicketAssignee | null,
+  unmetCount: number,
+): string {
+  switch (verdict) {
+    case 'eligible':
+      return 'Will auto-queue when capacity allows';
+    case 'in-queue':
+      return 'In the Queue';
+    case 'terminal':
+      return 'Completed/Closed — not applicable';
+    case 'human-work':
+      return assignee === 'steve'
+        ? 'Not auto-queued — assigned to steve (human work is never automated)'
+        : 'Not auto-queued — no assignee';
+    case 'not-eligible':
+      return `Not eligible — ${unmetCount} unmet`;
+  }
+}
+
+/** Short word for a member's verdict, for the Epic roll-up list (D-103). */
+export const AUTO_QUEUE_VERDICT_SHORT: Record<AutoQueueVerdict, string> = {
+  eligible: 'eligible',
+  'not-eligible': 'not eligible',
+  'in-queue': 'in queue',
+  terminal: 'done',
+  'human-work': 'human',
+};
+
+/** The verdict line for an Epic: it is never dispatched itself, so the line is about whether its
+ *  members *can* auto-queue (D-103 §3). Unmet Epic-level criteria block every member. */
+export function autoQueueEpicVerdictLine(eligibility: AutoQueueEpicEligibility): string {
+  const unmet = eligibility.criteria.filter((c) => !c.met).length;
+  return unmet > 0 ? `Not eligible — ${unmet} unmet` : 'Members auto-queue as they become eligible';
+}
+
+/** `N of M members eligible`, the Epic member roll-up tally (D-103 §3). */
+export function autoQueueMemberRollup(members: readonly AutoQueueMemberVerdict[]): {
+  eligible: number;
+  total: number;
+} {
+  return { eligible: members.filter((m) => m.verdict === 'eligible').length, total: members.length };
+}
+
 /**
  * What `GET …/tickets/:id/queue-eligibility` returns (D-103, PD-808). A member carries
  * `eligibility`; an Epic carries `epicEligibility` (its own criteria + a per-member verdict
- * roll-up). Both carry the board/worker-wide `capacity` snapshot the promoter evaluates each tick.
+ * roll-up). Both carry the board/worker-wide `capacity` snapshot the promoter evaluates each tick,
+ * and the promoter's `mode` so the UI can say whether any of it is live yet (D-103 §4).
  */
 export interface AutoQueueEligibilityResponse {
   ticketId: number;
@@ -951,6 +1045,8 @@ export interface AutoQueueEligibilityResponse {
   /** Present for an Epic. */
   epicEligibility?: AutoQueueEpicEligibility;
   capacity: AutoQueueCapacity;
+  /** The promoter's run mode (`AUTO_QUEUE`), so the checklist can flag off/dry-run (D-103 §4). */
+  mode: AutoQueueMode;
 }
 
 /**

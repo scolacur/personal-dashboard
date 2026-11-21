@@ -6,6 +6,12 @@ import {
   ROBOT_CAPACITY_POLICY_KEY,
   autoQueueEligibility,
   autoQueueEpicEligibility,
+  autoQueueModeNote,
+  autoQueueVerdictLine,
+  autoQueueEpicVerdictLine,
+  autoQueueMemberRollup,
+  parseAutoQueueMode,
+  AUTO_QUEUE_VERDICT_SHORT,
   type AutoQueueCriterionId,
   type TicketAssignee,
   type TicketStatus,
@@ -165,6 +171,69 @@ describe('autoQueueEpicEligibility (D-103)', () => {
   });
 });
 
+/* ── Mode + verdict wording (D-103 §4, PD-809) ───────────────────────────── */
+
+describe('parseAutoQueueMode', () => {
+  it('passes through the three valid modes and defaults everything else to off', () => {
+    expect(parseAutoQueueMode('on')).toBe('on');
+    expect(parseAutoQueueMode('dry-run')).toBe('dry-run');
+    expect(parseAutoQueueMode('off')).toBe('off');
+    expect(parseAutoQueueMode(undefined)).toBe('off');
+    expect(parseAutoQueueMode('')).toBe('off');
+    expect(parseAutoQueueMode('ON')).toBe('off');
+  });
+});
+
+describe('autoQueueModeNote', () => {
+  it('warns while off or dry-run, silent when on', () => {
+    expect(autoQueueModeNote('off')).toBe('Auto-queue is off — nothing is promoted automatically.');
+    expect(autoQueueModeNote('dry-run')).toBe('Auto-queue is in dry-run — promotions are logged, not applied.');
+    expect(autoQueueModeNote('on')).toBeNull();
+  });
+});
+
+describe('autoQueueVerdictLine', () => {
+  it('covers every verdict, splitting the two human-work cases', () => {
+    expect(autoQueueVerdictLine('eligible', 'robot', 0)).toBe('Will auto-queue when capacity allows');
+    expect(autoQueueVerdictLine('in-queue', 'robot', 0)).toBe('In the Queue');
+    expect(autoQueueVerdictLine('terminal', 'robot', 0)).toBe('Completed/Closed — not applicable');
+    expect(autoQueueVerdictLine('not-eligible', 'robot', 3)).toBe('Not eligible — 3 unmet');
+    expect(autoQueueVerdictLine('human-work', 'steve', 0)).toBe(
+      'Not auto-queued — assigned to steve (human work is never automated)',
+    );
+    expect(autoQueueVerdictLine('human-work', null, 0)).toBe('Not auto-queued — no assignee');
+  });
+});
+
+describe('autoQueueEpicVerdictLine + roll-up + short labels', () => {
+  it('reports unmet Epic criteria, else members auto-queue', () => {
+    expect(
+      autoQueueEpicVerdictLine({
+        criteria: [{ id: 'epic-refined', label: '', description: '', met: false }],
+        members: [],
+      }),
+    ).toBe('Not eligible — 1 unmet');
+    expect(
+      autoQueueEpicVerdictLine({
+        criteria: [{ id: 'epic-refined', label: '', description: '', met: true }],
+        members: [],
+      }),
+    ).toBe('Members auto-queue as they become eligible');
+  });
+
+  it('tallies eligible members and names every verdict', () => {
+    expect(
+      autoQueueMemberRollup([
+        { ticketId: 1, verdict: 'eligible' },
+        { ticketId: 2, verdict: 'not-eligible' },
+        { ticketId: 3, verdict: 'eligible' },
+      ]),
+    ).toEqual({ eligible: 2, total: 3 });
+    expect(AUTO_QUEUE_VERDICT_SHORT['in-queue']).toBe('in queue');
+    expect(AUTO_QUEUE_VERDICT_SHORT.terminal).toBe('done');
+  });
+});
+
 /* ── The server read: routes + capacity ──────────────────────────────────── */
 
 const base = '/api/widgets/task-monitor';
@@ -232,7 +301,27 @@ describe('GET /tickets/:id/queue-eligibility (D-103)', () => {
     addRelation(db, ids[0], ids[1], 'blocks', 'human');
     const body = (await app.inject({ method: 'GET', url: `${base}/tickets/${ids[1]}/queue-eligibility` })).json();
     expect(body.eligibility.verdict).toBe('not-eligible');
-    expect(body.eligibility.criteria.find((c: { id: string }) => c.id === 'unblocked').met).toBe(false);
+    const unblocked = body.eligibility.criteria.find((c: { id: string }) => c.id === 'unblocked');
+    expect(unblocked.met).toBe(false);
+    // D-103 (PD-809): the remedy flows through so the checklist can link to the blocker.
+    expect(unblocked.remedy).toEqual({ kind: 'resolve-blocker', ticketId: ids[0] });
+  });
+
+  it('carries the promoter mode from AUTO_QUEUE (default off)', async () => {
+    const { app, db, pid } = setup();
+    const { ids } = activeEpic(db, pid, 1);
+    const prev = process.env.AUTO_QUEUE;
+    delete process.env.AUTO_QUEUE;
+    try {
+      const off = (await app.inject({ method: 'GET', url: `${base}/tickets/${ids[0]}/queue-eligibility` })).json();
+      expect(off.mode).toBe('off');
+      process.env.AUTO_QUEUE = 'on';
+      const on = (await app.inject({ method: 'GET', url: `${base}/tickets/${ids[0]}/queue-eligibility` })).json();
+      expect(on.mode).toBe('on');
+    } finally {
+      if (prev === undefined) delete process.env.AUTO_QUEUE;
+      else process.env.AUTO_QUEUE = prev;
+    }
   });
 
   it('an Epic: Epic-level criteria and the member roll-up', async () => {

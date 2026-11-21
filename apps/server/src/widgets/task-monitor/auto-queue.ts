@@ -16,6 +16,7 @@ import {
   ROBOT_CONCURRENCY_DEFAULT,
   autoQueueEligibility,
   autoQueueEpicEligibility,
+  parseAutoQueueMode,
 } from '@dashboard/shared';
 import {
   getDispatchPauseState,
@@ -262,6 +263,7 @@ export function getTicketAutoQueueEligibility(
       isEpic: true,
       epicEligibility,
       capacity: computeAutoQueueCapacity(db, id, now),
+      mode: parseAutoQueueMode(process.env.AUTO_QUEUE),
     };
   }
 
@@ -278,6 +280,7 @@ export function getTicketAutoQueueEligibility(
     isEpic: false,
     eligibility,
     capacity: computeAutoQueueCapacity(db, ticket.epicId, now),
+    mode: parseAutoQueueMode(process.env.AUTO_QUEUE),
   };
 }
 

@@ -68,6 +68,23 @@ export function seedTaskTracker(db: Database.Database): void {
   // Last: adding a member resets an Epic's refined flag (D-089), so the Epic is marked refined once
   // its members are all in place.
   updateTicket(db, epic.id, { refined: true });
+
+  // D-103 (PD-809): one ticket that is auto-queue ELIGIBLE, so the eligibility checklist has a green
+  // verdict to photograph. That needs an ACTIVE (queued) Epic whose members are all refined, holding
+  // a refined, Ready, robot ticket still in Backlog. Built Epic-first — activated while empty — so
+  // adding the member does not arm it (a ticket created into a queued Epic stays in Backlog, D-080).
+  const READY_BODY =
+    '## Context\nThe Pomodoro timer should be reachable from anywhere.\n\n' +
+    '## Task\nAdd a floating timer button pinned to the bottom-right corner.\n\n' +
+    '## Done When\nThe button floats on every page and opens the timer.\n\n' +
+    '## Out of scope\nThe timer countdown logic itself.';
+  const activeEpic = createTicket(db, { title: 'Pomodoro timer', projectId: pd, isEpic: true, priority: 'P2' });
+  updateTicket(db, activeEpic.id, { refined: true });
+  updateTicket(db, activeEpic.id, { status: 'queue' });
+  const eligible = t('Floating Pomodoro button', { assignee: 'robot', epicId: activeEpic.id, body: READY_BODY });
+  updateTicket(db, eligible.id, { refined: true });
+  // Adding the member re-staled the Epic (D-089); re-mark it so the member clears every criterion.
+  updateTicket(db, activeEpic.id, { refined: true });
 }
 
 export function taskTrackerIsEmpty(db: Database.Database): boolean {

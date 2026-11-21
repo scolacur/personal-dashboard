@@ -5,6 +5,7 @@ import type {
   RefineAnswerSet,
   AgentRun,
   AgentTicket,
+  AutoQueueEligibilityResponse,
   CreateTicketInput,
   DispatchPauseState,
   EpicSummary,
@@ -344,6 +345,15 @@ export async function fetchRelations(id: number): Promise<ResolvedRelation[]> {
   const res = await fetch(`${BASE}/${id}/relations`);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<ResolvedRelation[]>;
+}
+
+/** D-103 (PD-809): would the auto-queue promoter queue this ticket, and if not, why? The criteria
+ *  (or, on an Epic, its Epic-level criteria + per-member verdicts), the capacity snapshot and the
+ *  promoter's run mode — what the detail-page checklist renders. */
+export async function fetchQueueEligibility(id: number): Promise<AutoQueueEligibilityResponse> {
+  const res = await fetch(`${BASE}/${id}/queue-eligibility`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AutoQueueEligibilityResponse>;
 }
 
 /** Every relation on the board as raw rows (PD-322) — one fetch for all card badges. */
