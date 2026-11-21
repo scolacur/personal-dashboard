@@ -168,6 +168,36 @@ export function parseRateLimitReset(error: string, now: number): number | null {
 /** "Reached maximum number of turns (N)" — the Agent SDK's per-run turn-ceiling error. */
 const MAX_TURNS_PATTERN = /maximum number of turns|max_turns|reached the turn limit/i;
 
+/* ── Infrastructure faults (PD-784, D-104) ─────────────────────────────────────
+ * Two events that are about the worker, not the ticket's code. They are set explicitly by the stall
+ * reconciler and the loop's shutdown path (never via `normalizeSignature`), so each is a stable key.
+ *
+ *  - `interrupted` — a graceful stop (SIGTERM, i.e. a deploy) aborted the session. Purely external:
+ *    always `retry`, NEVER counted or promoted. With `promoteAfter = 2`, two deploys landing on one
+ *    ticket's runs would otherwise park it for something it had nothing to do with.
+ *  - `process-restart-orphan` — the worker died WITHOUT a graceful stop (OOM kill, crash, host reboot,
+ *    or SIGKILL after the stop-grace window). Once the graceful path works, a routine deploy never
+ *    produces one, so an orphan is a real signal — possibly that THIS ticket's session is what kills
+ *    the worker. It stays out of the ordinary retry budget (one reboot shouldn't burn a real-fault
+ *    retry), but counts against its OWN per-ticket cap (`orphanCap`): reaching it parks the ticket,
+ *    so a session that OOMs the worker can't crash-loop it forever under `restart: unless-stopped`.
+ *    The worker-wide counterpart — unclean restarts that aren't tied to one ticket — is the restart
+ *    breaker in `restart-breaker.ts`. */
+
+/** A `running` run reclaimed because the worker process that started it died uncleanly (PD-784). */
+export const PROCESS_RESTART_SIGNATURE = 'process-restart-orphan';
+/** An in-flight run closed because a graceful stop (SIGTERM) aborted its session (PD-784). */
+export const INTERRUPTED_SIGNATURE = 'interrupted';
+
+/** Signatures excluded from the ordinary retry budget and promotion (D-104). `interrupted` is never
+ *  counted at all; `process-restart-orphan` is counted only against `orphanCap`. */
+const INFRA_SIGNATURES: ReadonlySet<string> = new Set([PROCESS_RESTART_SIGNATURE, INTERRUPTED_SIGNATURE]);
+
+/** Default per-ticket cap on process-restart orphans before the ticket parks (D-104). Above 1 so a
+ *  single unrelated reboot never parks anything, and so — once `ROBOT_CONCURRENCY > 1` — a sibling
+ *  run that is collateral of another ticket's OOM survives a couple of them. */
+export const DEFAULT_ORPHAN_CAP = 3;
+
 /** Tunable policy (all env-driven via RobotConfig). */
 export interface FaultPolicy {
   /** Max countable (non-system-wide) failures before a transient ticket parks. */
@@ -177,6 +207,9 @@ export interface FaultPolicy {
   /** First backoff step; doubles each subsequent attempt up to `backoffMaxMs`. */
   backoffBaseMs: number;
   backoffMaxMs: number;
+  /** Process-restart orphans a ticket may accumulate (since its last human reset) before it parks
+   *  (D-104). Separate from `retryCap`; defaults to `DEFAULT_ORPHAN_CAP`. */
+  orphanCap?: number;
 }
 
 /** Auth / credit / quota faults — loop-wide, never the ticket's fault. Matched against error text. */
@@ -275,9 +308,18 @@ export function backoffMs(attempt: number, policy: FaultPolicy): number {
  *  so are session limits (PD-470): the account ran out of quota, which is not evidence of anything
  *  about this ticket. Excluding them here is ALSO what structurally prevents the deterministic
  *  promotion that stranded PD-420 for ~12h — two identical session-limit signatures are one
- *  transient cause seen twice, and neither one is ever counted. */
+ *  transient cause seen twice, and neither one is ever counted. Infra faults (a worker restart orphan
+ *  or a graceful interrupt, D-104) are excluded for the same reason: a deploy is not a ticket fault. */
 function countable(failures: FailedRun[]): FailedRun[] {
-  return failures.filter((f) => f.tier !== 'system-wide' && !HOLD_SIGNATURES.has(f.signature));
+  return failures.filter(
+    (f) => f.tier !== 'system-wide' && !HOLD_SIGNATURES.has(f.signature) && !INFRA_SIGNATURES.has(f.signature),
+  );
+}
+
+/** Process-restart orphans in a ticket's failure history (since its last human reset) — the count
+ *  `orphanCap` bounds (D-104). */
+function orphanCount(failures: FailedRun[]): number {
+  return failures.filter((f) => f.signature === PROCESS_RESTART_SIGNATURE).length;
 }
 
 /** Signatures that mean "wait", not "this ticket failed". Never counted, never promoted — two
@@ -335,6 +377,25 @@ export function decideFault(
 ): FaultDecision {
   if (cls.tier === 'system-wide') return { action: 'pause', ...cls };
   if (cls.tier === 'deterministic') return { action: 'park', ...cls };
+
+  // D-104: a graceful interrupt always re-queues immediately — no count, no promotion, no park.
+  // Decided before every counting rule below so a real-fault history can never push it over a cap.
+  if (cls.signature === INTERRUPTED_SIGNATURE) return { action: 'retry', ...cls };
+
+  // D-104: a process-restart orphan counts only against its own cap, never the ordinary budget.
+  if (cls.signature === PROCESS_RESTART_SIGNATURE) {
+    const cap = policy.orphanCap ?? DEFAULT_ORPHAN_CAP;
+    const n = orphanCount(priorFailures) + 1; // include this one
+    if (n >= cap) {
+      return {
+        action: 'park',
+        tier: 'transient',
+        signature: cls.signature,
+        reason: `the worker died uncleanly during this ticket's run ${n}× (orphan cap ${cap}) — its session may be what kills the worker`,
+      };
+    }
+    return { action: 'retry', ...cls };
+  }
 
   // A session limit (PD-470) or a GitHub throttle (PD-248) is a WAIT, not a failure. Decided before
   // every counting rule below so no repeat count, cap or promotion can reach it — the ticket keeps
@@ -417,6 +478,10 @@ export function preflight(failures: FailedRun[], policy: FaultPolicy, now: numbe
   }
 
   if (c.length >= policy.retryCap) return { action: 'park', reason: `retry cap reached (${c.length}/${policy.retryCap})` };
+
+  const orphans = orphanCount(failures);
+  const orphanCap = policy.orphanCap ?? DEFAULT_ORPHAN_CAP;
+  if (orphans >= orphanCap) return { action: 'park', reason: `orphan cap reached (${orphans}/${orphanCap}): the worker died during this ticket's runs` };
 
   const until = nextEligibleAt(failures, policy);
   if (now < until) return { action: 'backoff', until };
