@@ -17,6 +17,7 @@
     filterType = $bindable(),
     filterPriority = $bindable(),
     filterRefine = $bindable(),
+    filterEligibleOnly = $bindable(),
     filterProjectId,
     filterAssignee,
     projects,
@@ -34,6 +35,8 @@
     filterType: 'all' | 'epics' | 'tickets' | 'epics-lone';
     filterPriority: 'all' | 'none' | TicketPriority;
     filterRefine: RefineFilter;
+    /** PD-810: restrict the board to the Backlog tickets the auto-queue promoter would queue. */
+    filterEligibleOnly: boolean;
     filterProjectId: number | null;
     filterAssignee: AssigneeFilter;
     projects: AgentProject[];
@@ -190,6 +193,16 @@
       <option value="unrefined">Unrefined</option>
     </select>
   </label>
+  <!-- PD-810: a toggle, not a select — one on/off cut. Shows only the Backlog tickets the auto-queue
+       promoter would queue (verdict `eligible`). -->
+  <button
+    type="button"
+    class="eligible-toggle"
+    class:active={filterEligibleOnly}
+    aria-pressed={filterEligibleOnly}
+    title="Show only the Backlog tickets the auto-queue promoter would queue"
+    onclick={() => (filterEligibleOnly = !filterEligibleOnly)}
+  >Eligible</button>
 </div>
 
 <style lang="scss" src="./BoardToolbar.scss"></style>

@@ -9,6 +9,7 @@ import type {
 } from '@dashboard/shared';
 import {
   AGENT_WORKER_HEARTBEAT_STALE_MS,
+  AUTO_QUEUE_CAPACITY_DEFS,
   AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT,
   AUTO_QUEUE_QUEUE_DEPTH_FACTOR,
   AUTO_QUEUE_REVIEW_WIP_LIMIT,
@@ -169,16 +170,19 @@ function workerUnhealthyReason(db: Database.Database, now: number): string | nul
   return null;
 }
 
+const CAPACITY_DEF_BY_ID = new Map(AUTO_QUEUE_CAPACITY_DEFS.map((d) => [d.id, d] as const));
+
+/** One capacity limb. `label`/`description` come from `AUTO_QUEUE_CAPACITY_DEFS` (the single source
+ *  the board's criteria modal also renders, PD-810) so the live rows and the modal cannot drift. */
 function capacityRow(
   id: AutoQueueCapacityRow['id'],
-  label: string,
-  description: string,
   current: number,
   limit: number,
   reason: string,
 ): AutoQueueCapacityRow {
+  const def = CAPACITY_DEF_BY_ID.get(id)!;
   const met = current < limit;
-  return { id, label, description, current, limit, met, ...(met ? {} : { reason }) };
+  return { id, label: def.label, description: def.description, current, limit, met, ...(met ? {} : { reason }) };
 }
 
 /**
@@ -197,37 +201,25 @@ export function computeAutoQueueCapacity(
   const rows: AutoQueueCapacityRow[] = [
     capacityRow(
       'queue-depth',
-      'Queue depth',
-      `Dispatchable robot tickets in the Queue stay below ROBOT_CONCURRENCY × ${AUTO_QUEUE_QUEUE_DEPTH_FACTOR}.`,
       countDispatchableRobotTickets(db),
       queueDepthLimit,
       'The Queue already holds enough dispatchable robot work.',
     ),
     capacityRow(
       'review-wip',
-      'Review WIP',
-      `Robot tickets awaiting review stay below ${AUTO_QUEUE_REVIEW_WIP_LIMIT}.`,
       countRobotInReview(db),
       AUTO_QUEUE_REVIEW_WIP_LIMIT,
       'Too many robot PRs are already awaiting review.',
     ),
     capacityRow(
       'epic-in-flight',
-      'Epic in flight',
-      `At most ${AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT} member of this Epic is in flight at once.`,
       epicId === null ? 0 : countEpicInFlight(db, epicId),
       AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT,
       'A member of this Epic is already in flight.',
     ),
-    {
-      id: 'worker-healthy',
-      label: 'Worker healthy',
-      description: 'Dispatch is not paused or held, the budget has headroom, and the worker is alive.',
-      current: unhealthy ? 1 : 0,
-      limit: 1,
-      met: unhealthy === null,
-      ...(unhealthy ? { reason: unhealthy } : {}),
-    },
+    // `worker-healthy` reuses the same helper: current=1 (unhealthy) trips `current < limit` so the
+    // limb fails and carries the composite reason; current=0 (healthy) passes with no reason.
+    capacityRow('worker-healthy', unhealthy ? 1 : 0, 1, unhealthy ?? ''),
   ];
 
   return { rows, ok: rows.every((r) => r.met) };

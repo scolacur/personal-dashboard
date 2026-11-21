@@ -17,6 +17,7 @@ import type {
   TicketAssignee,
 } from '@dashboard/shared';
 import {
+  AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT,
   AUTO_QUEUE_VERDICT_SHORT,
   autoQueueEpicVerdictLine,
   autoQueueMemberRollup,
@@ -101,6 +102,36 @@ function memberMark(verdict: AutoQueueVerdict): '✓' | '✗' | '–' {
   if (verdict === 'eligible' || verdict === 'in-queue') return '✓';
   if (verdict === 'not-eligible') return '✗';
   return '–';
+}
+
+/**
+ * For an *eligible* Backlog card (every per-ticket criterion met), is the promoter held back from
+ * queueing it right now by a capacity limit, and which one? Returns the first unmet limb's short
+ * label (e.g. `Review WIP 3 / 3`), or null when capacity has headroom (D-103 §4, PD-810).
+ *
+ * The board-wide `epic-in-flight` row is skipped — it is computed with no Epic in view
+ * (`AutoQueueBoardEligibility`), so that limb is judged per card from `epicInFlight[epicId]` against
+ * `AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT` instead.
+ */
+export function capacityWaitFor(
+  capacity: AutoQueueCapacity,
+  epicInFlight: Readonly<Record<number, number>>,
+  epicId: number | null,
+): string | null {
+  for (const r of capacity.rows) {
+    if (r.id === 'epic-in-flight') continue; // per-card, below
+    if (!r.met) {
+      // The health limb has no meaningful count; the count limbs read "label current / limit".
+      return r.id === 'worker-healthy' ? r.label : `${r.label} ${r.current} / ${r.limit}`;
+    }
+  }
+  if (epicId !== null) {
+    const inFlight = epicInFlight[epicId] ?? 0;
+    if (inFlight >= AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT) {
+      return `Epic in flight ${inFlight} / ${AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT}`;
+    }
+  }
+  return null;
 }
 
 export function buildChecklistView(input: {

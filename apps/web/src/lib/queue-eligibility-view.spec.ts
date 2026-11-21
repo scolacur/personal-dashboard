@@ -9,7 +9,7 @@ import type {
   AutoQueueVerdict,
   TicketAssignee,
 } from '@dashboard/shared';
-import { buildChecklistView } from './queue-eligibility-view';
+import { buildChecklistView, capacityWaitFor } from './queue-eligibility-view';
 
 // D-103 (PD-809): the pure view model behind the auto-queue checklist. Every verdict, the muted
 // mode note, the capacity-visibility rule, remedy links and the Epic roll-up are reachable here —
@@ -157,6 +157,47 @@ describe('buildChecklistView — capacity visibility', () => {
     expect(rows.find((r) => r.id === 'queue-depth')!.label).toBe('Queue depth 1 / 2');
     expect(rows.find((r) => r.id === 'review-wip')!.mark).toBe('✗');
     expect(rows.find((r) => r.id === 'worker-healthy')!.label).toBe('Worker healthy');
+  });
+});
+
+describe('capacityWaitFor — the board Eligible view capacity note (PD-810)', () => {
+  const allClear: AutoQueueCapacity = {
+    ok: true,
+    rows: [
+      { id: 'queue-depth', label: 'Queue depth', description: '', current: 1, limit: 2, met: true },
+      { id: 'review-wip', label: 'Review WIP', description: '', current: 0, limit: 3, met: true },
+      { id: 'epic-in-flight', label: 'Epic in flight', description: '', current: 0, limit: 1, met: true },
+      { id: 'worker-healthy', label: 'Worker healthy', description: '', current: 0, limit: 1, met: true },
+    ],
+  };
+
+  it('returns null when every board-wide limb has headroom and the Epic is not in flight', () => {
+    expect(capacityWaitFor(allClear, {}, 5)).toBeNull();
+    expect(capacityWaitFor(allClear, { 5: 0 }, 5)).toBeNull();
+  });
+
+  it('names the first unmet board-wide limb, formatted with its count', () => {
+    // `capacity` (module-scoped) has review-wip 3/3 unmet, queue-depth met.
+    expect(capacityWaitFor(capacity, {}, null)).toBe('Review WIP 3 / 3');
+  });
+
+  it('omits the count for the composite worker-healthy limb', () => {
+    const unhealthy: AutoQueueCapacity = {
+      ok: false,
+      rows: [
+        { id: 'queue-depth', label: 'Queue depth', description: '', current: 1, limit: 2, met: true },
+        { id: 'review-wip', label: 'Review WIP', description: '', current: 0, limit: 3, met: true },
+        { id: 'epic-in-flight', label: 'Epic in flight', description: '', current: 0, limit: 1, met: true },
+        { id: 'worker-healthy', label: 'Worker healthy', description: '', current: 1, limit: 1, met: false, reason: 'Dispatch is paused.' },
+      ],
+    };
+    expect(capacityWaitFor(unhealthy, {}, 5)).toBe('Worker healthy');
+  });
+
+  it('judges epic-in-flight per card from epicInFlight, ignoring the board-wide row', () => {
+    expect(capacityWaitFor(allClear, { 5: 1 }, 5)).toBe('Epic in flight 1 / 1');
+    // A different Epic at capacity does not hold this card back.
+    expect(capacityWaitFor(allClear, { 9: 1 }, 5)).toBeNull();
   });
 });
 

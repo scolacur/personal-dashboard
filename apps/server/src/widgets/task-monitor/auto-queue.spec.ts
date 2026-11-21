@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import Database from 'better-sqlite3';
 import {
   AUTO_QUEUE_CRITERIA,
+  AUTO_QUEUE_CAPACITY_DEFS,
   ROBOT_CAPACITY_POLICY_KEY,
   autoQueueEligibility,
   autoQueueEpicEligibility,
@@ -388,6 +389,16 @@ describe('computeAutoQueueCapacity (D-103 §4)', () => {
   function row(db: Database.Database, epicId: number | null, id: string) {
     return computeAutoQueueCapacity(db, epicId).rows.find((r) => r.id === id)!;
   }
+
+  it('every row carries its AUTO_QUEUE_CAPACITY_DEFS label + description (one source for the modal, PD-810)', () => {
+    const { db } = setup();
+    heartbeat(db);
+    const rows = computeAutoQueueCapacity(db, null).rows;
+    expect(rows.map((r) => r.id)).toEqual(AUTO_QUEUE_CAPACITY_DEFS.map((d) => d.id));
+    for (const [i, d] of AUTO_QUEUE_CAPACITY_DEFS.entries()) {
+      expect(rows[i]).toMatchObject({ id: d.id, label: d.label, description: d.description });
+    }
+  });
 
   it('queue-depth limit is concurrency × 2, concurrency read from the worker’s published policy (default 1)', () => {
     const { db } = setup();

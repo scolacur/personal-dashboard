@@ -206,6 +206,7 @@ export {
   autoQueueEligibility,
   autoQueueEpicEligibility,
   AUTO_QUEUE_CRITERIA,
+  AUTO_QUEUE_CAPACITY_DEFS,
   AUTO_QUEUE_VERDICT_SHORT,
   parseAutoQueueMode,
   autoQueueModeNote,
