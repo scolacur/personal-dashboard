@@ -26,6 +26,7 @@ import {
 } from './runs';
 import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
 import {
+  activeDeployHold,
   activeMaintenanceHold,
   activeSessionLimitHold,
   ensureRobotStateTable,
@@ -165,6 +166,20 @@ export async function processRobotQueue(
     logger.info(
       { until: maintenance.until, reason: maintenance.reason },
       'robot: holding — maintenance window, dispatch resumes when it releases',
+    );
+    return 0;
+  }
+
+  // Deploy hold (PD-802, D-105): a Watchtower pre-update drain is about to recreate this container,
+  // so nothing new may dispatch while it waits for in-flight runs to finish. Its own slot, not a
+  // reason on the maintenance hold above — see the block comment in `state.ts` for why. Bounded by
+  // `stallThresholdMs`, so a drain that dies cannot wedge dispatch shut; the new container also
+  // releases a lingering hold on boot.
+  const deploy = activeDeployHold(db, now());
+  if (deploy) {
+    logger.info(
+      { until: deploy.until, reason: deploy.reason },
+      'robot: holding — deploy drain, dispatch resumes once the new container boots',
     );
     return 0;
   }
