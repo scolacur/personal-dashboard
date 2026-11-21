@@ -231,6 +231,89 @@ export function activeMaintenanceHold(db: Database.Database, now: number = Date.
   return null;
 }
 
+/* ── Deploy hold (PD-802, D-105) ───────────────────────────────────────────────
+ * The hold a Watchtower pre-update drain takes so recreating the agent-worker container does not
+ * kill an in-flight Robot run (`apps/agent-worker/src/deploy-drain.ts`).
+ *
+ * Its OWN slot, not a `reason` on the maintenance hold — for exactly the reason the maintenance hold
+ * is not a third `kind` on the session-limit hold (see that block comment above). A deploy and a
+ * human's maintenance window are two conditions with independent causes and independent lifetimes,
+ * and `maintenance_hold` is one last-writer-wins slot. Sharing it breaks both ways, both silently:
+ *
+ *   - A deploy drain mid-maintenance-window overwrites the maintenance hold's reason/deadline; the
+ *     coordinator never re-takes it, so dispatch resumes while a maintenance job is still working.
+ *   - Worse in reverse: the new container's release-on-boot nulls "the hold", clearing a maintenance
+ *     hold that a human opened — dispatch resumes straight into the window it was meant to protect.
+ *
+ * With a separate slot a release only ever clears what its owner set (D-077's rule again), so boot
+ * can release a lingering deploy hold without touching a maintenance window.
+ *
+ * `until` is a DEADLINE, not a schedule: the drain passes `now + stallThresholdMs`, the same bound a
+ * stalled run gets, so a drain process that dies mid-recreate cannot wedge dispatch shut forever —
+ * `activeDeployHold` self-clears a lapsed hold exactly like the maintenance one.
+ */
+
+const DEPLOY_HOLD = 'deploy_hold';
+
+/** The reason stamped on a deploy hold. Stable text so a reader of the status/log knows a hold came
+ *  from a deploy drain and not a human maintenance window. */
+export const DEPLOY_HOLD_REASON = 'agent-worker deploy drain';
+
+export interface DeployHold {
+  /** Epoch ms the hold lapses on its own — a DEADLINE, not a plan. */
+  until: number;
+  /** What is holding dispatch, for the UI and the log. */
+  reason: string;
+  /** Epoch ms the hold was taken. */
+  since: number;
+}
+
+/** The stored deploy hold, expired or not — `null` when none is set. Pure read. */
+export function deployHold(db: Database.Database): DeployHold | null {
+  const row = db.prepare('SELECT value, updated_at FROM robot_state WHERE key = ?').get(DEPLOY_HOLD) as
+    | { value: string | null; updated_at: number }
+    | undefined;
+  if (!row || row.value === null) return null;
+  try {
+    const parsed = JSON.parse(row.value) as { until?: unknown; reason?: unknown };
+    if (typeof parsed.until !== 'number') return null;
+    return {
+      until: parsed.until,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      since: row.updated_at,
+    };
+  } catch {
+    return null; // a corrupt row must not wedge the loop shut
+  }
+}
+
+/** Take the deploy hold. `until` is the deadline past which it lapses whatever happened to the drain
+ *  process — the drain passes `now + stallThresholdMs`. A second take WINS (a retried drain extends
+ *  the deadline). */
+export function takeDeployHold(db: Database.Database, until: number, reason: string, now: number = Date.now()): void {
+  writeState(db, DEPLOY_HOLD, JSON.stringify({ until, reason }), now);
+}
+
+/** Release the deploy hold. Clears ONLY this slot — never the maintenance or session-limit holds,
+ *  each of which has its own owner (D-105). */
+export function releaseDeployHold(db: Database.Database, now: number = Date.now()): void {
+  db.prepare(
+    `INSERT INTO robot_state (key, value, updated_at) VALUES (?, NULL, ?)
+       ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
+  ).run(DEPLOY_HOLD, now);
+}
+
+/** The dispatch gate: the deploy hold if it is still in force, or `null` — clearing a lapsed one as
+ *  it goes, exactly like {@link activeMaintenanceHold}, so a drain that died self-heals with no
+ *  human (and the new container's release-on-boot is the ordinary path). */
+export function activeDeployHold(db: Database.Database, now: number = Date.now()): DeployHold | null {
+  const hold = deployHold(db);
+  if (!hold) return null;
+  if (now < hold.until) return hold;
+  releaseDeployHold(db, now);
+  return null;
+}
+
 /** Upsert an arbitrary `robot_state` key (C5/PD-346 — used to throttle the PR-state poll). */
 export function writeState(db: Database.Database, key: string, value: string, now: number = Date.now()): void {
   db.prepare(

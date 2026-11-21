@@ -10,6 +10,7 @@ import { startEvaluatorJob } from './jobs/evaluate';
 import { startConflictJob } from './jobs/conflicts';
 import { startVisualJob } from './jobs/visual';
 import { startMaintenanceCoordinator } from './jobs/maintenance';
+import { releaseDeployHoldOnStartup } from './deploy-drain';
 import { startHeartbeat } from './heartbeat';
 
 /**
@@ -39,6 +40,11 @@ async function main(): Promise<void> {
   // Fail fast if the shared dashboard DB isn't mounted where we expect.
   const db = openDb(config);
   db.prepare('SELECT 1').get();
+
+  // Release a deploy hold a Watchtower pre-update drain left behind (PD-802, D-105): a recreate just
+  // swapped this container, and dispatch must resume now that the new process is up. Only the deploy
+  // slot is cleared — a human's manual maintenance window is left alone.
+  releaseDeployHoldOnStartup(db);
 
   // Liveness beacon the dashboard's Site Status reads (this worker never serves HTTP).
   startHeartbeat(db, config);
