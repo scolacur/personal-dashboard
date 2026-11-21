@@ -69,6 +69,12 @@ describe('loadRobotConfig', () => {
     expect(s.backoffMaxMs).toBe(15 * 60_000);
   });
 
+  it('defaults and reads the circuit-breaker threshold', () => {
+    expect(loadRobotConfig({}).breakerFailures).toBe(3);
+    expect(loadRobotConfig({ ROBOT_BREAKER_FAILURES: '5' }).breakerFailures).toBe(5);
+    expect(loadRobotConfig({ ROBOT_BREAKER_FAILURES: '0' }).breakerFailures).toBe(0); // 0 disables
+  });
+
   it('reads the C2 fault-guardrail knobs from env', () => {
     const s = loadRobotConfig({
       ROBOT_RETRY_CAP: '5',

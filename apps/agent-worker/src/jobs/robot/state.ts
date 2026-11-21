@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { HoldKind } from '@dashboard/shared';
+import { resetBreaker } from './breaker';
 
 /**
  * `robot_state` — a tiny key/value store for the Robot loop's own durable flags (D-055, PD-343).
@@ -55,12 +56,16 @@ export function pauseDispatch(db: Database.Database, reason: string, now: number
   ).run(DISPATCH_PAUSED, reason, now);
 }
 
-/** Clear the pause (the C4 resume action). */
+/** Clear the pause (the C4 resume action). Also resets the circuit breaker's consecutive-failure
+ *  count: a resume is the deliberate "I looked, carry on", and leaving a tripped count behind would
+ *  re-trip the breaker on the very next deterministic failure. The server's own resume endpoint
+ *  (store.ts `setDispatchPaused(db, false)`) clears the same key by name. */
 export function resumeDispatch(db: Database.Database, now: number = Date.now()): void {
   db.prepare(
     `INSERT INTO robot_state (key, value, updated_at) VALUES (?, NULL, ?)
        ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
   ).run(DISPATCH_PAUSED, now);
+  resetBreaker(db, now);
 }
 
 /* ── Session-limit hold (PD-470) ───────────────────────────────────────────────

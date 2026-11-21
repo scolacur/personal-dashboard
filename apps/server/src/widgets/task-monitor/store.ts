@@ -2331,6 +2331,15 @@ export function setDispatchPaused(
     `INSERT INTO robot_state (key, value, updated_at) VALUES ('dispatch_paused', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(paused ? (reason ?? 'paused by human') : null, now);
+  if (!paused) {
+    // A human resume also resets the worker's circuit breaker count (`robot_state.circuit_breaker`,
+    // the worker-owned key in agent-worker breaker.ts). A breaker pause always waits for a human;
+    // clearing the pause without clearing the count would re-trip on the next deterministic failure.
+    db.prepare(
+      `INSERT INTO robot_state (key, value, updated_at) VALUES ('circuit_breaker', NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
+    ).run(now);
+  }
   return getDispatchPauseState(db);
 }
 

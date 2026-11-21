@@ -9,7 +9,9 @@ import {
   ensureRobotStateTable,
   isDispatchPaused,
   pauseDispatch,
+  resumeDispatch,
 } from './state';
+import { breakerFailures } from './breaker';
 import { SESSION_LIMIT_FALLBACK_MS } from './faults';
 import type { RobotSessionResult } from './session';
 
@@ -295,6 +297,101 @@ describe('processRobotQueue', () => {
     const n2 = await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
     expect(n2).toBe(0);
     expect(listRunsForTicket(db, 2)).toEqual([]);
+  });
+
+  // ---- Circuit breaker (this ticket): N consecutive deterministic parks across tickets ----
+
+  /** A deterministic error whose signature is distinct per ticket, so the per-ticket promotion
+   *  never fires — the breaker is counting DISTINCT tickets, not a repeated signature. */
+  const detDeps = (): RobotDeps => {
+    const d = deps();
+    d.runSession = async (_c, cand) => ({
+      ok: false,
+      verifyOk: false,
+      error: `refused to edit protected path file-${cand.id}.ts`, // deterministic (D-047 pattern)
+    });
+    return d;
+  };
+
+  it('pauses the whole loop after N distinct deterministic parks (default 3)', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    addQueued(db, 3);
+    const c = cfg({ ROBOT_ALLOWLIST: '1,2,3', ROBOT_CONCURRENCY: '3' });
+
+    await processRobotQueue(db, c, detDeps());
+
+    // Each parked individually (deterministic → 0 retries), and the 3rd tripped the breaker.
+    expect(agentState(db, 1)).toBe('stuck');
+    expect(agentState(db, 2)).toBe('stuck');
+    expect(agentState(db, 3)).toBe('stuck');
+    expect(isDispatchPaused(db)).toBe(true);
+    expect(dispatchPauseState(db).reason).toMatch(/^circuit-breaker/);
+    expect(breakerFailures(db).map((f) => f.ticketId)).toEqual([1, 2, 3]);
+
+    // A loop-wide notification names the failure (no ticket attached).
+    const note = db
+      .prepare("SELECT title FROM agent_notifications WHERE kind = 'agent_needs_human' AND ticket_id IS NULL")
+      .get() as { title: string } | undefined;
+    expect(note?.title).toMatch(/circuit breaker/i);
+  });
+
+  it('does not trip before N — two deterministic parks leave the loop running', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const c = cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' });
+
+    await processRobotQueue(db, c, detDeps());
+
+    expect(isDispatchPaused(db)).toBe(false);
+    expect(breakerFailures(db)).toHaveLength(2);
+  });
+
+  it('a successful hand-off between parks resets the count', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2); // this one hands off
+    addQueued(db, 3);
+    const c = cfg({ ROBOT_ALLOWLIST: '1,2,3', ROBOT_CONCURRENCY: '3' });
+    const d = deps();
+    d.runSession = async (_cfg, cand) =>
+      cand.id === 2
+        ? { ok: true, verifyOk: true, prNumber: 500 }
+        : { ok: false, verifyOk: false, error: `refused to edit protected path file-${cand.id}.ts` };
+
+    await processRobotQueue(db, c, d);
+
+    // 1 parked (count=1), 2 handed off (reset → 0), 3 parked (count=1) — never reaches 3.
+    expect(isDispatchPaused(db)).toBe(false);
+    expect(breakerFailures(db).map((f) => f.ticketId)).toEqual([3]);
+  });
+
+  it('transient retries do not count toward the breaker', async () => {
+    addQueued(db, 1);
+    const c = cfgNoBackoff();
+    const d = deps();
+    // A distinct transient flake each run (letters, so `normalizeSignature` keeps them distinct and
+    // the transient→deterministic promotion never fires) — stays transient, never a deterministic park.
+    const errors = ['flake-alpha', 'flake-beta'];
+    let calls = 0;
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: errors[calls++] });
+
+    await processRobotQueue(db, c, d); // retry 1
+    await processRobotQueue(db, c, d); // retry 2
+    expect(breakerFailures(db)).toEqual([]); // nothing recorded while it was transient
+    expect(isDispatchPaused(db)).toBe(false);
+  });
+
+  it('resume clears a tripped breaker so the next park starts the count fresh', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    addQueued(db, 3);
+    const c = cfg({ ROBOT_ALLOWLIST: '1,2,3', ROBOT_CONCURRENCY: '3' });
+    await processRobotQueue(db, c, detDeps());
+    expect(isDispatchPaused(db)).toBe(true);
+
+    resumeDispatch(db, 2000);
+    expect(isDispatchPaused(db)).toBe(false);
+    expect(breakerFailures(db)).toEqual([]);
   });
 
   // ---- PD-470: the provider session limit ----

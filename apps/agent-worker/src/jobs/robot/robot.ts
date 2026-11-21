@@ -34,6 +34,7 @@ import {
   pauseDispatch,
 } from './state';
 import { logMilestone, ROBOT_EVENT } from './events';
+import { breakerPauseReason, breakerTripped, recordBreakerFailure, resetBreaker } from './breaker';
 import { setAgentState, branchFor } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
 import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
@@ -370,6 +371,26 @@ export async function processRobotQueue(
         logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
         notifyNeedsHuman(db, candidate.id, 'Robot ticket stuck', decision.reason, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: fault → parking (stuck)');
+        // Circuit breaker (this ticket): a deterministic park may be this ticket's own fault, or it
+        // may be the first sign the pipeline is broken for EVERY ticket. Count the distinct tickets
+        // that park this way; at the threshold, pause the whole loop so it stops feeding the line
+        // into the same wall. Transient-cap parks (tier 'transient') don't count — they're flakes.
+        if (decision.tier === 'deterministic') {
+          const list = recordBreakerFailure(
+            db,
+            { ticketId: candidate.id, displayId: displayIdFor(db, candidate.id), signature: decision.signature },
+            now(),
+          );
+          if (breakerTripped(list, config.robot.breakerFailures) && !isDispatchPaused(db)) {
+            const reason = breakerPauseReason(list);
+            // Reuse the one human-cleared pause (C4 `dispatch_paused`) so the existing Resume clears
+            // it — and resume also resets the count (state.ts / store.ts). A breaker pause never
+            // auto-expires. The promoter stops as a side effect: it reads the pause (D-103).
+            pauseDispatch(db, reason, now());
+            notifyLoop(db, 'agent_needs_human', 'Robot circuit breaker tripped', reason, now());
+            logger.error({ reason, failures: list.length }, 'robot: circuit breaker tripped — PAUSING dispatch');
+          }
+        }
       } else {
         setAgentState(db, candidate.id, 'queued', now());
         logMilestone(db, candidate.id, ROBOT_EVENT.fault, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
@@ -429,6 +450,9 @@ export async function processRobotQueue(
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
         handedOff = true;
         setAgentState(db, candidate.id, 'in-review', now());
+        // A successful hand-off proves the pipeline works — clear the circuit breaker's
+        // consecutive-deterministic-failure count (this ticket).
+        resetBreaker(db, now());
         dispatched++;
         logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
         // PD-773: the Robot asked for Steve's visual check; the PR waits for it (see visual/gate.ts).
@@ -462,6 +486,20 @@ export async function processRobotQueue(
   }
 
   return dispatched;
+}
+
+/** Best-effort read of a ticket's human-facing display id (e.g. `PD-974`) for a breaker label, or
+ *  null when the column is absent (older board schema / the orchestration test board). Wrapped so a
+ *  missing column never breaks a dispatch — the label just falls back to `#ticketId`. */
+function displayIdFor(db: Database.Database, ticketId: number): string | null {
+  try {
+    const row = db.prepare('SELECT display_id AS d FROM agent_tickets WHERE id = ?').get(ticketId) as
+      | { d: string | null }
+      | undefined;
+    return row?.d ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

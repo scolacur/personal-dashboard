@@ -109,4 +109,16 @@ describe('setDispatchPaused (C4 pause/resume)', () => {
     setDispatchPaused(db, true, 'second', 2000);
     expect(getDispatchPauseState(db)).toEqual({ paused: true, reason: 'second', since: 2000 });
   });
+
+  it('resume also clears the worker circuit-breaker count (robot_t974)', () => {
+    // The worker owns `robot_state.circuit_breaker`; mirror a tripped count here, then resume.
+    db.exec("CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)");
+    db.prepare("INSERT INTO robot_state (key, value, updated_at) VALUES ('circuit_breaker', ?, 1000)").run(
+      JSON.stringify([{ ticketId: 1, displayId: null, signature: 's' }]),
+    );
+    setDispatchPaused(db, true, 'circuit-breaker: …', 1000);
+    setDispatchPaused(db, false, null, 2000);
+    const row = db.prepare("SELECT value FROM robot_state WHERE key = 'circuit_breaker'").get() as { value: string | null };
+    expect(row.value).toBeNull();
+  });
 });

@@ -174,6 +174,10 @@ export interface RobotConfig {
   retryCap: number;
   /** Identical-signature repeats that promote a transient fault to deterministic (park). */
   promoteAfter: number;
+  /** Circuit breaker (this ticket): how many DISTINCT tickets may park with a deterministic fault,
+   *  with no successful hand-off between them, before the whole loop pauses. 0 disables. Default 3.
+   *  Catches a systemic break (main broken, env regressed) the per-ticket guardrail is blind to. */
+  breakerFailures: number;
   /** First transient-retry backoff step (ms); doubles per attempt up to `backoffMaxMs`. */
   backoffBaseMs: number;
   backoffMaxMs: number;
@@ -243,6 +247,7 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     maxTurns: Number(env.ROBOT_MAX_TURNS ?? ROBOT_MAX_TURNS_DEFAULT),
     retryCap: Number(env.ROBOT_RETRY_CAP ?? 3),
     promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
+    breakerFailures: Number(env.ROBOT_BREAKER_FAILURES ?? 3),
     backoffBaseMs: Number(env.ROBOT_BACKOFF_BASE_MS ?? 60_000),
     backoffMaxMs: Number(env.ROBOT_BACKOFF_MAX_MS ?? 15 * 60_000),
     stallThresholdMs: Number(env.ROBOT_STALL_THRESHOLD_MS ?? 2 * 60 * 60_000),
