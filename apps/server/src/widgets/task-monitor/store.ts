@@ -80,6 +80,7 @@ interface TicketRow {
   max_turns: number | null;
   is_epic: number;
   epic_id: number | null;
+  auto_queue_excluded: number;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -147,6 +148,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     maxTurns: row.max_turns,
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
+    autoQueueExcluded: row.auto_queue_excluded === 1,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -186,6 +188,11 @@ export function listProjects(db: Database.Database): AgentProject[] {
 
 export function projectExists(db: Database.Database, id: number): boolean {
   return db.prepare('SELECT 1 FROM agent_projects WHERE id = ?').get(id) !== undefined;
+}
+
+export function getProjectById(db: Database.Database, id: number): AgentProject | null {
+  const row = db.prepare('SELECT * FROM agent_projects WHERE id = ?').get(id) as ProjectRow | undefined;
+  return row ? rowToProject(row) : null;
 }
 
 export function getProjectBySlug(db: Database.Database, slug: string): AgentProject | null {
@@ -481,6 +488,11 @@ export function updateTicket(
     maxTurns: patch.maxTurns === undefined ? existing.maxTurns : validMaxTurns(patch.maxTurns),
     // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
     epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
+    // D-103: auto-queue exclusion, meaningful on Epics. Defaults to the existing value.
+    autoQueueExcluded:
+      patch.autoQueueExcluded === undefined
+        ? (existing.autoQueueExcluded ?? false)
+        : patch.autoQueueExcluded,
     updatedAt: Date.now(),
   };
 
@@ -621,7 +633,7 @@ export function updateTicket(
     }
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -639,6 +651,7 @@ export function updateTicket(
       next.maxTurns,
       next.isEpic ? 1 : 0,
       next.epicId,
+      next.autoQueueExcluded ? 1 : 0,
       next.updatedAt,
       id,
     );

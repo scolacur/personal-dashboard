@@ -15,7 +15,10 @@ import {
   RATE_LIMIT_FALLBACK_MS,
   RATE_LIMIT_MAX_WAIT_MS,
   RATE_LIMIT_SIGNATURE,
+  PROCESS_RESTART_SIGNATURE,
+  INTERRUPTED_SIGNATURE,
   type FailedRun,
+  type FaultClassification,
   type FaultPolicy,
 } from './faults';
 
@@ -132,6 +135,61 @@ describe('decideFault', () => {
   it('PD-406: missing hashes (legacy runs) are treated as unchanged → park', () => {
     const prior: FailedRun[] = [{ tier: 'transient', signature: MAX_TURNS_SIGNATURE, finishedAt: 1, bodyHash: null }];
     expect(decideFault(maxTurns(), prior, policy, null)).toMatchObject({ action: 'park', tier: 'deterministic' });
+  });
+});
+
+describe('infrastructure faults (PD-784/D-104)', () => {
+  const infra = (signature: string): FaultClassification => ({ tier: 'transient', signature, reason: 'stalled' });
+
+  it('a process-restart orphan ignores the ordinary retry cap', () => {
+    const tiny: FaultPolicy = { ...policy, retryCap: 1 };
+    const prior: FailedRun[] = [
+      { tier: 'transient', signature: 'real-fault', finishedAt: 1, bodyHash: null },
+      { tier: 'transient', signature: 'real-fault', finishedAt: 2, bodyHash: null },
+    ];
+    expect(decideFault(infra(PROCESS_RESTART_SIGNATURE), prior, tiny).action).toBe('retry');
+  });
+
+  it('a process-restart orphan parks at its own cap (default 3)', () => {
+    const orphan: FailedRun = { tier: 'transient', signature: PROCESS_RESTART_SIGNATURE, finishedAt: 1 };
+    expect(decideFault(infra(PROCESS_RESTART_SIGNATURE), [orphan], policy).action).toBe('retry'); // 2nd
+    const third = decideFault(infra(PROCESS_RESTART_SIGNATURE), [orphan, orphan], policy);
+    expect(third.action).toBe('park');
+    expect(third.reason).toMatch(/orphan cap 3/);
+    expect(decideFault(infra(PROCESS_RESTART_SIGNATURE), [orphan], { ...policy, orphanCap: 2 }).action).toBe('park');
+  });
+
+  it('preflight parks a ticket that already reached the orphan cap', () => {
+    const orphan: FailedRun = { tier: 'transient', signature: PROCESS_RESTART_SIGNATURE, finishedAt: 1 };
+    expect(preflight([orphan, orphan], policy, 10).action).toBe('go');
+    expect(preflight([orphan, orphan, orphan], policy, 10)).toMatchObject({ action: 'park' });
+  });
+
+  it('a graceful interrupt never counts, however many times it repeats', () => {
+    const interrupted: FailedRun = { tier: 'transient', signature: INTERRUPTED_SIGNATURE, finishedAt: 1 };
+    const many = Array.from({ length: 10 }, () => interrupted);
+    expect(decideFault(infra(INTERRUPTED_SIGNATURE), many, { ...policy, orphanCap: 1 }).action).toBe('retry');
+    expect(preflight(many, policy, 10).action).toBe('go');
+  });
+
+  it('a graceful interrupt always retries', () => {
+    expect(decideFault(infra(INTERRUPTED_SIGNATURE), [], { ...policy, retryCap: 1 }).action).toBe('retry');
+  });
+
+  it('infra faults are not counted — they never push a real fault over the cap or into a promotion', () => {
+    // Two real transients + three infra events: with retryCap 3, a third REAL fault would park, but
+    // the infra events must not count toward that.
+    const prior: FailedRun[] = [
+      { tier: 'transient', signature: 'boom', finishedAt: 1 },
+      { tier: 'transient', signature: PROCESS_RESTART_SIGNATURE, finishedAt: 2 },
+      { tier: 'transient', signature: INTERRUPTED_SIGNATURE, finishedAt: 3 },
+    ];
+    // nextEligibleAt counts only the one real 'boom' failure → first backoff step off its finish.
+    expect(nextEligibleAt(prior, policy)).toBe(1 + 1000);
+    // A fresh real fault of a NEW signature: countable prior is just the one 'boom', so total = 2 <
+    // cap 3 and this signature hasn't repeated → retry. The two infra events are invisible to both.
+    const cls: FaultClassification = { tier: 'transient', signature: 'other', reason: 'x' };
+    expect(decideFault(cls, prior, policy).action).toBe('retry');
   });
 });
 

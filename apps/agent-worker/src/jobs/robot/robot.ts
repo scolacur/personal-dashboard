@@ -24,8 +24,11 @@ import {
   ticketsWithTerminalWipRef,
   clearWipRef,
 } from './runs';
-import { classifyFault, decideFault, preflight, type FaultPolicy } from './faults';
+import { classifyFault, decideFault, preflight, INTERRUPTED_SIGNATURE, type FaultClassification, type FaultPolicy } from './faults';
+import { ABORT_HUNG, ABORT_SHUTDOWN, createRunOwnership, type RunOwnership } from './ownership';
+import { RobotShutdown, timeout } from './shutdown';
 import {
+  activeDeployHold,
   activeMaintenanceHold,
   activeSessionLimitHold,
   ensureRobotStateTable,
@@ -37,7 +40,7 @@ import { breakerPauseReason, breakerNotificationBody, recordDeterministicFailure
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
-import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
+import { checkBudget, publishBudgetPolicy, publishCapacityPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
@@ -64,8 +67,8 @@ export { setAgentState, branchFor };
 
 /** Derive the fault policy from config (faults.ts is pure; this is the only adapter). */
 function faultPolicy(config: AgentWorkerConfig): FaultPolicy {
-  const { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs } = config.robot;
-  return { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs };
+  const { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs, orphanCap } = config.robot;
+  return { retryCap, promoteAfter, backoffBaseMs, backoffMaxMs, orphanCap };
 }
 
 /** The loop-wide budget ceiling this config enforces (PD-463). */
@@ -96,7 +99,16 @@ export interface RobotDeps {
     resume: ResumeContext | undefined,
     /** PD-230: called as the session streams, with the live turn count. */
     onProgress?: (turns: number) => void,
+    /** PD-784/D-104: aborts the session on a graceful stop. The default (real) session wires it to
+     *  the SDK; an injected session may trigger `shutdown.request()` to simulate a SIGTERM. */
+    abort?: AbortController,
   ) => Promise<RobotSessionResult>;
+  /** PD-784/D-104: the live worker's in-flight run registry. Persisted across cycles by the loop
+   *  owner (`startRobotJob`); a fresh one per call otherwise. Shared with `reconcileStalledRuns` so
+   *  orphans are reclaimed by ownership, not age. */
+  ownership?: RunOwnership;
+  /** PD-784/D-104: the graceful-stop coordinator. Defaults to one wrapping `ownership`. */
+  shutdown?: RobotShutdown;
   now?: () => number;
 }
 
@@ -136,6 +148,7 @@ export async function processRobotQueue(
   // available only after the switch was already flipped, which is backwards for a pre-flight.
   const budget = budgetPolicy(config);
   publishBudgetPolicy(db, budget, now());
+  publishCapacityPolicy(db, { concurrency: config.robot.concurrency }, now()); // D-103: auto-queue reads it
 
   // System-wide fault gate (C2): a prior auth/credit fault paused the whole loop. Stay inert until
   // a human resumes (C4) — auto-resuming would re-burn the board (the PD-320/#202 failure mode).
@@ -170,25 +183,44 @@ export async function processRobotQueue(
     return 0;
   }
 
+  // Deploy hold (PD-802, D-105): a Watchtower pre-update drain is about to recreate this container,
+  // so nothing new may dispatch while it waits for in-flight runs to finish. Its own slot, not a
+  // reason on the maintenance hold above — see the block comment in `state.ts` for why. Bounded by
+  // `stallThresholdMs`, so a drain that dies cannot wedge dispatch shut; the new container also
+  // releases a lingering hold on boot.
+  const deploy = activeDeployHold(db, now());
+  if (deploy) {
+    logger.info(
+      { until: deploy.until, reason: deploy.reason },
+      'robot: holding — deploy drain, dispatch resumes once the new container boots',
+    );
+    return 0;
+  }
+
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
   const doPrune = deps.pruneWorktrees ?? ((c, keep) => pruneWorktrees(c, keep));
   const doPushWip = deps.pushWip ?? ((c, w, id) => pushWip(c, w, id));
   const doDeleteWip = deps.deleteWip ?? ((c, id, cwd) => deleteWipRef(c, id, cwd));
   // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot, `onProgress` in
-  // the 6th and the DB handle in the 7th, so `deps.runSession` (whose 5th arg IS onProgress)
-  // cannot be passed positionally. `db` is closed over from this cycle — PD-564 needs it to build
-  // the decision-id tool, and dropping it costs the Robot its ability to record a decision without
-  // anything else going red.
+  // the 6th, the DB handle in the 7th and the abort controller in the 8th, so `deps.runSession`
+  // (whose 5th arg IS onProgress) cannot be passed positionally. `db` is closed over from this cycle
+  // — PD-564 needs it to build the decision-id tool, and dropping it costs the Robot its ability to
+  // record a decision without anything else going red.
   const doRun =
     deps.runSession ??
-    ((c, cand, w, resume, onProgress) => runRobotSession(c, cand, w, resume, undefined, onProgress, db));
+    ((c, cand, w, resume, onProgress, abort) => runRobotSession(c, cand, w, resume, undefined, onProgress, db, abort));
   const policy = faultPolicy(config);
+
+  // PD-784/D-104: the ownership registry (persisted across cycles by the loop owner) and the
+  // graceful-stop coordinator. Orphan reclaim keys off ownership, not age.
+  const ownership = deps.ownership ?? createRunOwnership();
+  const shutdown = deps.shutdown ?? new RobotShutdown(ownership);
 
   // ── C5 (PD-346): pre-dispatch reconciliation — the four folded-in bridges. These run BEFORE
   // selection so a ticket they re-queue is picked up in this SAME cycle. All are DB-native (no
   // labels); the PR-state poll is self-throttled to its own slower cadence.
-  reconcileStalledRuns(db, config, policy, now()); // watchdog → in-process stall detection
+  reconcileStalledRuns(db, config, policy, ownership, now()); // watchdog → ownership-based reclaim (D-104)
   resumeAskHuman(db, now()); // ask_human resume off the DB reply
   await pollInReviewPrs(db, config, now()); // review-/conflict-rework → one PR-state poll
 
@@ -229,6 +261,13 @@ export async function processRobotQueue(
   let dispatched = 0;
 
   for (const candidate of selected) {
+    // PD-784/D-104: a graceful stop was requested mid-cycle — dispatch nothing new. In-flight
+    // sessions are aborted by the shutdown coordinator and unwind through the catch below.
+    if (shutdown.requested) {
+      logger.warn('robot: graceful stop in progress — not dispatching further this cycle');
+      break;
+    }
+
     // PD-463: the loop-wide budget ceiling, evaluated per candidate so a cycle with concurrency > 1
     // cannot step over it mid-cycle. It gates NEW dispatch only — an in-flight Robot is never
     // interrupted, because killing one mid-hand-off loses the work outright (D-046).
@@ -304,6 +343,11 @@ export async function processRobotQueue(
       { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch, bodyHash, maxTurns: effectiveMaxTurns },
       now(),
     );
+    // PD-784/D-104: claim ownership of this run the instant its row exists, so the stall reconciler
+    // never mistakes a run THIS process is executing for a dead-process orphan. The abort controller
+    // is how a graceful stop interrupts the session below.
+    const abort = new AbortController();
+    ownership.begin({ runId, ticketId: candidate.id, branch, abort }, now());
     logMilestone(db, candidate.id, ROBOT_EVENT.dispatched, { branch, maxTurns: effectiveMaxTurns }, now());
 
     // Route a failed run (no-verify or errored) through the fault guardrail. Shared by the normal
@@ -318,8 +362,11 @@ export async function processRobotQueue(
       // PD-737/T898: the WIP ref this run preserved its work to (or null). Recorded on the run row
       // and surfaced in whichever milestone this failure writes, so a human can `git fetch` it.
       wip: WipRef | null = null,
+      // PD-784/D-104: an explicit classification, used by the graceful-stop path to record the run
+      // as an `interrupted` infra fault rather than letting `classifyFault` read the abort error.
+      classification?: FaultClassification,
     ): void => {
-      const cls = classifyFault({ verifyOk: false, error }, now());
+      const cls = classification ?? classifyFault({ verifyOk: false, error }, now());
       const decision = decideFault(cls, failures, policy, bodyHash, now());
       const wipDetail = wip ? { wipRef: wip.ref, wipSha: wip.sha } : {};
       finishRun(
@@ -412,25 +459,75 @@ export async function processRobotQueue(
     const preserveWip = async (): Promise<WipRef | null> => {
       if (!worktree) return null;
       try {
-        return await doPushWip(config, worktree, candidate.id);
+        const push = doPushWip(config, worktree, candidate.id);
+        // PD-784/D-104: during a graceful stop the container's stop-grace window is finite, so the
+        // WIP push is time-boxed — a hung `git push` must not eat the whole window and get the
+        // process SIGKILLed before the run is even closed. Outside a stop it runs unbounded as before.
+        return shutdown.requested
+          ? await Promise.race([push, timeout<WipRef | null>(config.robot.shutdownWipTimeoutMs, null)])
+          : await push;
       } catch (err) {
         logger.warn({ err, ticketId: candidate.id }, 'robot: WIP push raised — ignored, run outcome unaffected');
         return null;
       }
     };
 
+    // PD-784/D-104: why (if at all) this run's session was aborted. Read off the controller, not off
+    // `shutdown.requested`, and checked on BOTH exits of the session — `runRobotSession` catches the
+    // SDK's abort error itself and RETURNS `{ ok: false }`, so an aborted run usually never reaches
+    // the `catch` below.
+    const abortReason = (): string | null => (abort.signal.aborted ? String(abort.signal.reason) : null);
+    /** Close a run a graceful stop aborted: a transient `interrupted` fault — re-queued, never counted
+     *  (D-104) — after a time-boxed WIP push, so a deploy neither strands nor loses the work. */
+    const closeInterrupted = async (
+      sessionId: string | undefined,
+      error: string | undefined,
+      metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
+    ): Promise<void> => {
+      logger.warn({ ticketId: candidate.id }, 'robot: in-flight session interrupted by graceful stop — re-queuing');
+      handleFailure('error', sessionId, error, metrics, await preserveWip(), {
+        tier: 'transient',
+        signature: INTERRUPTED_SIGNATURE,
+        reason: 'interrupted: worker graceful stop (SIGTERM)',
+      });
+    };
+    /** The hung-session backstop (stall.ts) already closed this run and re-queued its ticket; closing
+     *  it again would double-write it. Only salvage the WIP. Unreachable while sessions are awaited
+     *  inside the cycle — live once a run can outlive its cycle. */
+    const leaveReclaimed = async (): Promise<void> => {
+      logger.warn({ ticketId: candidate.id, runId }, 'robot: session aborted as hung — run already reclaimed, not closing it again');
+      await preserveWip();
+    };
+
     try {
       worktree = await doEnsure(config, branch);
+      ownership.attachWorktree(runId, worktree); // PD-784: so a graceful stop can reach it for WIP
       // PD-230: persist live turn progress so the board shows a working run closing on the cap.
       // The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only reports.
-      const result = await doRun(config, candidate, worktree, resumeCtx, (turns) =>
-        updateRunProgress(db, runId, turns),
+      // PD-784/D-104: the same callback resets the run's hung-session clock in the ownership registry.
+      const result = await doRun(
+        config,
+        candidate,
+        worktree,
+        resumeCtx,
+        (turns) => {
+          updateRunProgress(db, runId, turns);
+          ownership.progress(runId, now());
+        },
+        abort,
       );
       // Spread into finishRun on every terminal path, so the captured tail (PD-426) lands on the
       // run row before the `finally` below removes the worktree.
       const metrics = { turns: result.turns, tokens: result.tokens, outputTail: result.outputTail };
+      const handoffReady = result.ok && result.verifyOk && result.prNumber !== undefined;
 
-      if (result.askHuman) {
+      if (abortReason() === ABORT_HUNG) {
+        await leaveReclaimed();
+      } else if (abortReason() === ABORT_SHUTDOWN && !handoffReady && !result.askHuman) {
+        // A session that finished its hand-off (or asked its question) before the abort landed keeps
+        // that outcome below; anything else the stop cut short is an interrupt, not a ticket failure.
+        await closeInterrupted(result.sessionId, result.error, metrics);
+      } else if (result.askHuman) {
         // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a
         // question. Not a failure — burns no budget; a human answers (Notification Center) and the
         // resume sweep re-queues it next cycle. Preserve WIP too (PD-737/T898): the next dispatch's
@@ -446,7 +543,7 @@ export async function processRobotQueue(
         logMilestone(db, candidate.id, ROBOT_EVENT.askHuman, { question: result.askHuman, ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}) }, now());
         notifyAwaitingHuman(db, candidate.id, 'Robot asked a question', result.askHuman, now());
         logger.info({ ticketId: candidate.id, question: result.askHuman.slice(0, 200) }, 'robot: ask_human — parked (awaiting-human)');
-      } else if (result.ok && result.verifyOk && result.prNumber !== undefined) {
+      } else if (handoffReady && result.prNumber !== undefined) {
         const prUrl = `https://github.com/${candidate.repo}/pull/${result.prNumber}`;
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
         handedOff = true;
@@ -471,10 +568,17 @@ export async function processRobotQueue(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      logger.error({ err, ticketId: candidate.id }, 'robot: dispatch failed');
-      // A thrown session may still have left work in the clone (if ensureWorktree got far enough).
-      handleFailure('error', undefined, msg, {}, await preserveWip());
+      if (abortReason() === ABORT_HUNG) {
+        await leaveReclaimed();
+      } else if (abortReason() === ABORT_SHUTDOWN) {
+        await closeInterrupted(undefined, msg);
+      } else {
+        logger.error({ err, ticketId: candidate.id }, 'robot: dispatch failed');
+        // A thrown session may still have left work in the clone (if ensureWorktree got far enough).
+        handleFailure('error', undefined, msg, {}, await preserveWip());
+      }
     } finally {
+      ownership.end(runId); // PD-784: the run is terminal — the live process no longer owns it.
       if (worktree && handedOff) {
         // The work is on GitHub as a PR now, so the WIP ref is superseded — delete it (best-effort)
         // while the clone still exists, then drop the clone (PD-737/T898, PD-719).

@@ -199,6 +199,21 @@ export interface RobotConfig {
    *  but tokens-per-turn swings by model, so this stays opt-in rather than shipping a number that
    *  quietly goes wrong after a model change. */
   budgetTokens: number;
+  /** PD-784/D-104: on a graceful stop (SIGTERM), the cap on each in-flight run's WIP push so a hung
+   *  `git push` can't eat the container's stop-grace window. Default 8s. */
+  shutdownWipTimeoutMs: number;
+  /** PD-784/D-104: how long the entrypoint waits for the Robot loop to drain in-flight runs after a
+   *  stop signal before exiting. Must fit inside the compose `stop_grace_period`. Default 20s. */
+  shutdownDrainMs: number;
+  /** PD-784/D-104: process-restart orphans one ticket may accumulate (since its last human reset)
+   *  before it parks — separate from `retryCap`. Default 3. */
+  orphanCap: number;
+  /** PD-784/D-104: the restart breaker — this many unclean worker restarts that left orphaned runs,
+   *  within `restartBreakerWindowMs`, pause dispatch (a human resumes). Default 4: one more than
+   *  `orphanCap`, so a single bad ticket parks itself before it can trip the whole loop. */
+  restartBreakerCount: number;
+  /** PD-784/D-104: the restart breaker's window. Default 6h. */
+  restartBreakerWindowMs: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -254,6 +269,11 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     budgetWindowMs: Number(env.ROBOT_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
     budgetTurns: Number(env.ROBOT_BUDGET_TURNS ?? 500),
     budgetTokens: Number(env.ROBOT_BUDGET_TOKENS ?? 0),
+    shutdownWipTimeoutMs: Number(env.ROBOT_SHUTDOWN_WIP_TIMEOUT_MS ?? 8_000),
+    shutdownDrainMs: Number(env.ROBOT_SHUTDOWN_DRAIN_MS ?? 20_000),
+    orphanCap: Number(env.ROBOT_ORPHAN_CAP ?? 3),
+    restartBreakerCount: Number(env.ROBOT_RESTART_BREAKER_COUNT ?? 4),
+    restartBreakerWindowMs: Number(env.ROBOT_RESTART_BREAKER_WINDOW_MS ?? 6 * 60 * 60_000),
   };
 }
 
