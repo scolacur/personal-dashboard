@@ -39,6 +39,7 @@ import {
   isReady,
   queueEntryRefusals,
   latestActionableProposal,
+  refineRelationsError,
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
@@ -1950,6 +1951,10 @@ export function approveRefine(
   const populate = parent.isEpic;
   const children = p.children ?? [];
   if (children.length === 0) return { ok: false, reason: 'invalid_proposal', detail: 'no children' };
+  // PD-842: the propose tool already refuses malformed relations; re-checked here so a stored
+  // proposal can never half-apply — a bad edge would otherwise throw mid-transaction.
+  const relErr = refineRelationsError(p.relations, children.length);
+  if (relErr) return { ok: false, reason: 'invalid_proposal', detail: relErr };
   if (parent.projectId === null) {
     return { ok: false, reason: 'invalid_proposal', detail: 'parent has no project' };
   }
@@ -2003,6 +2008,11 @@ export function approveRefine(
       // `split` lineage is a decompose-only relation; Populate links purely by membership.
       if (!populate) addRelation(db, ticketId, child.id, 'split');
       childIds.push(child.id);
+    }
+    // PD-842: the proposal's sibling relations, now that every child has an id. `origin: 'agent'`
+    // — the Refine agent proposed them, Steve approved; same provenance as the `split` lineage.
+    for (const r of p.relations ?? []) {
+      addRelation(db, childIds[r.from], childIds[r.to], r.type, 'agent');
     }
     // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
     if (!populate) updateTicket(db, ticketId, { status: 'closed' });
@@ -2367,6 +2377,16 @@ export function setDispatchPaused(
     `INSERT INTO robot_state (key, value, updated_at) VALUES ('dispatch_paused', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(paused ? (reason ?? 'paused by human') : null, now);
+  // t974 (D-107): a human resume also resets the circuit breaker's consecutive-deterministic-failure
+  // streak, so the loop starts counting fresh. The worker owns this key (`breaker_consecutive`, in
+  // agent-worker/.../breaker.ts) — resume is the only human reset, so we null it here. Mirrors the
+  // literal `dispatch_paused` convention above (the robot_state keys are not shared constants).
+  if (!paused) {
+    db.prepare(
+      `INSERT INTO robot_state (key, value, updated_at) VALUES ('breaker_consecutive', NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
+    ).run(now);
+  }
   return getDispatchPauseState(db);
 }
 

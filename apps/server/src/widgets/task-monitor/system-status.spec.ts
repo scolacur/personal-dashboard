@@ -10,6 +10,7 @@ import {
   getGithubRateLimit,
   getSortieFleet,
   listWorkerHeartbeats,
+  setDispatchPaused,
 } from './store';
 
 function freshDb(): Database.Database {
@@ -162,6 +163,44 @@ describe('getDispatchPauseState', () => {
       reason: 'auth/credit fault (loop-wide): HTTP 403',
       since: 1700,
     });
+  });
+});
+
+describe('setDispatchPaused resets the circuit breaker on resume (t974, D-107)', () => {
+  // Seed a non-empty breaker streak (worker-owned key) alongside a pause, as a trip leaves them.
+  function seedTripped(db: Database.Database): void {
+    setDispatchPaused(db, true, 'circuit-breaker: 3 consecutive deterministic failures (t1, t2, t3)', 1000);
+    db.prepare(
+      "INSERT INTO robot_state (key, value, updated_at) VALUES ('breaker_consecutive', ?, ?)",
+    ).run(JSON.stringify([{ ticketId: 1, title: 'T1', signature: 'sig' }]), 1000);
+  }
+
+  function breakerValue(db: Database.Database): string | null {
+    const row = db.prepare("SELECT value FROM robot_state WHERE key = 'breaker_consecutive'").get() as
+      | { value: string | null }
+      | undefined;
+    return row?.value ?? null;
+  }
+
+  it('resume clears both the pause and the breaker streak', () => {
+    const db = freshDb();
+    seedTripped(db);
+    expect(breakerValue(db)).not.toBeNull();
+
+    const state = setDispatchPaused(db, false, null, 2000);
+    expect(state.paused).toBe(false);
+    expect(breakerValue(db)).toBeNull(); // streak reset so the loop starts counting fresh
+  });
+
+  it('a pause leaves the breaker streak alone (only resume resets it)', () => {
+    const db = freshDb();
+    db.prepare('CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)').run();
+    db.prepare(
+      "INSERT INTO robot_state (key, value, updated_at) VALUES ('breaker_consecutive', ?, ?)",
+    ).run(JSON.stringify([{ ticketId: 1, title: 'T1', signature: 'sig' }]), 1000);
+
+    setDispatchPaused(db, true, 'paused by human', 2000);
+    expect(breakerValue(db)).not.toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ROBOT_MAX_TURNS_LIMIT, coerceTicketStatus } from '@dashboard/shared';
+import { ROBOT_MAX_TURNS_LIMIT, coerceTicketStatus, refineRelationsError } from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal, RefineQuestionRound } from '@dashboard/shared';
 import type Database from 'better-sqlite3';
@@ -52,6 +52,14 @@ const CHILD = z.object({
   refined: z.boolean().optional(),
 });
 
+// PD-842: a relation between two children, by 0-based index into `children` (they have no ids
+// until approval creates them). Only `blocks` / `relates` — `split` lineage stays automatic.
+const RELATION = z.object({
+  from: z.number().int().min(0),
+  to: z.number().int().min(0),
+  type: z.enum(['blocks', 'relates']),
+});
+
 // Raw Zod shape (not z.object) — the SDK's tool() wants the shape.
 const PROPOSE_COMMIT_SHAPE = {
   mode: z.enum(['refine_in_place', 'decompose']),
@@ -60,6 +68,7 @@ const PROPOSE_COMMIT_SHAPE = {
   assignee: ASSIGNEE.optional(),
   maxTurns: MAX_TURNS.optional(),
   children: z.array(CHILD).optional(),
+  relations: z.array(RELATION).optional(),
   rationale: z.string().optional(),
 };
 
@@ -75,6 +84,10 @@ const DESCRIPTION = [
   'Children are born refined — set `refined: false` on a child ONLY if it is a placeholder that needs',
   'its own Refine session. The standard: a child is refined if you would hand it to a Robot as-is.',
   'A robot-assigned child without the four sections lands unrefined whatever you claim.',
+  'OPTIONAL `relations` (decompose only): edges between the children you propose, each',
+  '{ from, to, type } with `from`/`to` as 0-based indexes into `children` and type "blocks" (from must',
+  'finish before to can start) or "relates". When the slices form a dependency chain, PUT IT HERE —',
+  'they are written on approval alongside the children. Never ask Steve to wire links by hand.',
   'There is NO priority field: priority belongs to the Epic and cascades to its members, so a',
   'Ticket-level priority has nowhere to land. If the plan implies a different urgency, say so in',
   '`rationale` and let Steve price the Epic.',
@@ -128,7 +141,13 @@ export function validateProposalShape(
       const err = queueLaneError(`child "${c.title}"`, c.status);
       if (err) return err;
     }
+    // PD-842: relations address children by index, so they are checked against this proposal.
+    const relErr = refineRelationsError(proposal.relations, proposal.children.length);
+    if (relErr) return `${relErr} Re-call with corrected \`relations\`.`;
   } else if (proposal.mode === 'refine_in_place') {
+    if (proposal.relations && proposal.relations.length > 0) {
+      return '`relations` link decompose children to each other, but this is refine_in_place — there are no children. Drop `relations`, or decompose if the work really is several tickets.';
+    }
     if (proposal.body === undefined) {
       return 'refine_in_place requires the rewritten `body` for this ticket — you set mode "refine_in_place" but attached no body. Re-call with the full rewritten body.';
     }
@@ -176,6 +195,9 @@ export function buildProposeToolServer(
                 status: coerceTicketStatus(c.status) ?? 'backlog',
               })),
             }
+          : {}),
+        ...(args.relations !== undefined && args.relations.length > 0
+          ? { relations: args.relations }
           : {}),
         ...(args.rationale !== undefined ? { rationale: args.rationale } : {}),
       };

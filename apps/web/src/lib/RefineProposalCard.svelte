@@ -134,6 +134,19 @@
         </li>
       {/each}
     </ul>
+    <!-- PD-842: sibling relations written on approval, shown so Steve approves what lands. -->
+    {#if proposal.relations && proposal.relations.length > 0}
+      <p class="proposal-section-label">Relations</p>
+      <ul class="proposal-relations">
+        {#each proposal.relations as rel, i (i)}
+          <li>
+            <span class="child-title">{proposal.children?.[rel.from]?.title ?? `#${rel.from + 1}`}</span>
+            <span class="relation-verb">{rel.type === 'blocks' ? 'blocks' : 'relates to'}</span>
+            <span class="child-title">{proposal.children?.[rel.to]?.title ?? `#${rel.to + 1}`}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 {/snippet}
 

@@ -1405,6 +1405,64 @@ export interface RefineChildProposal {
   refined?: boolean;
 }
 
+/** The relation types a Refine proposal may carry between its children (PD-842). `split` stays
+ *  automatic (parent→child lineage) and `duplicates` makes no sense between siblings being born. */
+export type RefineRelationType = 'blocks' | 'relates';
+export const REFINE_RELATION_TYPES: readonly RefineRelationType[] = ['blocks', 'relates'];
+
+/** A proposed relation between two decompose children, addressed by 0-based index into
+ *  `RefineProposal.children` — the children have no ids until approval creates them (PD-842). */
+export interface RefineRelationProposal {
+  from: number;
+  to: number;
+  type: RefineRelationType;
+}
+
+/**
+ * Mechanical shape check for a proposal's `relations` (PD-842): index range, self-edges, and
+ * `blocks` cycles among the children. Returns an instructive error, or null when well-formed.
+ * Shared so the propose tool (immediate agent feedback) and the approve path (defence against a
+ * stored proposal) apply the same rule.
+ */
+export function refineRelationsError(
+  relations: readonly RefineRelationProposal[] | undefined,
+  childCount: number,
+): string | null {
+  if (!relations || relations.length === 0) return null;
+  const adj = new Map<number, number[]>();
+  for (const r of relations) {
+    const label = `relation ${r.from} → ${r.to}`;
+    if (!REFINE_RELATION_TYPES.includes(r.type)) {
+      return `${label} has type "${r.type}", but only ${REFINE_RELATION_TYPES.join(' / ')} may be proposed.`;
+    }
+    for (const end of [r.from, r.to]) {
+      if (!Number.isInteger(end) || end < 0 || end >= childCount) {
+        return `${label} points at child index ${end}, but there are only ${childCount} children (0-based, 0..${childCount - 1}).`;
+      }
+    }
+    if (r.from === r.to) return `${label} relates a child to itself.`;
+    if (r.type === 'blocks') adj.set(r.from, [...(adj.get(r.from) ?? []), r.to]);
+  }
+  // Cycle check over the `blocks` edges (D-048): a cycle would leave every member permanently blocked.
+  const state = new Map<number, 1 | 2>(); // 1 = on stack, 2 = done
+  const visit = (n: number, path: number[]): number[] | null => {
+    if (state.get(n) === 1) return [...path, n];
+    if (state.get(n) === 2) return null;
+    state.set(n, 1);
+    for (const m of adj.get(n) ?? []) {
+      const cyc = visit(m, [...path, n]);
+      if (cyc) return cyc;
+    }
+    state.set(n, 2);
+    return null;
+  };
+  for (const n of adj.keys()) {
+    const cyc = visit(n, []);
+    if (cyc) return `the blocks relations form a cycle (${cyc.join(' → ')}), which would leave those children permanently blocked.`;
+  }
+  return null;
+}
+
 /**
  * The structured commit proposal, stored as the detail of a `refine_proposal` event.
  *
@@ -1426,6 +1484,10 @@ export interface RefineProposal {
   maxTurns?: number | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
+  /** decompose (PD-842): relations between the proposed children, by index into `children`.
+   *  Written in the approval transaction, so a dependency chain arrives wired instead of needing
+   *  Steve to link it by hand. Omitted on every proposal stored before PD-842. */
+  relations?: RefineRelationProposal[];
   /** Short why, shown in the approval panel. */
   rationale?: string;
 }
