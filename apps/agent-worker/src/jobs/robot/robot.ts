@@ -33,6 +33,7 @@ import {
   isDispatchPaused,
   pauseDispatch,
 } from './state';
+import { breakerPauseReason, breakerNotificationBody, recordDeterministicFailure, resetBreaker } from './breaker';
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
@@ -370,6 +371,27 @@ export async function processRobotQueue(
         logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
         notifyNeedsHuman(db, candidate.id, 'Robot ticket stuck', decision.reason, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: fault → parking (stuck)');
+        // Circuit breaker (t974, D-107): only a DETERMINISTIC-tier park feeds it — a transient
+        // retry-cap park (tier 'transient') is this ticket's own budget running out, not evidence of
+        // a systemic failure. Count distinct tickets; trip the loop-wide pause at `breakerFailures`.
+        if (decision.tier === 'deterministic' && config.robot.breakerFailures > 0) {
+          const streak = recordDeterministicFailure(
+            db,
+            { ticketId: candidate.id, title: candidate.title, signature: decision.signature },
+            now(),
+          );
+          // Guard on the pause flag so a breaker that trips while the loop is already paused (for any
+          // other reason) neither overwrites that reason (pauseDispatch keeps the first anyway) nor
+          // re-fires the notification.
+          if (streak.length >= config.robot.breakerFailures && !isDispatchPaused(db)) {
+            pauseDispatch(db, breakerPauseReason(streak), now());
+            notifyLoop(db, 'agent_needs_human', 'Robot circuit breaker tripped', breakerNotificationBody(streak), now());
+            logger.error(
+              { failures: streak.map((f) => f.ticketId), threshold: config.robot.breakerFailures },
+              'robot: circuit breaker tripped — PAUSING dispatch after consecutive deterministic failures',
+            );
+          }
+        }
       } else {
         setAgentState(db, candidate.id, 'queued', now());
         logMilestone(db, candidate.id, ROBOT_EVENT.fault, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
@@ -429,6 +451,9 @@ export async function processRobotQueue(
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
         handedOff = true;
         setAgentState(db, candidate.id, 'in-review', now());
+        // Circuit breaker (t974, D-107): a successful hand-off breaks the "consecutive" chain, so the
+        // deterministic-failure streak resets. Only a success does — a transient retry leaves it be.
+        resetBreaker(db, now());
         dispatched++;
         logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
         // PD-773: the Robot asked for Steve's visual check; the PR waits for it (see visual/gate.ts).

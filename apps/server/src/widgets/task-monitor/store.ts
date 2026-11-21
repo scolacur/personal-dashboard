@@ -2331,6 +2331,16 @@ export function setDispatchPaused(
     `INSERT INTO robot_state (key, value, updated_at) VALUES ('dispatch_paused', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(paused ? (reason ?? 'paused by human') : null, now);
+  // t974 (D-107): a human resume also resets the circuit breaker's consecutive-deterministic-failure
+  // streak, so the loop starts counting fresh. The worker owns this key (`breaker_consecutive`, in
+  // agent-worker/.../breaker.ts) — resume is the only human reset, so we null it here. Mirrors the
+  // literal `dispatch_paused` convention above (the robot_state keys are not shared constants).
+  if (!paused) {
+    db.prepare(
+      `INSERT INTO robot_state (key, value, updated_at) VALUES ('breaker_consecutive', NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
+    ).run(now);
+  }
   return getDispatchPauseState(db);
 }
 

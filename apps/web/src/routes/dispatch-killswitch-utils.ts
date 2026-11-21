@@ -83,6 +83,10 @@ export function formatClockTime(ms: number): string {
  */
 export function pauseReasonLabel(reason: string | null): string {
   if (reason === null) return 'Manual pause';
+  // t974 (D-107): the circuit breaker stores a long "circuit-breaker: N consecutive … (t1, t2)"
+  // reason so the Site Status readout can show the full detail; the nav only needs the gist. Both
+  // surfaces thus make the breaker pause visible — distinguished from a manual pause or an auth fault.
+  if (/circuit-breaker/i.test(reason)) return 'Circuit breaker tripped';
   return /paused by human/i.test(reason) ? 'Manual pause' : reason;
 }
 

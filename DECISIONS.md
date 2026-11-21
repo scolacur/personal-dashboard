@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-107](DECISIONS/D-107-circuit-breaker-pauses-the-loop-after-n-consecutive-deterministic-failures.md)** — A circuit breaker pauses the whole loop after N consecutive deterministic failures across distinct tickets
 - **[D-103](DECISIONS/D-103-auto-promotion-into-the-queue-is-a-deterministic-rule-executing-steves-epic-choice.md)** — Auto-promotion into the Queue is a deterministic rule executing Steve's Epic choice — Epic-scoped, computed not stored, capacity-throttled
 - **[D-102](DECISIONS/D-102-by-habit-calendar-completion-rate-window-and-today-open-affordance.md)** — By Habit completion-rate is a floored, in-progress-excluded window; Today opens the calendar from a dedicated control, not the name text
 - **[D-101](DECISIONS/D-101-the-evaluator-reviews-every-pr-and-its-ship-opens-review-gate.md)** — The Evaluator reviews every PR, and a ship from every lens opens review-gate as Steve's approval does

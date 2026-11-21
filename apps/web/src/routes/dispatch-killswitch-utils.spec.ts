@@ -279,6 +279,13 @@ describe('pauseReasonLabel', () => {
   it('still says something when the pause recorded no reason', () => {
     expect(pauseReasonLabel(null)).toBe('Manual pause');
   });
+
+  it('summarises a circuit-breaker pause for the nav (t974, D-107)', () => {
+    // The breaker stores a long reason so Site Status can show the detail; the nav just needs the gist.
+    expect(
+      pauseReasonLabel('circuit-breaker: 3 consecutive deterministic failures across distinct tickets (t1, t2, t3)'),
+    ).toBe('Circuit breaker tripped');
+  });
 });
 
 describe('needsYouHref', () => {
