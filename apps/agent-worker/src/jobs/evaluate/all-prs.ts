@@ -34,7 +34,7 @@ const run = promisify(execFile);
  *  - **a PR comment** from the bot account with the verdict and findings. The PR-state poll never
  *    trusts the bot (a COLLABORATOR without `HUMAN_REPLY_MARKER`), and the marker is stripped from
  *    anything quoted, so a review can never trigger Robot rework;
- *  - **a timeline event** on the linked ticket, when there is one;
+ *  - **a timeline event** on each linked ticket — every ticket the PR names (PD-804);
  *  - **`review-gate` success on a ship from every lens**, the same as Steve's approval (Steve's call,
  *    2026-11-20). Nothing else is posted: a revise or a failed review leaves the gate to Steve's
  *    approval, so the Evaluator can open the gate early but never close one he opened.
@@ -74,25 +74,71 @@ export function skipReason(pr: OtherPr): string | null {
   return null;
 }
 
-/** The ticket a PR is about: a display id in its branch (`pd-705-x`), title, or body, that exists. */
-export function linkedTicket(
-  db: Database.Database,
-  pr: Pick<OtherPr, 'headRefName' | 'title' | 'body'>,
-): { id: number; displayId: string; title: string; body: string | null } | null {
-  const candidates: string[] = [];
+type LinkedTicket = { id: number; displayId: string; title: string; body: string | null };
+
+const DISPLAY_ID = /\b([A-Z]{1,4})-(\d+)\b/g;
+
+function lookupTicket(db: Database.Database, displayId: string): LinkedTicket | null {
+  if (/^D-\d+$/.test(displayId)) return null; // a decision, not a ticket
+  const row = db
+    .prepare('SELECT id, display_id, title, body FROM agent_tickets WHERE display_id = ? AND archived_at IS NULL')
+    .get(displayId) as { id: number; display_id: string; title: string; body: string | null } | undefined;
+  return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
+}
+
+/**
+ * The tickets a PR implements (PD-804): every existing display id in its branch (`pd-705-x`) and
+ * title, in that order, de-duplicated. A PR often builds several tickets at once, and judging it
+ * against only the first one reads the others' work as scope creep (PR #457 was escalated that way).
+ *
+ * The **body** is deliberately not a source when the branch or title names a ticket: descriptions
+ * cite related tickets for context ("partly covers PD-613", "the Epic PD-605"), and treating those
+ * as implemented would hold the PR to criteria it never claimed. With nothing in the branch or
+ * title, the first existing id in the body is used, as before.
+ */
+export function linkedTickets(db: Database.Database, pr: Pick<OtherPr, 'headRefName' | 'title' | 'body'>): LinkedTicket[] {
+  const named: string[] = [];
   const branch = /^([a-z]{1,4})-(\d+)(?:-|$)/i.exec(pr.headRefName);
-  if (branch) candidates.push(`${branch[1]}-${branch[2]}`.toUpperCase());
-  for (const text of [pr.title, pr.body]) {
-    for (const m of (text ?? '').matchAll(/\b([A-Z]{1,4})-(\d+)\b/g)) candidates.push(`${m[1]}-${m[2]}`);
+  if (branch) named.push(`${branch[1]}-${branch[2]}`.toUpperCase());
+  for (const m of (pr.title ?? '').matchAll(DISPLAY_ID)) named.push(`${m[1]}-${m[2]}`);
+
+  const out: LinkedTicket[] = [];
+  for (const displayId of new Set(named)) {
+    const t = lookupTicket(db, displayId);
+    if (t) out.push(t);
   }
-  for (const displayId of candidates) {
-    if (/^D-\d+$/.test(displayId)) continue; // a decision, not a ticket
-    const row = db
-      .prepare('SELECT id, display_id, title, body FROM agent_tickets WHERE display_id = ? AND archived_at IS NULL')
-      .get(displayId) as { id: number; display_id: string; title: string; body: string | null } | undefined;
-    if (row) return { id: row.id, displayId: row.display_id, title: row.title, body: row.body };
+  if (out.length > 0) return out;
+
+  for (const m of (pr.body ?? '').matchAll(DISPLAY_ID)) {
+    const t = lookupTicket(db, `${m[1]}-${m[2]}`);
+    if (t) return [t];
   }
-  return null;
+  return [];
+}
+
+/** "PD-1 (A)", "PD-1 (A) and PD-2 (B)", "PD-1 (A), PD-2 (B) and PD-3 (C)". */
+function ticketList(tickets: readonly { displayId: string; title: string }[]): string {
+  const named = tickets.map((t) => `${t.displayId} (${t.title})`);
+  return named.length <= 1 ? (named[0] ?? '') : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
+}
+
+/**
+ * What the Evaluator is told the PR must satisfy. One ticket: its title and body, unchanged. Several:
+ * every ticket's criteria, framed as one change set, so a ticket's "out of scope — that is PD-x" is
+ * read as satisfied when PD-x is in the set, not as a violation (PD-804).
+ */
+export function acceptanceBrief(tickets: readonly LinkedTicket[]): { title: string; body: string | null } {
+  if (tickets.length === 1) return { title: tickets[0].title, body: tickets[0].body };
+  return {
+    title: tickets.map((t) => `${t.displayId}: ${t.title}`).join(' + '),
+    body: [
+      `MULTIPLE TICKETS: this PR implements ${tickets.length} tickets as one change set — ${tickets.map((t) => t.displayId).join(', ')}.`,
+      'Judge it against all of them together. Work that any one of these tickets asks for is in scope. Where one',
+      "ticket's Task, Out of scope or Done When defers work to another ticket in this list, that work being done",
+      'here satisfies it rather than violating it. Only work none of them asks for is scope creep.',
+      ...tickets.flatMap((t) => ['', '---', '', `# ${t.displayId} — ${t.title}`, '', t.body || '(no description)']),
+    ].join('\n'),
+  };
 }
 
 function ghEnv(config: AgentWorkerConfig, token: string): NodeJS.ProcessEnv {
@@ -141,10 +187,10 @@ export function defaultPrCommenter(config: AgentWorkerConfig): PrCommenter {
 export function verdictComment(
   report: EvaluatorReport | null,
   round: number,
-  ticket: { displayId: string; title: string } | null,
+  tickets: readonly { displayId: string; title: string }[],
 ): string {
   const lines: string[] = ['<!-- evaluator:verdict -->'];
-  const against = ticket ? `${ticket.displayId} (${ticket.title})` : 'the PR description (no linked ticket, so no acceptance criteria)';
+  const against = tickets.length > 0 ? ticketList(tickets) : 'the PR description (no linked ticket, so no acceptance criteria)';
   if (!report) {
     lines.push(`**Evaluator (round ${round}): no usable verdict.** The review failed, so it counts as neither ship nor revise. Steve's approval decides.`);
   } else {
@@ -187,14 +233,15 @@ export async function evaluateNextOtherPr(
 
   const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
   const round = prRounds(db, pr.number) + 1;
-  const ticket = linkedTicket(db, pr);
-  const ticketId = ticket?.id ?? NO_TICKET;
+  const tickets = linkedTickets(db, pr);
+  // An evaluator run row has one ticket; the first is the PR's primary (its branch, else its title).
+  const ticketId = tickets[0]?.id ?? NO_TICKET;
   const repo = config.githubRepo;
 
   const runIds = new Map<EvaluatorLens, number>();
   for (const lens of lenses) {
     runIds.set(lens, startEvaluatorRun(db, { ticketId, prNumber: pr.number, round, model: config.evaluator.model, lens, headSha: pr.headRefOid }, now));
-    if (ticket) logMilestone(db, ticket.id, ROBOT_EVENT.evaluating, { round, prNumber: pr.number, lens }, now);
+    for (const t of tickets) logMilestone(db, t.id, ROBOT_EVENT.evaluating, { round, prNumber: pr.number, lens }, now);
   }
 
   // The verdict must belong to the commit that was read. A push between the listing and the diff
@@ -206,10 +253,11 @@ export async function evaluateNextOtherPr(
     return null;
   }
   const { diff, truncated } = capDiff(rawDiff);
+  const brief = tickets.length > 0 ? acceptanceBrief(tickets) : null;
   const userPrompt = buildEvaluatorPrompt({
-    title: ticket ? ticket.title : pr.title,
-    body: ticket
-      ? ticket.body
+    title: brief ? brief.title : pr.title,
+    body: brief
+      ? brief.body
       : [
           'NO LINKED TICKET: there are no acceptance criteria. Judge correctness, quality, standards and',
           'scope against this PR description, and say in your summary that it was judged without a ticket.',
@@ -236,16 +284,18 @@ export async function evaluateNextOtherPr(
         : { error: result.ok ? `unparseable report: ${result.text.slice(0, 500)}` : result.text || 'agent error', turns: result.turns, tokens: result.tokens },
       now,
     );
-    if (report && ticket) {
-      logMilestone(db, ticket.id, ROBOT_EVENT.evaluated, {
-        verdict: report.verdict,
-        findings: report.findings.length,
-        blockingFindings: blockingFindings(report).length,
-        round,
-        prNumber: pr.number,
-        reason: report.summary,
-        lens,
-      }, now);
+    if (report) {
+      for (const t of tickets) {
+        logMilestone(db, t.id, ROBOT_EVENT.evaluated, {
+          verdict: report.verdict,
+          findings: report.findings.length,
+          blockingFindings: blockingFindings(report).length,
+          round,
+          prNumber: pr.number,
+          reason: report.summary,
+          lens,
+        }, now);
+      }
     }
     if (report && lens === 'security' && report.findings.some((f) => f.kind === 'secret')) {
       notifyLoop(db, 'agent_needs_human', `Possible secret in PR #${pr.number}: rotate it`, 'The security reviewer found a credential in a PR. The repo is public, so treat it as leaked: rotate it now, then remove it from the branch.', now);
@@ -254,15 +304,15 @@ export async function evaluateNextOtherPr(
   }
 
   const combined = combineReports(reports);
-  await (deps.comment ?? defaultPrCommenter(config))(repo, pr.number, verdictComment(combined, round, ticket));
+  await (deps.comment ?? defaultPrCommenter(config))(repo, pr.number, verdictComment(combined, round, tickets));
   if (combined?.verdict === 'ship' && config.evaluator.reviewGateToken) {
     await (deps.postStatus ?? defaultStatusPoster(config))(
       repo,
       pr.headRefOid,
       { state: 'success', description: `Evaluator: ship (round ${round})` },
-      gateTargetUrl(config, ticket?.displayId ?? null),
+      gateTargetUrl(config, tickets[0]?.displayId ?? null),
     );
   }
-  logger.info({ prNumber: pr.number, verdict: combined?.verdict ?? null, ticket: ticket?.displayId ?? null }, 'evaluator: reviewed a non-Robot PR');
+  logger.info({ prNumber: pr.number, verdict: combined?.verdict ?? null, tickets: tickets.map((t) => t.displayId) }, 'evaluator: reviewed a non-Robot PR');
   return combined;
 }
