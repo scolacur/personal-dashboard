@@ -4,6 +4,7 @@
   import Button from './Button.svelte';
   import TicketThread from './TicketThread.svelte';
   import { fileSurfaceTicket } from '../routes/devops/api';
+  import { portal } from './portal';
 
   // The compose dialog behind every suggestion trigger (PD-578, In-widget prompt to ticket to
   // Robot — its front door): the widget card +, the page footer, and the app-wide nav button.
@@ -76,12 +77,8 @@
   }
 
   // A widget card sets `perspective`, which makes it the containing block for `position: fixed`
-  // descendants — the modal would render trapped inside the card. Moving the wrapper to <body>
-  // keeps it a true full-screen dialog wherever the trigger lives.
-  function portal(node: HTMLElement) {
-    document.body.appendChild(node);
-    return { destroy: () => node.remove() };
-  }
+  // descendants — the modal would render trapped inside the card. `portal` moves the wrapper to
+  // <body>, keeping it a true full-screen dialog wherever the trigger lives.
 
   const modalTitle = $derived(
     phase === 'grilling' && ticket ? `Grilling · ${ticket.displayId}` : `New ticket · ${label}`,

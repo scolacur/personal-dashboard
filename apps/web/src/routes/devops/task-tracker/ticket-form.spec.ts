@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import type { AgentTicket } from '@dashboard/shared';
 import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 import {
   emptyTicketForm,
   epicRequired,
   maxTurnsInvalid,
+  saveChecks,
   ticketFormError,
+  ticketToForm,
   type TicketFormState,
 } from './ticket-form';
 
@@ -103,5 +106,56 @@ describe('epicRequired', () => {
   it('leaves a terminal Epic-less Ticket editable', () => {
     expect(epicRequired({ creating: false, hadEpic: false, status: 'completed' })).toBe(false);
     expect(epicRequired({ creating: false, hadEpic: false, status: 'closed' })).toBe(false);
+  });
+});
+
+describe('saveChecks', () => {
+  const existing = {
+    id: 7,
+    title: 'A ticket',
+    body: 'Body',
+    status: 'backlog',
+    priority: 'P2',
+    assignee: 'steve',
+    isEpic: false,
+    epicId: 3,
+    refined: false,
+    maxTurns: null,
+    projectId: 1,
+  } as unknown as AgentTicket;
+  const edit = (overrides: Partial<TicketFormState> = {}) => ({ ...ticketToForm(existing, 1), ...overrides });
+  const labels = (f: TicketFormState, e: AgentTicket = existing) => saveChecks(e, f).map((c) => c.label);
+
+  it('names only the write itself for a plain edit', () => {
+    expect(labels(edit({ title: 'Renamed' }))).toEqual(['Saving changes']);
+  });
+
+  it('names the Queue gate when robot work enters the Queue', () => {
+    expect(labels(edit({ status: 'queue', assignee: 'robot' }))[0]).toMatch(/^Queue gate/);
+  });
+
+  it('does not re-judge a ticket already in the Robot Queue under the same Epic', () => {
+    const queued = { ...existing, status: 'queue', assignee: 'robot' } as AgentTicket;
+    expect(labels(ticketToForm(queued, 1), queued)).toEqual(['Saving changes']);
+  });
+
+  it('names the refined choice only when a refined ticket’s description changes', () => {
+    const refined = { ...existing, refined: true } as AgentTicket;
+    expect(labels({ ...ticketToForm(refined, 1), body: 'New body' }, refined)[0]).toMatch(/^Refinement/);
+    expect(labels(ticketToForm(refined, 1), refined)).toEqual(['Saving changes']);
+  });
+
+  it('puts minting a drafted Epic first, client-side, then the Epic rules', () => {
+    const checks = saveChecks(existing, edit({ newEpic: { title: 'Fresh', priority: 'P1' } }));
+    expect(checks[0]).toEqual({ stage: 'mint', label: 'Creating the Epic “Fresh”' });
+    expect(checks.map((c) => c.label)).toContain('Epic rules — membership, and pausing a refined Epic it joins');
+  });
+
+  it('names the cascade when an Epic’s priority changes', () => {
+    const epic = { ...existing, isEpic: true, epicId: null } as AgentTicket;
+    expect(labels({ ...ticketToForm(epic, 1), priority: 'P0' }, epic)).toEqual([
+      'Priority — cascading to every member',
+      'Saving changes',
+    ]);
   });
 });

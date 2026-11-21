@@ -6,7 +6,8 @@
   import SideNav from '$lib/SideNav.svelte';
   import NotificationBell from '$lib/NotificationBell.svelte';
   import AppTicketButton from '$lib/AppTicketButton.svelte';
-  import PageTicketFooter from '$lib/PageTicketFooter.svelte';
+  import PageTicketButton from '$lib/PageTicketButton.svelte';
+  import FloatDock from '$lib/FloatDock.svelte';
   import YinYang from '$lib/icons/YinYang.svelte';
   import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from '$lib/nav-utils';
   import DeployStatus from './DeployStatus.svelte';
@@ -33,9 +34,10 @@
   const widgetRoutes = widgets.map((w) => ({ route: w.route, title: w.title }));
   const currentPageTitle = $derived(resolvePageTitle(page.url.pathname, widgetRoutes));
 
-  // The pomodoro floats over the whole app, but on the ticket-detail page it overlaps the
-  // Refine chat window on mobile — hide it there. Match on route id (exact) not pathname.
-  const showPomodoro = $derived(page.route.id !== '/devops/tickets/[ticketId]');
+  // The ticket-detail page mounts its own FloatDock — "Change something" beside its Refine chat —
+  // so the app-wide one (which also carries the Pomodoro) stands down there. The Pomodoro was
+  // already hidden on that page: it overlapped the Refine chat. Match on route id, not pathname.
+  const showFloatDock = $derived(page.route.id !== '/devops/tickets/[ticketId]');
 
   // Dev Ops section context in the nav: the deploy/commit readout (PD-414, re-homed from the
   // `#site-status` section PD-422 removed), the Robot dispatch killswitch (PD-410), and the
@@ -129,17 +131,17 @@
     </nav>
     <main class="content">
       {@render children()}
-      <!-- Page-scoped suggestions (PD-578 front door): one footer for every page, keyed to the
-           current route so its draft never carries over to the next page. -->
-      {#key page.url.pathname}
-        <PageTicketFooter pageTitle={currentPageTitle} route={page.url.pathname} />
-      {/key}
     </main>
   </div>
 </div>
 
-{#if showPomodoro}
-  <FloatingPomodoro />
+<!-- Page-scoped suggestions (PD-578 front door) float bottom-right on every page, beside the
+     Pomodoro. `.content` carries bottom padding so the dock never hides the end of a page. -->
+{#if showFloatDock}
+  <FloatDock>
+    <PageTicketButton />
+    <FloatingPomodoro />
+  </FloatDock>
 {/if}
 
 <!-- Mounted once for the whole app: anything, including non-component modules like the

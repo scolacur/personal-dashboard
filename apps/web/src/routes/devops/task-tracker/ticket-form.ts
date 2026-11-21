@@ -133,3 +133,52 @@ export function ticketFormError(
   }
   return null;
 }
+
+/** One thing a save checks or does, shown while it runs. `mint` happens first, client-side;
+ *  everything else is the server's single PATCH. */
+export interface SaveCheck {
+  stage: 'mint' | 'server';
+  label: string;
+}
+
+/**
+ * What saving `form` over `existing` will check, in the order the server checks it — for the
+ * edit modal's loading state, so a slow save says what it is waiting on rather than just spinning.
+ *
+ * Only the checks this particular edit can trip are listed: a title tweak says "Saving changes"
+ * and nothing else, while moving robot work into the Queue names the Queue gate. The list mirrors
+ * the PATCH route (`task-monitor/routes.ts`): patch guards → D-097 refined choice → D-091 Queue
+ * gate → Epic invariants and the stale-Epic pause (D-054, D-089) → priority cascade (D-080).
+ */
+export function saveChecks(existing: AgentTicket, form: TicketFormState): SaveCheck[] {
+  const checks: SaveCheck[] = [];
+  const draftingEpic = !form.isEpic && form.newEpic !== null && form.newEpic.title.trim() !== '';
+  if (draftingEpic) {
+    checks.push({ stage: 'mint', label: `Creating the Epic “${form.newEpic!.title.trim()}”` });
+  }
+  const server = (label: string) => checks.push({ stage: 'server', label });
+
+  const body = form.body.trim() || null;
+  if (existing.refined && body !== (existing.body ?? null)) {
+    server('Refinement — the description changed on a refined ticket');
+  }
+  const epicId = form.isEpic ? null : form.epicId;
+  // Mirrors `queueGuardFailure`: judged on entering the Robot's Queue, or changing Epic while in it.
+  const wasRobotQueued = existing.status === 'queue' && existing.assignee === 'robot';
+  if (
+    !form.isEpic &&
+    form.status === 'queue' &&
+    form.assignee === 'robot' &&
+    !(wasRobotQueued && epicId === existing.epicId && !draftingEpic)
+  ) {
+    server('Queue gate — refined, Ready sections, its Epic, open blockers');
+  }
+  if (draftingEpic || form.isEpic !== existing.isEpic || epicId !== existing.epicId) {
+    server('Epic rules — membership, and pausing a refined Epic it joins');
+  }
+  if (form.isEpic && form.priority !== existing.priority) {
+    server('Priority — cascading to every member');
+  }
+  server('Saving changes');
+  return checks;
+}

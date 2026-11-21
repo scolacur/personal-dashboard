@@ -81,3 +81,68 @@
     min-height: 60px;
   }
 }
+
+// A save the server refused (the detail page's edit, which has no gate modal of its own). Shown in
+// the modal so the edits stay on screen rather than vanishing behind a page banner.
+.submit-error {
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-stuck);
+  border-radius: var(--radius);
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+// A save in flight (detail page): which checks the save is waiting on, so a slow one reads as
+// work rather than a hang.
+.save-progress {
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-size: var(--font-size-sm);
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  li {
+    color: var(--text);
+  }
+  li.done {
+    color: var(--muted);
+  }
+  .mark {
+    display: inline-block;
+    width: 1.25em;
+    color: var(--accent);
+  }
+}
+
+.save-progress-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-xs);
+  color: var(--muted);
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: save-spin 0.8s linear infinite;
+}
+
+@keyframes save-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
