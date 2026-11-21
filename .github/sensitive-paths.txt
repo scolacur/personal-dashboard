@@ -39,6 +39,10 @@ apps/server/src/migrate.ts
 # ── The agent-worker itself ──────────────────────────────────────────────────
 # A Robot changing the runtime that hosts Robots. Excluded from auto-promotion by an Epic flag
 # (D-103); this is the PR-time backstop for a self-modifying ticket whose Epic was never flagged.
+# The worker image now auto-deploys: deploy.yml publishes ghcr.io/<owner>/<repo>-agent-worker on
+# every merge to main (PD-802), so a Robot PR touching the worker's own runtime must be consciously
+# acked (D-047 path-guard, D-067 author-scoped) before it ships to the host. PD-311 (re-evaluate the
+# sensitive-path list after the Mac Mini move) should account for this entry.
 apps/agent-worker/**
 
 # ── Dependency manifests ─────────────────────────────────────────────────────
