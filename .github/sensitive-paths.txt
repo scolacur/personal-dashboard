@@ -36,6 +36,11 @@ apps/server/src/migrate.ts
 # ── Agent harness config ─────────────────────────────────────────────────────
 .claude/**
 
+# ── The agent-worker itself ──────────────────────────────────────────────────
+# A Robot changing the runtime that hosts Robots. Excluded from auto-promotion by an Epic flag
+# (D-103); this is the PR-time backstop for a self-modifying ticket whose Epic was never flagged.
+apps/agent-worker/**
+
 # ── Dependency manifests ─────────────────────────────────────────────────────
 # This is the pair PR #268 changed with no enforcement — the incident behind PD-308.
 **/package.json
