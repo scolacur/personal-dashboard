@@ -81,6 +81,7 @@ export function bootstrapSchema(db: Database.Database): void {
       max_turns           INTEGER,                  -- per-ticket run ceiling (PD-432); NULL = the loop's env default
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
+      auto_queue_excluded INTEGER NOT NULL DEFAULT 0, -- 1 = Epic excluded from auto-queue (D-103, PD-808)
       archived_at         INTEGER,                  -- soft delete; NULL = active
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL
@@ -328,6 +329,13 @@ export function bootstrapSchema(db: Database.Database): void {
   // default", so the global stays authoritative for the ~all tickets that never need an override.
   migrate(db, 'agent_tickets_add_max_turns', (d) => {
     addColumn(d, 'agent_tickets', 'max_turns', 'INTEGER');
+  });
+
+  // D-103 (PD-808): auto-queue exclusion. Meaningful on Epics — set by hand on Robot / Osiris / infra
+  // Epics so the auto-queue promoter never auto-queues self-modifying work. Defaults 0 so every
+  // existing row back-fills to "not excluded"; the member-level read checks its own Epic's column.
+  migrate(db, 'agent_tickets_add_auto_queue_excluded', (d) => {
+    addColumn(d, 'agent_tickets', 'auto_queue_excluded', 'INTEGER NOT NULL DEFAULT 0');
   });
 
   // PD-610: the third refinement state. `refined = 0` otherwise means two different things — "never

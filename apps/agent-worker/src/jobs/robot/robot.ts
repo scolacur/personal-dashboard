@@ -38,7 +38,7 @@ import {
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
-import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
+import { checkBudget, publishBudgetPolicy, publishCapacityPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
@@ -146,6 +146,7 @@ export async function processRobotQueue(
   // available only after the switch was already flipped, which is backwards for a pre-flight.
   const budget = budgetPolicy(config);
   publishBudgetPolicy(db, budget, now());
+  publishCapacityPolicy(db, { concurrency: config.robot.concurrency }, now()); // D-103: auto-queue reads it
 
   // System-wide fault gate (C2): a prior auth/credit fault paused the whole loop. Stay inert until
   // a human resumes (C4) — auto-resuming would re-burn the board (the PD-320/#202 failure mode).
