@@ -4,7 +4,7 @@ import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { ensureEvaluatorRunsTable } from './evaluator-runs';
 import type { EvaluatorTurnResult } from './evaluate-agent';
-import { evaluateNextOtherPr, linkedTicket, skipReason, verdictComment, type OtherPr } from './all-prs';
+import { acceptanceBrief, evaluateNextOtherPr, linkedTickets, skipReason, verdictComment, type OtherPr } from './all-prs';
 
 const SHA = 'a'.repeat(40);
 const pr = (over: Partial<OtherPr> = {}): OtherPr => ({
@@ -77,10 +77,28 @@ describe('skipReason / linkedTicket (PD-712)', () => {
     expect(skipReason(pr({ files: [{ path: 'MEMORY/runs/x.md' }, { path: 'DECISIONS/D-1.md' }] }))).toBeNull();
   });
 
+  const ids = (p: OtherPr) => linkedTickets(db, p).map((t) => t.displayId);
+
   it('links the ticket from the branch, then title or body, ignoring decisions and unknown ids', () => {
-    expect(linkedTicket(db, pr())?.displayId).toBe('PD-705');
-    expect(linkedTicket(db, pr({ headRefName: 'fix-x', title: 'D-098 and PD-705: thing' }))?.displayId).toBe('PD-705');
-    expect(linkedTicket(db, pr({ headRefName: 'pd-9-x', title: 'nothing', body: '' }))).toBeNull();
+    expect(ids(pr())).toEqual(['PD-705']);
+    expect(ids(pr({ headRefName: 'fix-x', title: 'D-098 and PD-705: thing' }))).toEqual(['PD-705']);
+    expect(ids(pr({ headRefName: 'fix-x', title: 'tidy', body: 'Follows PD-705.' }))).toEqual(['PD-705']);
+    expect(ids(pr({ headRefName: 'pd-9-x', title: 'nothing', body: '' }))).toEqual([]);
+  });
+
+  const seed = (...ns: number[]) => {
+    for (const n of ns) db.prepare("INSERT INTO agent_tickets (id, display_id, title) VALUES (?, ?, 'T')").run(n, `PD-${n}`);
+  };
+
+  it('links every ticket the branch and title name, in order, once each (PD-804)', () => {
+    seed(706, 707);
+    expect(ids(pr({ headRefName: 'pd-706-x', title: 'Thing (PD-705, PD-706, PD-707)' }))).toEqual(['PD-706', 'PD-705', 'PD-707']);
+  });
+
+  it('does not read the body for tickets when the branch or title names one (PD-804)', () => {
+    seed(706, 707);
+    // Bodies cite related tickets for context — "partly covers PD-707" is not a claim to implement it.
+    expect(ids(pr({ title: 'Thing (PD-706)', body: 'Partly covers PD-707.' }))).toEqual(['PD-705', 'PD-706']);
   });
 });
 
@@ -93,6 +111,20 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     expect(h.comments[0]).toMatch(/Evaluator \(round 1\): ship\*\*, judged against PD-705 \(Do the thing\)/);
     const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = 705').all() as { type: string }[]).map((r) => r.type);
     expect(types).toEqual(['robot_evaluating', 'robot_evaluated']);
+  });
+
+  it('judges a multi-ticket PR against every ticket, records on each, and names them all (PD-804)', async () => {
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, body) VALUES (706, 'PD-706', 'Remove the tabs', 'Out of scope: the modal — that is PD-705')").run();
+    const h = deps(ship, [pr({ headRefName: 'pd-705-thing', title: 'Thing and tabs (PD-705, PD-706)', body: 'Related: PD-999.' })]);
+    await evaluateNextOtherPr(db, cfg(), 1000, h.d);
+    const prompt = h.runAgent.mock.calls[0][2];
+    expect(prompt).toMatch(/MULTIPLE TICKETS/);
+    expect(prompt).toContain('# PD-706 — Remove the tabs');
+    expect(h.comments[0]).toMatch(/judged against PD-705 \(Do the thing\) and PD-706 \(Remove the tabs\)/);
+    for (const id of [705, 706]) {
+      const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = ?').all(id) as { type: string }[]).map((r) => r.type);
+      expect(types).toEqual(['robot_evaluating', 'robot_evaluated']);
+    }
   });
 
   it('on revise posts no status (Steve decides), and the comment never carries the human-reply marker', async () => {
@@ -136,8 +168,25 @@ describe('evaluateNextOtherPr (PD-712)', () => {
   });
 });
 
+describe('acceptanceBrief (PD-804)', () => {
+  const t = (n: number) => ({ id: n, displayId: `PD-${n}`, title: `T${n}`, body: `body ${n}` });
+
+  it('passes a single ticket through unchanged', () => {
+    expect(acceptanceBrief([t(1)])).toEqual({ title: 'T1', body: 'body 1' });
+  });
+
+  it('frames several tickets as one change set, with every ticket’s criteria', () => {
+    const b = acceptanceBrief([t(1), t(2)]);
+    expect(b.title).toBe('PD-1: T1 + PD-2: T2');
+    expect(b.body).toMatch(/^MULTIPLE TICKETS: this PR implements 2 tickets/);
+    expect(b.body).toMatch(/defers work to another ticket in this list/);
+    expect(b.body).toContain('# PD-1 — T1\n\nbody 1');
+    expect(b.body).toContain('# PD-2 — T2\n\nbody 2');
+  });
+});
+
 describe('verdictComment', () => {
   it('says a failed review is neither ship nor revise', () => {
-    expect(verdictComment(null, 1, null)).toMatch(/no usable verdict/);
+    expect(verdictComment(null, 1, [])).toMatch(/no usable verdict/);
   });
 });
