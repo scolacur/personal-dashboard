@@ -11,7 +11,7 @@
   import Modal from '$lib/Modal.svelte';
   import Button from '$lib/Button.svelte';
   import EpicField from './EpicField.svelte';
-  import { maxTurnsInvalid, ticketFormError, type TicketFormState } from './ticket-form';
+  import { maxTurnsInvalid, ticketFormError, type SaveCheck, type TicketFormState } from './ticket-form';
 
   /** The add / edit ticket modal. `form` is the page's `$state` object, mutated in place. */
   let {
@@ -24,6 +24,9 @@
     epicOptions,
     columns,
     requireEpic,
+    submitError = null,
+    busy = false,
+    progress = null,
     onClose,
     onSubmit,
   }: {
@@ -41,6 +44,12 @@
     columns: { status: TicketStatus; label: string }[];
     /** From `epicRequired()` — a Ticket may move between Epics but never out of one. */
     requireEpic: boolean;
+    /** A write that failed, shown in the modal so the edits are not lost behind it. */
+    submitError?: string | null;
+    busy?: boolean;
+    /** A save in flight: what it checks (`saveChecks`) and which stage it has reached. Everything
+     *  before `stage` reads as done; the `stage` items as in progress. */
+    progress?: { checks: SaveCheck[]; stage: SaveCheck['stage'] } | null;
     onClose: () => void;
     onSubmit: () => void;
   } = $props();
@@ -158,13 +167,29 @@
         {/if}
       </small>
     </label>
+    {#if progress}
+      <div class="save-progress" role="status" aria-live="polite">
+        <p class="save-progress-head"><span class="spinner" aria-hidden="true"></span>Saving — checking:</p>
+        <ul>
+          {#each progress.checks as c (c.label)}
+            {@const done = progress.stage === 'server' && c.stage === 'mint'}
+            <li class:done>
+              <span class="mark" aria-hidden="true">{done ? '✓' : '•'}</span>{c.label}
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+    {#if submitError}
+      <p class="submit-error" role="alert">{submitError}</p>
+    {/if}
     <div class="form-actions">
       {#if saveError}
         <span class="save-blocker">{saveError}</span>
       {/if}
       <Button variant="ghost" onclick={onClose}>Cancel</Button>
-      <Button variant="primary" onclick={onSubmit} disabled={saveError !== null}>
-        {editing ? 'Save' : 'Add'}
+      <Button variant="primary" onclick={onSubmit} disabled={saveError !== null || busy}>
+        {progress ? 'Saving…' : editing ? 'Save' : 'Add'}
       </Button>
     </div>
   </div>

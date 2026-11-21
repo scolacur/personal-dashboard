@@ -1,11 +1,9 @@
-/* Shared positioning — all three states anchor to bottom-right */
+/* Positioning is the FloatDock's (bottom-right, beside "Change something"); every state is
+   just an item in that row, so it can never sit on top of its neighbours. */
 .fp-trigger,
 .fp-minimized,
 .fp-panel {
-  position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  z-index: 500;
+  position: relative;
 }
 
 /* ── Closed state: yellow tomato button ─── */

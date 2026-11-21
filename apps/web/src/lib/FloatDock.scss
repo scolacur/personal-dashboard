@@ -1,0 +1,38 @@
+.float-dock {
+  position: fixed;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: 500;
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-sm);
+  // The dock is a full-width-ish box only in the sense of its children; clicks between them reach
+  // the page underneath.
+  pointer-events: none;
+
+  > :global(*) {
+    pointer-events: auto;
+  }
+}
+
+// Centred on the content column, not the viewport: spans from the sidebar's edge (220px, the rail in
+// +layout.scss) to the right edge and centres its items. No transform — that would make the dock the
+// containing block for any `position: fixed` inside it.
+@media (min-width: 861px) {
+  .float-dock.center {
+    left: 220px;
+    right: 0;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 860px) {
+  .float-dock {
+    right: var(--space-md);
+    bottom: var(--space-md);
+  }
+  // Clears the ticket page's sticky bottom nav (~3.75rem tall).
+  .float-dock.above-bottom-nav {
+    bottom: calc(4.25rem + var(--space-sm));
+  }
+}

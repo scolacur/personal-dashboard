@@ -1,0 +1,47 @@
+// Same shape as "Change something" (PageTicketButton) so the pair reads as one row, but solid
+// accent: Refine is the page's primary floating action.
+.refine-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 2.5rem;
+  padding: 0 var(--space-lg);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  transition: filter 0.15s;
+
+  &:hover,
+  &:focus-visible {
+    filter: brightness(1.08);
+  }
+}
+
+// The notification dot, pinned to the pill's top-right corner.
+.attn-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--status-awaiting-human);
+  border: 2px solid var(--surface);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

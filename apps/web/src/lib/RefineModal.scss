@@ -1,0 +1,79 @@
+.refine-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+
+  // Big enough to read a long grilling without scrolling a postage stamp: the thread takes most
+  // of the viewport, and its composer stays pinned under the history.
+  :global(.refine-thread) {
+    height: min(65vh, 48rem);
+    max-height: none;
+  }
+}
+
+.refine-modal-subject {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.refine-modal-error {
+  margin: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-stuck);
+  border-radius: var(--radius);
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+.refine-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.refined-badge {
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--status-done);
+  border-radius: 999px;
+  color: var(--status-done);
+  font-size: var(--font-size-xs);
+}
+
+.mark-refined {
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.info-btn {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}

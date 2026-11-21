@@ -7,26 +7,14 @@
     ResolvedRelation,
     TicketRelation,
     TicketStatus,
-    TicketPriority,
     TicketAssignee,
     TicketEvent,
     RobotEventDetail,
-    UpdateTicketInput,
   } from '@dashboard/shared';
-  import {
-    PRIORITY_LABELS,
-    AGENT_STATE_LABELS,
-    ASSIGNEE_LABELS,
-    TICKET_STATUSES,
-    TICKET_PRIORITIES,
-    TICKET_ASSIGNEES,
-    ROBOT_EVENT,
-    ROBOT_MAX_TURNS_DEFAULT,
-  } from '@dashboard/shared';
+  import { PRIORITY_LABELS, AGENT_STATE_LABELS, TICKET_STATUSES, ROBOT_EVENT } from '@dashboard/shared';
+  import { MediaQuery } from 'svelte/reactivity';
+  import { ArrowLeft } from 'lucide-svelte';
   import * as api from '../../api';
-  import { projectIdColor } from '../../api';
-  import { resolveUnrefineChoice } from '../../refine-prompt';
-  import GithubMark from '$lib/icons/GithubMark.svelte';
   import TicketThread from '$lib/TicketThread.svelte';
   import RunHistory from '$lib/RunHistory.svelte';
   import ActivityTimeline from '$lib/ActivityTimeline.svelte';
@@ -55,6 +43,12 @@
   import EpicPicker from '../../EpicPicker.svelte';
   import EpicJoinModal from '../../EpicJoinModal.svelte';
   import BackfillToggle from './BackfillToggle.svelte';
+  import DetailsPanel from './DetailsPanel.svelte';
+  import RefineButton from './RefineButton.svelte';
+  import RefineModal from '$lib/RefineModal.svelte';
+  import { refineWaitingOnHuman } from '$lib/refine-waiting';
+  import FloatDock from '$lib/FloatDock.svelte';
+  import PageTicketButton from '$lib/PageTicketButton.svelte';
   import { joinWriteOpts, planEpicJoin, unrefinedToast, type EpicJoinChoice, type EpicJoinPlan } from '../../epic-join';
   import { toast } from '$lib/toast-store.svelte';
   import TicketBoard from '../../task-tracker/TicketBoard.svelte';
@@ -90,11 +84,19 @@
   let loadError = $state<string | null>(null);
   let notFound = $state(false);
 
-  // Option C layout (PD-345). Desktop: Overview is the always-on left column; the right column
-  // toggles between Details and Refine. Mobile: one pane at a time via the bottom nav. The two
-  // states are independent (they belong to different viewports) — CSS shows the relevant one.
-  let rightTab = $state<'details' | 'refine'>('details');
+  // Layout (PD-345, reworked for PD-605). Desktop: Overview is the left column and Details the
+  // right, its top level with the title; Refine opens in a large modal (PD-643) from a floating
+  // button at the bottom centre. Mobile: one pane at a time via the bottom nav, Refine included.
+  // The thread is mounted in one place for the current viewport — the mobile pane, or the modal.
   let mobilePane = $state<'overview' | 'details' | 'refine'>('overview');
+  // Must match the `min-width: 861px` breakpoint in +page.scss.
+  const desktop = new MediaQuery('(min-width: 861px)');
+
+  // "The Refine agent is waiting on you" — the dot on the Refine button (desktop) and the Refine
+  // tab (mobile). Read from the event log on load, then re-polled so it appears without a reload
+  // while the modal is closed (the thread, which polls itself, is not mounted then).
+  let refineModalOpen = $state(false);
+  let refineWaiting = $state(false);
 
   const STATUS_LABELS: Record<TicketStatus, string> = {
     backlog: 'Backlog',
@@ -126,6 +128,7 @@
         found.projectId !== null ? (projects.find((p) => p.id === found.projectId) ?? null) : null;
       relations = await api.fetchRelations(found.id);
       events = await api.fetchTicketEvents(found.id).catch(() => [] as TicketEvent[]);
+      refineWaiting = refineWaitingOnHuman(events);
       if (found.isEpic) {
         const m = await api.fetchEpicMembers(found.id);
         epicMembers = m.members;
@@ -165,14 +168,20 @@
     if (ticketId) load(ticketId);
   });
 
-  function fmt(ts: number): string {
-    return new Date(ts).toLocaleString();
-  }
-
-  // Inline attribute editing (PD-374) — the detail page can now edit what a card can, reusing
-  // the same updateTicket call. A non-empty Epic's lane is derived from its members (D-054), so
-  // status editing is disabled for Epics.
-  const statusLocked = $derived(ticket?.isEpic ?? false);
+  // Keep the waiting dot live. Cheap — one events fetch every 10s for the ticket on screen.
+  const pollId = $derived(ticket?.id ?? null);
+  $effect(() => {
+    const id = pollId;
+    if (id === null) return;
+    const timer = setInterval(async () => {
+      try {
+        refineWaiting = refineWaitingOnHuman(await api.fetchTicketEvents(id));
+      } catch {
+        // A missed poll just leaves the dot as it was.
+      }
+    }, 10_000);
+    return () => clearInterval(timer);
+  });
 
   // D-083: a terminal Ticket is read-only everywhere. An Epic is exempt — its terminal lane
   // is derived from its members, so there is nothing here to freeze.
@@ -187,7 +196,6 @@
       ? allTickets.find((t) => t.id === ticket!.epicId)
       : undefined,
   );
-  const priorityInherited = $derived(parentEpic !== undefined && parentEpic.priority !== null);
 
   /* ── Reopen (D-083) ──────────────────────────────────────────
      The single exception to "terminal is final". Deliberately a considered click on this page
@@ -252,24 +260,6 @@
       error = e instanceof Error ? e.message : String(e);
     } finally {
       spinOffBusy = false;
-    }
-  }
-  async function updateField(patch: UpdateTicketInput) {
-    if (!ticket || !ticketId) return;
-    error = null;
-    // D-097: whenever this page edits the body (the description edit arrives via PD-396), a refined
-    // ticket must say whether it stays refined. Routing every write through the same helper means the
-    // detail page and the board card prompt identically, and a patch without a body is untouched.
-    let effective = patch;
-    if (patch.body !== undefined && patch.refined === undefined) {
-      const refinedChoice = resolveUnrefineChoice(ticket, patch.body, (m) => confirm(m));
-      if (refinedChoice !== undefined) effective = { ...patch, refined: refinedChoice };
-    }
-    try {
-      await api.updateTicket(ticket.id, effective);
-      await load(ticketId);
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -607,7 +597,8 @@
 </script>
 
 <nav class="detail-nav">
-  <a href="/devops/task-tracker">← Back to board</a>
+  <!-- A button, not a text link (still an <a> underneath — it navigates). -->
+  <a class="back-btn" href="/devops/task-tracker"><ArrowLeft size={14} aria-hidden="true" />Back to board</a>
 </nav>
 
 {#if loading}
@@ -620,25 +611,26 @@
     <p class="muted">No ticket with id <strong>{ticketId}</strong>.</p>
   </div>
 {:else if ticket}
-  <article class="ticket-detail" data-rt={rightTab} data-pane={mobilePane}>
-    {#if error}
-      <!-- An action failed; the ticket below is still valid, so it stays on screen. -->
-      <p class="action-error" role="alert">
-        {error}
-        <button type="button" class="action-error-x" aria-label="Dismiss" onclick={() => (error = null)}>×</button>
-      </p>
-    {/if}
-    <!-- Header: full width, above the columns. -->
-    <header class="detail-head">
+  <article class="ticket-detail" class:is-epic={ticket.isEpic} data-pane={mobilePane}>
+    <!-- Full-width banners, above both columns. Kept out of the header so that on desktop the
+         Details column can start level with the title rather than below every banner. -->
+    {#if error || frozen || staleEpic}
+      <div class="detail-banners">
+      {#if error}
+        <!-- An action failed; the ticket below is still valid, so it stays on screen. -->
+        <p class="action-error" role="alert">
+          {error}
+          <button type="button" class="action-error-x" aria-label="Dismiss" onclick={() => (error = null)}>×</button>
+        </p>
+      {/if}
       <!-- PD-601: the frozen banner is the FIRST thing on the page, above the badges and title.
            It sat below the Description before, which put it after everything it qualifies — you
            read the ticket as editable, then found out it was not. It also changes what every
            control below it means (they are all inert) and carries the only one that still works,
            so it belongs where a reader meets it before forming that expectation.
 
-           Living in `.detail-head` rather than `.pane-overview` also makes it full-bleed on
-           desktop: the header is `grid-area: head`, spanning both columns, while the overview pane
-           is the 70% left column. -->
+           Living in `.detail-banners` rather than `.pane-overview` also makes it full-bleed on
+           desktop: the banners row spans both columns, while the overview pane is the left one. -->
       {#if frozen}
         <p class="frozen-banner">
           <strong>{ticket.status === 'completed' ? 'Completed' : 'Closed'}</strong> — this ticket is a
@@ -662,32 +654,23 @@
           </button>
         </p>
       {/if}
+      </div>
+    {/if}
+
+    <!-- Header: badges + title, left column. On desktop its children are placed straight onto the
+         page grid, so the Details column lines up with the title. -->
+    <header class="detail-head">
+      <!-- PD-605: the header is identity only — id, P pill, and the Robot's state when it has one.
+           Lane, priority name, project and the GitHub issue live in Details, not both. -->
       <div class="head-badges">
         <span class="detail-id">{ticket.displayId}</span>
-        <span class="priority priority-{ticket.priority ?? 'none'}">{ticket.priority ?? '—'}</span>
-        {#if ticket.priority}
-          <span class="priority-name">{PRIORITY_LABELS[ticket.priority]}</span>
-        {/if}
-        <span class="status-badge">{STATUS_LABELS[ticket.status] ?? ticket.status}</span>
+        <span class="priority priority-{ticket.priority ?? 'none'}" title={ticket.priority ? PRIORITY_LABELS[ticket.priority] : 'No priority'}
+          >{ticket.priority ?? '—'}</span
+        >
         {#if ticket.agentState}
           <span class="agent-pill agent-{ticket.agentState}">
             {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState}
           </span>
-        {/if}
-        {#if project}
-          <span class="project-chip" style="--chip: {projectIdColor(project)}">{project.name}</span>
-        {/if}
-        {#if ticket.githubIssueUrl}
-          <a
-            class="gh-link"
-            href={ticket.githubIssueUrl}
-            target="_blank"
-            rel="noreferrer"
-            title="GitHub issue #{ticket.githubIssueNumber}"
-            aria-label="GitHub issue #{ticket.githubIssueNumber}"
-          >
-            <GithubMark size={15} />
-          </a>
         {/if}
       </div>
       <h1 class="detail-title">{ticket.title}</h1>
@@ -994,164 +977,49 @@
       <RunHistory ticketId={ticket.id} />
     </section>
 
-    <!-- ── RIGHT COLUMN: Details | Refine (desktop toggle · mobile tabs 2 & 3) ── -->
+    <!-- ── RIGHT COLUMN: Details (desktop, level with the title · mobile tab 2) ──
+         Only what the header does not already say; editing is the board's modal (Edit). -->
     <div class="right-col">
-      <div class="segbar" role="tablist" aria-label="Right panel">
-        <button
-          class="seg"
-          role="tab"
-          aria-selected={rightTab === 'details'}
-          onclick={() => (rightTab = 'details')}>Details</button
-        >
-        <button
-          class="seg"
-          role="tab"
-          aria-selected={rightTab === 'refine'}
-          onclick={() => (rightTab = 'refine')}>✦ Refine</button
-        >
-      </div>
-
       <section class="pane pane-details">
-        <!-- Editable inline (PD-374): the detail page can now change attributes, not just cards. -->
-        <dl class="fields">
-          <div>
-            <dt>Status</dt>
-            <dd>
-              <select
-                class="field-select"
-                value={ticket.status}
-                disabled={statusLocked || frozen}
-                title={frozen
-                  ? 'Completed work is read-only — use Reopen'
-                  : statusLocked
-                    ? "An Epic's lane is derived from its members"
-                    : 'Set status'}
-                onchange={(e) => updateField({ status: e.currentTarget.value as TicketStatus })}
-              >
-                {#each TICKET_STATUSES as s (s)}
-                  <option value={s}>{STATUS_LABELS[s] ?? s}</option>
-                {/each}
-              </select>
-            </dd>
-          </div>
-          <div>
-            <dt>Priority</dt>
-            <dd>
-              {#if priorityInherited}
-                <span
-                  class="field-inherited"
-                  title="Set on {parentEpic?.displayId ?? 'the Epic'} — every member follows"
-                >
-                  {ticket.priority ?? '—'}
-                  {#if ticket.priority}· {PRIORITY_LABELS[ticket.priority]}{/if}
-                  <a class="inherited-from" href="/devops/tickets/{parentEpic?.displayId}"
-                    >from {parentEpic?.displayId}</a
-                  >
-                </span>
-              {:else}
-                <select
-                  class="field-select"
-                  value={ticket.priority ?? ''}
-                  disabled={frozen}
-                  title={frozen ? 'Completed work is read-only' : ticket.isEpic ? 'Set priority — cascades to every member' : 'Set priority'}
-                  onchange={(e) => updateField({ priority: (e.currentTarget.value || null) as TicketPriority | null })}
-                >
-                  <option value="">—</option>
-                  {#each TICKET_PRIORITIES as p (p)}
-                    <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
-                  {/each}
-                </select>
-              {/if}
-            </dd>
-          </div>
-          <div>
-            <dt>Assignee</dt>
-            <dd>
-              <select
-                class="field-select"
-                value={ticket.assignee ?? ''}
-                disabled={frozen}
-                title={frozen ? 'Completed work is read-only' : 'Set assignee'}
-                onchange={(e) => updateField({ assignee: (e.currentTarget.value || null) as TicketAssignee | null })}
-              >
-                <option value="">Unassigned</option>
-                {#each TICKET_ASSIGNEES as a (a)}
-                  <option value={a}>{ASSIGNEE_LABELS[a] ?? a}</option>
-                {/each}
-              </select>
-            </dd>
-          </div>
-          <div>
-            <dt>Project</dt>
-            <dd>
-              <select
-                class="field-select"
-                disabled={frozen}
-                value={ticket.projectId ?? ''}
-                title="Set project"
-                onchange={(e) => e.currentTarget.value && updateField({ projectId: Number(e.currentTarget.value) })}
-              >
-                {#each allProjects as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-              </select>
-            </dd>
-          </div>
-          <div>
-            <dt>Refinement</dt>
-            <dd>{ticket.refined ? '✓ Refined' : (ticket.refineState ?? 'Not started')}</dd>
-          </div>
-          <!-- PD-432: only rendered when the ticket carries an override. A row reading
-               "default" on every ticket would be noise; an unusual budget is the thing worth
-               seeing, and it should be obvious that someone chose it. -->
-          {#if ticket.maxTurns !== null}
-            <div>
-              <dt>Turn ceiling</dt>
-              <dd>{ticket.maxTurns} <span class="muted">(raised from {ROBOT_MAX_TURNS_DEFAULT})</span></dd>
-            </div>
-          {/if}
-          <div><dt>Source</dt><dd>{ticket.source}</dd></div>
-          <div><dt>Created</dt><dd>{fmt(ticket.createdAt)}</dd></div>
-          <div><dt>Updated</dt><dd>{fmt(ticket.updatedAt)}</dd></div>
-        </dl>
-        {#if ticket.githubIssueUrl}
-          <p class="details-issue">
-            <a class="issue-link gh-inline" href={ticket.githubIssueUrl} target="_blank" rel="noreferrer">
-              <GithubMark size={14} /> Issue #{ticket.githubIssueNumber}
-            </a>
-          </p>
-        {/if}
+        <DetailsPanel
+          {ticket}
+          {allTickets}
+          {allProjects}
+          {project}
+          {parentEpic}
+          memberCount={memberTotal}
+          {frozen}
+          onSaved={() => ticketId && load(ticketId)}
+        />
       </section>
 
-      <section class="pane pane-refine">
-        {#if ticket.refined}
-          <div class="refine-controls"><span class="refined-badge" title="This ticket has been refined">✓ Refined</span></div>
-        {/if}
-        <TicketThread
-          ticketId={ticket.id}
-          isEpic={ticket.isEpic}
-          epic={parentEpic ?? null}
-          epicMembers={parentEpic ? allTickets.filter((t) => t.epicId === parentEpic.id) : []}
-          onChanged={() => ticketId && load(ticketId)}
-          onStart={startRefine}
-          {starting}
-        />
-        <div class="refine-footer">
-          <button
-            class="info-btn"
-            type="button"
-            title="Refinement statuses"
-            aria-label="Refinement statuses"
-            onclick={() => (glossaryOpen = true)}>i</button
-          >
-          {#if !ticket.refined && ticket.refineState !== null}
-            <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
-              {markingRefined ? 'Marking…' : '✓ Mark refined'}
-            </button>
-          {/if}
-        </div>
-      </section>
+      <!-- Phones keep Refine as the third bottom-nav pane. Desktop opens it in RefineModal instead. -->
+      {#if !desktop.current}
+        <section class="pane pane-refine">
+          {@render refinePanel(ticket)}
+        </section>
+      {/if}
     </div>
+
+    <!-- Floating, bottom-centre on desktop: "Change something" beside the Refine button — this page's
+         own dock, since the layout's stands down here. Phones: bottom-right, above the bottom nav,
+         where Refine is the third tab instead. -->
+    <FloatDock aboveBottomNav align="center">
+      <PageTicketButton />
+      {#if desktop.current}
+        <RefineButton waiting={refineWaiting} onclick={() => (refineModalOpen = true)} />
+      {/if}
+    </FloatDock>
+    {#if desktop.current}
+      <RefineModal
+        open={refineModalOpen}
+        {ticket}
+        epic={parentEpic ?? null}
+        epicMembers={parentEpic ? allTickets.filter((m) => m.epicId === parentEpic.id) : []}
+        onClose={() => (refineModalOpen = false)}
+        onChanged={() => ticketId && load(ticketId)}
+      />
+    {/if}
 
     <!-- ── Mobile bottom nav (hidden on desktop) ── -->
     <nav class="botnav" aria-label="Ticket sections">
@@ -1179,6 +1047,7 @@
       >
         <span class="ic" aria-hidden="true">✦</span>
         <span>Refine</span>
+        {#if refineWaiting}<span class="attn-dot waiting" title="The Refine agent is waiting on you"></span>{/if}
       </button>
     </nav>
 
@@ -1245,6 +1114,36 @@
 {/if}
 
 <style lang="scss" src="./+page.scss"></style>
+
+<!-- The mobile Refine pane's thread + controls. Desktop uses RefineModal, which carries its own. -->
+{#snippet refinePanel(t: AgentTicket)}
+  {#if t.refined}
+    <div class="refine-controls"><span class="refined-badge" title="This ticket has been refined">✓ Refined</span></div>
+  {/if}
+  <TicketThread
+    ticketId={t.id}
+    isEpic={t.isEpic}
+    epic={parentEpic ?? null}
+    epicMembers={parentEpic ? allTickets.filter((m) => m.epicId === parentEpic.id) : []}
+    onChanged={() => ticketId && load(ticketId)}
+    onStart={startRefine}
+    {starting}
+  />
+  <div class="refine-footer">
+    <button
+      class="info-btn"
+      type="button"
+      title="Refinement statuses"
+      aria-label="Refinement statuses"
+      onclick={() => (glossaryOpen = true)}>i</button
+    >
+    {#if !t.refined && t.refineState !== null}
+      <button class="mark-refined" type="button" onclick={markRefined} disabled={markingRefined}>
+        {markingRefined ? 'Marking…' : '✓ Mark refined'}
+      </button>
+    {/if}
+  </div>
+{/snippet}
 
 {#snippet memberCardSnippet(m: AgentTicket, drag: { dragging: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
   <MemberCard

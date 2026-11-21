@@ -143,6 +143,9 @@
 }
 .content {
   padding: var(--space-xl) var(--space-lg);
+  // Room under the last thing on the page for the FloatDock ("Change something", the Pomodoro,
+  // the Refine chat bar), so scrolling to the end never leaves content hidden behind it.
+  padding-bottom: calc(var(--space-xl) + 3.5rem);
 }
 
 /* ── Mobile responsive (≤768px): rail becomes a drawer ─────────────────── */
@@ -188,5 +191,6 @@
 
   .content {
     padding: var(--space-md);
+    padding-bottom: calc(var(--space-md) + 3.5rem);
   }
 }

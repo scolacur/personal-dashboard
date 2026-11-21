@@ -1,0 +1,41 @@
+// A round, floating pill. Quiet surface colours rather than the accent — it is on every page, so it
+// must not compete with the page's own content — but solid and shadowed, since it floats over it.
+.page-ticket-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 2.5rem;
+  padding: 0 var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+// Phones: icon only, a true circle — the label costs width the screen does not have.
+@media (max-width: 860px) {
+  .page-ticket-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    justify-content: center;
+
+    .label {
+      display: none;
+    }
+  }
+}

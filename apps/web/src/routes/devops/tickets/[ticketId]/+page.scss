@@ -4,15 +4,27 @@
 
 .detail-nav {
   margin-bottom: var(--space-lg);
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
   font-size: var(--font-size-sm);
+  text-decoration: none;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
 
-  a {
-    color: var(--muted);
-    transition: color 0.15s;
-
-    &:hover {
-      color: var(--accent);
-    }
+  &:hover,
+  &:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 }
 
@@ -29,9 +41,11 @@
   font-size: var(--font-size-sm);
 }
 
-// ── Option C layout (PD-345) ──────────────────────────────────────────────
+// ── Layout (PD-345, reworked) ─────────────────────────────────────────────
 // Mobile-first: one pane at a time, switched by the sticky bottom nav. Desktop (≥861px):
-// Overview is the always-on left 70%; the right 30% toggles Details|Refine via the segbar.
+// Overview is the left 70%, Details the right 30% with its top level with the title; the Refine
+// chat is docked bottom-centre (RefineChatDock), not a column. Keep 861px in step with the
+// MediaQuery in +page.svelte, which decides where the thread mounts.
 .ticket-detail {
   display: block;
   max-width: 1400px;
@@ -48,6 +62,9 @@
   display: block;
 }
 
+.detail-banners {
+  margin-bottom: var(--space-md);
+}
 .detail-head {
   margin-bottom: var(--space-md);
 }
@@ -59,10 +76,6 @@
   margin-bottom: var(--space-sm);
 }
 
-// The desktop right-column toggle (hidden on mobile, where the bottom nav drives panes).
-.segbar {
-  display: none;
-}
 .right-col {
   min-width: 0;
 }
@@ -109,20 +122,39 @@
     height: 7px;
     border-radius: 50%;
     background: var(--status-stuck);
+
+    // The Refine agent replied and is waiting on Steve — same signal as the desktop chat's dot.
+    &.waiting {
+      background: var(--status-awaiting-human);
+    }
   }
 }
 
 @media (min-width: 861px) {
+  // Rows: banners (full width), badges, title, overview. Details spans the title and overview rows,
+  // so its top is level with the title. The last row is `1fr` so that, if Details is the taller of
+  // the two, the extra height lands under the overview rather than pushing the title row apart.
   .ticket-detail {
     display: grid;
     grid-template-columns: minmax(0, 70fr) minmax(0, 30fr);
-    grid-template-areas: 'head head' 'overview right';
-    gap: var(--space-xl);
+    grid-template-rows: auto auto auto 1fr;
+    grid-template-areas: 'banners banners' 'badges .' 'title right' 'overview right';
+    column-gap: var(--space-xl);
+    row-gap: 0;
     align-items: start;
     padding-bottom: 0;
   }
+  .detail-banners {
+    grid-area: banners;
+  }
   .detail-head {
-    grid-area: head;
+    display: contents;
+  }
+  .head-badges {
+    grid-area: badges;
+  }
+  .detail-title {
+    grid-area: title;
   }
   .pane-overview {
     grid-area: overview;
@@ -132,69 +164,19 @@
     position: sticky;
     top: var(--space-md);
     max-height: calc(100vh - 2 * var(--space-md));
-    display: flex;
-    flex-direction: column;
+    overflow-y: auto;
+    padding: var(--space-md);
     border: 1px solid var(--border);
     border-radius: var(--radius-md, 8px);
-    overflow: hidden;
   }
   .pane {
     display: block; // reset the mobile hide
   }
-  .segbar {
-    display: flex;
-    flex: none;
-  }
   .botnav {
     display: none;
   }
-  // Only the selected right pane shows on desktop.
-  .ticket-detail[data-rt='details'] .pane-refine {
-    display: none;
-  }
-  .ticket-detail[data-rt='refine'] .pane-details {
-    display: none;
-  }
-  .pane-details {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: var(--space-md);
-  }
-  // Refine fills the column so its composer pins to the bottom, thread scrolls above it.
-  .pane-refine {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    padding: var(--space-sm);
-    gap: var(--space-sm);
-  }
-  .pane-refine :global(.refine-thread) {
-    flex: 1;
-    min-height: 0;
-    max-height: none;
-  }
 }
 
-.seg {
-  flex: 1;
-  padding: var(--space-sm) var(--space-md);
-  background: var(--surface-2);
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
-  font: inherit;
-  font-weight: 600;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-
-  &[aria-selected='true'] {
-    color: var(--text);
-    border-bottom-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-}
 
 // ── Robot remediation banner (C4) ──
 .parked-banner {
@@ -276,59 +258,12 @@
   &.agent-needs-human { color: var(--status-awaiting-human); }
 }
 
-// Details pane field list.
-.fields {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--space-xs) var(--space-md);
-  margin: 0;
-  font-size: var(--font-size-sm);
-
-  div {
-    display: contents;
-  }
-  dt {
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: var(--font-size-xs);
-  }
-  dd {
-    margin: 0;
-    color: var(--text);
-    text-align: right;
-  }
-}
-.details-issue {
-  margin: var(--space-md) 0 0;
-}
 .rel-add-row {
   display: flex;
   justify-content: flex-end;
   margin-bottom: var(--space-xs);
 }
 
-// Inline attribute editing in the Details pane (PD-374).
-.field-select {
-  width: 100%;
-  max-width: 12rem;
-  padding: 2px var(--space-xs);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius, 4px);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-
-  &:hover {
-    border-color: var(--muted);
-  }
-  &:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-}
 
 // D-083: terminal tickets are read-only; this states it and carries the one way out.
 // Rendered as the first child of `.detail-head` (PD-601), so it is full-bleed above the badges and
@@ -433,42 +368,7 @@
   color: var(--muted);
 }
 
-// A field the Epic owns (D-080): shown in place of the select, with a link to the Epic that
-// sets it. Deliberately not a disabled <select> — this is not a control you lack permission for,
-// it is a value that lives somewhere else.
-.field-inherited {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-xs);
-  font-size: var(--font-size-sm);
-  color: var(--text);
-
-  .inherited-from {
-    font-size: var(--font-size-xs);
-    color: var(--muted);
-
-    &:hover {
-      color: var(--accent);
-    }
-  }
-}
-
 // GitHub icon links (header + details) — visual parity with the board cards (PD-374).
-.gh-link {
-  display: inline-flex;
-  align-items: center;
-  color: var(--muted);
-
-  &:hover {
-    color: var(--text);
-  }
-}
-.gh-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-}
-
 .detail-id {
   font-family: var(--font-display);
   font-weight: 700;
@@ -514,30 +414,25 @@
   }
 }
 
-.priority-name {
-  font-size: var(--font-size-sm);
-  color: var(--muted);
-}
-
-.status-badge {
-  font-size: var(--font-size-xs);
-  border-radius: 999px;
-  padding: 0 var(--space-sm);
-  background: var(--surface-2);
-  color: var(--muted);
-}
-
-.project-chip {
-  font-size: var(--font-size-xs);
-  color: var(--chip);
-  border: 1px solid var(--chip);
-  border-radius: 999px;
-  padding: 0 var(--space-sm);
-}
-
 .detail-title {
   margin: 0 0 var(--space-md);
   font-size: var(--font-size-xl);
+}
+
+// Epics read as Epics at a glance: an accent stripe down the left of the badges + title. Drawn on
+// both elements (not a wrapper) because on desktop they are separate grid items — the title row
+// is what the Details column aligns to — so the gap between them is padding, not margin, to keep
+// the stripe unbroken.
+.ticket-detail.is-epic {
+  .head-badges,
+  .detail-title {
+    padding-left: var(--space-md);
+    border-left: 3px solid var(--accent-2);
+  }
+  .head-badges {
+    margin-bottom: 0;
+    padding-bottom: var(--space-sm);
+  }
 }
 
 .detail-body {
@@ -673,12 +568,6 @@
     border-color: var(--accent);
     color: var(--on-accent);
   }
-}
-
-.issue-link {
-  font-size: var(--font-size-sm);
-  color: var(--accent);
-  text-decoration: underline;
 }
 
 // PD-250 inline reply to a parked agent.
