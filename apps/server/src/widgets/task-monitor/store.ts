@@ -1357,8 +1357,9 @@ export function appendRefineReply(
 
 /**
  * Every ticket whose Refine session is waiting on Steve, with the agent turn it waits on — the
- * Decisions inbox (PD-746, D-096 §7). Two queries, never one per ticket: the tickets (refineState
- * derived exactly as the board derives it), then each one's newest `refine_agent` event. Sorted by
+ * Decisions inbox (PD-746, D-096 §7). Three queries, never one per ticket: the tickets (refineState
+ * derived exactly as the board derives it), each one's newest `refine_agent` event, and each one's
+ * proposal lifecycle, so an item carries its actionable proposal (PD-843). Sorted by
  * priority (P0 first, unset last), then oldest question first, so what has waited longest at the
  * highest priority leads.
  */
@@ -1383,6 +1384,26 @@ export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] 
     created_at: number;
   }[];
   const byTicket = new Map(latest.map((r) => [r.ticket_id, r]));
+  // PD-843: each session's proposal lifecycle, oldest first, so `latestActionableProposal` reads it
+  // exactly as the approve path does. One query for all tickets.
+  const lifecycle = db
+    .prepare(
+      `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
+        WHERE ticket_id IN (${placeholders}) AND type IN (?, ?, ?)
+        ORDER BY created_at ASC, id ASC`,
+    )
+    .all(
+      ...ids,
+      REFINE_PROPOSAL_EVENT.proposal,
+      REFINE_PROPOSAL_EVENT.committed,
+      REFINE_PROPOSAL_EVENT.rejected,
+    ) as TicketEventRow[];
+  const proposalEvents = new Map<number, TicketEvent[]>();
+  for (const row of lifecycle) {
+    const list = proposalEvents.get(row.ticket_id) ?? [];
+    list.push(rowToTicketEvent(row));
+    proposalEvents.set(row.ticket_id, list);
+  }
   const epics = new Map(all.filter((t) => t.isEpic).map((t) => [t.id, t]));
   const items: AwaitingRefineItem[] = [];
   for (const t of tickets) {
@@ -1405,8 +1426,10 @@ export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] 
       epicTitle: epic?.title ?? null,
       eventId: ev.id,
       askedAt: ev.created_at,
+      isEpic: t.isEpic,
       agentText: typeof detail.text === 'string' ? detail.text : '',
       round,
+      proposal: latestActionableProposal(proposalEvents.get(t.id) ?? []),
     });
   }
   const rank = (p: string | null) => (p === null ? 99 : Number(p.replace(/^P/, '')));

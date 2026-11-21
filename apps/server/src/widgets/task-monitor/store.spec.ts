@@ -863,6 +863,37 @@ describe('listAwaitingRefine — the Decisions inbox (PD-746)', () => {
     expect(item.round).toBeNull();
   });
 
+  it('carries the actionable proposal, the round, or neither (PD-843)', () => {
+    const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P2' });
+    const proposed = createTicket(db, { title: 'proposed', projectId: pd, epicId: epic.id });
+    const asked = createTicket(db, { title: 'asked', projectId: pd, epicId: epic.id });
+    const replied = createTicket(db, { title: 'replied', projectId: pd, epicId: epic.id });
+    const rejected = createTicket(db, { title: 'rejected', projectId: pd, epicId: epic.id });
+    // proposal: the agent proposed and then ended its turn; nothing decided since.
+    at(proposed.id, 'refine_proposal', 6000, { mode: 'refine_in_place', body: 'new body', rationale: 'why' });
+    at(proposed.id, 'refine_agent', 5900, { text: 'Proposed.' });
+    // round: a structured question, no proposal.
+    at(asked.id, 'refine_agent', 5000, { text: 'q', round: ROUND });
+    // neither: plain text, no round, no proposal.
+    at(replied.id, 'refine_agent', 4000, { text: 'Still looking.' });
+    // a rejected proposal is no longer actionable.
+    at(rejected.id, 'refine_proposal', 3000, { mode: 'decompose', children: [] });
+    at(rejected.id, 'refine_rejected', 2500, {});
+    at(rejected.id, 'refine_agent', 2000, { text: 'ok' });
+
+    const byTitle = new Map(listAwaitingRefine(db).map((i) => [i.title, i]));
+    const p = byTitle.get('proposed')!;
+    expect(p.proposal?.proposal).toEqual({ mode: 'refine_in_place', body: 'new body', rationale: 'why' });
+    expect(typeof p.proposal?.eventId).toBe('number');
+    expect(p.round).toBeNull();
+    expect(p.isEpic).toBe(false);
+    expect(byTitle.get('asked')!.proposal).toBeNull();
+    expect(byTitle.get('asked')!.round?.questions[0].id).toBe('q');
+    expect(byTitle.get('replied')!.proposal).toBeNull();
+    expect(byTitle.get('replied')!.round).toBeNull();
+    expect(byTitle.get('rejected')!.proposal).toBeNull();
+  });
+
   it('is empty when nothing waits', () => {
     expect(listAwaitingRefine(db)).toEqual([]);
   });

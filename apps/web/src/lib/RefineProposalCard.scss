@@ -1,0 +1,277 @@
+// Commit proposal card (D-044, PD-269) — the approval gate before any ticket writes. Shared by the
+// ticket thread and the Decisions inbox (PD-843). An agent bubble with an accent border, so it reads
+// as the distinct approval gate, not a plain message.
+.proposal-card {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--accent);
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  background: var(--surface-2);
+  line-height: 1.55;
+}
+
+.proposal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-xs);
+
+  .who {
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+  }
+}
+
+.proposal-badge {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+.proposal-rationale {
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text);
+}
+
+.proposal-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-xs) var(--space-md);
+  margin: var(--space-sm) 0 0;
+  font-size: var(--font-size-sm);
+
+  div {
+    display: contents;
+  }
+  dt {
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: var(--font-size-xs);
+  }
+  dd {
+    margin: 0;
+  }
+}
+
+.proposal-body {
+  margin: var(--space-sm) 0 0;
+  padding: var(--space-sm);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--font-size-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.proposal-children {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+
+  .child-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-sm);
+    font-size: var(--font-size-sm);
+  }
+  // `.child-priority` went with the field in PD-510 (Refine proposes content, not placement), and
+  // `.child-lane` in PD-598 — approval does not read a proposed lane, so printing one per child
+  // was decoration that read as a decision.
+  .child-assignee {
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0 var(--space-sm);
+    white-space: nowrap;
+  }
+  .child-title {
+    font-weight: 600;
+  }
+  // PD-634: a child that will NOT be born refined — the exception, so it is the one marked.
+  .child-unrefined {
+    font-size: var(--font-size-xs);
+    color: var(--status-warn);
+    border: 1px solid var(--status-warn);
+    border-radius: 999px;
+    padding: 0 var(--space-sm);
+    white-space: nowrap;
+  }
+}
+
+// PD-634: a Populate shows the rewritten Epic description above its members.
+.proposal-section-label {
+  margin: var(--space-sm) 0 var(--space-xs);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+  .approve {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+  // "Approve & queue" is the deliberate dispatch action — outlined so the safe default
+  // (Approve, which never dispatches) reads as primary (D-057).
+  .approve-queue {
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+  }
+  .reject {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+  .shape-hint {
+    font-size: var(--font-size-sm);
+    color: var(--status-warn, #b7791f);
+    cursor: help;
+  }
+}
+
+
+// PD-843: the Decisions inbox folds the body / children away; the summary says what is inside.
+.proposal-details {
+  margin-top: var(--space-sm);
+
+  summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: var(--font-size-sm);
+  }
+}
+
+// An error, or the Epic-marked note. A successful approve/reject message belongs to the caller,
+// because the card is gone once the proposal is decided.
+.proposal-msg {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-muted, var(--text));
+  font-size: var(--font-size-sm);
+}
+
+// PD-760: the beside-the-button hint that the Queue gate will refuse, and the refusal panel itself.
+.proposal-actions .gate-hint {
+  font-size: var(--font-size-sm);
+  color: var(--status-warn, #b7791f);
+  cursor: help;
+}
+
+.queue-refusal {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-warn, #b7791f);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2);
+  font-size: var(--font-size-sm);
+
+  .queue-refusal-lead {
+    margin: 0 0 var(--space-xs);
+    font-weight: 600;
+  }
+
+  .queue-refusal-rows {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+
+    li {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-sm);
+      padding: var(--space-xs) 0;
+    }
+  }
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  .queue-refusal-fix {
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm, 6px);
+    text-decoration: none;
+  }
+
+  .queue-refusal-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+  }
+
+  .approve {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .queue-refusal-cancel {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+}
+
+// PD-842: proposed sibling relations — one compact line per edge under the children.
+.proposal-relations {
+  list-style: none;
+  margin: var(--space-xs, 4px) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs, 4px);
+  font-size: var(--font-size-sm);
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-sm);
+  }
+  .child-title {
+    font-weight: 600;
+  }
+  .relation-verb {
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+  }
+}
