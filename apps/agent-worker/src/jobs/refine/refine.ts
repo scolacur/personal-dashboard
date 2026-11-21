@@ -199,6 +199,31 @@ export function writeRefineAgentTurn(
  */
 const stagedRounds = new Map<number, RefineQuestionRound>();
 
+/**
+ * Tickets that recorded a propose_commit proposal during the turn in flight (PD-844). Module-level
+ * for the same reason as `stagedRounds`: the warm session binds `onProposal` once, at open.
+ */
+const proposedThisTurn = new Set<number>();
+
+/** The fixed nudge sent when a turn ends with nothing for Steve to act on (PD-844). */
+export const REFINE_NUDGE =
+  'You ended your turn without asking a question or recording a proposal. Continue: finish grounding, then ask_questions or propose_commit.';
+
+/**
+ * Whether a clean Refine turn ended with nothing for Steve to act on, and so earns one automatic
+ * nudge (PD-844). A turn is actionable when it staged an ask_questions round, recorded a
+ * propose_commit proposal, or its reply ends in a question to Steve. Trailing markdown emphasis,
+ * closing quotes/brackets and whitespace are ignored, so "...which one?**" still counts.
+ *
+ * The case this exists for is a turn like "I'll wait for the explorers to report back": derived
+ * state (`refine_agent` newest -> awaiting-human) would park it on Steve with nothing to answer.
+ */
+export function turnNeedsNudge(turn: { text: string; round?: RefineQuestionRound; proposed: boolean }): boolean {
+  if (turn.round || turn.proposed) return false;
+  const tail = turn.text.replace(/[\s*_`"'\u201d\u2019)\]]+$/u, '');
+  return !tail.endsWith('?');
+}
+
 /** Fallback text for a turn that asked questions but wrote no prose around them. */
 export function roundOnlyText(round: RefineQuestionRound): string {
   const n = round.questions.length;
@@ -438,10 +463,14 @@ export async function processPendingRefines(
     if (!work) continue;
     const warm = sessions.has(ticketId);
     // The agent calls propose_commit → we persist the proposal for Steve to approve.
-    const onProposal = (proposal: RefineProposal) => writeRefineProposal(db, ticketId, proposal, now());
+    const onProposal = (proposal: RefineProposal) => {
+      writeRefineProposal(db, ticketId, proposal, now());
+      proposedThisTurn.add(ticketId);
+    };
     // PD-744: stage the round; it is attached to the agent turn below only if the turn succeeds.
     const onRound = (round: RefineQuestionRound) => stagedRounds.set(ticketId, round);
     stagedRounds.delete(ticketId);
+    proposedThisTurn.delete(ticketId);
     // PD-634: lets propose_commit refuse a Populate without the Epic's rewritten body while the agent
     // can still correct it. The server re-checks at approval, so a stale warm session cannot slip past.
     const targetIsEpic =
@@ -466,8 +495,37 @@ export async function processPendingRefines(
           fullThreadPrompt(events),
         );
       }
-      const round = stagedRounds.get(ticketId);
+      let round = stagedRounds.get(ticketId);
       stagedRounds.delete(ticketId);
+      // PD-844 backstop: a clean turn with no round, no proposal and no closing question would park
+      // on Steve with nothing to answer. Resume it ONCE with a fixed nudge and persist only the
+      // nudged turn. Exactly one per human message — this runs once per processed `work`, and the
+      // nudged turn's result is persisted whatever it holds, so it cannot loop. If the nudge itself
+      // fails or comes back empty, the original turn is kept rather than thrown away.
+      if (result.ok && turnNeedsNudge({ text: result.text, round, proposed: proposedThisTurn.has(ticketId) })) {
+        logger.info({ ticketId }, 'refine: turn ended without a question or proposal — nudging once');
+        proposedThisTurn.delete(ticketId);
+        let nudged: RefineTurnResult;
+        try {
+          nudged = await sessions.turn(
+            ticketId,
+            { config, contextPack, resumeSessionId: result.sessionId, onProposal, targetIsEpic, onRound, db },
+            REFINE_NUDGE,
+          );
+        } catch (err) {
+          logger.warn({ err, ticketId }, 'refine: nudge threw');
+          nudged = { text: '', ok: false, sessionId: result.sessionId };
+        }
+        const nudgedRound = stagedRounds.get(ticketId);
+        stagedRounds.delete(ticketId);
+        if (nudged.ok && (nudged.text.trim() !== '' || nudgedRound)) {
+          result = nudged;
+          round = nudgedRound;
+        } else {
+          logger.warn({ ticketId, ok: nudged.ok }, 'refine: nudge produced no usable turn — keeping the original');
+        }
+      }
+      proposedThisTurn.delete(ticketId);
       if (!result.ok) {
         // An API/agent error (billing, rate limit, auth, max-turns) — NOT the agent's words.
         // Log the real reason and leave the ticket pending so it self-heals on a later poll
@@ -508,6 +566,7 @@ export async function processPendingRefines(
       );
     } catch (err) {
       stagedRounds.delete(ticketId);
+      proposedThisTurn.delete(ticketId);
       const { attempt, waitMs } = backoff.recordFailure(ticketId, now());
       logger.error({ err, ticketId, attempt, waitMs }, 'refine: turn failed — backing off');
     }
