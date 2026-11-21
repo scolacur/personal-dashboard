@@ -90,6 +90,18 @@ describe('POST /api/widgets/task-monitor/surface-tickets', () => {
     expect(epic).toEqual({ title: WIDGET_INBOX_TITLE, source: WIDGET_INBOX_SOURCE, is_epic: 1 });
   });
 
+  it('stores the chosen priority, and files unprioritized when none is sent (PD-836)', async () => {
+    const { app } = freshSetup();
+    const withP = await post(app, { surface: appSurface, text: 'urgent-ish', priority: 'P2' });
+    expect(withP.statusCode).toBe(201);
+    expect(withP.json().ticket.priority).toBe('P2');
+    const without = await post(app, { surface: appSurface, text: 'no level' });
+    expect(without.json().ticket.priority).toBeNull();
+    const bad = await post(app, { surface: appSurface, text: 'x', priority: 'P9' });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('INVALID_PRIORITY');
+  });
+
   it('opens a Refine session when refine is true', async () => {
     const { app, db } = freshSetup();
     const res = await post(app, { surface: pageSurface, text: 'grill me on this', refine: true });

@@ -3,8 +3,10 @@ import type {
   AgentTicket,
   SurfaceTicketInput,
   TicketEvent,
+  TicketPriority,
   TicketSurface,
 } from '@dashboard/shared';
+import { TICKET_PRIORITIES } from '@dashboard/shared';
 import { createTicket, getProjectBySlug, getTicket, startRefine } from './store';
 
 /**
@@ -18,6 +20,9 @@ import { createTicket, getProjectBySlug, getTicket, startRefine } from './store'
  *
  * Optionally the same request opens a Refine session ("grill me first"), so the ask is
  * interrogated before it is shaped into work.
+ *
+ * A priority picked in the dialog (PD-836) is stored on the ticket, so suggestions no longer sink
+ * to the bottom of the backlog as unprioritized.
  *
  * Deliberately *not* PD-580's (In-widget prompt affordance) full flow: no LLM drafting, no approval
  * gate, no queueing. The ticket lands in backlog, unassigned, unrefined — nothing here can cause a
@@ -49,7 +54,7 @@ const INBOX_BODY = [
 
 export type SurfaceTicketFailure = {
   ok: false;
-  code: 'INVALID_TEXT' | 'INVALID_SURFACE' | 'NO_PROJECT';
+  code: 'INVALID_TEXT' | 'INVALID_SURFACE' | 'INVALID_PRIORITY' | 'NO_PROJECT';
   message: string;
 };
 
@@ -180,7 +185,15 @@ function validate(raw: Record<string, unknown>): SurfaceTicketInput | SurfaceTic
   if (!text) return { ok: false, code: 'INVALID_TEXT', message: 'text is required' };
   const surface = validateSurface(raw.surface);
   if ('ok' in surface) return surface;
-  return { text, surface, refine: raw.refine === true };
+  // PD-836: optional, but a value that is present must be a real level — never silently dropped.
+  let priority: TicketPriority | null = null;
+  if (raw.priority !== undefined && raw.priority !== null) {
+    if (!TICKET_PRIORITIES.includes(raw.priority as TicketPriority)) {
+      return { ok: false, code: 'INVALID_PRIORITY', message: 'priority must be one of P0–P5' };
+    }
+    priority = raw.priority as TicketPriority;
+  }
+  return { text, surface, refine: raw.refine === true, priority };
 }
 
 /**
@@ -221,6 +234,7 @@ export function fileSurfaceTicket(
       body,
       projectId: project.id,
       epicId,
+      priority: input.priority ?? null,
       source: sourceTag(input.surface),
     });
   });

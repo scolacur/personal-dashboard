@@ -420,6 +420,9 @@ export interface SurfaceTicketInput {
   surface: TicketSurface;
   /** Open a Refine session on the new ticket ("grill me first"). */
   refine?: boolean;
+  /** P0–P5 (PD-836). Omit or `null` to file unprioritized. The triage-inbox Epic is unclassified,
+   *  so under D-080 the member keeps this value rather than inheriting one. */
+  priority?: TicketPriority | null;
 }
 
 /** Partial update — any subset of these fields. */
