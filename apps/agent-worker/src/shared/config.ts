@@ -170,6 +170,9 @@ export interface RobotConfig {
   codingHome: string;
   /** Hard turn ceiling for one coding session (the Robot loop's max-turns cap). */
   maxTurns: number;
+  /** D-094 (PD-737): the small fixed budget the checkpoint status-report step resumes the
+   *  ceiling-paused session for. Small on purpose — enough to summarise, not to resume real work. */
+  checkpointReportTurns: number;
   /** Fault-tier retry guardrail (D-055, PD-343 / C2). Consumed by faults.ts as its `FaultPolicy`. */
   retryCap: number;
   /** Identical-signature repeats that promote a transient fault to deterministic (park). */
@@ -241,6 +244,7 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     // Default from @dashboard/shared so the board's denominator (PD-230) and the loop's real cap
     // cannot drift in code. An env override here is NOT visible to the web process.
     maxTurns: Number(env.ROBOT_MAX_TURNS ?? ROBOT_MAX_TURNS_DEFAULT),
+    checkpointReportTurns: Number(env.ROBOT_CHECKPOINT_REPORT_TURNS ?? 3),
     retryCap: Number(env.ROBOT_RETRY_CAP ?? 3),
     promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
     backoffBaseMs: Number(env.ROBOT_BACKOFF_BASE_MS ?? 60_000),

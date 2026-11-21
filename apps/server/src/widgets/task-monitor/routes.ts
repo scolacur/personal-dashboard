@@ -58,6 +58,8 @@ import {
   RelationCycleError,
   removeRelationById,
   resetRobotRuns,
+  continueCheckpoint,
+  restartCheckpoint,
   SelfRelationError,
   setDispatchPaused,
   startRefine,
@@ -656,6 +658,40 @@ export function registerRoutes(
     const ticket = resetRobotRuns(db, id, 'unstick');
     if (!ticket) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
     return ticket;
+  });
+
+  // D-094 (PD-737): Continue a checkpointed ticket — resume from the saved WIP with more turns.
+  // `{ extraTurns }` defaults to 50, must be 1–200, and is REJECTED (not clamped) above 200 (D-066).
+  app.post(`${base}/tickets/:id/robot/continue`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const body = (request.body ?? {}) as { extraTurns?: unknown };
+    const extraTurns =
+      body.extraTurns === undefined || body.extraTurns === null ? undefined : Number(body.extraTurns);
+    const result = continueCheckpoint(db, id, extraTurns);
+    if (!result.ok) {
+      if (result.reason === 'not_found')
+        return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+      if (result.reason === 'invalid_turns')
+        return reply.status(400).send({ error: result.message ?? 'invalid extraTurns', code: 'INVALID_EXTRA_TURNS' });
+      return reply.status(409).send({ error: 'ticket is not at a checkpoint', code: 'NOT_CHECKPOINT' });
+    }
+    return result.ticket;
+  });
+
+  // D-094 (PD-737): Restart a checkpointed ticket — re-queue a fresh run from main (keeps the WIP ref).
+  app.post(`${base}/tickets/:id/robot/restart`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const result = restartCheckpoint(db, id);
+    if (!result.ok) {
+      if (result.reason === 'not_found')
+        return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+      return reply.status(409).send({ error: 'ticket is not at a checkpoint', code: 'NOT_CHECKPOINT' });
+    }
+    return result.ticket;
   });
 
   // Global pause/resume of Robot dispatch. Resume clears the flag a system-wide fault (C2) set.

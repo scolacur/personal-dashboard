@@ -48,6 +48,7 @@ import {
   REFINE_BACKFILL_EXCLUDED_EVENT,
   REFINE_STATE_EVENT_TYPES,
   renderRoundAnswers,
+  resolveContinueTurns,
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
   validateAnswerSet,
@@ -2140,7 +2141,8 @@ export function getSortieFleet(db: Database.Database): Partial<Record<AgentState
 }
 
 /**
- * The tickets parked waiting on a human — stuck, needs-human, awaiting-human (PD-498).
+ * The tickets parked waiting on a human — stuck, needs-human, awaiting-human, and a turn-ceiling
+ * checkpoint (PD-498; D-094/PD-737).
  *
  * Identities, not a count, because the nav's "N needs you" is only useful if it goes somewhere. A
  * count alone forces the reader to the board and then to hunt for which ticket it meant, which is
@@ -2155,7 +2157,7 @@ export function getNeedsHumanTickets(db: Database.Database, limit = 10): NeedsHu
       `SELECT id, display_id AS displayId, title, agent_state AS agentState
          FROM agent_tickets
         WHERE archived_at IS NULL
-          AND agent_state IN ('stuck', 'needs-human', 'awaiting-human')
+          AND agent_state IN ('stuck', 'needs-human', 'awaiting-human', 'checkpoint')
         ORDER BY updated_at DESC
         LIMIT ?`,
     )
@@ -2360,6 +2362,88 @@ export function resetRobotRuns(
   const nextState = ticket.status === 'queue' ? 'queued' : null;
   db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run(nextState, now, ticketId);
   return getTicket(db, ticketId);
+}
+
+/** The reason a checkpoint remediation was refused (D-094, PD-737). */
+export type CheckpointActionError = 'not_found' | 'not_checkpoint' | 'invalid_turns';
+
+export interface CheckpointActionResult {
+  ok: boolean;
+  reason?: CheckpointActionError;
+  message?: string;
+  ticket?: AgentTicket;
+}
+
+/** The latest `checkpoint` run for a ticket — the source of the WIP ref + sha + report a Continue
+ *  resumes from (D-094, PD-737). Null when there is none / the table is absent. */
+function latestCheckpointRun(
+  db: Database.Database,
+  ticketId: number,
+): { wipRef: string | null; wipSha: string | null; report: string | null } | null {
+  try {
+    const row = db
+      .prepare(
+        `SELECT wip_ref AS wipRef, wip_sha AS wipSha, report
+           FROM agent_runs
+          WHERE ticket_id = ? AND status = 'checkpoint'
+          ORDER BY started_at DESC, id DESC
+          LIMIT 1`,
+      )
+      .get(ticketId) as { wipRef: string | null; wipSha: string | null; report: string | null } | undefined;
+    return row ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Continue a checkpointed ticket (D-094, PD-737). Writes a `robot_continue` event carrying the
+ * ceiling (`extraTurns`), the saved report and the WIP ref the next dispatch resumes from, then
+ * re-queues the ticket (`agent_state = queued`). Only acts on a ticket in `checkpoint`.
+ *
+ * `extraTurns` is validated with the shared `resolveContinueTurns` (default 50, 1–200, REJECTED
+ * above 200 per D-066 — not clamped).
+ */
+export function continueCheckpoint(
+  db: Database.Database,
+  ticketId: number,
+  extraTurns: number | null | undefined,
+  now: number = Date.now(),
+): CheckpointActionResult {
+  const ticket = getTicket(db, ticketId);
+  if (!ticket) return { ok: false, reason: 'not_found' };
+  if (ticket.agentState !== 'checkpoint') return { ok: false, reason: 'not_checkpoint' };
+  const resolved = resolveContinueTurns(extraTurns);
+  if (!resolved.ok) return { ok: false, reason: 'invalid_turns', message: resolved.error };
+
+  const run = latestCheckpointRun(db, ticketId);
+  logEvent(db, ticketId, ROBOT_EVENT.continue, {
+    extraTurns: resolved.turns,
+    fromWip: true,
+    ...(run?.report ? { report: run.report } : {}),
+    ...(run?.wipRef ? { wipRef: run.wipRef } : {}),
+    ...(run?.wipSha ? { wipSha: run.wipSha } : {}),
+  });
+  db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run('queued', now, ticketId);
+  return { ok: true, ticket: getTicket(db, ticketId) ?? undefined };
+}
+
+/**
+ * Restart a checkpointed ticket (D-094, PD-737). Re-queues a FRESH run from `main` (per PD-340 —
+ * no report, no WIP resume), writing a `robot_restart` event. The WIP ref is KEPT. Only acts on a
+ * ticket in `checkpoint`.
+ */
+export function restartCheckpoint(
+  db: Database.Database,
+  ticketId: number,
+  now: number = Date.now(),
+): CheckpointActionResult {
+  const ticket = getTicket(db, ticketId);
+  if (!ticket) return { ok: false, reason: 'not_found' };
+  if (ticket.agentState !== 'checkpoint') return { ok: false, reason: 'not_checkpoint' };
+  logEvent(db, ticketId, ROBOT_EVENT.restart, { reason: 'restart from main by human' });
+  db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run('queued', now, ticketId);
+  return { ok: true, ticket: getTicket(db, ticketId) ?? undefined };
 }
 
 /** Every known worker heartbeat, freshest first. The web server never talks to a

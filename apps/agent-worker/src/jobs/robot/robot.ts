@@ -10,9 +10,9 @@ import {
   type RobotCandidate,
 } from './select';
 import { checkDbLockedFromCoder } from './privilege';
-import { ensureWorktree, pruneWorktrees, removeWorktree, worktreeDirFor, type Worktree } from './workspace';
+import { ensureWorktree, ensureWorktreeFromWip, makeGitRunner, pruneWorktrees, removeWorktree, worktreeDirFor, type Worktree } from './workspace';
 import { pushWip, deleteWipRef, type WipRef } from './wip';
-import { runRobotSession, type RobotSessionResult } from './session';
+import { captureCheckpointReport, runRobotSession, type RobotSessionResult } from './session';
 import type { ResumeContext } from '@dashboard/shared';
 import {
   ensureRunsTable,
@@ -35,10 +35,10 @@ import {
 } from './state';
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
-import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
+import { notifyNeedsHuman, notifyAwaitingHuman, notifyCheckpoint, notifyLoop } from './notify';
 import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
-import { resumeAskHuman, askHumanResume } from './resume';
+import { resumeAskHuman, askHumanResume, checkpointContinuation } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
 import { pollInReviewPrs } from './pr-state';
 
@@ -76,6 +76,9 @@ function budgetPolicy(config: AgentWorkerConfig): BudgetPolicy {
 export interface RobotDeps {
   /** Injectable so orchestration tests never open a real worktree. */
   ensureWorktree?: (config: AgentWorkerConfig, branch: string) => Promise<Worktree>;
+  /** D-094 (PD-737): the clone a Continue works in — from the saved WIP ref, rebased onto main.
+   *  Injectable so orchestration tests never shell out to git. */
+  ensureWorktreeFromWip?: (config: AgentWorkerConfig, branch: string, wipRef: string) => Promise<Worktree>;
   removeWorktree?: (config: AgentWorkerConfig, wt: Worktree) => Promise<void>;
   /** PD-719: injectable so tests can observe pruning without touching a real worktrees dir. */
   pruneWorktrees?: (config: AgentWorkerConfig, keepDirs: ReadonlySet<string>) => string[];
@@ -96,6 +99,14 @@ export interface RobotDeps {
     /** PD-230: called as the session streams, with the live turn count. */
     onProgress?: (turns: number) => void,
   ) => Promise<RobotSessionResult>;
+  /** D-094 (PD-737): resume the ceiling-paused session for a status report. Injectable so tests
+   *  never spawn a real `claude`. Returns the report text, or null to fall back to the output tail. */
+  captureReport?: (
+    config: AgentWorkerConfig,
+    c: RobotCandidate,
+    wt: Worktree,
+    sessionId: string,
+  ) => Promise<string | null>;
   now?: () => number;
 }
 
@@ -170,6 +181,12 @@ export async function processRobotQueue(
   }
 
   const doEnsure = deps.ensureWorktree ?? ((c, b) => ensureWorktree(c, b));
+  // D-094 (PD-737): the Continue-from-WIP clone uses the WRITE token's runner (the WIP ref is on a
+  // private repo and a Continue pushes with the write token), unlike the default read-token clone.
+  const doEnsureFromWip =
+    deps.ensureWorktreeFromWip ?? ((c, b, ref) => ensureWorktreeFromWip(c, b, ref, makeGitRunner(c, c.robot.writeToken)));
+  const doCaptureReport =
+    deps.captureReport ?? ((c, cand, w, sessionId) => captureCheckpointReport(c, cand, w, sessionId));
   const doRemove = deps.removeWorktree ?? ((c, w) => removeWorktree(c, w));
   const doPrune = deps.pruneWorktrees ?? ((c, keep) => pruneWorktrees(c, keep));
   const doPushWip = deps.pushWip ?? ((c, w, id) => pushWip(c, w, id));
@@ -282,11 +299,17 @@ export async function processRobotQueue(
     // off the branch. Both may be present — a human answered AND the Evaluator asked for changes —
     // so they compose rather than override.
     const brief = pendingEvaluatorBrief(db, candidate.id);
-    const resumeCtx: ResumeContext | undefined =
-      resume || brief
+    // D-094 (PD-737): a pending Continue off a checkpoint. When present, the run starts from the
+    // saved WIP ref (below), is granted the human's `extraTurns`, and gets the saved report in its
+    // prompt. Read BEFORE the dispatched event is written, exactly like askHumanResume, so a
+    // consumed Continue is never re-applied.
+    const continuation = checkpointContinuation(db, candidate.id);
+    let resumeCtx: ResumeContext | undefined =
+      resume || brief || continuation
         ? {
             ...(resume ? { askHumanQuestion: resume.question, askHumanAnswer: resume.answer } : {}),
             ...(brief ? { evaluatorBrief: brief } : {}),
+            ...(continuation ? { checkpointReport: continuation.report } : {}),
           }
         : undefined;
 
@@ -297,7 +320,8 @@ export async function processRobotQueue(
     setAgentState(db, candidate.id, 'working', now());
     // PD-432: record the ceiling this run actually runs under, so the run is self-describing and
     // the board's N/M indicator reads the real denominator rather than the shared constant.
-    const effectiveMaxTurns = candidate.maxTurns ?? config.robot.maxTurns;
+    // D-094 (PD-737): a Continue overrides the ceiling with the human's `extraTurns`.
+    const effectiveMaxTurns = continuation ? continuation.extraTurns : candidate.maxTurns ?? config.robot.maxTurns;
     const runId = startRun(
       db,
       { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch, bodyHash, maxTurns: effectiveMaxTurns },
@@ -381,6 +405,10 @@ export async function processRobotQueue(
     // PD-719: only a hand-off (the work is on GitHub) deletes the clone. A park, a fault or a
     // no-verify keeps it, so the commits survive into the next dispatch of this ticket.
     let handedOff = false;
+    // D-094 (PD-737): a checkpoint removes the clone (the work is saved to the WIP ref and the next
+    // dispatch re-clones from it), but — unlike a hand-off — must KEEP the WIP ref, since Continue
+    // resumes from it. A separate flag so the `finally` can tell the two apart.
+    let checkpointed = false;
 
     // PD-737/T898: preserve a non-hand-off run's WIP to `robot-wip/t<id>` before the clone is
     // dropped/reused. The clone is kept locally (PD-719), but a crashed run's UNCOMMITTED work is
@@ -397,8 +425,84 @@ export async function processRobotQueue(
       }
     };
 
+    /**
+     * D-094 (PD-737): the run hit its turn ceiling. Not a fault — it does NOT go through
+     * `handleFailure`/the fault tiers and burns no retry. Instead: capture a status report (resume
+     * the same session, read-only), save the WIP, record a `checkpoint` run + a `robot_checkpoint`
+     * event carrying the report, park the ticket `checkpoint`, and notify. The `finally` then removes
+     * the clone while KEEPING the WIP ref (a Continue resumes from it).
+     */
+    const handleCheckpoint = async (
+      result: RobotSessionResult,
+      metrics: { turns?: number; tokens?: number; outputTail?: string },
+    ): Promise<void> => {
+      // Status report: resume the session for a few turns. Null (step failed/timed out, or no
+      // session id) ⇒ fall back to the run's output tail, and say so.
+      let report: string | null = null;
+      if (worktree && result.sessionId) {
+        report = await doCaptureReport(config, candidate, worktree, result.sessionId);
+      }
+      let reportIsFallback = false;
+      if (!report) {
+        report = metrics.outputTail
+          ? `[status-report step unavailable — showing the run's output tail]\n\n${metrics.outputTail}`
+          : null;
+        reportIsFallback = true;
+      }
+      const wip = await preserveWip();
+      finishRun(
+        db,
+        runId,
+        {
+          status: 'checkpoint',
+          sessionId: result.sessionId,
+          faultReason: 'reached the per-run turn ceiling — checkpoint',
+          report,
+          wipRef: wip?.ref ?? null,
+          wipSha: wip?.sha ?? null,
+          ...metrics,
+        },
+        now(),
+      );
+      checkpointed = true;
+      setAgentState(db, candidate.id, 'checkpoint', now());
+      logMilestone(
+        db,
+        candidate.id,
+        ROBOT_EVENT.checkpoint,
+        {
+          reason: 'reached the per-run turn ceiling',
+          maxTurns: effectiveMaxTurns,
+          ...(report ? { report } : {}),
+          ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}),
+        },
+        now(),
+      );
+      notifyCheckpoint(
+        db,
+        candidate.id,
+        'Robot hit the turn ceiling',
+        report ?? 'The run reached its turn ceiling. Choose Continue or Restart.',
+        now(),
+      );
+      logger.info(
+        { ticketId: candidate.id, reportIsFallback, wipRef: wip?.ref ?? null },
+        'robot: run reached the turn ceiling — checkpointed (no retry burn)',
+      );
+    };
+
     try {
-      worktree = await doEnsure(config, branch);
+      // D-094 (PD-737): a Continue clones from the saved WIP ref (rebased onto main); everything
+      // else is the normal clone. A rebase conflict is surfaced to the (DB-blind) session via the
+      // resume prompt, so it integrates `main` itself.
+      if (continuation) {
+        worktree = await doEnsureFromWip(config, branch, continuation.wipRef);
+        if (worktree.rebaseConflict) {
+          resumeCtx = { ...(resumeCtx ?? {}), checkpointRebaseConflict: true };
+        }
+      } else {
+        worktree = await doEnsure(config, branch);
+      }
       // PD-230: persist live turn progress so the board shows a working run closing on the cap.
       // The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only reports.
       const result = await doRun(config, candidate, worktree, resumeCtx, (turns) =>
@@ -408,7 +512,11 @@ export async function processRobotQueue(
       // run row before the `finally` below removes the worktree.
       const metrics = { turns: result.turns, tokens: result.tokens, outputTail: result.outputTail };
 
-      if (result.askHuman) {
+      if (result.maxTurnsReached) {
+        // D-094 (PD-737): the turn ceiling is a checkpoint, not a fault. Routed away from
+        // `handleFailure`/the fault tiers so it burns no retry — see handleCheckpoint.
+        await handleCheckpoint(result, metrics);
+      } else if (result.askHuman) {
         // Deliberate park (D-055 human-state labels): the Robot hit a real ambiguity and asked a
         // question. Not a failure — burns no budget; a human answers (Notification Center) and the
         // resume sweep re-queues it next cycle. Preserve WIP too (PD-737/T898): the next dispatch's
@@ -454,6 +562,10 @@ export async function processRobotQueue(
         // The work is on GitHub as a PR now, so the WIP ref is superseded — delete it (best-effort)
         // while the clone still exists, then drop the clone (PD-737/T898, PD-719).
         await doDeleteWip(config, candidate.id, worktree.dir);
+        await doRemove(config, worktree);
+      } else if (worktree && checkpointed) {
+        // D-094 (PD-737): the work is saved to the WIP ref — drop the clone (the next dispatch
+        // re-clones from the WIP ref on Continue, or from main on Restart) but KEEP the WIP ref.
         await doRemove(config, worktree);
       } else if (worktree) {
         logger.info({ ticketId: candidate.id, dir: worktree.dir }, 'robot: keeping the clone for the next dispatch (no hand-off)');

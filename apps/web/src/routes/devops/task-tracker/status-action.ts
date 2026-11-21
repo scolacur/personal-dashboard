@@ -15,8 +15,9 @@ import { AGENT_STATE_DESCRIPTIONS, ROBOT_EVENT } from '@dashboard/shared';
  * in with a `status-report` words source and Continue / Restart actions — see the commented slot.
  */
 
-/** The remediation a state's button triggers. `open-pr` is a link, not a server call. */
-export type StatusActionKind = 'unstick' | 'reset' | 'open-pr';
+/** The remediation a state's button triggers. `open-pr` is a link, not a server call.
+ *  `continue`/`restart` (D-094, PD-737) POST to the checkpoint routes. */
+export type StatusActionKind = 'unstick' | 'reset' | 'open-pr' | 'continue' | 'restart';
 
 export interface StatusActionButton {
   kind: StatusActionKind;
@@ -98,15 +99,23 @@ export const STATUS_ACTION_REGISTRY: Partial<Record<AgentState, StatusActionEntr
     ],
     reply: false,
   },
-  // PD-737 (the turn ceiling is a checkpoint, D-094) adds one more entry here:
-  //   checkpoint: {
-  //     state: 'checkpoint',
-  //     title: 'Hit the turn ceiling',
-  //     description: AGENT_STATE_DESCRIPTIONS.checkpoint,
-  //     words: { source: 'status-report', label: 'The Robot reported:', collapsed: false, ... },
-  //     actions: [{ kind: 'continue', ... }, { kind: 'restart', ... }],
-  //     reply: false,
-  //   },
+  // PD-737 (the turn ceiling is a checkpoint, D-094).
+  checkpoint: {
+    state: 'checkpoint',
+    title: 'Hit the turn ceiling',
+    description: AGENT_STATE_DESCRIPTIONS.checkpoint,
+    words: {
+      source: 'status-report',
+      label: 'The Robot reported:',
+      collapsed: false,
+      emptyFallback: 'No status report was captured for this checkpoint.',
+    },
+    actions: [
+      { kind: 'continue', label: 'Continue' },
+      { kind: 'restart', label: 'Restart' },
+    ],
+    reply: false,
+  },
 };
 
 /** Does clicking this state's pill open the modal (vs. its PD-619 destination)? */
@@ -194,8 +203,8 @@ export function buildStatusContent(
       words = run?.outputTail ?? null;
       break;
     case 'status-report':
-      // PD-737 populates this from the checkpoint's saved status report.
-      words = null;
+      // D-094 (PD-737): the checkpoint's saved status report, stored on the checkpoint run row.
+      words = run?.report ?? null;
       break;
   }
   return {

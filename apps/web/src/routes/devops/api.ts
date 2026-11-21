@@ -236,6 +236,25 @@ export async function unstickTicket(id: number): Promise<AgentTicket> {
   return res.json() as Promise<AgentTicket>;
 }
 
+/** Continue a checkpointed ticket (D-094, PD-737): resume from the saved WIP with more turns.
+ *  `extraTurns` defaults to 50; 1–200, rejected above 200. */
+export async function continueCheckpoint(id: number, extraTurns?: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/robot/continue`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(extraTurns === undefined ? {} : { extraTurns }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
+/** Restart a checkpointed ticket (D-094, PD-737): re-queue a fresh run from main. */
+export async function restartCheckpoint(id: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/robot/restart`, { method: 'POST' });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentTicket>;
+}
+
 /** Globally pause Robot dispatch (loop-wide). */
 export async function pauseDispatch(reason?: string): Promise<DispatchPauseState> {
   const res = await fetch('/api/widgets/task-monitor/robot/pause', {

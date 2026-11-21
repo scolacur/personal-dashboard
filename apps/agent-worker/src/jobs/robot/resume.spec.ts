@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { ROBOT_EVENT } from '@dashboard/shared';
-import { askHumanResume, resumeAskHuman, ticketsAwaitingHuman } from './resume';
+import { askHumanResume, checkpointContinuation, resumeAskHuman, ticketsAwaitingHuman } from './resume';
 
 function db(): Database.Database {
   const d = new Database(':memory:');
@@ -56,6 +56,49 @@ describe('askHumanResume', () => {
     ev(d, 1, ROBOT_EVENT.humanReply, { text: 'B.' }, 200);
     ev(d, 1, ROBOT_EVENT.dispatched, {}, 300); // resume dispatch consumed the answer
     expect(askHumanResume(d, 1)).toBeNull();
+  });
+});
+
+describe('checkpointContinuation (D-094, PD-737)', () => {
+  let d: Database.Database;
+  beforeEach(() => {
+    d = db();
+    parked(d, 1, 'checkpoint');
+  });
+
+  const cont = { extraTurns: 80, report: 'picking up here', wipRef: 'robot-wip/t1', wipSha: 'abc', fromWip: true };
+
+  it('returns the directive when a robot_continue post-dates the last dispatch', () => {
+    ev(d, 1, ROBOT_EVENT.dispatched, {}, 100);
+    ev(d, 1, ROBOT_EVENT.checkpoint, { report: 'picking up here' }, 150);
+    ev(d, 1, ROBOT_EVENT.continue, cont, 200);
+    expect(checkpointContinuation(d, 1)).toEqual({
+      extraTurns: 80,
+      report: 'picking up here',
+      wipRef: 'robot-wip/t1',
+      wipSha: 'abc',
+    });
+  });
+
+  it('is null once a later dispatch has consumed the Continue', () => {
+    ev(d, 1, ROBOT_EVENT.continue, cont, 100);
+    ev(d, 1, ROBOT_EVENT.dispatched, {}, 200); // the Continue run already started
+    expect(checkpointContinuation(d, 1)).toBeNull();
+  });
+
+  it('is null when a Restart supersedes an earlier Continue', () => {
+    ev(d, 1, ROBOT_EVENT.continue, cont, 100);
+    ev(d, 1, ROBOT_EVENT.restart, { reason: 'changed my mind' }, 200);
+    expect(checkpointContinuation(d, 1)).toBeNull();
+  });
+
+  it('is null without a WIP ref to resume from', () => {
+    ev(d, 1, ROBOT_EVENT.continue, { extraTurns: 50, report: 'x' }, 100);
+    expect(checkpointContinuation(d, 1)).toBeNull();
+  });
+
+  it('is null with no Continue at all', () => {
+    expect(checkpointContinuation(d, 1)).toBeNull();
   });
 });
 

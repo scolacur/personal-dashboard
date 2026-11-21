@@ -132,6 +132,19 @@ export interface ResumeContext {
    * brief in the DB also means the Evaluator needs no GitHub write token at all.
    */
   evaluatorBrief?: string;
+  /**
+   * D-094 (PD-737): a Continue off a checkpoint. The previous run hit its turn ceiling, saved this
+   * status report, and the human chose to resume it. The clone starts from the saved WIP ref (so the
+   * session continues from its own work), and this report is injected so it knows where it left off.
+   * Injected rather than read off the branch for the same reason as the others — the session is
+   * DB-blind.
+   */
+  checkpointReport?: string;
+  /**
+   * D-094 (PD-737): set on a Continue when the saved WIP could NOT be rebased cleanly onto current
+   * `main`. The clone was left at the WIP ref as-is, so the session must integrate `main` itself.
+   */
+  checkpointRebaseConflict?: boolean;
 }
 
 export interface TaskPromptInput {
@@ -176,6 +189,30 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     ? ['## An automated Evaluator reviewed your PR', '', resume.evaluatorBrief, '', '---', '']
     : [];
 
+  // Checkpoint continuation (D-094, PD-737). The clone already starts from your own saved work, so
+  // the first instruction is to re-establish where you are: run verify before writing anything.
+  const checkpointBlock = resume?.checkpointReport
+    ? [
+        '## You are continuing a previous run (it hit the turn ceiling)',
+        'This clone already contains the work from your previous run. Do NOT start over. First run',
+        '`npm run verify` to see the current state, then continue from where you left off.',
+        ...(resume.checkpointRebaseConflict
+          ? [
+              '',
+              '> ⚠️ Your saved work could NOT be rebased cleanly onto the latest `main`. The clone is at',
+              "> your work as-is. Merge `main` in and resolve any conflicts yourself before continuing:",
+              '> `git merge origin/main`.',
+            ]
+          : []),
+        '',
+        '> **Your status report from the previous run:**',
+        ...resume.checkpointReport.split('\n').map((l) => `> ${l}`),
+        '',
+        '---',
+        '',
+      ]
+    : [];
+
   return [
     `# Ticket: ${title}`,
     '',
@@ -185,6 +222,7 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     ...answerBlock,
     ...evaluatorBlock,
+    ...checkpointBlock,
     '## Step 0 — Resuming an earlier attempt?',
     `Your branch (\`${branch}\`) may already have an open PR from a previous run — this happens when a`,
     'human requested changes, left review comments, or the branch fell into conflict with main. Check:',

@@ -42,6 +42,43 @@ export function askHumanResume(db: Database.Database, ticketId: number): AskHuma
   return { question: question?.detail.question ?? null, answer: reply.detail.text ?? '' };
 }
 
+/** A Continue directive off a checkpoint (D-094, PD-737), as the dispatch reads it. */
+export interface CheckpointContinuation {
+  /** The ceiling the resumed run is granted (the human's `extraTurns`). */
+  extraTurns: number;
+  /** The saved status report, to inject into the resume prompt. */
+  report: string;
+  /** The WIP ref the clone starts from (`robot-wip/t<id>`), and its tip sha. */
+  wipRef: string;
+  wipSha: string | null;
+}
+
+/**
+ * The Continue directive for a ticket IF one is pending — the newest `robot_continue` event must
+ * post-date the newest `robot_dispatched` (so a directive already consumed by an earlier dispatch is
+ * not re-applied). Returns the ceiling + report + WIP ref to resume from, else null.
+ *
+ * Pure read. Called at dispatch time BEFORE the new `robot_dispatched` event is written, exactly
+ * like {@link askHumanResume}, so a stale Continue is never re-injected into a later run.
+ */
+export function checkpointContinuation(db: Database.Database, ticketId: number): CheckpointContinuation | null {
+  const cont = latestEvent(db, ticketId, ROBOT_EVENT.continue);
+  if (!cont) return null;
+  const dispatchedAt = latestEventAt(db, ticketId, ROBOT_EVENT.dispatched);
+  if (cont.createdAt <= dispatchedAt) return null; // already consumed by a dispatch
+  // A Restart after the Continue supersedes it (the human changed their mind): a `robot_restart`
+  // newer than the `robot_continue` means "fresh from main", so no continuation applies.
+  const restartAt = latestEventAt(db, ticketId, ROBOT_EVENT.restart);
+  if (restartAt > cont.createdAt) return null;
+  const d = cont.detail;
+  const wipRef = typeof d.wipRef === 'string' ? d.wipRef : null;
+  const report = typeof d.report === 'string' ? d.report : null;
+  const extraTurns = typeof d.extraTurns === 'number' ? d.extraTurns : null;
+  // Without a WIP ref there is nothing to resume from — fall back to a normal (fresh) dispatch.
+  if (!wipRef || extraTurns == null) return null;
+  return { extraTurns, report: report ?? '', wipRef, wipSha: typeof d.wipSha === 'string' ? d.wipSha : null };
+}
+
 /** Robot-assigned queued tickets currently parked `awaiting-human` — the resume sweep's candidate
  *  set (D-058: queue + robot). */
 export function ticketsAwaitingHuman(db: Database.Database): number[] {

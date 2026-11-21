@@ -740,4 +740,135 @@ describe('processRobotQueue', () => {
     // The robot_resumed milestone is on the timeline.
     expect(eventTypes(db, 1)).toContain('robot_resumed');
   });
+
+  // ---- D-094 (PD-737): the turn ceiling is a checkpoint, not a fault ----
+
+  /** A ceiling-paused session result. */
+  const ceiling = (over: Partial<RobotSessionResult> = {}): RobotSessionResult => ({
+    ok: false,
+    verifyOk: false,
+    maxTurnsReached: true,
+    sessionId: 's',
+    turns: 50,
+    outputTail: 'tail text',
+    ...over,
+  });
+
+  it('a run that hits the ceiling checkpoints: no fault, no retry burn, report + WIP saved', async () => {
+    addQueued(db, 1);
+    let removed = false;
+    let wipDeleted = false;
+    const d: RobotDeps = {
+      ...deps(),
+      removeWorktree: async () => {
+        removed = true;
+      },
+      deleteWip: async () => {
+        wipDeleted = true;
+      },
+      pushWip: async () => ({ ref: 'robot-wip/t1', sha: 'deadbeef' }),
+      captureReport: async () => 'Done: the store. Left: the UI. ~20 more turns.',
+      runSession: async () => ceiling(),
+    };
+
+    const n = await processRobotQueue(db, cfg(), d);
+    expect(n).toBe(0); // a checkpoint is not a hand-off
+    expect(agentState(db, 1)).toBe('checkpoint');
+
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('checkpoint');
+    expect(run.report).toBe('Done: the store. Left: the UI. ~20 more turns.');
+    expect(run.wipRef).toBe('robot-wip/t1');
+    expect(run.faultTier).toBeNull(); // NOT a fault
+    // No retry budget burned — the fault engine counts only no-verify/error runs.
+    expect(failedRunsForTicket(db, 1)).toEqual([]);
+    // Timeline: dispatched then checkpoint (no fault/park event).
+    expect(eventTypes(db, 1)).toEqual(['robot_dispatched', 'robot_checkpoint']);
+    // Clone removed, but the WIP ref KEPT (Continue resumes from it).
+    expect(removed).toBe(true);
+    expect(wipDeleted).toBe(false);
+  });
+
+  it('the status report falls back to the output tail when the report step fails', async () => {
+    addQueued(db, 1);
+    const d: RobotDeps = {
+      ...deps(),
+      pushWip: async () => null,
+      captureReport: async () => null, // the resume/report step failed
+      runSession: async () => ceiling({ outputTail: 'verify: 2 failing tests' }),
+    };
+    await processRobotQueue(db, cfg(), d);
+    const [run] = listRunsForTicket(db, 1);
+    expect(run.status).toBe('checkpoint');
+    expect(run.report).toContain('verify: 2 failing tests');
+    expect(run.report).toContain('output tail'); // the fallback marker
+  });
+
+  it('Continue resumes from the saved WIP ref with the report and the requested ceiling', async () => {
+    addQueued(db, 1);
+    // A prior checkpoint run left a WIP ref, and the human chose Continue (+80 turns).
+    db.prepare(
+      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, wip_ref, wip_sha, report, started_at, finished_at)
+       VALUES (1, 1, 'robot/1', 'checkpoint', 'robot-wip/t1', 'abc', 'prior report', 100, 200)`,
+    ).run();
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_continue', ?, 300)").run(
+      JSON.stringify({ extraTurns: 80, report: 'prior report', wipRef: 'robot-wip/t1', wipSha: 'abc', fromWip: true }),
+    );
+
+    let fromWipRef: string | null = null;
+    let seenResume: unknown;
+    const d: RobotDeps = {
+      ...deps(),
+      ensureWorktree: async () => {
+        throw new Error('Continue must not clone fresh from main');
+      },
+      ensureWorktreeFromWip: async (_c, branch, ref) => {
+        fromWipRef = ref;
+        return { dir: `/wt/${branch.replace('/', '-')}`, branch, base: 'wip' };
+      },
+      runSession: async (_c, _cand, _wt, resume) => {
+        seenResume = resume;
+        return { ok: true, sessionId: 's2', verifyOk: true, prNumber: 9 };
+      },
+    };
+
+    const n = await processRobotQueue(db, cfg(), d);
+    expect(n).toBe(1);
+    expect(fromWipRef).toBe('robot-wip/t1');
+    expect(seenResume).toMatchObject({ checkpointReport: 'prior report' });
+    // The resumed run's ceiling is the requested extraTurns.
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(80);
+  });
+
+  it('Restart runs fresh from main (not from the WIP ref)', async () => {
+    addQueued(db, 1);
+    db.prepare(
+      `INSERT INTO agent_runs (ticket_id, issue_number, branch, status, wip_ref, wip_sha, started_at, finished_at)
+       VALUES (1, 1, 'robot/1', 'checkpoint', 'robot-wip/t1', 'abc', 100, 200)`,
+    ).run();
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_restart', ?, 300)").run(
+      JSON.stringify({ reason: 'restart from main by human' }),
+    );
+
+    let mainCalled = false;
+    let fromWipCalled = false;
+    const d: RobotDeps = {
+      ...deps(),
+      ensureWorktree: async (_c, branch) => {
+        mainCalled = true;
+        return { dir: `/wt/${branch.replace('/', '-')}`, branch, base: 'main' };
+      },
+      ensureWorktreeFromWip: async () => {
+        fromWipCalled = true;
+        throw new Error('Restart must not resume from the WIP ref');
+      },
+    };
+
+    const n = await processRobotQueue(db, cfg(), d);
+    expect(n).toBe(1);
+    expect(mainCalled).toBe(true);
+    expect(fromWipCalled).toBe(false);
+    // The fresh run inherits the loop default ceiling, not any extraTurns.
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(cfg().robot.maxTurns);
+  });
 });

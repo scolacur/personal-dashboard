@@ -64,6 +64,11 @@ export type AgentState =
   | 'stuck'
   | 'needs-human'
   | 'awaiting-human'
+  // D-094 (PD-737): a run that reached its turn ceiling is PAUSED, not failed — it saved a status
+  // report + its WIP and is waiting for Steve to choose Continue or Restart. A "needs human" state
+  // like 'stuck'/'awaiting-human', but distinct because reaching the ceiling is not a fault and
+  // burns no retry budget.
+  | 'checkpoint'
   | 'wontfix'
   | 'done';
 
@@ -123,6 +128,7 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
   stuck: 'stuck',
   'needs-human': 'PR closed unmerged',
   'awaiting-human': 'awaiting human',
+  checkpoint: 'checkpoint',
   wontfix: 'wontfix',
   done: 'done',
 };
@@ -150,10 +156,35 @@ export const ROBOT_MAX_TURNS_LIMIT = 200;
 /** At/above this fraction of the ceiling a run is flagged as close to the cap. */
 export const TURN_WARN_FRACTION = 0.8;
 
-/** Agent states for which turn progress is meaningful. `working` is the live case; `in-review`
- *  and `stuck` are post-mortem — `stuck` is where the ceiling actually bites, so it earns a slot
- *  (a card reading "50/50" explains itself at a glance). */
-export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-review', 'stuck'];
+/** Default extra turns a Continue (D-094, PD-737) grants a checkpointed run when none is given. */
+export const CHECKPOINT_CONTINUE_DEFAULT_TURNS = ROBOT_MAX_TURNS_DEFAULT;
+
+/**
+ * Validate a Continue's `extraTurns` (D-094, PD-737). Mirrors the per-ticket override bound
+ * (`ROBOT_MAX_TURNS_LIMIT`): it is **rejected** above the limit, not clamped — a silently-lowered
+ * ceiling would mislead whoever set it (same reasoning as `maxTurns` at the write boundary). An
+ * absent value falls back to the default; a non-integer or a value below 1 is invalid.
+ * Returns the resolved ceiling, or an `error` string the route turns into a 400.
+ */
+export function resolveContinueTurns(
+  extraTurns: number | null | undefined,
+): { ok: true; turns: number } | { ok: false; error: string } {
+  if (extraTurns === null || extraTurns === undefined) {
+    return { ok: true, turns: CHECKPOINT_CONTINUE_DEFAULT_TURNS };
+  }
+  if (!Number.isInteger(extraTurns) || extraTurns < 1) {
+    return { ok: false, error: 'extraTurns must be an integer ≥ 1' };
+  }
+  if (extraTurns > ROBOT_MAX_TURNS_LIMIT) {
+    return { ok: false, error: `extraTurns must be ≤ ${ROBOT_MAX_TURNS_LIMIT}` };
+  }
+  return { ok: true, turns: extraTurns };
+}
+
+/** Agent states for which turn progress is meaningful. `working` is the live case; `in-review`,
+ *  `stuck` and `checkpoint` are post-mortem — `stuck` and `checkpoint` are where the ceiling
+ *  actually bites, so they earn a slot (a card reading "50/50" explains itself at a glance). */
+export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-review', 'stuck', 'checkpoint'];
 
 export interface TurnProgress {
   turns: number;
@@ -220,6 +251,10 @@ export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
     "A human closed the Robot's PR without merging it. The loop will not touch the ticket again on its own.",
   'awaiting-human':
     'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
+  // D-094 (PD-737): the ceiling is a checkpoint, not a fault — the run saved a report + its WIP and
+  // burned no retry. The human chooses Continue (more turns from the saved work) or Restart (fresh).
+  checkpoint:
+    'The run reached its turn ceiling and paused with a status report. Needs you to choose Continue (resume with more turns) or Restart (fresh run); it burned no retry budget.',
   wontfix: "Terminal: the ticket was closed as won't-fix.",
   done: 'Terminal: the Robot loop finished the work and the PR merged (green pill; lives in the Completed lane).',
 };
@@ -1331,7 +1366,9 @@ export interface MaintenanceHoldStatus {
 
 /** How a Robot run ended. Mirrors the worker's `RunStatus` (agent-worker owns the
  *  write side; this is the read-side shape the server + web share). */
-export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'error';
+// 'checkpoint' (D-094, PD-737): the run reached its turn ceiling and paused. NOT a failure — it is
+// excluded from the fault engine's failed-run count, so it burns no retry budget.
+export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'error' | 'checkpoint';
 
 /**
  * Is the running worker current with the code it is grounding against? (PD-528)
@@ -1385,6 +1422,10 @@ export interface AgentRun {
    *  nothing, or the WIP push failed (and cleared once the ticket goes terminal). */
   wipRef: string | null;
   wipSha: string | null;
+  /** D-094 (PD-737): the status report a `checkpoint` run captured (what's done / left / blocking /
+   *  an estimate of the turns needed). Falls back to the output tail when the report step failed.
+   *  Null for non-checkpoint runs and older rows. */
+  report: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -1439,6 +1480,14 @@ export const ROBOT_EVENT = {
   // PD-773 slice 2: the Robot or the Evaluator asked for Steve's visual check of a PR, and his answer.
   visualReviewRequested: 'robot_visual_review_requested',
   visualReviewed: 'robot_visual_reviewed',
+  // D-094 (PD-737): the turn ceiling is a checkpoint, not a fault. `checkpoint` is written by the
+  // loop when a run reaches its ceiling — it carries the saved status report + WIP ref. `continue`
+  // and `restart` are the two human remediation choices, written by the server when the button is
+  // clicked: `continue` re-dispatches from the saved WIP with more turns + the report; `restart`
+  // re-dispatches fresh from `main`. Both only act on a ticket in `checkpoint`.
+  checkpoint: 'robot_checkpoint',
+  continue: 'robot_continue',
+  restart: 'robot_restart',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -1527,8 +1576,16 @@ export interface RobotEventDetail {
    *  from an auth/credit pause (which needs a human), and `until` is when dispatch resumes. */
   sessionLimit?: boolean;
   until?: number;
-  /** PD-737/T898: on a `robot_fault`/`robot_parked`/`robot_paused`/`robot_ask_human` event whose run
-   *  preserved its work — the WIP ref (`robot-wip/t<id>`) and the commit sha at its tip. */
+  /** PD-737/T898: on a `robot_fault`/`robot_parked`/`robot_paused`/`robot_ask_human`/`robot_checkpoint`
+   *  event whose run preserved its work — the WIP ref (`robot-wip/t<id>`) and the commit sha at its tip. */
   wipRef?: string;
   wipSha?: string;
+  /** D-094 (PD-737): the status report a `robot_checkpoint` captured — what's done / left / blocking,
+   *  and an estimate of the turns needed. The same text stored on the run row. */
+  report?: string;
+  /** D-094 (PD-737): on a `robot_continue`, the ceiling the resumed run is granted. */
+  extraTurns?: number;
+  /** D-094 (PD-737): true on the `robot_continue` directive and read at dispatch — the run starts
+   *  from the saved WIP ref (rebased onto main) rather than fresh from main. */
+  fromWip?: boolean;
 }

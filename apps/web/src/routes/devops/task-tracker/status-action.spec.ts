@@ -29,6 +29,7 @@ function run(partial: Partial<AgentRun> = {}): AgentRun {
     outputTail: null,
     wipRef: null,
     wipSha: null,
+    report: null,
     startedAt: 1000,
     finishedAt: null,
     ...partial,
@@ -42,7 +43,7 @@ function event(type: string, detail: unknown, id = 1): TicketEvent {
 describe('STATUS_ACTION_REGISTRY', () => {
   it('covers exactly the input-needed states', () => {
     expect(Object.keys(STATUS_ACTION_REGISTRY).sort()).toEqual(
-      ['awaiting-human', 'needs-human', 'stuck'].sort(),
+      ['awaiting-human', 'checkpoint', 'needs-human', 'stuck'].sort(),
     );
   });
 
@@ -64,6 +65,11 @@ describe('STATUS_ACTION_REGISTRY', () => {
     // awaiting-human has no buttons — it uses the reply box instead.
     expect(STATUS_ACTION_REGISTRY['awaiting-human']!.actions).toEqual([]);
     expect(STATUS_ACTION_REGISTRY['awaiting-human']!.reply).toBe(true);
+    // D-094 (PD-737): checkpoint offers Continue / Restart.
+    expect(STATUS_ACTION_REGISTRY.checkpoint!.actions.map((a) => a.kind)).toEqual([
+      'continue',
+      'restart',
+    ]);
   });
 });
 
@@ -72,6 +78,10 @@ describe('isStatusActionState', () => {
     expect(isStatusActionState('stuck')).toBe(true);
     expect(isStatusActionState('awaiting-human')).toBe(true);
     expect(isStatusActionState('needs-human')).toBe(true);
+  });
+
+  it('is true for the checkpoint state (D-094)', () => {
+    expect(isStatusActionState('checkpoint')).toBe(true);
   });
 
   it('is false for other states and nullish', () => {
@@ -171,6 +181,22 @@ describe('buildStatusContent', () => {
     expect(c.prUrl).toBe('http://pr/9');
     expect(c.reason).toBe('PR #9 was closed without merging.');
     expect(c.actions.map((a) => a.kind)).toEqual(['open-pr', 'reset']);
+  });
+
+  it('checkpoint: surfaces the saved status report inline with Continue / Restart (D-094)', () => {
+    const runs = [run({ status: 'checkpoint', report: 'Done: X. Left: Y. ~20 more turns.', turns: 50 })];
+    const c = buildStatusContent(STATUS_ACTION_REGISTRY.checkpoint!, runs, []);
+    expect(c.words).toBe('Done: X. Left: Y. ~20 more turns.');
+    expect(c.wordsCollapsed).toBe(false);
+    expect(c.totalTurns).toBe(50);
+    expect(c.actions.map((a) => a.kind)).toEqual(['continue', 'restart']);
+    expect(c.reply).toBe(false);
+  });
+
+  it('checkpoint: falls back to the empty copy when no report was captured', () => {
+    const c = buildStatusContent(STATUS_ACTION_REGISTRY.checkpoint!, [run({ status: 'checkpoint' })], []);
+    expect(c.words).toBeNull();
+    expect(c.wordsFallback).toBeTruthy();
   });
 
   it('a missing field falls back gracefully (no runs, no events)', () => {

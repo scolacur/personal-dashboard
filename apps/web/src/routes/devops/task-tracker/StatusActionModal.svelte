@@ -67,6 +67,9 @@
     try {
       if (kind === 'unstick') await api.unstickTicket(ticket.id);
       else if (kind === 'reset') await api.resetTicketRuns(ticket.id);
+      // D-094 (PD-737): Continue uses the default ceiling (+50); Restart runs fresh from main.
+      else if (kind === 'continue') await api.continueCheckpoint(ticket.id);
+      else if (kind === 'restart') await api.restartCheckpoint(ticket.id);
       onUpdate();
       onClose();
     } catch (e) {

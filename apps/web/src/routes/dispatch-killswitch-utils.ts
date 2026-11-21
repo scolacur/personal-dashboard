@@ -224,11 +224,11 @@ export interface FleetCounts {
   queued: number;
   /** Handed off; a PR is open. */
   inReview: number;
-  /** Parked and will not move without a human: stuck, needs-human, awaiting-human. */
+  /** Parked and will not move without a human: stuck, needs-human, awaiting-human, checkpoint. */
   needsYou: number;
 }
 
-const NEEDS_YOU_STATES: AgentState[] = ['stuck', 'needs-human', 'awaiting-human'];
+const NEEDS_YOU_STATES: AgentState[] = ['stuck', 'needs-human', 'awaiting-human', 'checkpoint'];
 
 export function fleetCounts(status: SystemStatus | null): FleetCounts {
   const n = (state: AgentState): number => status?.sortie?.[state] ?? 0;

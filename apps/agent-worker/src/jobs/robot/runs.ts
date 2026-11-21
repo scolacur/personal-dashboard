@@ -20,9 +20,10 @@ export type RunStatus =
   | 'handed-off' // green verify → pushed branch + PR (the success path)
   | 'no-verify' // turn ended before a green verify → red PR withheld (D-046 gate); WIP pushed to robot-wip/t<id> (PD-737/T898)
   | 'ask-human' // the Robot posted a question and parked (awaiting-human) — not a failure (C2)
+  | 'checkpoint' // reached the per-run turn ceiling and paused (D-094, PD-737) — NOT a failure, burns no retry
   | 'error'; // the coding session itself failed (spawn/SDK/crash)
 
-export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'error'];
+export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'checkpoint', 'error'];
 
 export interface RunRow {
   id: number;
@@ -53,6 +54,9 @@ export interface RunRow {
    *  nothing, or the WIP push failed. */
   wipRef: string | null;
   wipSha: string | null;
+  /** D-094 (PD-737): the status report a `checkpoint` run captured — what's done / left / blocking,
+   *  with a turns estimate — or the output tail when the report step failed. Null otherwise. */
+  report: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -107,6 +111,8 @@ export function ensureRunsTable(db: Database.Database): void {
   // PD-737/T898: where a non-hand-off run's WIP was preserved (`robot-wip/t<id>` + its tip sha).
   addColumnIfMissing(db, 'agent_runs', 'wip_ref', 'TEXT');
   addColumnIfMissing(db, 'agent_runs', 'wip_sha', 'TEXT');
+  // D-094 (PD-737): the status report a checkpoint run captured.
+  addColumnIfMissing(db, 'agent_runs', 'report', 'TEXT');
 }
 
 /** Stable hash of a ticket body, for the PD-406 unchanged-body check. `null`/empty bodies hash to a
@@ -169,6 +175,8 @@ export interface FinishRunInput {
   /** PD-737/T898: the WIP ref + sha a non-hand-off run preserved its work to. */
   wipRef?: string | null;
   wipSha?: string | null;
+  /** D-094 (PD-737): the status report a checkpoint run captured. */
+  report?: string | null;
 }
 
 /** Close out a run with its terminal outcome. */
@@ -187,7 +195,7 @@ export function finishRun(
     `UPDATE agent_runs
         SET status = ?, session_id = ?, pr_url = ?, error = ?,
             fault_tier = ?, fault_signature = ?, fault_reason = ?,
-            turns = ?, tokens = ?, output_tail = ?, wip_ref = ?, wip_sha = ?, finished_at = ?
+            turns = ?, tokens = ?, output_tail = ?, wip_ref = ?, wip_sha = ?, report = ?, finished_at = ?
       WHERE id = ?`,
   ).run(
     input.status,
@@ -202,6 +210,7 @@ export function finishRun(
     boundedTail,
     input.wipRef ?? null,
     input.wipSha ?? null,
+    input.report ?? null,
     now,
     runId,
   );
@@ -326,6 +335,7 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     outputTail: (r.output_tail as string | null) ?? null,
     wipRef: (r.wip_ref as string | null) ?? null,
     wipSha: (r.wip_sha as string | null) ?? null,
+    report: (r.report as string | null) ?? null,
     startedAt: r.started_at as number,
     finishedAt: (r.finished_at as number | null) ?? null,
   };

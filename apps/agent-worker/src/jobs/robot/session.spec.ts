@@ -277,6 +277,25 @@ describe('runRobotSession', () => {
     expect(res.verifyOk).toBe(false);
   });
 
+  // D-094 (PD-737): the turn ceiling is a distinct outcome, read from the SDK subtype rather than
+  // the (possibly empty) error text, so the loop can route it to a checkpoint.
+  it('flags maxTurnsReached on the error_max_turns subtype — even with no error text', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'result', subtype: 'error_max_turns', session_id: 's', errors: [] } as never;
+    }) as unknown as RunQuery;
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.maxTurnsReached).toBe(true);
+    expect(res.ok).toBe(false);
+  });
+
+  it('does NOT flag maxTurnsReached on a normal success', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 2 } as never;
+    }) as unknown as RunQuery;
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake);
+    expect(res.maxTurnsReached).toBe(false);
+  });
+
   // PD-230: live turn progress. Assistant messages are counted as they stream so the board can
   // show a working run closing on the cap; finishRun later overwrites with the SDK's num_turns.
   it('reports live turn progress as assistant messages stream', async () => {

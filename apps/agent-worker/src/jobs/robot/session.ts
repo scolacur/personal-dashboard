@@ -44,6 +44,10 @@ export interface RobotSessionResult {
   tokens?: number;
   /** On !ok, the SDK error text (billing / rate-limit / max-turns / crash). */
   error?: string;
+  /** D-094 (PD-737): the run reached its per-run turn ceiling (SDK result `subtype:
+   *  'error_max_turns'`). Detected from the subtype, not the error text, so it is a reliable,
+   *  distinct outcome the loop routes to a checkpoint instead of the fault engine. */
+  maxTurnsReached?: boolean;
   /** Last `OUTPUT_TAIL_MAX` chars of the session's assistant text + tool output (PD-426).
    *  The evidence a `no-verify` run leaves behind — see the capture note below. */
   outputTail?: string;
@@ -292,6 +296,7 @@ export async function runRobotSession(
   let ok = false;
   let sessionId: string | undefined;
   let error: string | undefined;
+  let maxTurnsReached = false;
   let turns: number | undefined;
   let tokens: number | undefined;
   /** Live stand-in for the SDK's final `num_turns`: the count of DISTINCT top-level assistant
@@ -388,6 +393,9 @@ export async function runRobotSession(
       if (message.type === 'result') {
         sessionId = message.session_id;
         ok = message.subtype === 'success' && !message.is_error;
+        // D-094 (PD-737): the turn ceiling is its own outcome, read from the SDK subtype rather than
+        // the error text (which may be empty). The loop routes this to a checkpoint, not a fault.
+        if (message.subtype === 'error_max_turns') maxTurnsReached = true;
         if (!ok) error = message.subtype === 'success' ? 'is_error' : (message.errors ?? []).join('; ');
         // Observability metrics (C3): turns + total tokens off the result message. Read
         // defensively — the SDK shape carries num_turns + a usage object.
@@ -404,5 +412,71 @@ export async function runRobotSession(
   const handoff = readHandoff(worktree.dir);
   // Empty tail (a session that produced nothing) reports as undefined, not '', so the column
   // stays null rather than storing a meaningless empty string.
-  return { ok, sessionId, error, turns, tokens, outputTail: outputTail || undefined, ...handoff };
+  return { ok, sessionId, error, maxTurnsReached, turns, tokens, outputTail: outputTail || undefined, ...handoff };
+}
+
+/**
+ * The instruction the status-report step sends to the ceiling-paused session (D-094, PD-737). The
+ * session already did the work; here it only summarises. No code changes — the wording is explicit
+ * so a cooperative session does not start editing again on its last few turns.
+ */
+export const CHECKPOINT_REPORT_PROMPT = [
+  'STOP. Do not make any further code changes, run any commands, or edit any files.',
+  'You have reached your turn ceiling for this run. In a few sentences, report ONLY:',
+  "  1. What you have DONE so far.",
+  '  2. What is LEFT to do.',
+  '  3. What (if anything) is BLOCKING you.',
+  '  4. Your estimate of how many more turns you need to finish.',
+  'Write prose, not code. This report is saved for a human who will decide whether to continue the run.',
+].join('\n');
+
+/** Hard ceiling on the stored status report, so a runaway report can't bloat the row. */
+export const CHECKPOINT_REPORT_MAX = 4 * 1024;
+
+/**
+ * Resume the ceiling-paused session for a small fixed budget and capture its status report (D-094,
+ * PD-737). Same clone, same `sessionId`, so the report is grounded in the work that was just done.
+ * NEVER throws and NEVER changes a run's outcome — on any failure it returns null and the loop falls
+ * back to the run's output tail. Returns the report text (trimmed, bounded), or null.
+ */
+export async function captureCheckpointReport(
+  config: AgentWorkerConfig,
+  candidate: RobotCandidate,
+  worktree: Worktree,
+  sessionId: string,
+  runQuery: RunQuery = query,
+): Promise<string | null> {
+  let report = '';
+  try {
+    for await (const message of runQuery({
+      prompt: CHECKPOINT_REPORT_PROMPT,
+      options: {
+        model: config.model,
+        cwd: worktree.dir,
+        // Resume the SAME session so the report reflects the run's own state (SDK `resume`).
+        resume: sessionId,
+        // A small fixed budget — enough to answer, not enough to resume real work.
+        maxTurns: config.robot.checkpointReportTurns,
+        // Read-only surface: the report must not touch the tree. Bash/Write/Edit are withheld.
+        tools: ['Read', 'Glob', 'Grep', 'TodoWrite'],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        env: codingEnv(config),
+        spawnClaudeCodeProcess: makeCodingSpawn(config),
+      },
+    }) as AsyncIterable<SDKMessage>) {
+      if (message.type === 'assistant' || message.type === 'user') {
+        try {
+          report = appendTail(report, extractMessageText(message), CHECKPOINT_REPORT_MAX);
+        } catch {
+          // capture must never break the report step
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ err, ticketId: candidate.id }, 'robot: checkpoint status-report step failed — falling back to the output tail');
+    return null;
+  }
+  const trimmed = report.trim();
+  return trimmed ? trimmed.slice(-CHECKPOINT_REPORT_MAX) : null;
 }

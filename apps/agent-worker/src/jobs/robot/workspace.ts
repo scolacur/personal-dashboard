@@ -37,9 +37,13 @@ export interface Worktree {
   branch: string;
   /**
    * Where the branch came from (PD-719): a kept clone from an earlier run of this ticket, the
-   * branch already on GitHub, or a fresh cut from `main`. Optional so test doubles can omit it.
+   * branch already on GitHub, a fresh cut from `main`, or (D-094, PD-737) the saved checkpoint WIP
+   * ref on a Continue. Optional so test doubles can omit it.
    */
-  base?: 'reused' | 'remote' | 'main';
+  base?: 'reused' | 'remote' | 'main' | 'wip';
+  /** D-094 (PD-737): on a `'wip'` base, true when the saved work could NOT be rebased cleanly onto
+   *  `main` — the clone was left at the WIP ref as-is and the session must integrate `main` itself. */
+  rebaseConflict?: boolean;
 }
 
 /** A git failure that keeps the exit code, so callers can tell "no such ref" from "network down". */
@@ -213,6 +217,61 @@ export async function ensureWorktree(
 
   logger.info({ dir, branch, base }, base === 'remote' ? 'robot: fresh clone of the existing remote branch ready' : 'robot: fresh clone ready');
   return { dir, branch, base };
+}
+
+/**
+ * The clone a Continue off a checkpoint works in (D-094, PD-737). Starts from the saved WIP ref so
+ * the session continues from its own previous work, rebased onto the latest `main`:
+ *
+ * 1. a FULL clone (not shallow) so a rebase has the history to replay against — a shallow clone
+ *    rebases onto "unrelated histories" (the gotcha from PD-738's run);
+ * 2. fetch the WIP ref and check the branch out at it;
+ * 3. rebase onto `origin/main`. On a conflict, abort and leave the branch at the WIP ref as-is,
+ *    flagging `rebaseConflict` so the resume prompt tells the session to integrate `main` itself
+ *    (per D-094 — a conflicting rebase must not block the Continue).
+ *
+ * The loop runs this as root; the final `chown` hands the tree to the coding uid. Uses the WRITE
+ * token's runner for the fetch of the private WIP ref (the read runner would also work, but the
+ * caller passes the write runner since a Continue will push with it).
+ */
+export async function ensureWorktreeFromWip(
+  config: AgentWorkerConfig,
+  branch: string,
+  wipRef: string,
+  git: GitRunner = defaultGitRunner(config),
+  chown: ChownRunner = defaultChown(config),
+): Promise<Worktree> {
+  const dir = worktreeDirFor(config, branch);
+  mkdirSync(config.robot.worktreesDir, { recursive: true });
+  // Start clean — the checkpoint removed the clone, but never trust that a stale one isn't here.
+  rmSync(dir, { recursive: true, force: true });
+
+  // FULL clone: rebase needs real history. The WIP ref shares history with main, but a --depth 1
+  // clone can't see it, which is the "unrelated histories" failure. A Continue is rare, so the
+  // heavier clone is acceptable.
+  await git(['clone', cloneUrl(config), dir]);
+  await git(['-C', dir, 'fetch', 'origin', `refs/heads/${wipRef}:refs/remotes/origin/${wipRef}`]);
+  await git(['-C', dir, 'checkout', '-B', branch, `origin/${wipRef}`]);
+  await git(['-C', dir, 'config', 'user.name', config.robot.botName]);
+  await git(['-C', dir, 'config', 'user.email', config.robot.botEmail]);
+
+  let rebaseConflict = false;
+  try {
+    await git([...asOwnerOf(dir), 'rebase', 'origin/main']);
+  } catch (err) {
+    // Any rebase failure (conflict, or anything else) → abort and continue from the WIP ref as-is.
+    logger.warn({ err, branch, wipRef }, 'robot: could not rebase checkpoint WIP onto main — continuing from the WIP ref as-is');
+    try {
+      await git([...asOwnerOf(dir), 'rebase', '--abort']);
+    } catch {
+      // nothing to abort / already clean
+    }
+    rebaseConflict = true;
+  }
+
+  await chown(dir);
+  logger.info({ dir, branch, wipRef, rebaseConflict }, 'robot: checkpoint Continue clone ready (from WIP ref)');
+  return { dir, branch, base: 'wip', rebaseConflict };
 }
 
 /**

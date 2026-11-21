@@ -46,6 +46,12 @@ export function notifyAwaitingHuman(db: Database.Database, ticketId: number, tit
   notify(db, 'agent_awaiting_human', ticketId, title, body, now);
 }
 
+/** A ticket paused at a turn-ceiling checkpoint (D-094, PD-737) — needs a human to choose
+ *  Continue or Restart. A "needs human" grouping, surfaced like the other park notifications. */
+export function notifyCheckpoint(db: Database.Database, ticketId: number, title: string, body: string, now: number = Date.now()): void {
+  notify(db, 'agent_needs_human', ticketId, title, body, now);
+}
+
 /**
  * A Robot PR the merge bridge merged with no human approval (PD-765). Linking the PR itself is the
  * point: it is the record of what shipped without Steve looking at it.
