@@ -66,8 +66,23 @@ export function seedTaskTracker(db: Database.Database): void {
   updateTicket(db, done.id, { status: 'completed' });
 
   // Last: adding a member resets an Epic's refined flag (D-089), so the Epic is marked refined once
-  // its members are all in place.
+  // its members are all in place. This Epic still has an unrefined open member (`awaitingRefine`),
+  // so its board card reads "Plan refined · N/M members" (T979/D-103).
   updateTicket(db, epic.id, { refined: true });
+
+  // T979/D-103: a SECOND Epic whose every open member is refined, so its card reads "Fully refined"
+  // (green) — the other half of the plan-vs-members display the badge now draws.
+  const fullEpic = createTicket(db, {
+    title: 'Pomodoro timer — floating card',
+    projectId: pd,
+    isEpic: true,
+    priority: 'P2',
+  });
+  for (const title of ['Persist timer across reloads', 'Interval settings bar']) {
+    const m = t(title, { assignee: 'robot', epicId: fullEpic.id });
+    updateTicket(db, m.id, { refined: true });
+  }
+  updateTicket(db, fullEpic.id, { refined: true });
 }
 
 export function taskTrackerIsEmpty(db: Database.Database): boolean {

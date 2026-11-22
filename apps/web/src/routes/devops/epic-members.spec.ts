@@ -12,6 +12,7 @@ import {
   membersReorderable,
   reorderedMembers,
   refinementBadge,
+  epicRefinementBadge,
   planStaleInvalidation,
   stalePauseNotice,
 } from './epic-members';
@@ -187,6 +188,38 @@ describe('refinementBadge — the stale state', () => {
 
   it('still says nothing about a terminal member', () => {
     expect(refinementBadge(member({ id: 12, status: 'completed', refineStale: true }))).toBeNull();
+  });
+});
+
+// ── T979/D-103: the Epic's composite refinement badge ────────────────────────
+
+describe('epicRefinementBadge', () => {
+  const epic = member({ id: 1, isEpic: true, refined: true });
+
+  it('fully-refined → green `refined-mark`, no member link', () => {
+    const badge = epicRefinementBadge(epic, [member({ id: 2, refined: true })])!;
+    expect(badge.state).toBe('fully-refined');
+    expect(badge.text).toBe('Fully refined');
+    expect(badge.cls).toContain('refined-mark');
+    expect(badge.linkToMembers).toBe(false);
+  });
+
+  it('plan-refined → amber `refine-plan` with N/M tally, links to the members', () => {
+    const badge = epicRefinementBadge(epic, [member({ id: 2, refined: true }), member({ id: 3, refined: false })])!;
+    expect(badge.state).toBe('plan-refined');
+    expect(badge.text).toBe('Plan refined · 1/2 members');
+    expect(badge.cls).toContain('refine-plan');
+    expect(badge.linkToMembers).toBe(true);
+  });
+
+  it('stale → unchanged ⚠ Stale pill', () => {
+    const badge = epicRefinementBadge(member({ id: 1, isEpic: true, refined: false, refineStale: true }), [])!;
+    expect(badge.state).toBe('stale');
+    expect(badge.cls).toContain('refine-stale');
+  });
+
+  it('not-refined → null (shows nothing, as before)', () => {
+    expect(epicRefinementBadge(member({ id: 1, isEpic: true, refined: false }), [])).toBeNull();
   });
 });
 

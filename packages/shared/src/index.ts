@@ -163,6 +163,8 @@ export type {
   QueueCriterion,
   QueueCriterionId,
   QueueRemedyKind,
+  EpicRefinementState,
+  EpicRefinementDisplay,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,
@@ -187,6 +189,7 @@ export {
   isReady,
   queueBlockers,
   epicQueueCriteria,
+  epicRefinementDisplay,
   queueEntryRefusals,
   NOTIFICATION_KINDS,
   VISUAL_REVIEW_NOTIFICATION_PREFIX,

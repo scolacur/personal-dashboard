@@ -1,5 +1,5 @@
-import type { AgentTicket, TicketAssignee, TicketStatus } from '@dashboard/shared';
-import { REFINE_STATE_LABELS } from '@dashboard/shared';
+import type { AgentTicket, EpicRefinementState, TicketAssignee, TicketStatus } from '@dashboard/shared';
+import { REFINE_STATE_LABELS, epicRefinementDisplay } from '@dashboard/shared';
 import { isReadOnly, isTerminal } from './board-logic';
 
 /**
@@ -269,4 +269,56 @@ export function refinementBadge(m: AgentTicket): RefinementBadge | null {
     };
   }
   return { text: 'Not refined', cls: 'refine-pill refine-start', title: 'Not refined yet' };
+}
+
+/**
+ * An Epic's composite refinement badge (T979, D-089, D-103) — the DISPLAY state derived from its
+ * stored flag plus its open members, mapped to the shared `_refine-badge.scss` look. `null` for
+ * `not-refined`, which is the ordinary state of almost every Epic and shows nothing (unchanged
+ * treatment). `state` is returned so a surface can choose which states to render — the Epic detail
+ * page already carries a stale banner, so it renders only the two new (fully/plan) states.
+ *
+ * `linkToMembers` marks the amber `plan-refined` state, whose remedy is to shape the unrefined
+ * members: the badge links/scrolls to the Epic page's member list (`#epic-members`).
+ */
+export interface EpicRefinementBadge extends RefinementBadge {
+  state: EpicRefinementState;
+  linkToMembers: boolean;
+}
+
+export function epicRefinementBadge(
+  epic: AgentTicket,
+  members: readonly AgentTicket[],
+): EpicRefinementBadge | null {
+  const d = epicRefinementDisplay(epic, members);
+  switch (d.state) {
+    case 'not-refined':
+      return null;
+    case 'stale':
+      return {
+        state: d.state,
+        text: d.label,
+        cls: 'refine-pill refine-stale',
+        title: 'Was refined, but its members changed since — needs re-refinement',
+        linkToMembers: false,
+      };
+    case 'fully-refined':
+      return {
+        state: d.state,
+        text: d.label,
+        cls: 'refined-mark',
+        title: 'Every open member of this Epic is refined',
+        linkToMembers: false,
+      };
+    case 'plan-refined':
+      return {
+        state: d.state,
+        text: d.label,
+        cls: 'refine-pill refine-plan',
+        title: `The plan is refined, but ${d.openCount - d.refinedCount} open member${
+          d.openCount - d.refinedCount === 1 ? '' : 's'
+        } still ${d.openCount - d.refinedCount === 1 ? 'needs' : 'need'} shaping`,
+        linkToMembers: true,
+      };
+  }
 }
