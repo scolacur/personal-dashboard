@@ -1,0 +1,265 @@
+.by-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  --namecol: 8rem;
+  --daycol: 4.5rem;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+
+  .flip {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+
+    &:hover {
+      border-color: var(--accent);
+    }
+
+    .flip-state {
+      color: var(--muted);
+      font-size: var(--font-size-xs);
+    }
+  }
+
+  .loading-more {
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+  }
+}
+
+.empty {
+  color: var(--muted);
+  padding: var(--space-md);
+  text-align: center;
+  font-size: var(--font-size-sm);
+}
+
+.scroller {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+
+  &.flipped {
+    max-height: 60vh;
+  }
+}
+
+.grid {
+  display: grid;
+  gap: 2px;
+  padding: 2px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.corner {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  background: var(--bg);
+}
+
+.col-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) 2px;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+
+  &.day.today {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  &.metric {
+    color: var(--text);
+  }
+}
+
+.row-head {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  font-size: var(--font-size-xs);
+  color: var(--text);
+
+  &.day {
+    justify-content: flex-end;
+    padding-right: var(--space-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+
+    &.today {
+      color: var(--accent);
+      font-weight: 600;
+    }
+  }
+
+  &.name-cell {
+    padding-right: var(--space-sm);
+
+    &.metric {
+      color: var(--muted);
+      font-style: italic;
+    }
+  }
+}
+
+/* An item-name header: a link into By Habit, or plain text until that view ships. */
+.name-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+
+  &:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+}
+
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell {
+  min-width: 2rem;
+  min-height: 1.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+
+  &:hover:not(.future) {
+    border-color: var(--accent);
+  }
+
+  /* Done + due: a solid accent fill. */
+  &.done {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Extra: done on a day it wasn't due — a lighter accent fill. */
+  &.extra {
+    background: color-mix(in srgb, var(--accent) 35%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+
+  /* Due but not done: an open, clearly tappable cell. */
+  &.due {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  /* Not due: muted, still tappable (recording an extra). */
+  &.notdue {
+    background: var(--surface-2);
+    border-style: dashed;
+  }
+
+  /* Set partially done: an accent outline, no fill. */
+  &.partial {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+}
+
+.metric-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+
+  .metric-value {
+    font-size: var(--font-size-xs);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &.logged {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  }
+}
+
+/* ── Metric inline editor ── */
+.editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.metric-editor {
+  position: fixed;
+  z-index: 41;
+  min-width: 14rem;
+  max-width: 16rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+  padding: var(--space-sm);
+
+  .editor-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-xs);
+
+    .editor-day {
+      font-size: var(--font-size-xs);
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .editor-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: var(--font-size-lg);
+      line-height: 1;
+      cursor: pointer;
+
+      &:hover {
+        color: var(--text);
+      }
+    }
+  }
+}

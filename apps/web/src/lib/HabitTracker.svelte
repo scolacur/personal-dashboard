@@ -6,6 +6,7 @@
   import {
     DEFAULT_DAY_BOUNDARY_MINUTES,
     DEFAULT_HABIT_TIMEZONE,
+    HABIT_DAY_PATTERN,
     habitDay,
     type HabitChoiceOption,
     type HabitItemView,
@@ -160,6 +161,16 @@
     outbox.add({ kind: 'metric', itemId, day: today, value });
   }
 
+  /**
+   * Set a metric's value on an arbitrary habit day — the Log › By Day past-day edits (PD-725). Rides
+   * the same shared outbox as Today (PROJECT.md §4, D-093); when the day is today, the Today tab's
+   * optimistic value is kept in sync too.
+   */
+  function setMetricValueOnDay(itemId: number, day: string, value: string | null) {
+    if (day === today) metricValues.set(itemId, value);
+    outbox.add({ kind: 'metric', itemId, day, value });
+  }
+
   function queueToggle(itemId: number, done: boolean) {
     if (done) completedToday.add(itemId);
     else completedToday.delete(itemId); // optimistic
@@ -300,15 +311,20 @@
   ];
   let tab = $state('today');
 
-  // Deep link: `?view=habit&item=<id>` opens the Log tab on the By Habit calendar for that item.
+  // Deep links into the Log tab: `?view=habit&item=<id>` opens the By Habit calendar for an item;
+  // `?view=day&day=<YYYY-MM-DD>` opens the By Day grid scrolled to that day (the yesterday banner).
   const deepView = $derived(page.url.searchParams.get('view'));
   const deepItem = $derived.by(() => {
     const raw = page.url.searchParams.get('item');
     const n = raw === null ? null : Number(raw);
     return n !== null && Number.isInteger(n) ? n : null;
   });
+  const deepDay = $derived.by(() => {
+    const raw = page.url.searchParams.get('day');
+    return raw !== null && HABIT_DAY_PATTERN.test(raw) ? raw : null;
+  });
   $effect(() => {
-    if (deepView === 'habit') tab = 'log';
+    if (deepView === 'habit' || deepView === 'day') tab = 'log';
   });
 
   onMount(() => {
@@ -370,9 +386,13 @@
             {settings}
             {today}
             {pending}
+            {metricRows}
             initialView={deepView === 'habit' ? 'habit' : 'day'}
             initialItemId={deepItem}
+            initialDay={deepDay}
             onToggle={toggleCompletionOnDay}
+            onMetricWrite={setMetricValueOnDay}
+            onOpenItem={openInCalendar}
           />
         {:else}
           {@render todayPanel()}
