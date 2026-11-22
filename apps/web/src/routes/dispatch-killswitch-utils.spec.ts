@@ -1,16 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import type { SystemStatus } from '@dashboard/shared';
+import type { SystemStatus, WorkerHeartbeat } from '@dashboard/shared';
+import { AGENT_WORKER_HEARTBEAT_STALE_MS } from '@dashboard/shared';
 import {
   HOLD_LABELS,
   countdownLabel,
   describeDispatch,
   fleetCounts,
   fleetRows,
+  loopStateLabel,
   needsYouHref,
   pauseReasonLabel,
+  workerOfflineDetail,
 } from './dispatch-killswitch-utils';
 
 const NOW = 1_000_000;
+
+/** An agent-worker heartbeat row last seen `ageMs` before NOW (by default). */
+function workerSeen(lastSeen: number, worker = 'agent-worker'): WorkerHeartbeat {
+  return {
+    worker,
+    startedAt: lastSeen - 60_000,
+    lastSeen,
+    pid: 123,
+    checkoutSha: 'abc1234',
+    buildSha: 'abc1234',
+    model: 'claude',
+  };
+}
 
 function status(over: Partial<SystemStatus> = {}): SystemStatus {
   return {
@@ -219,6 +235,85 @@ describe('the maintenance hold as a dispatch mode (PD-498)', () => {
       NOW,
     )!;
     expect(view.endsBy).toBeNull();
+  });
+});
+
+// t1010: intent is not liveness. The loop read "On" through a 20-minute agent-worker crash-loop
+// because `dispatch_paused` was clear while no worker was alive. The nav now shows worker-offline
+// ALONGSIDE the on/off state — only the label changes; the toggle still records intent.
+describe('agent-worker liveness (t1010)', () => {
+  const fresh = () => status({ workers: [workerSeen(NOW - 30_000)] });
+  const stale = () => status({ workers: [workerSeen(NOW - (AGENT_WORKER_HEARTBEAT_STALE_MS + 1_000))] });
+
+  it('a fresh heartbeat leaves the running view untouched — not offline', () => {
+    const v = describeDispatch(fresh(), NOW)!;
+    expect(v.mode).toBe('running');
+    expect(v.workerOffline).toBe(false);
+    expect(loopStateLabel(v)).toBe('On');
+    expect(workerOfflineDetail(v, NOW)).toBeNull();
+  });
+
+  it('a stale heartbeat (> 90s) reports offline while the loop is running', () => {
+    const v = describeDispatch(stale(), NOW)!;
+    expect(v.mode).toBe('running');
+    expect(v.workerOffline).toBe(true);
+    expect(loopStateLabel(v)).toBe('On · worker offline');
+  });
+
+  it('a stale heartbeat reports offline while the loop is paused', () => {
+    const s = stale();
+    s.dispatch = { paused: true, reason: 'by human', since: 500 };
+    const v = describeDispatch(s, NOW)!;
+    expect(v.mode).toBe('paused');
+    expect(v.workerOffline).toBe(true);
+    expect(loopStateLabel(v)).toBe('Off · worker offline');
+  });
+
+  it('a missing agent-worker row counts as offline', () => {
+    // No beacon at all is not a healthy worker. An unrelated worker row does not vouch for it.
+    const v = describeDispatch(status({ workers: [workerSeen(NOW, 'visual-capture')] }), NOW)!;
+    expect(v.workerOffline).toBe(true);
+    expect(v.workerLastSeen).toBeNull();
+    expect(workerOfflineDetail(v, NOW)).toBe('No worker heartbeat — nothing is running');
+  });
+
+  it('names how long ago the worker was last seen', () => {
+    const v = describeDispatch(status({ workers: [workerSeen(NOW - 4 * 60_000)] }), NOW)!;
+    expect(workerOfflineDetail(v, NOW)).toBe('Worker last seen 4m ago — nothing is running');
+  });
+
+  it('does not change the action — pause/resume is unaffected by offline', () => {
+    expect(describeDispatch(stale(), NOW)!.action).toBe('pause');
+    const paused = stale();
+    paused.dispatch = { paused: true, reason: 'by human', since: 500 };
+    expect(describeDispatch(paused, NOW)!.action).toBe('resume');
+  });
+
+  it('uses the shared staleness threshold, not a second one', () => {
+    // Exactly at the threshold is still fresh; one ms past it is offline.
+    const atEdge = status({ workers: [workerSeen(NOW - AGENT_WORKER_HEARTBEAT_STALE_MS)] });
+    expect(describeDispatch(atEdge, NOW)!.workerOffline).toBe(false);
+    const pastEdge = status({ workers: [workerSeen(NOW - (AGENT_WORKER_HEARTBEAT_STALE_MS + 1))] });
+    expect(describeDispatch(pastEdge, NOW)!.workerOffline).toBe(true);
+  });
+
+  // The restart walk: the worker drops, 91s elapse with no beat, then it comes back. The label must
+  // track it against a moving clock, exactly as the nav renders each tick.
+  it('walks a worker restart with a fake clock: On → On · worker offline → On', () => {
+    let clock = NOW;
+    const beat = () => status({ workers: [workerSeen(clock)] });
+
+    // Fresh beat at t0.
+    let snapshot = beat();
+    expect(loopStateLabel(describeDispatch(snapshot, clock)!)).toBe('On');
+
+    // 91 seconds pass with no new beat — past the 90s threshold.
+    clock += 91_000;
+    expect(loopStateLabel(describeDispatch(snapshot, clock)!)).toBe('On · worker offline');
+
+    // A new beat lands at the current clock.
+    snapshot = beat();
+    expect(loopStateLabel(describeDispatch(snapshot, clock)!)).toBe('On');
   });
 });
 

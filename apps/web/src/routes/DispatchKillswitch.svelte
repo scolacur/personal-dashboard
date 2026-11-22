@@ -1,7 +1,13 @@
 <script lang="ts">
   import type { SystemStatus } from '@dashboard/shared';
   import { pauseDispatch, resumeDispatch } from './devops/api';
-  import { countdownLabel, describeDispatch, fleetRows } from './dispatch-killswitch-utils';
+  import {
+    countdownLabel,
+    describeDispatch,
+    fleetRows,
+    loopStateLabel,
+    workerOfflineDetail,
+  } from './dispatch-killswitch-utils';
 
   // PD-410 — the loop-wide killswitch, in the nav rather than inside the Site Status widget.
   // Same C4 pause the widget drives (`robot_state.dispatch_paused`); no new backend. The widget
@@ -46,6 +52,10 @@
   let view = $derived(describeDispatch(status, now));
   let rows = $derived(fleetRows(status));
   let countdown = $derived(countdownLabel(view?.endsBy ?? null, now));
+  // t1010: the agent-worker's liveness, as a line under the toggle. Intent (on/paused/holding) is
+  // not liveness — the loop read "On" through a 20-minute crash-loop — so this is shown alongside
+  // whatever mode the loop is in, never instead of it.
+  let offlineDetail = $derived(view ? workerOfflineDetail(view, now) : null);
 
   // The toggle reflects whether the loop is ARMED, which is not the same as whether it is
   // dispatching: a hold stops dispatch without unsetting the flag. Holds get their own row below
@@ -86,7 +96,9 @@
       >
         <span class="ks-toggle-label">Loop</span>
         <span class="ks-track"><span class="ks-thumb"></span></span>
-        <span class="ks-toggle-state">{toggling ? '…' : loopOn ? 'On' : 'Off'}</span>
+        <span class="ks-toggle-state" class:ks-toggle-state--offline={view.workerOffline}>
+          {toggling ? '…' : loopStateLabel(view)}
+        </span>
       </button>
 
       {#if view.detail || countdown}
@@ -102,6 +114,13 @@
           {#if view.detail}<span class="ks-detail">{view.detail}</span>{/if}
           {#if countdown}<span class="ks-countdown" title="Dispatch resumes when the window closes">{countdown}</span>{/if}
         </span>
+      {/if}
+
+      {#if offlineDetail}
+        <!-- t1010: the agent-worker heartbeat is stale or missing, so nothing is dispatching,
+             evaluating or capturing regardless of what the toggle says. Link to System Status, where
+             the per-worker heartbeat detail lives. -->
+        <a class="ks-reason-link ks-worker-offline" href="/devops/agent-dashboard">{offlineDetail}</a>
       {/if}
 
       {#if view.resumeBlockedByHold}

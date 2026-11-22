@@ -93,6 +93,23 @@
   opacity: 0.55;
 }
 
+/* t1010: the worker is dead but the loop may still be armed. Recolour the state to warn so "On ·
+   worker offline" does not read as a healthy green "On" — the green is a lie while nothing can run. */
+.ks-toggle-state--offline {
+  color: var(--status-warn);
+}
+
+.ks-toggle--on .ks-toggle-state--offline {
+  color: var(--status-warn);
+}
+
+/* The last-seen line, under the toggle like the other reasons. Warn-coloured: it is the warning the
+   nav lacked when the worker crash-looped under a green "On". */
+.ks-worker-offline {
+  font-size: var(--font-size-xs);
+  color: var(--status-warn);
+}
+
 /* ── The line under the toggle: WHY the loop is in this state ────────────── */
 .ks-reason {
   display: flex;
