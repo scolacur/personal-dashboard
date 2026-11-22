@@ -13,7 +13,7 @@ import {
   type TicketStatus,
   type UpdateTicketInput,
 } from '@dashboard/shared';
-import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
+import { HUMAN_REPLY_MARKER, parseAutoQueueMode } from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import { getTicketAutoQueueEligibility, listBacklogAutoQueueEligibility } from './auto-queue';
 import {
@@ -33,6 +33,7 @@ import {
   listEpicSummaries,
   createProject,
   createTicket,
+  getAutoQueueTickSummary,
   getDispatchPauseState,
   getRefineAutostartStatus,
   getRobotBudget,
@@ -910,6 +911,13 @@ export function registerRoutes(
   // D-103 (PD-808): every live Backlog ticket's eligibility in one read, for the board's Eligible
   // view — the same bulk-over-per-card pattern as /relations.
   app.get(`${base}/queue-eligibility`, async () => listBacklogAutoQueueEligibility(db));
+
+  // D-103 (PD-811): the promoter's current mode + last-tick summary, so Dev Ops / the checklist can
+  // show what the auto-queue tick did (or would have done) without the promoter being `on`.
+  app.get(`${base}/auto-queue`, async () => ({
+    mode: parseAutoQueueMode(process.env.AUTO_QUEUE),
+    lastTick: getAutoQueueTickSummary(db),
+  }));
 
   app.get(`${base}/tickets/:id/relations`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);

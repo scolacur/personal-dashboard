@@ -73,7 +73,7 @@ function openBlockerIds(db: Database.Database, ticketId: number): number[] {
 /** Dispatchable robot tickets sitting in the Queue right now — the server-side mirror of the loop's
  *  `robotQueueCandidates` selection (queue + robot + Ready/bypassed + refined + fresh agent_state +
  *  robot-enabled repo + unblocked). Counted, not listed. */
-function countDispatchableRobotTickets(db: Database.Database): number {
+export function countDispatchableRobotTickets(db: Database.Database): number {
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n
@@ -103,7 +103,7 @@ function countDispatchableRobotTickets(db: Database.Database): number {
 
 /** Robot tickets awaiting review (incl. PRs held by the review/visual gate or conflicting — all of
  *  which keep `agent_state = 'in-review'`). */
-function countRobotInReview(db: Database.Database): number {
+export function countRobotInReview(db: Database.Database): number {
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM agent_tickets
@@ -114,7 +114,7 @@ function countRobotInReview(db: Database.Database): number {
 }
 
 /** Members of one Epic that are in flight: queued-not-dispatched, working, or in review. */
-function countEpicInFlight(db: Database.Database, epicId: number): number {
+export function countEpicInFlight(db: Database.Database, epicId: number): number {
   const row = db
     .prepare(
       `SELECT COUNT(*) AS n FROM agent_tickets
@@ -127,7 +127,7 @@ function countEpicInFlight(db: Database.Database, epicId: number): number {
 
 /** The loop's effective concurrency, published by the worker into `robot_state` (mirrors the budget
  *  policy — the web process cannot read `ROBOT_CONCURRENCY`). Falls back to the env default. */
-function robotConcurrency(db: Database.Database): number {
+export function robotConcurrency(db: Database.Database): number {
   try {
     const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(ROBOT_CAPACITY_POLICY_KEY) as
       | { value: string | null }
@@ -144,7 +144,7 @@ function robotConcurrency(db: Database.Database): number {
 
 /** Why the worker is not healthy right now, or null when it is — the composite behind the
  *  `worker-healthy` capacity limb (D-103 §4). */
-function workerUnhealthyReason(db: Database.Database, now: number): string | null {
+export function workerUnhealthyReason(db: Database.Database, now: number = Date.now()): string | null {
   if (getDispatchPauseState(db).paused) return 'Dispatch is paused.';
   const hold = getSessionLimitHold(db, now);
   if (hold) {
@@ -185,6 +185,68 @@ function capacityRow(
   return { id, label: def.label, description: def.description, current, limit, met, ...(met ? {} : { reason }) };
 }
 
+/** A non-negative integer env var, falling back to `def` for anything missing or malformed. */
+function envInt(name: string, def: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return def;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : def;
+}
+
+/**
+ * The promoter's capacity limits, env-configurable with the D-103 §4 defaults (PD-811). Read on
+ * every capacity computation so the board, the checklist and the promoter all enforce the same
+ * numbers — the shared `AUTO_QUEUE_*` constants are the defaults, the env vars the overrides.
+ */
+export function autoQueueLimits(): { queueDepthFactor: number; reviewWip: number; epicInFlight: number } {
+  return {
+    queueDepthFactor: envInt('AUTO_QUEUE_QUEUE_DEPTH_FACTOR', AUTO_QUEUE_QUEUE_DEPTH_FACTOR),
+    reviewWip: envInt('AUTO_QUEUE_REVIEW_WIP_LIMIT', AUTO_QUEUE_REVIEW_WIP_LIMIT),
+    epicInFlight: envInt('AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT', AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT),
+  };
+}
+
+/** The four limbs' current/limit values, so both `computeAutoQueueCapacity` (DB-read) and the
+ *  promoter (in-memory simulation across a tick) build the SAME row shape from one place. */
+export interface CapacityInputs {
+  queueDepthCurrent: number;
+  queueDepthLimit: number;
+  reviewWipCurrent: number;
+  reviewWipLimit: number;
+  epicInFlightCurrent: number;
+  epicInFlightLimit: number;
+  /** The `worker-healthy` composite reason, or null when the worker is healthy. */
+  unhealthyReason: string | null;
+}
+
+/** Assemble the capacity snapshot from already-gathered currents/limits (D-103 §4). */
+export function buildAutoQueueCapacity(inputs: CapacityInputs): AutoQueueCapacity {
+  const rows: AutoQueueCapacityRow[] = [
+    capacityRow(
+      'queue-depth',
+      inputs.queueDepthCurrent,
+      inputs.queueDepthLimit,
+      'The Queue already holds enough dispatchable robot work.',
+    ),
+    capacityRow(
+      'review-wip',
+      inputs.reviewWipCurrent,
+      inputs.reviewWipLimit,
+      'Too many robot PRs are already awaiting review.',
+    ),
+    capacityRow(
+      'epic-in-flight',
+      inputs.epicInFlightCurrent,
+      inputs.epicInFlightLimit,
+      'A member of this Epic is already in flight.',
+    ),
+    // `worker-healthy` reuses the same helper: current=1 (unhealthy) trips `current < limit` so the
+    // limb fails and carries the composite reason; current=0 (healthy) passes with no reason.
+    capacityRow('worker-healthy', inputs.unhealthyReason ? 1 : 0, 1, inputs.unhealthyReason ?? ''),
+  ];
+  return { rows, ok: rows.every((r) => r.met) };
+}
+
 /**
  * The board/worker-wide capacity snapshot the promoter evaluates each tick (D-103 §4). `epicId`
  * scopes the per-Epic `epic-in-flight` limb; pass null for a snapshot with no Epic in view.
@@ -194,35 +256,52 @@ export function computeAutoQueueCapacity(
   epicId: number | null,
   now: number = Date.now(),
 ): AutoQueueCapacity {
-  const concurrency = robotConcurrency(db);
-  const queueDepthLimit = concurrency * AUTO_QUEUE_QUEUE_DEPTH_FACTOR;
-  const unhealthy = workerUnhealthyReason(db, now);
+  const limits = autoQueueLimits();
+  return buildAutoQueueCapacity({
+    queueDepthCurrent: countDispatchableRobotTickets(db),
+    queueDepthLimit: robotConcurrency(db) * limits.queueDepthFactor,
+    reviewWipCurrent: countRobotInReview(db),
+    reviewWipLimit: limits.reviewWip,
+    epicInFlightCurrent: epicId === null ? 0 : countEpicInFlight(db, epicId),
+    epicInFlightLimit: limits.epicInFlight,
+    unhealthyReason: workerUnhealthyReason(db, now),
+  });
+}
 
-  const rows: AutoQueueCapacityRow[] = [
-    capacityRow(
-      'queue-depth',
-      countDispatchableRobotTickets(db),
-      queueDepthLimit,
-      'The Queue already holds enough dispatchable robot work.',
-    ),
-    capacityRow(
-      'review-wip',
-      countRobotInReview(db),
-      AUTO_QUEUE_REVIEW_WIP_LIMIT,
-      'Too many robot PRs are already awaiting review.',
-    ),
-    capacityRow(
-      'epic-in-flight',
-      epicId === null ? 0 : countEpicInFlight(db, epicId),
-      AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT,
-      'A member of this Epic is already in flight.',
-    ),
-    // `worker-healthy` reuses the same helper: current=1 (unhealthy) trips `current < limit` so the
-    // limb fails and carries the composite reason; current=0 (healthy) passes with no reason.
-    capacityRow('worker-healthy', unhealthy ? 1 : 0, 1, unhealthy ?? ''),
-  ];
+/** A Backlog ticket the promoter may consider, in dispatch order. */
+export interface PromotionCandidate {
+  id: number;
+  displayId: string;
+  epicId: number | null;
+}
 
-  return { rows, ok: rows.every((r) => r.met) };
+// Mirrors `PRIORITY_UNSET` in the store / agent-worker select.ts: the column is TEXT NOT NULL
+// DEFAULT 'none', so "unset" is this sentinel and never SQL NULL.
+const PRIORITY_UNSET = 'none';
+
+/**
+ * Live, non-Epic Backlog tickets in the SAME dispatch order the loop's `robotQueueCandidates` uses
+ * (Epic priority, Epic `sort_order`, member `sort_order`, id — D-080/PD-294), so the promoter pulls
+ * work in exactly the order it would next be dispatched (D-103 §4). Eligibility + capacity are judged
+ * per candidate by the promoter; this is purely the ordered candidate set.
+ */
+export function backlogPromotionCandidates(db: Database.Database): PromotionCandidate[] {
+  const rows = db
+    .prepare(
+      `SELECT t.id AS id, t.display_id AS display_id, t.epic_id AS epic_id
+         FROM agent_tickets t
+         LEFT JOIN agent_tickets e ON e.id = t.epic_id
+        WHERE t.archived_at IS NULL
+          AND t.status = 'backlog'
+          AND t.is_epic = 0
+        ORDER BY CASE WHEN t.priority IS NULL OR t.priority = ? THEN 1 ELSE 0 END,
+                 t.priority ASC,
+                 COALESCE(e.sort_order, 0) ASC,
+                 t.sort_order ASC,
+                 t.id ASC`,
+    )
+    .all(PRIORITY_UNSET) as { id: number; display_id: string; epic_id: number | null }[];
+  return rows.map((r) => ({ id: r.id, displayId: r.display_id, epicId: r.epic_id }));
 }
 
 /* ── Per-ticket / per-Epic eligibility ─────────────────────────────────────── */

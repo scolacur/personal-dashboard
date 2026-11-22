@@ -199,6 +199,14 @@
   cursor: help;
 }
 
+// D-103 (PD-811): the auto-queue promoter put this ticket in the Queue. Uses the accent token so it
+// reads as "the system did this", distinct from the green "eligible" (a prediction).
+.eligible-badge.auto-queued {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .card-actions {
   display: flex;
   align-items: center;

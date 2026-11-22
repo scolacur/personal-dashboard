@@ -354,6 +354,10 @@ export interface AgentTicket {
   /** The single parent Epic this Ticket belongs to, or null. An Epic itself always has this null
    *  (no nesting). "Belongs to" — not "child of"; parent/child is reserved for `split` lineage. */
   epicId: number | null;
+  /** D-103 (PD-811): this ticket's most recent lane change into the Queue was made by the auto-queue
+   *  promoter (an `auto_queued` event newer than any manual `status_changed`), not by hand. Drives
+   *  the card's "auto-queued" badge. Server-derived, read-only; absent reads as false. */
+  autoQueued?: boolean;
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -1096,6 +1100,71 @@ export interface AutoQueueBoardEligibility {
   tickets: Record<number, AutoQueueEligibility>;
 }
 
+// ── Auto-queue: the promoter's audit trail + tick summary (D-103 §4, PD-811) ──
+// The server-side promoter runs on an interval and moves eligible Backlog members of active Epics
+// into the Queue through the SAME store path + guard the PATCH route uses. Every promotion is an
+// `agent_ticket_events` row carrying the criteria + capacity snapshot that justified it, so the
+// decision is auditable after the fact; dry-run records the same thing without the status write.
+
+/** `agent_ticket_events.type` values the auto-queue promoter emits (PD-811). Referenced by BOTH the
+ *  server (write + the card's auto-queued-badge subselect) and potential readers, so the literals
+ *  live here (mirrors ROBOT_EVENT / REFINE_EVENT_TYPE). */
+export const AUTO_QUEUE_EVENT = {
+  /** A promotion actually applied (mode `on`). */
+  queued: 'auto_queued',
+  /** A promotion that WOULD have applied (mode `dry-run`) — logged, never written to status. */
+  dryRun: 'auto_queue_dry_run',
+  /** The Queue guard refused a promotion the eligibility predicate judged eligible — logged, not
+   *  thrown (D-103 §consequences: "a refusal from the existing guard is logged, not bypassed"). */
+  refused: 'auto_queue_refused',
+} as const;
+
+/** The JSON `detail` stored on an `auto_queued` / `auto_queue_dry_run` event — the full justification
+ *  for the promotion, so the decision can be read back off the activity log (D-103 §4). */
+export interface AutoQueuePromotionDetail {
+  mode: AutoQueueMode;
+  epicId: number | null;
+  /** The per-ticket eligibility criteria (all met for a promotion). */
+  criteria: AutoQueueCriterion[];
+  /** The capacity snapshot at the moment of promotion. */
+  capacity: AutoQueueCapacityRow[];
+}
+
+/** One ticket the promoter moved (or would have moved) this tick. */
+export interface AutoQueuePromotedItem {
+  ticketId: number;
+  displayId: string;
+  epicId: number | null;
+}
+
+/**
+ * The summary of one promoter tick, published to `robot_state` under `AUTO_QUEUE_LAST_TICK_KEY` so
+ * Dev Ops / the eligibility checklist can show "last tick promoted X" or "would have queued X
+ * because …" without the promoter being `on` (D-103 §4).
+ */
+export interface AutoQueueTickSummary {
+  mode: AutoQueueMode;
+  /** Unix ms the tick ran. */
+  ranAt: number;
+  /** Tickets actually moved into the Queue (always empty in `off`/`dry-run`). */
+  promoted: AutoQueuePromotedItem[];
+  /** Tickets the promoter WOULD have queued (populated in `dry-run`; empty in `on`/`off`). */
+  wouldPromote: AutoQueuePromotedItem[];
+  /** How many eligible candidates were considered before a capacity limit (if any) halted the tick. */
+  considered: number;
+  /** The board-wide capacity limb that halted the tick, or null if it ran to the end of the Backlog. */
+  stoppedBy: AutoQueueCapacityId | null;
+  /** False when the worker was too unhealthy to promote at all this tick. */
+  workerHealthy: boolean;
+  /** Why the worker was unhealthy, when it was (the `worker-healthy` composite reason). */
+  unhealthyReason?: string;
+}
+
+/** The `robot_state` key the server's promoter writes its last-tick summary to (D-103 §4). Unlike
+ *  most `robot_state` keys this one is SERVER-written (the promoter runs in the web process); the
+ *  worker never touches it. */
+export const AUTO_QUEUE_LAST_TICK_KEY = 'auto_queue_last_tick';
+
 // ── Notification Center (D-040) ──────────────────────────────────────────────
 // A notification surfaced in the dashboard's in-app inbox. MVP kinds cover an agent
 // parking for a human (ask_human / needs-human); widget notifications plug in later.
@@ -1105,7 +1174,10 @@ export interface AutoQueueBoardEligibility {
  *  strength of its required checks and the `review-gate` status (D-098). Informational, not a call
  *  to act. */
 /** `agent_visual_review` (PD-773): a PR is held for Steve's visual check. Links to Decisions. */
-export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review';
+/** `agent_auto_queued` (D-103, PD-811): the auto-queue promoter moved one or more Backlog tickets
+ *  into the Queue this tick. A non-ticket-scoped digest — ONE per tick that promoted anything, not
+ *  one per ticket. */
+export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review' | 'agent_auto_queued';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
 /** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
@@ -1179,6 +1251,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_refine',
   'agent_auto_merged',
   'agent_visual_review',
+  'agent_auto_queued',
 ] as const;
 
 export interface AgentNotification {

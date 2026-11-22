@@ -80,6 +80,9 @@
   // Queued-but-blocked (D-051 amended, PD-408): a blocked ticket may sit in the queue, but the loop
   // skips it until its blocker resolves — de-emphasize it so the queue reads actionable-vs-waiting.
   const queuedBlocked = $derived(ticket.status === 'queue' && badges.blockedBy > 0);
+  // D-103 (PD-811): the auto-queue promoter put this ticket in the Queue (not a human). Server-derived
+  // from the ticket's newest lane-changing event; shown only while it is still in the Queue.
+  const autoQueued = $derived(ticket.status === 'queue' && ticket.autoQueued === true);
 
   // ⋮ "Mark as →" relation menu (D-051, PD-322).
   let menuOpen = $state(false);
@@ -208,6 +211,12 @@
       {#if capacityWait}
         <span class="eligible-wait" title="Waiting on capacity: {capacityWait}">waiting — {capacityWait}</span>
       {/if}
+    </div>
+  {/if}
+  {#if autoQueued}
+    <!-- D-103 (PD-811): moved into the Queue by the auto-queue promoter, not by hand. -->
+    <div class="card-eligible">
+      <span class="eligible-badge auto-queued" title="Moved into the Queue automatically by the auto-queue promoter (D-103).">🤖 auto-queued</span>
     </div>
   {/if}
   {#if ticket.readyBypassed || notReady}

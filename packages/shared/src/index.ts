@@ -178,6 +178,9 @@ export type {
   AutoQueueEligibilityResponse,
   AutoQueueBoardEligibility,
   AutoQueueMode,
+  AutoQueuePromotionDetail,
+  AutoQueuePromotedItem,
+  AutoQueueTickSummary,
 } from './task-monitor';
 export {
   AUDIT_RUN_STATUSES,
@@ -216,6 +219,8 @@ export {
   AUTO_QUEUE_REVIEW_WIP_LIMIT,
   AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT,
   AUTO_QUEUE_QUEUE_DEPTH_FACTOR,
+  AUTO_QUEUE_EVENT,
+  AUTO_QUEUE_LAST_TICK_KEY,
   AGENT_WORKER_HEARTBEAT_STALE_MS,
   ROBOT_CAPACITY_POLICY_KEY,
   ROBOT_CONCURRENCY_DEFAULT,
