@@ -1794,9 +1794,9 @@ export interface SystemStatus {
 /**
  * A ticket parked waiting on a human, as the nav needs it (PD-498).
  *
- * Carries `id` because that is what the detail-page route takes, and `displayId` because that is
- * what a human recognises. Both, rather than one and a lookup, because the nav has no ticket list
- * to look anything up in.
+ * Carries `displayId` because that is what the detail-page route takes (and what a human
+ * recognises), and `id` as the stable row key. The nav must link by `displayId` — an earlier version
+ * linked `id`, which the route does not resolve.
  */
 export interface NeedsHumanTicket {
   id: number;

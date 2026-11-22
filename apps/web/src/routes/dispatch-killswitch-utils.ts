@@ -217,7 +217,10 @@ export function fleetRows(status: SystemStatus | null): FleetRow[] {
  */
 export function needsYouHref(parked: SystemStatus['needsHuman'], count: number): string | null {
   if (count <= 0) return null;
-  if (count === 1 && parked.length === 1) return `/devops/tickets/${parked[0].id}`;
+  // The detail route is keyed by DISPLAY id (`tickets.find(t => t.displayId === id)`), not the row
+  // id — linking `id` sent "1 needs you" to /devops/tickets/987, a page that reports "not found".
+  // A ticket with no display id has no detail page to land on, so it falls back to the board.
+  if (count === 1 && parked.length === 1 && parked[0].displayId) return `/devops/tickets/${parked[0].displayId}`;
   return '/devops/task-tracker';
 }
 
