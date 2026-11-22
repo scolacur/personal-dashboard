@@ -4,7 +4,7 @@ import { loadConfig } from '../../shared/config';
 import { ensureRunsTable, finishRun, startRun } from '../robot/runs';
 import { ensureRobotStateTable } from '../robot/state';
 import type { CaptureOutcome } from './capture';
-import { captureComment, ensureVisualCapturesTable, runVisualPass, type PrView } from './pass';
+import { captureComment, ensureVisualCapturesTable, runVisualPass, ticketLabel, type PrView } from './pass';
 import type { CaptureTarget } from './routes';
 import { recordCapture, recordCaptureHeartbeat } from './status';
 
@@ -38,7 +38,7 @@ describe('runVisualPass (PD-773)', () => {
     ensureRunsTable(db);
     ensureRobotStateTable(db);
     ensureVisualCapturesTable(db);
-    db.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (1, 'queue', 'robot', 'in-review')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, assignee, agent_state) VALUES (1, 'PD-846', 'Habit grid', 'queue', 'robot', 'in-review')").run();
     const runId = startRun(db, { ticketId: 1, issueNumber: null, branch: 'robot/t1' }, 10);
     finishRun(db, runId, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 100);
   });
@@ -59,6 +59,10 @@ describe('runVisualPass (PD-773)', () => {
     expect(JSON.parse(ev.detail).shots[0].url).toBe('/api/visual-captures/pr-314/abc1234/habits-desktop-light.png');
     expect(comments[0]).toContain('[view](http://nas:8088/api/visual-captures/pr-314/abc1234/habits-desktop-light.png)');
     expect(comments[0]).toMatch(/Visual: captured 2 screenshots/);
+    // PD-846: the comment names the PR's OWN ticket, not the tickets that built the capture tool.
+    expect(comments[0]).toContain('PD-846 (Habit grid)');
+    expect(comments[0]).not.toContain('PD-773');
+    expect(comments[0]).not.toContain('PD-798');
     expect(await runVisualPass(db, cfg(), 2000, deps)).toBeNull(); // same head: done
   });
 
@@ -111,7 +115,21 @@ describe('runVisualPass (PD-773)', () => {
   });
 
   it('comments without links when no public URL is set', () => {
-    expect(captureComment('', 314, SHA, captured as Extract<CaptureOutcome, { kind: 'captured' }>)).toMatch(/ticket timeline/);
+    expect(captureComment('', 314, SHA, captured as Extract<CaptureOutcome, { kind: 'captured' }>, 'PD-846 (Habit grid)')).toMatch(/ticket timeline/);
+  });
+
+  it('labels the capture line with the PR ticket passed in, never a hardcoded build-citation (PD-846)', () => {
+    const c = captureComment('', 314, SHA, captured as Extract<CaptureOutcome, { kind: 'captured' }>, 'PD-846 (Habit grid)');
+    expect(c).toContain('for PD-846 (Habit grid), built from this PR');
+    expect(c).not.toContain('PD-773');
+    expect(c).not.toContain('PD-798');
+  });
+
+  it('ticketLabel resolves the PR ticket, falling back to #id when display_id is null (PD-846)', () => {
+    expect(ticketLabel(db, 1)).toBe('PD-846 (Habit grid)');
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status) VALUES (2, NULL, 'No display id', 'queue')").run();
+    expect(ticketLabel(db, 2)).toBe('#2 (No display id)');
+    expect(ticketLabel(db, 999)).toBe('#999'); // no row
   });
   it('passes the Visual: line\'s click steps to the capture and records step failures on the ticket (PD-798)', async () => {
     const seen: { targets: CaptureTarget[] }[] = [];

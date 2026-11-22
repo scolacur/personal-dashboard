@@ -17,7 +17,7 @@ function boardDb(): Database.Database {
   db.exec(`
     CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
-      id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
+      id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
       -- Prod is \`TEXT NOT NULL DEFAULT 'none'\`; left nullable here only so the defensive
       -- SQL-NULL ordering case is testable. addTicket defaults to 'none' like a real insert.
       priority TEXT,
@@ -58,13 +58,16 @@ function addTicket(
     /** P0–P5, or the `'none'` sentinel for unset — matching how the column actually stores it.
      *  Defaults to 'none', as a real insert would (PD-294). */
     priority?: string | null;
+    /** Display id (PD-725). Defaults to `PD-<id>`; pass null to test the unset case. */
+    displayId?: string | null;
   },
 ): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, assignee, priority, ready, ready_bypassed, refined, project_id, github_issue_number, agent_state, max_turns, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_tickets (id, display_id, title, body, status, assignee, priority, ready, ready_bypassed, refined, project_id, github_issue_number, agent_state, max_turns, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
+    t.displayId === undefined ? `PD-${t.id}` : t.displayId,
     `T${t.id}`,
     t.body ?? READY,
     t.status,
@@ -207,6 +210,15 @@ describe('robotQueueCandidates', () => {
     expect(c[1]).toMatchObject({ id: 2, priority: null, maxTurns: null });
   });
 
+  // PD-725: the display id must reach the task prompt so the Robot PR can name its ticket.
+  it('carries the display id on the candidate, and null when unset', () => {
+    addTicket(db, { id: 1, status: 'queue', displayId: 'PD-725' });
+    addTicket(db, { id: 2, status: 'queue', displayId: null });
+    const byId = new Map(robotQueueCandidates(db).map((c) => [c.id, c.displayId]));
+    expect(byId.get(1)).toBe('PD-725');
+    expect(byId.get(2)).toBeNull();
+  });
+
   it('applies ordering only to tickets that pass the gates', () => {
     addTicket(db, { id: 1, status: 'queue', priority: 'P5' });
     addTicket(db, { id: 2, status: 'queue', priority: 'P0', assignee: 'steve' }); // filtered out
@@ -325,6 +337,7 @@ describe('selectDispatchable', () => {
   const cand = (id: number, body: string | null = READY): RobotCandidate => ({
     id,
     issueNumber: id,
+    displayId: `PD-${id}`,
     maxTurns: null,
     repo: 'r',
     title: `T${id}`,
