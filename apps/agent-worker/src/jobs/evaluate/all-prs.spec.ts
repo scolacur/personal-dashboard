@@ -100,6 +100,18 @@ describe('skipReason / linkedTicket (PD-712)', () => {
     // Bodies cite related tickets for context — "partly covers PD-707" is not a claim to implement it.
     expect(ids(pr({ title: 'Thing (PD-706)', body: 'Partly covers PD-707.' }))).toEqual(['PD-705', 'PD-706']);
   });
+
+  // PD-725: a Robot PR's branch is `robot/t<id>` (unmatchable) and its title may lack a (PD-n) suffix,
+  // so linkage falls back to the first display id in the body — the deterministic `**Ticket:**` line
+  // the task-prompt envelope now stamps there resolves the right ticket.
+  it("links a Robot PR from the envelope's **Ticket:** body line when branch and title name none", () => {
+    const p = pr({
+      headRefName: 'robot/t887',
+      title: 'feat: habit grid by day',
+      body: '**Ticket:** PD-705 — Do the thing\n\n**Status:** DONE',
+    });
+    expect(ids(p)).toEqual(['PD-705']);
+  });
 });
 
 describe('evaluateNextOtherPr (PD-712)', () => {

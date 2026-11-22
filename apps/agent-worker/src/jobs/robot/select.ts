@@ -17,6 +17,10 @@ import type { RobotConfig } from '../../shared/config';
 export interface RobotCandidate {
   id: number;
   issueNumber: number | null;
+  /** The ticket's display id (e.g. `PD-725`), or null when unset. Carried into the task prompt so a
+   *  Robot PR names its ticket in the title and a `**Ticket:**` body line (the `robot/t<id>` branch
+   *  only carries the internal numeric id). */
+  displayId: string | null;
   repo: string;
   title: string;
   body: string | null;
@@ -29,6 +33,7 @@ export interface RobotCandidate {
 interface CandidateRow {
   id: number;
   n: number | null;
+  display_id: string | null;
   repo: string;
   title: string;
   body: string | null;
@@ -83,7 +88,7 @@ const PRIORITY_UNSET = 'none';
 export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   const rows = db
     .prepare(
-      `SELECT t.id AS id, t.github_issue_number AS n, t.title AS title, t.body AS body,
+      `SELECT t.id AS id, t.github_issue_number AS n, t.display_id AS display_id, t.title AS title, t.body AS body,
               t.priority AS priority, t.max_turns AS max_turns, p.github_repo AS repo
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
@@ -115,6 +120,7 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   return rows.map((r) => ({
     id: r.id,
     issueNumber: r.n,
+    displayId: r.display_id,
     repo: r.repo,
     title: r.title,
     body: r.body,

@@ -139,6 +139,11 @@ export interface TaskPromptInput {
   body: string | null;
   branch: string;
   repo: string;
+  /** The ticket's display id (e.g. `PD-725`) — stamped into the PR title and the `**Ticket:**`
+   *  envelope line so a Robot PR names the ticket it implements, not just its `robot/t<id>` branch
+   *  (the branch carries the internal numeric id, which is not the display id). Board tickets no
+   *  longer get GitHub issues, so `Closes #N` is usually empty; this is the durable link. */
+  displayId: string;
   /** GitHub issue number for `Closes #N`, or null when the ticket has no linked issue. */
   issueNumber: number | null;
   /** Squid proxy URL, or '' for direct egress (dev). Passed inline to git/gh in the finish steps. */
@@ -149,7 +154,7 @@ export interface TaskPromptInput {
 
 /** Build the per-run task prompt (the user turn) with the ticket and the DB-blind Finish sequence. */
 export function buildTaskPrompt(input: TaskPromptInput): string {
-  const { title, body, branch, repo, issueNumber, proxy, resume } = input;
+  const { title, body, branch, repo, displayId, issueNumber, proxy, resume } = input;
   // git needs the proxy inline (an exported *_proxy is not honored for git); npm/gh honor env.
   const pxFlag = proxy ? `-c http.proxy=${proxy} ` : '';
   const closes = issueNumber !== null ? `Closes #${issueNumber}\n\n` : '';
@@ -282,8 +287,15 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '   The body must follow this envelope — fill in every placeholder:',
     '   ```sh',
     `   gh pr create --repo ${repo} --base main --head ${branch} \\`,
-    '     --title "<concise conventional-commit summary>" \\',
+    // End the title with the display id in parentheses, matching human PRs (e.g. `fix(x): … (PD-844)`).
+    // The literal id is interpolated so it cannot be mis-guessed — the branch carries the internal
+    // numeric id, not this one.
+    `     --title "<concise conventional-commit summary> (${displayId})" \\`,
     '     --body "$(cat <<\'BODY\'',
+    // The builder fills in the Ticket line — it is the durable link to the ticket (board tickets have
+    // no GitHub issue, so `Closes #N` is usually absent). The Evaluator's `linkedTickets` reads it.
+    `**Ticket:** ${displayId} — ${title}`,
+    '',
     `${closes}**Status:** <DONE | PARTIAL | BLOCKED>`,
     '',
     '**Summary:** <1–3 lines>',
@@ -875,6 +887,7 @@ export const SAMPLE_TASK_PROMPT_INPUT: TaskPromptInput = {
   body: '<TICKET BODY — the ## Context / ## Task / ## Done When / ## Out of scope sections>',
   branch: 'robot/<TICKET ID>',
   repo: '<OWNER/REPO>',
+  displayId: '<PD-NNN>',
   issueNumber: null,
   proxy: '<EGRESS PROXY URL, when set>',
 };

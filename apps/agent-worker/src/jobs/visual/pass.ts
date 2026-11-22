@@ -77,11 +77,21 @@ export function captureUrl(prNumber: number, headSha: string, file: string): str
   return `/api/visual-captures/pr-${prNumber}/${headSha.slice(0, 7)}/${file}`;
 }
 
-/** The PR comment: a table per route, one link per viewport × scheme. Links need DASHBOARD_PUBLIC_URL. */
-export function captureComment(publicUrl: string, prNumber: number, headSha: string, outcome: Extract<CaptureOutcome, { kind: 'captured' }>): string {
+/** The PR comment: a table per route, one link per viewport × scheme. Links need DASHBOARD_PUBLIC_URL.
+ *  `ticketLabel` is the PR's OWN ticket (e.g. `PD-846 (Title)`), resolved by the caller — the visible
+ *  line names the ticket this PR implements, not the tickets that built the capture tool (the
+ *  `(PD-773)`/`(PD-798)` build-citations used to leak through here and read as the PR's own ticket). */
+export function captureComment(
+  publicUrl: string,
+  prNumber: number,
+  headSha: string,
+  outcome: Extract<CaptureOutcome, { kind: 'captured' }>,
+  ticketLabel: string,
+): string {
+  const n = outcome.manifest.shots.length;
   const lines = [
     '<!-- visual:captures -->',
-    `**Visual: captured ${outcome.manifest.shots.length} screenshot${outcome.manifest.shots.length === 1 ? '' : 's'}** of ${headSha.slice(0, 7)} (PD-773), built from this PR and served with its visual fixtures (PD-798).`,
+    `**Visual: captured ${n} screenshot${n === 1 ? '' : 's'}** of ${headSha.slice(0, 7)} for ${ticketLabel}, built from this PR.`,
     '',
   ];
   const failures = outcome.manifest.failures ?? [];
@@ -110,6 +120,18 @@ export function captureComment(publicUrl: string, prNumber: number, headSha: str
   lines.push(...failureLines);
   lines.push('', 'Links open on the tailnet only.');
   return lines.join('\n');
+}
+
+/** The PR's own ticket, as `PD-846 (Title)` — or `#<id>` when display_id is null or unreadable.
+ *  Mirrors `robot/notify.ts`'s lookup so the visible comment names the right ticket (PD-846). */
+export function ticketLabel(db: Database.Database, ticketId: number): string {
+  let t: { display_id: string | null; title: string } | undefined;
+  try {
+    t = db.prepare('SELECT display_id, title FROM agent_tickets WHERE id = ?').get(ticketId) as typeof t;
+  } catch (err) {
+    logger.warn({ err, ticketId }, 'visual: could not read the PR ticket (using its id)');
+  }
+  return t ? `${t.display_id ?? `#${ticketId}`} (${t.title})` : `#${ticketId}`;
 }
 
 export async function runVisualPass(
@@ -151,7 +173,11 @@ export async function runVisualPass(
         shots: outcome.manifest.shots.map((s) => ({ ...s, url: captureUrl(target.prNumber, pr.headRefOid, s.file) })),
         failures: outcome.manifest.failures ?? [],
       }, now);
-      await comment(target.repo, target.prNumber, captureComment(config.visual.publicUrl, target.prNumber, pr.headRefOid, outcome));
+      await comment(
+        target.repo,
+        target.prNumber,
+        captureComment(config.visual.publicUrl, target.prNumber, pr.headRefOid, outcome, ticketLabel(db, target.ticketId)),
+      );
     } else {
       logger.warn({ prNumber: target.prNumber, reason: outcome.reason }, 'visual: capture failed');
       await comment(target.repo, target.prNumber, captureFailedComment(pr.headRefOid, outcome.reason));
