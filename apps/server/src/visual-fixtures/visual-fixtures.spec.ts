@@ -75,6 +75,14 @@ describe('visual fixtures (PD-798)', () => {
     expect(autoQueued[0].status).toBe('queue');
   });
 
+  it('includes one auto-queue-EXCLUDED Epic so the D-103 marker shows (PD-808)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const tickets = listTickets(db);
+    const excluded = tickets.filter((t) => t.isEpic && t.autoQueueExcluded);
+    expect(excluded).toHaveLength(1);
+  });
+
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);
