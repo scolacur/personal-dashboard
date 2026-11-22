@@ -15,7 +15,8 @@ import {
  * draw. Written through the store's own functions, so a schema change that breaks it fails its spec
  * instead of silently producing an empty screenshot.
  *
- *  - three habits: two due today (daily) with a few weeks of history for streaks, one per-week;
+ *  - four habits: two due today (daily) with a few weeks of history for streaks, one per-week, and
+ *    one ("Floss") left unchecked yesterday so the Today yesterday banner renders (T889);
  *  - a "Morning Routine" set with two daily child habits, so the nested-habit (set) rendering is
  *    exercised on both Today and the Log › By Day grid (Steve's review on PD-725);
  *  - one metric of each type, with today's value set on two and the third left empty, so both the
@@ -34,6 +35,11 @@ export function seedHabitTracker(db: Database.Database, now: number): void {
   setSchedule(db, gym.id, { kind: 'days_of_week', daysMask: 0b1111111 }, now);
   setSchedule(db, read.id, { kind: 'days_of_week', daysMask: 0b1111111 }, now);
   setSchedule(db, stretch.id, { kind: 'per_week', perWeekN: 3 }, now);
+
+  // A daily habit left unchecked yesterday, so the Today "Yesterday: N habits unchecked" banner
+  // renders (T889). Due daily, with no completion on yesterday (or today).
+  const floss = createItem(db, { name: 'Floss' }, now);
+  setSchedule(db, floss.id, { kind: 'days_of_week', daysMask: 0b1111111 }, now);
 
   // A streak with one gap for Gym, a long unbroken one for Read, two this week for Stretch.
   for (let ago = 1; ago <= 21; ago++) {

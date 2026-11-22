@@ -10,3 +10,83 @@
   font-size: var(--font-size-sm);
   color: var(--status-warn);
 }
+
+/* The Today panel positions the whole-day burst overlay (T889). */
+.today-panel {
+  position: relative;
+}
+
+/* Yesterday banner (T889): "Yesterday: N habits unchecked", dismissible, links to Log › By Day. */
+.yesterday-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--status-warn);
+  border-radius: var(--radius);
+}
+
+.yesterday-link {
+  flex: 1 1 auto;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    color: var(--accent);
+  }
+}
+
+.yesterday-dismiss {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 0 var(--space-xs);
+  color: var(--muted);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+/* Whole-day burst (T889, layer 3): a brief centred flourish over the Today panel. */
+.day-burst {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+
+  span {
+    font-size: 3.5rem;
+    animation: habit-day-burst 1.2s ease forwards;
+  }
+}
+
+@keyframes habit-day-burst {
+  0% { opacity: 0; transform: scale(0.3); }
+  25% { opacity: 1; transform: scale(1.15); }
+  70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  // The component already withholds the burst under reduced motion; never animate it regardless.
+  .day-burst {
+    display: none;
+  }
+}

@@ -233,3 +233,50 @@
     letter-spacing: 0.04em;
   }
 }
+
+/* ── Completion-feedback layers (T889, spec §3) ──────────────────────────────────
+   Transition-only flourishes, applied for one animation then removed by the component. */
+
+// Layer 1: a tick springs the checkbox fill in; `transform-box: fill-box` keeps the scale centred.
+@keyframes habit-spring-fill {
+  0% { transform: scale(0.5); }
+  55% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+// Layers 2: a set completing pulses its row / chip.
+@keyframes habit-pulse {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.04); }
+  100% { transform: scale(1); }
+}
+// Layer 4: a streak milestone flourishes the 🔥 badge.
+@keyframes habit-flourish {
+  0% { transform: scale(1) rotate(0); }
+  30% { transform: scale(1.5) rotate(-10deg); }
+  60% { transform: scale(1.15) rotate(7deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+.today-row.animate-tick .check {
+  animation: habit-spring-fill 0.45s ease;
+}
+
+.set-row.animate-set,
+.chip.pulse {
+  animation: habit-pulse 0.5s ease;
+}
+
+.animate-milestone .streak {
+  display: inline-block; // transform needs a block-ish box
+  animation: habit-flourish 0.8s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  // Belt-and-suspenders: the component already skips scheduling these, but never animate anyway.
+  .today-row.animate-tick .check,
+  .set-row.animate-set,
+  .chip.pulse,
+  .animate-milestone .streak {
+    animation: none;
+  }
+}

@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity';
   import { STREAK_BADGE_MIN, type HabitMetricTodayRow } from '@dashboard/shared';
-  import { subtreeItemIds, topLevelSets, type HabitTreeNode } from './tree';
+  import { flattenTree, subtreeItemIds, topLevelSets, type HabitTreeNode } from './tree';
+  import { isStreakMilestone } from './completion-feedback';
   import MetricInput from './MetricInput.svelte';
 
   /**
@@ -92,6 +94,46 @@
     if (node.done) return 'done';
     return (node.progress?.done ?? 0) > 0 ? 'partial' : 'empty';
   }
+
+  /**
+   * Completion-feedback layers (T889, spec §3): a spring-fill on a leaf's checkbox when it is ticked,
+   * a pulse on a set's row and chip when the set completes, and a flourish on the streak badge when it
+   * reaches a milestone (7/30/100/365). All are CSS transitions with no new dependency.
+   *
+   * We only animate real *transitions* — detected by diffing the current tree against the previous
+   * render — so nothing fires on initial load or on a re-pull that doesn't change a node's state.
+   * Under `prefers-reduced-motion` we skip the whole effect, leaving the instant `.done` state change.
+   */
+  const reducedMotion =
+    typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  // Previous-render state for transition detection — plain objects (not reactive, not read in markup).
+  const prevDone: Record<number, boolean> = {};
+  const prevStreak: Record<number, number> = {};
+  // Transient membership → animation class; each id is removed once its animation has played.
+  const justTicked = new SvelteSet<number>(); // leaf checkbox spring-fill
+  const justSet = new SvelteSet<number>(); // set row + chip pulse
+  const justMilestone = new SvelteSet<number>(); // streak-badge flourish
+
+  function flash(bucket: SvelteSet<number>, id: number, ms: number) {
+    bucket.add(id);
+    setTimeout(() => bucket.delete(id), ms);
+  }
+
+  $effect(() => {
+    if (reducedMotion) return;
+    for (const node of flattenTree(tree)) {
+      const id = node.item.id;
+      const wasDone = prevDone[id];
+      if (wasDone === false && node.done) flash(node.isSet ? justSet : justTicked, id, node.isSet ? 600 : 500);
+      prevDone[id] = node.done;
+
+      const streak = node.streak.current;
+      const wasStreak = prevStreak[id];
+      if (wasStreak !== undefined && wasStreak !== streak && isStreakMilestone(streak)) flash(justMilestone, id, 900);
+      prevStreak[id] = streak;
+    }
+  });
 </script>
 
 {#if sets.length > 0}
@@ -105,6 +147,7 @@
         class="chip"
         class:selected={chip === s.item.id}
         class:done={s.done}
+        class:pulse={justSet.has(s.item.id)}
         onclick={() => (chip = s.item.id)}
       >
         {s.item.name}
@@ -119,7 +162,12 @@
     {@const open = isOpen(node)}
     {@const state = setCheckState(node)}
     <li class="set">
-      <div class="set-row" class:done={node.done}>
+      <div
+        class="set-row"
+        class:done={node.done}
+        class:animate-set={justSet.has(node.item.id)}
+        class:animate-milestone={justMilestone.has(node.item.id)}
+      >
         <button
           type="button"
           class="check set-check"
@@ -162,6 +210,8 @@
         type="button"
         class="today-row"
         class:done={node.done || weekDone}
+        class:animate-tick={justTicked.has(node.item.id)}
+        class:animate-milestone={justMilestone.has(node.item.id)}
         aria-pressed={node.done}
         onclick={() => onToggleLeaf(node.item)}
       >

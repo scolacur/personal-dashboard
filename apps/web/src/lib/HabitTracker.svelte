@@ -4,10 +4,12 @@
   import { goto } from '$app/navigation';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import {
+    addHabitDays,
     DEFAULT_DAY_BOUNDARY_MINUTES,
     DEFAULT_HABIT_TIMEZONE,
     HABIT_DAY_PATTERN,
     habitDay,
+    habitWeekStart,
     type HabitChoiceOption,
     type HabitItemView,
     type HabitMetricTodayRow,
@@ -30,6 +32,7 @@
     deleteChoiceOption,
     deleteItem,
     fetchChoiceOptions,
+    fetchCompletions,
     fetchItems,
     fetchSchedules,
     fetchSettings,
@@ -45,6 +48,8 @@
     setSchedule,
   } from '../routes/widgets/habit-tracker/api';
   import { buildHabitTree, dueLeaves, type HabitTreeNode } from '../routes/widgets/habit-tracker/tree';
+  import { uncheckedYesterdayCount } from '../routes/widgets/habit-tracker/yesterday';
+  import { isDayComplete, shouldFireDayBurst } from '../routes/widgets/habit-tracker/completion-feedback';
   import {
     applyPendingCompletions,
     applyPendingMetrics,
@@ -110,6 +115,57 @@
   // Recomputes if the day boundary / timezone change on the Habits tab; otherwise stable. The server
   // Today view carries its own `day`; this is the fallback the optimistic tick writes against.
   const today = $derived(habitDay(Date.now(), settings));
+  const yesterday = $derived(addHabitDays(today, -1));
+
+  // ── Yesterday banner (T889) ──────────────────────────────────────────────────────
+  // "Yesterday: N habits unchecked" — due leaf habits only (no metrics, no sets). Dismissible per
+  // habit day and only ever covering yesterday; tapping it opens Log › By Day scrolled to yesterday.
+  const YESTERDAY_DISMISS_KEY = 'habit-tracker:yesterday-dismissed';
+  let yesterdayCount = $state(0);
+  let yesterdayDismissed = $state<string | null>(readLs(YESTERDAY_DISMISS_KEY));
+  const showYesterdayBanner = $derived(loaded && yesterdayCount > 0 && yesterdayDismissed !== yesterday);
+
+  function readLs(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLs(key: string, value: string) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Private-mode / quota failure just means the state isn't remembered — not fatal.
+    }
+  }
+
+  /**
+   * Compute the yesterday count from the server's completions for the habit week containing yesterday
+   * (enough history for a per-week habit's weekly target). `items` + `schedules` are already loaded.
+   * A fetch failure just hides the banner — it is never worth a toast.
+   */
+  async function refreshYesterday() {
+    try {
+      const y = addHabitDays(habitDay(Date.now(), settings), -1);
+      // The habit week containing yesterday is enough history for a per-week target.
+      const completions = await fetchCompletions(habitWeekStart(y), y);
+      yesterdayCount = uncheckedYesterdayCount(items, schedules, completions, y);
+    } catch {
+      yesterdayCount = 0;
+    }
+  }
+
+  function dismissYesterday() {
+    yesterdayDismissed = yesterday;
+    writeLs(YESTERDAY_DISMISS_KEY, yesterday);
+  }
+
+  /** Open Log › By Day scrolled to yesterday (the PD-725 deep link). Works from the card and the page. */
+  function openYesterday() {
+    void goto(`/widgets/habit-tracker?view=day&day=${yesterday}`, { keepFocus: true, noScroll: true });
+  }
 
   async function refreshToday() {
     const view = await fetchToday();
@@ -136,6 +192,7 @@
       items = its;
       schedules = scheds;
       await refreshToday();
+      await refreshYesterday();
     } catch {
       toast.show('Could not load habits.', 'error');
     } finally {
@@ -146,6 +203,27 @@
   // Today's render tree (PD-723), rebuilt from the server rows + the optimistic done-set so a set's
   // done/progress recompute the instant a child is ticked. Set streaks come from the server rows.
   const tree = $derived(buildHabitTree(todayRows, completedToday));
+
+  // ── Whole-day burst (T889, layer 3) ──────────────────────────────────────────────
+  // A short burst when the whole day is done, at most once per habit day: `lastBurstDay` is persisted
+  // so an untick + re-tick (or a reload) never replays it. Skipped entirely under reduced motion.
+  const BURST_KEY = 'habit-tracker:burst-day';
+  const dayComplete = $derived(isDayComplete(tree));
+  let lastBurstDay = $state<string | null>(readLs(BURST_KEY));
+  let bursting = $state(false);
+
+  function prefersReducedMotion(): boolean {
+    return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  $effect(() => {
+    if (!shouldFireDayBurst(today, dayComplete, lastBurstDay)) return;
+    lastBurstDay = today;
+    writeLs(BURST_KEY, today);
+    if (prefersReducedMotion()) return; // reduced motion → no visual, just the once-per-day record
+    bursting = true;
+    setTimeout(() => (bursting = false), 1200);
+  });
 
   // Metrics for Today (PD-724): the server rows (item + options) with the optimistic value folded in,
   // so a just-logged value shows immediately and survives the next refresh.
@@ -261,6 +339,8 @@
   async function updateSettings(patch: Partial<HabitSettings>) {
     settings = await patchSettings(patch);
     await refreshToday();
+    // A boundary / timezone change can move which day is "yesterday", so recount the banner.
+    await refreshYesterday();
   }
 
   // ── Metric-tab actions (PD-724) ─────────────────────────────────────────────────
@@ -337,18 +417,34 @@
 </script>
 
 {#snippet todayPanel()}
-  <TodayList
-    {tree}
-    {metrics}
-    onToggleLeaf={toggle}
-    onToggleSet={toggleSet}
-    onMetric={queueMetric}
-    {loaded}
-    {compact}
-  />
-  {#if pending.length > 0}
-    <p class="pending" role="status">{pending.length} pending sync</p>
-  {/if}
+  <div class="today-panel">
+    {#if showYesterdayBanner}
+      <div class="yesterday-banner">
+        <button type="button" class="yesterday-link" onclick={openYesterday}>
+          Yesterday: {yesterdayCount}
+          {yesterdayCount === 1 ? 'habit' : 'habits'} unchecked
+        </button>
+        <button type="button" class="yesterday-dismiss" aria-label="Dismiss" onclick={dismissYesterday}>
+          ×
+        </button>
+      </div>
+    {/if}
+    <TodayList
+      {tree}
+      {metrics}
+      onToggleLeaf={toggle}
+      onToggleSet={toggleSet}
+      onMetric={queueMetric}
+      {loaded}
+      {compact}
+    />
+    {#if pending.length > 0}
+      <p class="pending" role="status">{pending.length} pending sync</p>
+    {/if}
+    {#if bursting}
+      <div class="day-burst" aria-hidden="true"><span>🎉</span></div>
+    {/if}
+  </div>
 {/snippet}
 
 {#if compact}
