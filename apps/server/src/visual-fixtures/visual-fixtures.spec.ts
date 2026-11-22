@@ -66,6 +66,15 @@ describe('visual fixtures (PD-798)', () => {
     expect(verdict).toBe('eligible');
   });
 
+  it('includes one AUTO-QUEUED ticket so the D-103 card badge shows (PD-811)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const tickets = listTickets(db);
+    const autoQueued = tickets.filter((t) => t.autoQueued);
+    expect(autoQueued).toHaveLength(1);
+    expect(autoQueued[0].status).toBe('queue');
+  });
+
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);

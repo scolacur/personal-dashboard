@@ -51,10 +51,12 @@ import {
   renderRoundAnswers,
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
+  AUTO_QUEUE_EVENT,
+  AUTO_QUEUE_LAST_TICK_KEY,
   validateAnswerSet,
   validateQuestionRound,
 } from '@dashboard/shared';
-import type { QueueCriterion } from '@dashboard/shared';
+import type { QueueCriterion, AutoQueueTickSummary } from '@dashboard/shared';
 import { queueGuardFailure, type QueueGateContext } from './ticket-guards';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
@@ -90,6 +92,8 @@ interface TicketRow {
   latest_refine_type?: string | null;
   /** PD-748: the newest backfill-exclude event's `excluded` (1/0), joined like latest_refine_type. */
   backfill_excluded?: number | null;
+  /** PD-811: 1 when the newest lane-changing event is an `auto_queued`, joined like the above. */
+  auto_queued?: number | null;
 }
 
 interface ProjectRow {
@@ -144,6 +148,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     refined: row.refined === 1,
     refineStale: row.refine_stale === 1,
     backfillExcluded: row.backfill_excluded === 1,
+    autoQueued: row.auto_queued === 1,
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
     maxTurns: row.max_turns,
@@ -178,6 +183,17 @@ function logEvent(db: Database.Database, ticketId: number, type: string, detail?
     detail === undefined ? null : JSON.stringify(detail),
     Date.now(),
   );
+}
+
+/** Public wrapper over the activity log, for callers outside the store (the auto-queue promoter,
+ *  PD-811) that need to record an event on their own path. Same shape as the internal `logEvent`. */
+export function recordTicketEvent(
+  db: Database.Database,
+  ticketId: number,
+  type: string,
+  detail?: unknown,
+): void {
+  logEvent(db, ticketId, type, detail);
 }
 
 /* ── Projects ─────────────────────────────────── */
@@ -232,6 +248,9 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
 // PD-743: the session-ending types (commit, park) count too, so an ended session derives to
 // null instead of reading as awaiting-human forever. The list is the shared one, so this SQL
 // and `refineSessionEnd` cannot disagree about what ends a session.
+// PD-811 (D-103): also derives `auto_queued` — 1 when the ticket's newest lane-changing event is an
+// `auto_queued` (written AFTER updateTicket's own `status_changed`, so it wins the newest-event
+// tiebreak); a later manual `status_changed` flips it back to 0. Drives the card's auto-queued badge.
 const LATEST_REFINE_TYPE_SELECT = `(
   SELECT e.type FROM agent_ticket_events e
    WHERE e.ticket_id = t.id AND e.type IN (${REFINE_STATE_EVENT_TYPES.map((s) => `'${s}'`).join(', ')})
@@ -241,7 +260,12 @@ const LATEST_REFINE_TYPE_SELECT = `(
   SELECT json_extract(e.detail, '$.excluded') FROM agent_ticket_events e
    WHERE e.ticket_id = t.id AND e.type = '${REFINE_BACKFILL_EXCLUDED_EVENT}'
    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) AS backfill_excluded`;
+) AS backfill_excluded,
+(
+  SELECT CASE WHEN e.type = '${AUTO_QUEUE_EVENT.queued}' THEN 1 ELSE 0 END FROM agent_ticket_events e
+   WHERE e.ticket_id = t.id AND e.type IN ('${AUTO_QUEUE_EVENT.queued}', 'status_changed')
+   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) AS auto_queued`;
 
 /**
  * Turns used by each ticket's LATEST Robot run (PD-230), keyed by ticket id.
@@ -2361,6 +2385,35 @@ function ensureRobotStateTable(db: Database.Database): void {
   db.exec(
     'CREATE TABLE IF NOT EXISTS robot_state (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER NOT NULL)',
   );
+}
+
+/** Persist the auto-queue promoter's last-tick summary to `robot_state` (D-103 §4, PD-811). This is
+ *  a SERVER-written `robot_state` key (the promoter runs in the web process); the worker never reads
+ *  or writes it. Lets Dev Ops / the eligibility checklist show "last tick promoted X / would have
+ *  queued X because …" regardless of the promoter's mode. */
+export function setAutoQueueTickSummary(
+  db: Database.Database,
+  summary: AutoQueueTickSummary,
+  now: number = Date.now(),
+): void {
+  ensureRobotStateTable(db);
+  db.prepare(
+    `INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(AUTO_QUEUE_LAST_TICK_KEY, JSON.stringify(summary), now);
+}
+
+/** The auto-queue promoter's last-tick summary, or null if it has never run (PD-811). */
+export function getAutoQueueTickSummary(db: Database.Database): AutoQueueTickSummary | null {
+  try {
+    const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(AUTO_QUEUE_LAST_TICK_KEY) as
+      | { value: string | null }
+      | undefined;
+    if (!row?.value) return null;
+    return JSON.parse(row.value) as AutoQueueTickSummary;
+  } catch {
+    return null; // no robot_state table yet, or a corrupt row — treat as "never ran"
+  }
 }
 
 /** Human pause/resume of Robot dispatch (C4/PD-345). Unlike the worker's auto-pause (which keeps
