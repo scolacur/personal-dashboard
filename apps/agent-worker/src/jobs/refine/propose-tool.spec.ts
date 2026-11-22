@@ -94,3 +94,61 @@ describe('validateProposalShape — a Populate carries the Epic body (PD-634)', 
     expect(validateProposalShape(p)).toBeNull();
   });
 });
+
+describe('validateProposalShape — relations (PD-842)', () => {
+  const kids = [
+    { title: 'a', body: ROBOT_BODY, status: 'backlog' as const, assignee: 'robot' as const },
+    { title: 'b', body: ROBOT_BODY, status: 'backlog' as const, assignee: 'robot' as const },
+    { title: 'c', body: ROBOT_BODY, status: 'backlog' as const, assignee: 'robot' as const },
+  ];
+
+  it('accepts a blocks chain plus a relates edge', () => {
+    const p: RefineProposal = {
+      mode: 'decompose',
+      children: kids,
+      relations: [
+        { from: 0, to: 1, type: 'blocks' },
+        { from: 0, to: 2, type: 'blocks' },
+        { from: 1, to: 2, type: 'relates' },
+      ],
+    };
+    expect(validateProposalShape(p)).toBeNull();
+  });
+
+  it('rejects an index past the end of children', () => {
+    const p: RefineProposal = { mode: 'decompose', children: kids, relations: [{ from: 0, to: 3, type: 'blocks' }] };
+    expect(validateProposalShape(p)).toMatch(/index 3.*only 3 children/);
+  });
+
+  it('rejects a self-edge', () => {
+    const p: RefineProposal = { mode: 'decompose', children: kids, relations: [{ from: 2, to: 2, type: 'relates' }] };
+    expect(validateProposalShape(p)).toMatch(/itself/);
+  });
+
+  it('rejects a blocks cycle, but a relates loop is fine', () => {
+    const cyc: RefineProposal = {
+      mode: 'decompose',
+      children: kids,
+      relations: [
+        { from: 0, to: 1, type: 'blocks' },
+        { from: 1, to: 2, type: 'blocks' },
+        { from: 2, to: 0, type: 'blocks' },
+      ],
+    };
+    expect(validateProposalShape(cyc)).toMatch(/cycle \(0 → 1 → 2 → 0\)/);
+    const loop: RefineProposal = {
+      mode: 'decompose',
+      children: kids,
+      relations: [
+        { from: 0, to: 1, type: 'relates' },
+        { from: 1, to: 0, type: 'relates' },
+      ],
+    };
+    expect(validateProposalShape(loop)).toBeNull();
+  });
+
+  it('rejects relations on refine_in_place', () => {
+    const p: RefineProposal = { mode: 'refine_in_place', body: ROBOT_BODY, relations: [{ from: 0, to: 1, type: 'blocks' }] };
+    expect(validateProposalShape(p)).toMatch(/refine_in_place/);
+  });
+});

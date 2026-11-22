@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { budgetUsage, evaluateBudget, checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
+import {
+  budgetUsage,
+  evaluateBudget,
+  checkBudget,
+  publishBudgetPolicy,
+  publishCapacityPolicy,
+  type BudgetPolicy,
+} from './budget';
 import { ensureRunsTable } from './runs';
 import { ensureRobotStateTable } from './state';
 
@@ -110,5 +117,12 @@ describe('checkBudget + publishBudgetPolicy', () => {
     publishBudgetPolicy(d, policy, 1000);
     const row = d.prepare("SELECT value FROM robot_state WHERE key = 'budget_policy'").get() as { value: string };
     expect(JSON.parse(row.value)).toEqual({ windowMs: DAY, turns: 500, tokens: 0 });
+  });
+
+  it('publishes the loop concurrency for the auto-queue capacity check (D-103)', () => {
+    const d = db();
+    publishCapacityPolicy(d, { concurrency: 2 }, 1000);
+    const row = d.prepare("SELECT value FROM robot_state WHERE key = 'capacity_policy'").get() as { value: string };
+    expect(JSON.parse(row.value)).toEqual({ concurrency: 2 });
   });
 });

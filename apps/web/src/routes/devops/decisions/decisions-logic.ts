@@ -11,3 +11,15 @@ export function askedAgo(askedAt: number, now: number): string {
   if (h < 48) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
+
+/** What an awaiting Refine session is waiting on (PD-843): a commit `proposal` to approve or
+ *  reject, a question `round` to answer, or a plain `reply` (the agent answered without asking a
+ *  question or proposing). A proposal wins over a round: once the agent has proposed, the decision
+ *  that moves the ticket is Approve/Reject. */
+export type DecisionKind = 'proposal' | 'round' | 'reply';
+
+export function decisionKind(item: { proposal: unknown | null; round: unknown | null }): DecisionKind {
+  if (item.proposal) return 'proposal';
+  if (item.round) return 'round';
+  return 'reply';
+}

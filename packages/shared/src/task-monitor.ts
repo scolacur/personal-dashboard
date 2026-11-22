@@ -330,6 +330,11 @@ export interface AgentTicket {
   /** PD-748: this Epic is switched out of the Refine backfill (its members inherit it). Optional so
    *  fixtures predating it still type-check; absent reads as false. */
   backfillExcluded?: boolean;
+  /** D-103 (PD-808): this Epic is excluded from auto-queue — set by hand on Robot / Osiris / infra
+   *  Epics so the promoter never auto-queues self-modifying work. Meaningful on Epics only (default
+   *  false); a member reads its own column, and the promoter also checks the member's Epic. Optional
+   *  so fixtures predating it still type-check; absent reads as false. */
+  autoQueueExcluded?: boolean;
   /** Whether the body is Robot-ready — the mechanical 4-section shape check (`isReady`),
    *  recomputed on every body write and persisted (D-058). Server-computed, NOT client-settable
    *  (absent from Create/UpdateTicketInput). A bypassable dispatch gate; refinement is the hard one
@@ -349,6 +354,10 @@ export interface AgentTicket {
   /** The single parent Epic this Ticket belongs to, or null. An Epic itself always has this null
    *  (no nesting). "Belongs to" — not "child of"; parent/child is reserved for `split` lineage. */
   epicId: number | null;
+  /** D-103 (PD-811): this ticket's most recent lane change into the Queue was made by the auto-queue
+   *  promoter (an `auto_queued` event newer than any manual `status_changed`), not by hand. Drives
+   *  the card's "auto-queued" badge. Server-derived, read-only; absent reads as false. */
+  autoQueued?: boolean;
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -415,6 +424,9 @@ export interface SurfaceTicketInput {
   surface: TicketSurface;
   /** Open a Refine session on the new ticket ("grill me first"). */
   refine?: boolean;
+  /** P0–P5 (PD-836). Omit or `null` to file unprioritized. The triage-inbox Epic is unclassified,
+   *  so under D-080 the member keeps this value rather than inheriting one. */
+  priority?: TicketPriority | null;
 }
 
 /** Partial update — any subset of these fields. */
@@ -443,6 +455,9 @@ export interface UpdateTicketInput {
   epicId?: number | null;
   /** Set (a number) or clear (null) the per-ticket run ceiling (PD-432). Omit to leave unchanged. */
   maxTurns?: number | null;
+  /** D-103 (PD-808): exclude/include this Epic from auto-queue. Meaningful on Epics. Omit to leave
+   *  unchanged. */
+  autoQueueExcluded?: boolean;
 }
 
 /** An Epic's board lane (D-054, PD-336; D-080 drops `prioritized`).
@@ -714,6 +729,504 @@ export function queueEntryRefusals(criteria: readonly QueueCriterion[]): QueueCr
   return criteria.filter((c) => !c.met && c.refusesEntry);
 }
 
+// ── Auto-queue eligibility (D-103, PD-808) ───────────────────────────────────
+// One pure answer to "would the promoter queue this ticket, and if not, why?" — built ON TOP of
+// `queueBlockers` so the promoter, the detail-page checklist and the board's Eligible view can
+// never disagree with the hard Queue gate (D-091). Eligibility is COMPUTED, never stored (D-103 §3):
+// there is no "Queue-eligible" lane, because any of a body edit (D-097), a new blocker, an Epic
+// going stale (D-089) or a sibling un-refining would silently invalidate a stored flag.
+//
+// The promoter only ever carries out a decision a HUMAN already made — it moves members of an
+// *active* (queued) Epic as they become eligible, and it never sets `assignee`, `ready_bypassed` or
+// `refined` (D-103 §1). So "nothing but a human sets `refined = 1`" holds (verified PD-808: the only
+// writers are ✓ Mark refined, a `PATCH { refined: true }`, and Steve approving a Refine proposal —
+// no extra criterion needed to exclude a machine writer).
+
+/** The per-ticket auto-queue criteria, in the order Steve reads them (D-103 §3). */
+export type AutoQueueCriterionId =
+  | 'refined'
+  | 'epic-refined'
+  | 'epic-not-stale'
+  | 'members-refined'
+  | 'epic-active'
+  | 'assigned-robot'
+  | 'ready'
+  | 'unblocked'
+  | 'refine-settled'
+  | 'epic-not-excluded'
+  | 'robot-project';
+
+/** A single resolved criterion: the static `label`/`description` (from `AUTO_QUEUE_CRITERIA`) plus
+ *  whether it is `met`, and a one-line `reason` when it is not. */
+export interface AutoQueueCriterion {
+  id: AutoQueueCriterionId;
+  label: string;
+  description: string;
+  met: boolean;
+  /** Present only when `met` is false — why this criterion fails right now. */
+  reason?: string;
+  /** Present only when `met` is false and the criterion has a structured fix — carried from the
+   *  Queue gate (`queueBlockers`) so the checklist can link the reason to the Epic or the blocker
+   *  (D-103, PD-809). `ticketId` is the ticket to open. */
+  remedy?: { kind: QueueRemedyKind; ticketId?: number };
+}
+
+/**
+ * The five outcomes the promoter + the UI distinguish:
+ *  - `human-work`: assignee is `steve` or null — never auto-queued, whatever the criteria say.
+ *  - `terminal`: the ticket is completed/closed — nothing to queue.
+ *  - `in-queue`: already in the Queue lane.
+ *  - `eligible`: every per-ticket criterion is met; the promoter would queue it (capacity permitting).
+ *  - `not-eligible`: a robot ticket that is not yet eligible; the criteria say why.
+ */
+export type AutoQueueVerdict = 'eligible' | 'not-eligible' | 'in-queue' | 'terminal' | 'human-work';
+
+export interface AutoQueueEligibility {
+  verdict: AutoQueueVerdict;
+  criteria: AutoQueueCriterion[];
+}
+
+/** Static definition (id + label + description) of each per-ticket criterion. Exported so the
+ *  board's criteria modal and the detail-page checklist render from the SAME source the predicate
+ *  judges against (D-103 §consequences). Order matches `AutoQueueCriterionId`. */
+export const AUTO_QUEUE_CRITERIA: readonly {
+  id: AutoQueueCriterionId;
+  label: string;
+  description: string;
+}[] = [
+  { id: 'refined', label: 'Refined', description: 'The ticket is refined — a human has read and attested the work.' },
+  { id: 'epic-refined', label: 'Epic refined', description: "The ticket's Epic is refined." },
+  { id: 'epic-not-stale', label: 'Epic current', description: "The Epic's refinement is current — its membership has not changed since." },
+  { id: 'members-refined', label: 'Members refined', description: 'Every open member of the Epic is refined.' },
+  { id: 'epic-active', label: 'Epic active', description: 'The Epic is in the Queue lane — Steve has activated it.' },
+  { id: 'assigned-robot', label: 'Assigned to Robot', description: 'The ticket is assigned to the Robot.' },
+  { id: 'ready', label: 'Ready', description: 'The body has the four Ready sections, or Steve set a bypass.' },
+  { id: 'unblocked', label: 'Unblocked', description: 'No open ticket blocks it.' },
+  { id: 'refine-settled', label: 'Refine settled', description: 'No Refine session is waiting on Steve.' },
+  { id: 'epic-not-excluded', label: 'Epic not excluded', description: 'The Epic is not excluded from auto-queue.' },
+  { id: 'robot-project', label: 'Robot project', description: 'The project is robot-enabled and has a GitHub repo.' },
+] as const;
+
+const AUTO_QUEUE_CRITERION_BY_ID = new Map(AUTO_QUEUE_CRITERIA.map((d) => [d.id, d] as const));
+
+function autoQueueCriterion(
+  id: AutoQueueCriterionId,
+  met: boolean,
+  reason: string,
+  remedy?: { kind: QueueRemedyKind; ticketId?: number },
+): AutoQueueCriterion {
+  const def = AUTO_QUEUE_CRITERION_BY_ID.get(id)!;
+  return {
+    id,
+    label: def.label,
+    description: def.description,
+    met,
+    ...(met ? {} : { reason }),
+    ...(met || !remedy ? {} : { remedy }),
+  };
+}
+
+/** A ticket as the eligibility predicate reads it. */
+type EligTicket = Pick<
+  AgentTicket,
+  'id' | 'status' | 'assignee' | 'refined' | 'ready' | 'readyBypassed' | 'refineState' | 'isEpic'
+>;
+/** The ticket's Epic (or null), plus the two columns the gate does not already read. */
+type EligEpic = GateEpic & { status: TicketStatus; autoQueueExcluded: boolean };
+/** The ticket's project — robot-enabled with a repo is what `robotQueueCandidates` requires. */
+type EligProject = { robotEnabled: boolean; githubRepo: string | null } | null;
+
+/**
+ * Would the promoter auto-queue this (member) ticket, and if not, why? Pure and DB-free (D-103 §3).
+ *
+ * Reuses `queueBlockers` for criteria 1–4, 7 (`ready`) and 8 (`unblocked`) rather than re-deriving
+ * them, so the hard Queue gate and auto-queue can never diverge. The five extra criteria
+ * (`epic-active`, `assigned-robot`, `refine-settled`, `epic-not-excluded`, `robot-project`) are the
+ * ones D-103 adds beyond D-091.
+ *
+ * `unblocked` is REQUIRED here even though D-091 lets a blocked ticket sit in the Queue: promoting a
+ * blocked ticket only adds clutter (D-103 §3).
+ */
+export function autoQueueEligibility(input: {
+  ticket: EligTicket;
+  epic: EligEpic | null;
+  members: readonly GateMember[];
+  openBlockerIds: readonly number[];
+  project: EligProject;
+}): AutoQueueEligibility {
+  const { ticket, epic, members, openBlockerIds, project } = input;
+
+  const gate = queueBlockers({
+    ticket: { id: ticket.id, refined: ticket.refined, ready: ticket.ready, readyBypassed: ticket.readyBypassed },
+    epic: epic ? { id: epic.id, refined: epic.refined, refineStale: epic.refineStale } : null,
+    members,
+    openBlockerIds,
+  });
+  const gateById = new Map(gate.map((c) => [c.id, c] as const));
+  // Map a reused `QueueCriterion` into an `AutoQueueCriterion`, carrying its dynamic label as the
+  // reason when it is unmet (the gate's labels are already the "why", e.g. "This ticket is not
+  // refined").
+  const fromGate = (id: AutoQueueCriterionId & QueueCriterionId): AutoQueueCriterion => {
+    const g = gateById.get(id)!;
+    return autoQueueCriterion(id, g.met, g.label, g.remedy);
+  };
+
+  const epicActive = epic != null && epic.status === 'queue';
+  const assignedRobot = ticket.assignee === 'robot';
+  const refineSettled = ticket.refineState !== 'awaiting-human';
+  const epicNotExcluded = !epic?.autoQueueExcluded;
+  const robotProject = project != null && project.robotEnabled && project.githubRepo != null;
+
+  const criteria: AutoQueueCriterion[] = [
+    fromGate('refined'),
+    fromGate('epic-refined'),
+    fromGate('epic-not-stale'),
+    fromGate('members-refined'),
+    autoQueueCriterion(
+      'epic-active',
+      epicActive,
+      epic ? 'Its Epic is not active — Steve has not queued it.' : 'It has no Epic to activate.',
+      epic ? { kind: 'open-epic', ticketId: epic.id } : undefined,
+    ),
+    autoQueueCriterion('assigned-robot', assignedRobot, 'It is not assigned to the Robot.'),
+    fromGate('ready'),
+    fromGate('unblocked'),
+    autoQueueCriterion('refine-settled', refineSettled, 'A Refine session is waiting on you.'),
+    autoQueueCriterion(
+      'epic-not-excluded',
+      epicNotExcluded,
+      'Its Epic is excluded from auto-queue.',
+      epic ? { kind: 'open-epic', ticketId: epic.id } : undefined,
+    ),
+    autoQueueCriterion(
+      'robot-project',
+      robotProject,
+      'The project is not robot-enabled or has no GitHub repo.',
+    ),
+  ];
+
+  const verdict: AutoQueueVerdict =
+    ticket.status === 'completed' || ticket.status === 'closed'
+      ? 'terminal'
+      : ticket.assignee !== 'robot'
+        ? 'human-work'
+        : ticket.status === 'queue'
+          ? 'in-queue'
+          : criteria.every((c) => c.met)
+            ? 'eligible'
+            : 'not-eligible';
+
+  return { verdict, criteria };
+}
+
+// ── Auto-queue: the Epic variant ─────────────────────────────────────────────
+
+/** The Epic-level criteria the Epic detail page shows (D-103 §3), a subset of the per-ticket ids. */
+export type AutoQueueEpicCriterionId =
+  | 'epic-refined'
+  | 'epic-not-stale'
+  | 'members-refined'
+  | 'epic-active'
+  | 'epic-not-excluded';
+
+/** Roll-up of one member's verdict, for the Epic detail page. */
+export interface AutoQueueMemberVerdict {
+  ticketId: number;
+  verdict: AutoQueueVerdict;
+}
+
+export interface AutoQueueEpicEligibility {
+  criteria: AutoQueueCriterion[];
+  /** Per-member verdict roll-up, in the members' board order. */
+  members: AutoQueueMemberVerdict[];
+}
+
+/**
+ * The Epic-level criteria plus a per-member verdict roll-up (D-103 §3). Pure and DB-free: the caller
+ * supplies the Epic's members and each member's open-blocker ids. `members-refined` is derived from
+ * the member set (never stored), reusing `epicQueueCriteria`.
+ */
+export function autoQueueEpicEligibility(input: {
+  epic: EligEpic;
+  members: readonly EligTicket[];
+  project: EligProject;
+  /** Open `blocks` blocker ids per member id; absent ⇒ unblocked. */
+  openBlockerIdsByMember?: Readonly<Record<number, readonly number[]>>;
+}): AutoQueueEpicEligibility {
+  const { epic, members, project, openBlockerIdsByMember } = input;
+
+  // `members-refined` is the one Epic-level criterion derived from the whole set (D-089). Reuse the
+  // gate's derivation so it cannot drift; terminal members are excluded there.
+  const gateMembers: GateMember[] = members.map((m) => ({ id: m.id, refined: m.refined, status: m.status }));
+  const [, , membersRefined] = epicQueueCriteria(
+    { id: epic.id, refined: epic.refined, refineStale: epic.refineStale },
+    gateMembers,
+  );
+
+  // Every Epic-level criterion is fixed on the Epic itself; its remedy points back here so the
+  // board's criteria modal can link to the Epic (the detail page suppresses the self-link).
+  const self = { kind: 'open-epic' as const, ticketId: epic.id };
+  const criteria: AutoQueueCriterion[] = [
+    autoQueueCriterion('epic-refined', epic.refined, 'This Epic is not refined.', self),
+    autoQueueCriterion('epic-not-stale', !epic.refineStale, "This Epic's membership changed since it was refined — re-refine it.", self),
+    autoQueueCriterion('members-refined', membersRefined.met, membersRefined.label, self),
+    autoQueueCriterion('epic-active', epic.status === 'queue', 'This Epic is not active — queue it to activate its members.', self),
+    autoQueueCriterion('epic-not-excluded', !epic.autoQueueExcluded, 'This Epic is excluded from auto-queue.', self),
+  ];
+
+  const memberVerdicts: AutoQueueMemberVerdict[] = members.map((m) => ({
+    ticketId: m.id,
+    verdict: autoQueueEligibility({
+      ticket: m,
+      epic,
+      members: gateMembers,
+      openBlockerIds: openBlockerIdsByMember?.[m.id] ?? [],
+      project,
+    }).verdict,
+  }));
+
+  return { criteria, members: memberVerdicts };
+}
+
+// ── Auto-queue: capacity (board/worker-wide, D-103 §4) ───────────────────────
+// Capacity is evaluated server-side each promoter tick, not per-ticket. Promotion stops at
+// whichever limit is hit first. The limits that depend on worker config (`ROBOT_CONCURRENCY`) are
+// read from `robot_state`, the same channel the budget policy uses (D-103 §4) — the web process
+// cannot see the worker's env.
+
+export type AutoQueueCapacityId = 'queue-depth' | 'review-wip' | 'epic-in-flight' | 'worker-healthy';
+
+/** One capacity limb: `current` against `limit`. `met` is `current < limit` for the count limbs;
+ *  `worker-healthy` is a composite whose `reason` names the failing condition. */
+export interface AutoQueueCapacityRow {
+  id: AutoQueueCapacityId;
+  label: string;
+  description: string;
+  current: number;
+  limit: number;
+  met: boolean;
+  /** Present when `met` is false — what is at capacity / unhealthy. */
+  reason?: string;
+}
+
+export interface AutoQueueCapacity {
+  rows: AutoQueueCapacityRow[];
+  /** True when every limb has headroom — the promoter may promote this tick. */
+  ok: boolean;
+}
+
+/** Robot tickets `in-review` (incl. PRs held by the review/visual gate or conflicting) may not
+ *  exceed this before the promoter stops (D-103 §4). */
+export const AUTO_QUEUE_REVIEW_WIP_LIMIT = 3;
+/** At most this many of an Epic's members may be in flight (queued-not-dispatched / working /
+ *  in-review) before the promoter stops promoting that Epic (D-103 §4). */
+export const AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT = 1;
+/** The multiple of `ROBOT_CONCURRENCY` the dispatchable-in-Queue depth may reach (D-103 §4). */
+export const AUTO_QUEUE_QUEUE_DEPTH_FACTOR = 2;
+/** A worker heartbeat older than this is stale, so the loop's health cannot be confirmed. Matches
+ *  the board's Site Status staleness window. */
+export const AGENT_WORKER_HEARTBEAT_STALE_MS = 90_000;
+/** The `robot_state` key the worker publishes its effective capacity policy under (concurrency),
+ *  mirroring `budget_policy` — the web process cannot read `ROBOT_CONCURRENCY` directly. */
+export const ROBOT_CAPACITY_POLICY_KEY = 'capacity_policy';
+/** Fallback concurrency when the worker has not published a policy yet (matches the env default). */
+export const ROBOT_CONCURRENCY_DEFAULT = 1;
+
+/** Static definition (id + label + description) of each board/worker-wide capacity limb. Exported so
+ *  `computeAutoQueueCapacity` (the live rows), the detail-page checklist and the board's criteria
+ *  modal render from ONE source — the same single-source pattern as `AUTO_QUEUE_CRITERIA` (D-103
+ *  §consequences, PD-810). Order matches `AutoQueueCapacityId`. The descriptions embed the limit
+ *  constants above so they can never contradict the numbers the predicate enforces. */
+export const AUTO_QUEUE_CAPACITY_DEFS: readonly {
+  id: AutoQueueCapacityId;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: 'queue-depth',
+    label: 'Queue depth',
+    description: `Dispatchable robot tickets in the Queue stay below ROBOT_CONCURRENCY × ${AUTO_QUEUE_QUEUE_DEPTH_FACTOR}.`,
+  },
+  {
+    id: 'review-wip',
+    label: 'Review WIP',
+    description: `Robot tickets awaiting review stay below ${AUTO_QUEUE_REVIEW_WIP_LIMIT}.`,
+  },
+  {
+    id: 'epic-in-flight',
+    label: 'Epic in flight',
+    description: `At most ${AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT} member of this Epic is in flight at once.`,
+  },
+  {
+    id: 'worker-healthy',
+    label: 'Worker healthy',
+    description: 'Dispatch is not paused or held, the budget has headroom, and the worker is alive.',
+  },
+] as const;
+
+// ── Auto-queue: mode + verdict wording (D-103 §4, PD-809) ────────────────────
+// The promoter ships behind `AUTO_QUEUE=off|dry-run|on` (D-103 §4). The checklist surfaces the mode
+// so Steve can tell, on any ticket, whether the ✓/✗ he is reading actually drives anything yet, and
+// renders a single verdict line from the same pure taxonomy the predicate produces.
+
+/** The promoter's run mode (D-103 §4): `off` promotes nothing, `dry-run` logs without applying,
+ *  `on` promotes. Defaults to `off`. */
+export type AutoQueueMode = 'off' | 'dry-run' | 'on';
+
+/** Parse the `AUTO_QUEUE` env value into a mode, defaulting to `off` for anything unrecognised. */
+export function parseAutoQueueMode(raw: string | null | undefined): AutoQueueMode {
+  return raw === 'on' || raw === 'dry-run' ? raw : 'off';
+}
+
+/** The muted note shown under the verdict while the promoter is not live; `null` when `on`. */
+export function autoQueueModeNote(mode: AutoQueueMode): string | null {
+  if (mode === 'off') return 'Auto-queue is off — nothing is promoted automatically.';
+  if (mode === 'dry-run') return 'Auto-queue is in dry-run — promotions are logged, not applied.';
+  return null;
+}
+
+/** The one-line verdict shown above a member Ticket's criteria (D-103 §consequences). `assignee`
+ *  splits the two `human-work` cases; `unmetCount` fills the `not-eligible` count. */
+export function autoQueueVerdictLine(
+  verdict: AutoQueueVerdict,
+  assignee: TicketAssignee | null,
+  unmetCount: number,
+): string {
+  switch (verdict) {
+    case 'eligible':
+      return 'Will auto-queue when capacity allows';
+    case 'in-queue':
+      return 'In the Queue';
+    case 'terminal':
+      return 'Completed/Closed — not applicable';
+    case 'human-work':
+      return assignee === 'steve'
+        ? 'Not auto-queued — assigned to steve (human work is never automated)'
+        : 'Not auto-queued — no assignee';
+    case 'not-eligible':
+      return `Not eligible — ${unmetCount} unmet`;
+  }
+}
+
+/** Short word for a member's verdict, for the Epic roll-up list (D-103). */
+export const AUTO_QUEUE_VERDICT_SHORT: Record<AutoQueueVerdict, string> = {
+  eligible: 'eligible',
+  'not-eligible': 'not eligible',
+  'in-queue': 'in queue',
+  terminal: 'done',
+  'human-work': 'human',
+};
+
+/** The verdict line for an Epic: it is never dispatched itself, so the line is about whether its
+ *  members *can* auto-queue (D-103 §3). Unmet Epic-level criteria block every member. */
+export function autoQueueEpicVerdictLine(eligibility: AutoQueueEpicEligibility): string {
+  const unmet = eligibility.criteria.filter((c) => !c.met).length;
+  return unmet > 0 ? `Not eligible — ${unmet} unmet` : 'Members auto-queue as they become eligible';
+}
+
+/** `N of M members eligible`, the Epic member roll-up tally (D-103 §3). */
+export function autoQueueMemberRollup(members: readonly AutoQueueMemberVerdict[]): {
+  eligible: number;
+  total: number;
+} {
+  return { eligible: members.filter((m) => m.verdict === 'eligible').length, total: members.length };
+}
+
+/**
+ * What `GET …/tickets/:id/queue-eligibility` returns (D-103, PD-808). A member carries
+ * `eligibility`; an Epic carries `epicEligibility` (its own criteria + a per-member verdict
+ * roll-up). Both carry the board/worker-wide `capacity` snapshot the promoter evaluates each tick,
+ * and the promoter's `mode` so the UI can say whether any of it is live yet (D-103 §4).
+ */
+export interface AutoQueueEligibilityResponse {
+  ticketId: number;
+  isEpic: boolean;
+  /** Present for a member Ticket. */
+  eligibility?: AutoQueueEligibility;
+  /** Present for an Epic. */
+  epicEligibility?: AutoQueueEpicEligibility;
+  capacity: AutoQueueCapacity;
+  /** The promoter's run mode (`AUTO_QUEUE`), so the checklist can flag off/dry-run (D-103 §4). */
+  mode: AutoQueueMode;
+}
+
+/**
+ * What `GET …/queue-eligibility` returns (D-103, PD-808): every live Backlog ticket's eligibility in
+ * one read, for the board's Eligible view. `capacity` is the board-wide snapshot (its `epic-in-flight`
+ * limb is evaluated with no Epic in view); `epicInFlight` gives each Epic's own in-flight count to
+ * judge that limb per card against `AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT`.
+ */
+export interface AutoQueueBoardEligibility {
+  capacity: AutoQueueCapacity;
+  epicInFlight: Record<number, number>;
+  tickets: Record<number, AutoQueueEligibility>;
+}
+
+// ── Auto-queue: the promoter's audit trail + tick summary (D-103 §4, PD-811) ──
+// The server-side promoter runs on an interval and moves eligible Backlog members of active Epics
+// into the Queue through the SAME store path + guard the PATCH route uses. Every promotion is an
+// `agent_ticket_events` row carrying the criteria + capacity snapshot that justified it, so the
+// decision is auditable after the fact; dry-run records the same thing without the status write.
+
+/** `agent_ticket_events.type` values the auto-queue promoter emits (PD-811). Referenced by BOTH the
+ *  server (write + the card's auto-queued-badge subselect) and potential readers, so the literals
+ *  live here (mirrors ROBOT_EVENT / REFINE_EVENT_TYPE). */
+export const AUTO_QUEUE_EVENT = {
+  /** A promotion actually applied (mode `on`). */
+  queued: 'auto_queued',
+  /** A promotion that WOULD have applied (mode `dry-run`) — logged, never written to status. */
+  dryRun: 'auto_queue_dry_run',
+  /** The Queue guard refused a promotion the eligibility predicate judged eligible — logged, not
+   *  thrown (D-103 §consequences: "a refusal from the existing guard is logged, not bypassed"). */
+  refused: 'auto_queue_refused',
+} as const;
+
+/** The JSON `detail` stored on an `auto_queued` / `auto_queue_dry_run` event — the full justification
+ *  for the promotion, so the decision can be read back off the activity log (D-103 §4). */
+export interface AutoQueuePromotionDetail {
+  mode: AutoQueueMode;
+  epicId: number | null;
+  /** The per-ticket eligibility criteria (all met for a promotion). */
+  criteria: AutoQueueCriterion[];
+  /** The capacity snapshot at the moment of promotion. */
+  capacity: AutoQueueCapacityRow[];
+}
+
+/** One ticket the promoter moved (or would have moved) this tick. */
+export interface AutoQueuePromotedItem {
+  ticketId: number;
+  displayId: string;
+  epicId: number | null;
+}
+
+/**
+ * The summary of one promoter tick, published to `robot_state` under `AUTO_QUEUE_LAST_TICK_KEY` so
+ * Dev Ops / the eligibility checklist can show "last tick promoted X" or "would have queued X
+ * because …" without the promoter being `on` (D-103 §4).
+ */
+export interface AutoQueueTickSummary {
+  mode: AutoQueueMode;
+  /** Unix ms the tick ran. */
+  ranAt: number;
+  /** Tickets actually moved into the Queue (always empty in `off`/`dry-run`). */
+  promoted: AutoQueuePromotedItem[];
+  /** Tickets the promoter WOULD have queued (populated in `dry-run`; empty in `on`/`off`). */
+  wouldPromote: AutoQueuePromotedItem[];
+  /** How many eligible candidates were considered before a capacity limit (if any) halted the tick. */
+  considered: number;
+  /** The board-wide capacity limb that halted the tick, or null if it ran to the end of the Backlog. */
+  stoppedBy: AutoQueueCapacityId | null;
+  /** False when the worker was too unhealthy to promote at all this tick. */
+  workerHealthy: boolean;
+  /** Why the worker was unhealthy, when it was (the `worker-healthy` composite reason). */
+  unhealthyReason?: string;
+}
+
+/** The `robot_state` key the server's promoter writes its last-tick summary to (D-103 §4). Unlike
+ *  most `robot_state` keys this one is SERVER-written (the promoter runs in the web process); the
+ *  worker never touches it. */
+export const AUTO_QUEUE_LAST_TICK_KEY = 'auto_queue_last_tick';
+
 // ── Notification Center (D-040) ──────────────────────────────────────────────
 // A notification surfaced in the dashboard's in-app inbox. MVP kinds cover an agent
 // parking for a human (ask_human / needs-human); widget notifications plug in later.
@@ -723,7 +1236,10 @@ export function queueEntryRefusals(criteria: readonly QueueCriterion[]): QueueCr
  *  strength of its required checks and the `review-gate` status (D-098). Informational, not a call
  *  to act. */
 /** `agent_visual_review` (PD-773): a PR is held for Steve's visual check. Links to Decisions. */
-export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review';
+/** `agent_auto_queued` (D-103, PD-811): the auto-queue promoter moved one or more Backlog tickets
+ *  into the Queue this tick. A non-ticket-scoped digest — ONE per tick that promoted anything, not
+ *  one per ticket. */
+export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review' | 'agent_auto_queued';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
 /** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
@@ -797,6 +1313,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_refine',
   'agent_auto_merged',
   'agent_visual_review',
+  'agent_auto_queued',
 ] as const;
 
 export interface AgentNotification {
@@ -1055,6 +1572,64 @@ export interface RefineChildProposal {
   refined?: boolean;
 }
 
+/** The relation types a Refine proposal may carry between its children (PD-842). `split` stays
+ *  automatic (parent→child lineage) and `duplicates` makes no sense between siblings being born. */
+export type RefineRelationType = 'blocks' | 'relates';
+export const REFINE_RELATION_TYPES: readonly RefineRelationType[] = ['blocks', 'relates'];
+
+/** A proposed relation between two decompose children, addressed by 0-based index into
+ *  `RefineProposal.children` — the children have no ids until approval creates them (PD-842). */
+export interface RefineRelationProposal {
+  from: number;
+  to: number;
+  type: RefineRelationType;
+}
+
+/**
+ * Mechanical shape check for a proposal's `relations` (PD-842): index range, self-edges, and
+ * `blocks` cycles among the children. Returns an instructive error, or null when well-formed.
+ * Shared so the propose tool (immediate agent feedback) and the approve path (defence against a
+ * stored proposal) apply the same rule.
+ */
+export function refineRelationsError(
+  relations: readonly RefineRelationProposal[] | undefined,
+  childCount: number,
+): string | null {
+  if (!relations || relations.length === 0) return null;
+  const adj = new Map<number, number[]>();
+  for (const r of relations) {
+    const label = `relation ${r.from} → ${r.to}`;
+    if (!REFINE_RELATION_TYPES.includes(r.type)) {
+      return `${label} has type "${r.type}", but only ${REFINE_RELATION_TYPES.join(' / ')} may be proposed.`;
+    }
+    for (const end of [r.from, r.to]) {
+      if (!Number.isInteger(end) || end < 0 || end >= childCount) {
+        return `${label} points at child index ${end}, but there are only ${childCount} children (0-based, 0..${childCount - 1}).`;
+      }
+    }
+    if (r.from === r.to) return `${label} relates a child to itself.`;
+    if (r.type === 'blocks') adj.set(r.from, [...(adj.get(r.from) ?? []), r.to]);
+  }
+  // Cycle check over the `blocks` edges (D-048): a cycle would leave every member permanently blocked.
+  const state = new Map<number, 1 | 2>(); // 1 = on stack, 2 = done
+  const visit = (n: number, path: number[]): number[] | null => {
+    if (state.get(n) === 1) return [...path, n];
+    if (state.get(n) === 2) return null;
+    state.set(n, 1);
+    for (const m of adj.get(n) ?? []) {
+      const cyc = visit(m, [...path, n]);
+      if (cyc) return cyc;
+    }
+    state.set(n, 2);
+    return null;
+  };
+  for (const n of adj.keys()) {
+    const cyc = visit(n, []);
+    if (cyc) return `the blocks relations form a cycle (${cyc.join(' → ')}), which would leave those children permanently blocked.`;
+  }
+  return null;
+}
+
 /**
  * The structured commit proposal, stored as the detail of a `refine_proposal` event.
  *
@@ -1076,6 +1651,10 @@ export interface RefineProposal {
   maxTurns?: number | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
+  /** decompose (PD-842): relations between the proposed children, by index into `children`.
+   *  Written in the approval transaction, so a dependency chain arrives wired instead of needing
+   *  Steve to link it by hand. Omitted on every proposal stored before PD-842. */
+  relations?: RefineRelationProposal[];
   /** Short why, shown in the approval panel. */
   rationale?: string;
 }
@@ -1350,9 +1929,9 @@ export interface SystemStatus {
 /**
  * A ticket parked waiting on a human, as the nav needs it (PD-498).
  *
- * Carries `id` because that is what the detail-page route takes, and `displayId` because that is
- * what a human recognises. Both, rather than one and a lookup, because the nav has no ticket list
- * to look anything up in.
+ * Carries `displayId` because that is what the detail-page route takes (and what a human
+ * recognises), and `id` as the stable row key. The nav must link by `displayId` — an earlier version
+ * linked `id`, which the route does not resolve.
  */
 export interface NeedsHumanTicket {
   id: number;

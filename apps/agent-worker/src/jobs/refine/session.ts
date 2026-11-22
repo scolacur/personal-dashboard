@@ -1,5 +1,11 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  AgentDefinition,
+  HookCallbackMatcher,
+  HookJSONOutput,
+  SDKMessage,
+  SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 import { refineSystemPrompt, type RefineProposal, type RefineQuestionRound } from '@dashboard/shared';
 import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
@@ -9,6 +15,127 @@ import { buildProposeToolServer, PROPOSE_TOOL_NAME } from './propose-tool';
 
 /** Read-only built-in tools — the agent-worker grounds against the checkout, never edits. */
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
+
+// ── Sub-agents (PD-844) ──────────────────────────────────────────────────────
+
+/**
+ * The sub-agent spawn tool. Its canonical name is `Agent`; `Task` is the legacy name the CLI still
+ * maps onto it (the SDK's alias table: `{Task:"Agent", ...}` in sdk.mjs), so both are matched. The
+ * input shape is `AgentInput` in sdk-tools.d.ts: `subagent_type?`, `run_in_background?` ("Agents run
+ * in the background by default"), `isolation?` ("remote" always runs in the background), `mode?`.
+ */
+export const AGENT_TOOL_NAMES = ['Agent', 'Task'] as const;
+
+/** The only sub-agent type Refine may spawn. */
+export const REFINE_EXPLORER_AGENT = 'refine-explorer';
+
+/**
+ * Tools Refine must never have. `allowedTools` only auto-approves; it does not limit which tools
+ * exist, so without this the model saw the full Claude Code toolset. These are removed from the
+ * model's context entirely ("removed from the model's context and cannot be used", Options in
+ * sdk.d.ts). The second group is every task/background-control tool other than Agent: with
+ * sub-agents forced into the foreground there is nothing to poll, stop, message or wake up for, and
+ * a scheduled wake-up would recreate exactly the "turn ends, result arrives later" shape PD-844
+ * removes.
+ */
+export const REFINE_DISALLOWED_TOOLS = [
+  'Bash',
+  'Edit',
+  'Write',
+  'NotebookEdit',
+  'WebFetch',
+  'WebSearch',
+  'TaskOutput',
+  'TaskStop',
+  'TaskCreate',
+  'TaskGet',
+  'TaskUpdate',
+  'TaskList',
+  'Monitor',
+  'SendMessage',
+  'ScheduleWakeup',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'RemoteTrigger',
+  'Workflow',
+  'EnterWorktree',
+  'ExitWorktree',
+];
+
+/** The explorer's definition: read-only grounding plus the read-only board, and nothing that can
+ *  ask Steve or record a proposal (those stay with the Refine agent itself). */
+export function refineExplorerAgent(boardTools: readonly string[]): AgentDefinition {
+  return {
+    description:
+      'Read-only explorer for wide searches of the grounding checkout and the board. Returns its findings in the same turn.',
+    tools: [...READ_ONLY_TOOLS, ...boardTools],
+    background: false,
+    prompt: [
+      'You are an explorer working for the Refine agent of the Personal Dashboard board. You get one',
+      'self-contained brief; answer it and stop. Your final message is your whole report, so put every',
+      'finding in it, with file paths and line numbers or ticket ids and titles.',
+      '',
+      'What you can see:',
+      '- The grounding checkout (your working directory) at `main`, refreshed about every 5 minutes,',
+      '  through Read, Grep and Glob.',
+      boardTools.length > 0
+        ? '- The live board, read-only, through search_tickets, get_ticket, list_relations and list_epic_members.'
+        : '- (The board tools are not available in this session.)',
+      '',
+      'What you cannot see: unmerged pull requests or branches, deploy or runtime state, and git',
+      'history. If the brief depends on one of those, say so plainly instead of guessing. You only',
+      'read; you never write, ask questions, or propose changes.',
+    ].join('\n'),
+  };
+}
+
+/**
+ * PreToolUse hook that keeps Refine's sub-agents in the foreground and restricted to the explorer.
+ *
+ * Why a PreToolUse hook and not `canUseTool`: `canUseTool` is only consulted on the permission
+ * "ask" path. Under `permissionMode: 'dontAsk'` that path is auto-denied without ever reaching the
+ * host (sdk.d.ts, SDKPermissionDeniedMessage: "auto-denied without an interactive permission
+ * prompt (e.g. ... dontAsk mode ...). The 'ask' path surfaces via a can_use_tool control_request"),
+ * and a tool already approved — by `allowedTools`, or the Agent tool's own permission check, which is
+ * how background explorers ran on PD-284 and PD-799 with Agent in neither list — never asks at all.
+ * So a `canUseTool` here would never be called. PreToolUse hooks run for every tool call before the
+ * permission decision (the same typings note that "PreToolUse hook denies bypass canUseTool"), and
+ * `PreToolUseHookSpecificOutput` carries both `permissionDecision` and `updatedInput`, which is what
+ * forcing `run_in_background: false` needs.
+ *
+ * Every other tool gets `{}` (no decision), leaving the existing permission behaviour unchanged.
+ */
+export async function refineAgentToolHook(input: { hook_event_name: string; tool_name?: string; tool_input?: unknown }): Promise<HookJSONOutput> {
+  if (input.hook_event_name !== 'PreToolUse' || !AGENT_TOOL_NAMES.includes(input.tool_name as (typeof AGENT_TOOL_NAMES)[number])) {
+    return {};
+  }
+  const toolInput = (input.tool_input ?? {}) as Record<string, unknown>;
+  if (toolInput.subagent_type !== REFINE_EXPLORER_AGENT) {
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: `Refine may only spawn the ${REFINE_EXPLORER_AGENT} sub-agent. Set subagent_type: "${REFINE_EXPLORER_AGENT}" and give it a self-contained brief.`,
+      },
+    };
+  }
+  // `isolation: 'remote'` always runs in the background and `mode` is a teammate setting; neither has
+  // a place in a read-only foreground explorer, so both are dropped rather than trusted.
+  const { isolation: _isolation, mode: _mode, ...rest } = toolInput;
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      permissionDecisionReason: 'Refine explorers run in the foreground (PD-844).',
+      updatedInput: { ...rest, run_in_background: false },
+    },
+  };
+}
+
+const REFINE_HOOKS: { PreToolUse: HookCallbackMatcher[] } = {
+  PreToolUse: [{ matcher: AGENT_TOOL_NAMES.join('|'), hooks: [refineAgentToolHook] }],
+};
 
 export interface RefineTurnInput {
   config: AgentWorkerConfig;
@@ -60,8 +187,8 @@ function resultFrom(message: Extract<SDKMessage, { type: 'result' }>): RefineTur
 
 /** The SDK options shared by the one-shot and warm-streaming paths. When `onProposal` is
  *  given, the propose_commit tool (PD-269) is exposed and allowed alongside the read-only set;
- *  `onRound` adds ask_questions (PD-744). */
-function refineOptions(
+ *  `onRound` adds ask_questions (PD-744). Exported for its tests. */
+export function refineOptions(
   config: AgentWorkerConfig,
   contextPack: string,
   resumeSessionId?: string,
@@ -70,9 +197,8 @@ function refineOptions(
   onRound?: (round: RefineQuestionRound) => void,
   db?: Database.Database,
 ) {
-  const refineTools = onProposal
-    ? [PROPOSE_TOOL_NAME, ...(onRound ? [ASK_TOOL_NAME] : []), ...(db ? BOARD_TOOL_NAMES : [])]
-    : [];
+  const boardTools: readonly string[] = onProposal && db ? BOARD_TOOL_NAMES : [];
+  const refineTools = onProposal ? [PROPOSE_TOOL_NAME, ...(onRound ? [ASK_TOOL_NAME] : []), ...boardTools] : [];
   return {
     model: config.model,
     cwd: config.checkoutDir,
@@ -84,9 +210,15 @@ function refineOptions(
     // path rather than being persisted as the agent's words.
     maxTurns: config.refineMaxTurns,
     systemPrompt: refineSystemPrompt(contextPack, config.robot.maxTurns),
-    allowedTools: [...READ_ONLY_TOOLS, ...refineTools],
+    // `Agent` is listed so spawning the explorer is approved by rule, independent of the hook's
+    // `allow`; the hook below still rewrites its input and refuses any other sub-agent type.
+    allowedTools: [...READ_ONLY_TOOLS, 'Agent', ...refineTools],
+    disallowedTools: REFINE_DISALLOWED_TOOLS,
     // Headless: deny any tool outside the allowlist without prompting (would hang).
     permissionMode: 'dontAsk' as const,
+    // PD-844: sub-agents only as the read-only explorer, and only in the foreground.
+    agents: { [REFINE_EXPLORER_AGENT]: refineExplorerAgent(boardTools) },
+    hooks: REFINE_HOOKS,
     ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic, onRound, board: db }) } } : {}),
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };

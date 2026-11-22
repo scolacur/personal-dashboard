@@ -146,6 +146,33 @@
   }
 }
 
+/* ── Eligible filter toggle (PD-810) ────────────── */
+.eligible-toggle {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+  transition:
+    background 0.1s,
+    border-color 0.1s,
+    color 0.1s;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+
+  &.active {
+    background: color-mix(in srgb, var(--status-done) 16%, transparent);
+    border-color: var(--status-done);
+    color: var(--status-done);
+    font-weight: 600;
+  }
+}
+
 /* ── Lanes show/hide menu ───────────────────────── */
 .lanes-menu-wrap {
   position: relative;

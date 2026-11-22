@@ -1,18 +1,22 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
+  activeDeployHold,
   activeMaintenanceHold,
   activeSessionLimitHold,
   clearSessionLimitHold,
+  deployHold,
   dispatchPauseState,
   ensureRobotStateTable,
   holdForSessionLimit,
   isDispatchPaused,
   maintenanceHold,
   pauseDispatch,
+  releaseDeployHold,
   releaseMaintenanceHold,
   resumeDispatch,
   sessionLimitHold,
+  takeDeployHold,
   takeMaintenanceHold,
   writeState,
 } from './state';
@@ -162,5 +166,64 @@ describe('maintenance hold (PD-498, D-078)', () => {
   it('survives a corrupt row without wedging the loop', () => {
     writeState(db, 'maintenance_hold', 'not json', 1000);
     expect(maintenanceHold(db)).toBeNull();
+  });
+});
+
+describe('deploy hold (PD-802, D-105)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    ensureRobotStateTable(db);
+  });
+
+  it('defaults to none', () => {
+    expect(deployHold(db)).toBeNull();
+    expect(activeDeployHold(db, 1000)).toBeNull();
+  });
+
+  it('holds with a reason and a lapse deadline', () => {
+    takeDeployHold(db, 5000, 'agent-worker deploy drain', 1000);
+    expect(activeDeployHold(db, 2000)).toMatchObject({ until: 5000, reason: 'agent-worker deploy drain', since: 1000 });
+  });
+
+  it('lapses on its own, so a drain that dies cannot wedge dispatch shut', () => {
+    takeDeployHold(db, 5000, 'drain', 1000);
+    expect(activeDeployHold(db, 5001)).toBeNull();
+    expect(deployHold(db)).toBeNull(); // the read cleared it, like the other holds
+  });
+
+  it('releases explicitly, which is the new container boot path', () => {
+    takeDeployHold(db, 5000, 'drain', 1000);
+    releaseDeployHold(db, 2000);
+    expect(activeDeployHold(db, 2001)).toBeNull();
+  });
+
+  it('a second take extends the deadline (a retried drain)', () => {
+    takeDeployHold(db, 5000, 'drain', 1000);
+    takeDeployHold(db, 9000, 'drain, retry', 2000);
+    expect(activeDeployHold(db, 6000)?.until).toBe(9000);
+  });
+
+  // ── The reason this is a separate slot, not a reason on the maintenance hold (D-105) ──────────
+  it('does not disturb a maintenance hold, and is not disturbed by one', () => {
+    takeMaintenanceHold(db, 8000, 'manual window', 1000);
+    takeDeployHold(db, 5000, 'drain', 1000);
+    expect(activeMaintenanceHold(db, 2000)?.reason).toBe('manual window');
+    expect(activeDeployHold(db, 2000)?.reason).toBe('drain');
+  });
+
+  it('releasing a deploy hold on boot leaves a manual maintenance window in force', () => {
+    // The failure this prevents: the new container boots, clears "the hold", and dispatch resumes
+    // straight into a maintenance window a human opened — the one-slot clobber D-105 avoids.
+    takeMaintenanceHold(db, 8000, 'manual window', 1000);
+    takeDeployHold(db, 5000, 'drain', 1000);
+    releaseDeployHold(db, 3000);
+    expect(activeDeployHold(db, 3001)).toBeNull();
+    expect(activeMaintenanceHold(db, 3001)?.reason).toBe('manual window');
+  });
+
+  it('survives a corrupt row without wedging the loop', () => {
+    writeState(db, 'deploy_hold', 'not json', 1000);
+    expect(deployHold(db)).toBeNull();
   });
 });

@@ -51,6 +51,25 @@
   margin-top: var(--space-xs);
 }
 
+.wt-priority {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-right: auto;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  select {
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--font-size-sm);
+  }
+}
+
 .wt-done {
   margin: 0;
   font-size: var(--font-size-sm);

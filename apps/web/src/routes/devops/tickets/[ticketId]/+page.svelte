@@ -3,6 +3,7 @@
   import type {
     AgentProject,
     AgentTicket,
+    AutoQueueEligibilityResponse,
     EpicSummary,
     ResolvedRelation,
     TicketRelation,
@@ -44,7 +45,9 @@
   import EpicPicker from '../../EpicPicker.svelte';
   import EpicJoinModal from '../../EpicJoinModal.svelte';
   import BackfillToggle from './BackfillToggle.svelte';
+  import AutoQueueToggle from './AutoQueueToggle.svelte';
   import DetailsPanel from './DetailsPanel.svelte';
+  import QueueEligibilityChecklist from '$lib/QueueEligibilityChecklist.svelte';
   import RefineButton from './RefineButton.svelte';
   import RefineModal from '$lib/RefineModal.svelte';
   import { refineWaitingOnHuman } from '$lib/refine-waiting';
@@ -74,6 +77,8 @@
   // Epic members + roll-up (D-054, PD-338), loaded only when this ticket is an Epic.
   let epicMembers = $state<AgentTicket[]>([]);
   let epicSummary = $state<EpicSummary | null>(null);
+  // Auto-queue eligibility checklist (D-103, PD-809): the criteria + capacity the promoter judges on.
+  let eligibility = $state<AutoQueueEligibilityResponse | null>(null);
   // Activity events — used to surface the outstanding ask_human question at the reply box (PD-393).
   // (ActivityTimeline fetches its own copy for the timeline render; this is the page's own slice.)
   let events = $state<TicketEvent[]>([]);
@@ -115,6 +120,7 @@
     notFound = false;
     ticket = null;
     project = null;
+    eligibility = null;
     try {
       const [projects, tickets] = await Promise.all([api.fetchProjects(), api.fetchTickets()]);
       allProjects = projects;
@@ -130,6 +136,8 @@
       relations = await api.fetchRelations(found.id);
       events = await api.fetchTicketEvents(found.id).catch(() => [] as TicketEvent[]);
       refineWaiting = refineWaitingOnHuman(events);
+      // D-103: the auto-queue checklist. A failure here must not blank the page — it is supplementary.
+      eligibility = await api.fetchQueueEligibility(found.id).catch(() => null);
       if (found.isEpic) {
         const m = await api.fetchEpicMembers(found.id);
         epicMembers = m.members;
@@ -197,6 +205,14 @@
       ? allTickets.find((t) => t.id === ticket!.epicId)
       : undefined,
   );
+
+  // D-103: resolve a checklist remedy / member id to its detail page, suppressing a self-link (an
+  // Epic's own criteria point back at the Epic). Reads the already-loaded ticket list — no round trip.
+  function ticketHref(id: number): string | null {
+    if (ticket && id === ticket.id) return null;
+    const t = allTickets.find((x) => x.id === id);
+    return t?.displayId ? `/devops/tickets/${t.displayId}` : null;
+  }
 
   /* ── Reopen (D-083) ──────────────────────────────────────────
      The single exception to "terminal is final". Deliberately a considered click on this page
@@ -793,6 +809,11 @@
           excluded={ticket.backfillExcluded ?? false}
           onChanged={() => ticketId && load(ticketId)}
         />
+        <AutoQueueToggle
+          ticketId={ticket.id}
+          excluded={ticket.autoQueueExcluded ?? false}
+          onChanged={() => ticketId && load(ticketId)}
+        />
         <!-- id: the plan-refined badge (header + board card) links here (T979/D-103). -->
         <section class="epic-members" id="epic-members">
           <div class="epic-members-head">
@@ -1010,6 +1031,18 @@
           onSaved={() => ticketId && load(ticketId)}
         />
       </section>
+
+      <!-- D-103 (PD-809): the auto-queue eligibility checklist, directly below Details. -->
+      {#if eligibility}
+        <section class="pane pane-eligibility">
+          <QueueEligibilityChecklist
+            data={eligibility}
+            assignee={ticket.assignee}
+            members={epicMembers}
+            {ticketHref}
+          />
+        </section>
+      {/if}
 
       <!-- Phones keep Refine as the third bottom-nav pane. Desktop opens it in RefineModal instead. -->
       {#if !desktop.current}

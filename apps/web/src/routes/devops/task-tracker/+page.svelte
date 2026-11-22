@@ -5,8 +5,10 @@
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
   import { SvelteSet } from 'svelte/reactivity';
-  import type { AgentProject, AgentState, AgentTicket, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput } from '@dashboard/shared';
+  import type { AgentProject, AgentState, AgentTicket, TicketPriority, TicketStatus, TicketRelation, EpicSummary, EpicDerivedLane, UpdateTicketInput, AutoQueueBoardEligibility } from '@dashboard/shared';
+  import { capacityWaitFor } from '$lib/queue-eligibility-view';
   import GlossaryModal from '$lib/GlossaryModal.svelte';
+  import QueueCriteriaModal from './QueueCriteriaModal.svelte';
   import TicketCard from '../TicketCard.svelte';
   import EpicCard from '../EpicCard.svelte';
   import RelationPicker from '../RelationPicker.svelte';
@@ -230,6 +232,30 @@
   let epicSummaries = $state<EpicSummary[]>([]);
   const epicSummaryById = $derived(new Map(epicSummaries.map((s) => [s.ticketId, s])));
 
+  // Auto-queue eligibility (D-103, PD-810): one bulk read of every live Backlog ticket's verdict +
+  // the board-wide capacity snapshot. Drives the "eligible" badge, the Eligible filter view and each
+  // card's capacity-wait note — never stored, always recomputed server-side (D-103 §3).
+  let boardEligibility = $state<AutoQueueBoardEligibility | null>(null);
+  // Show only the Backlog tickets the promoter would queue (verdict `eligible`). Epics and every
+  // other lane drop out of the view — it is a focused list of "what's about to be picked up".
+  let filterEligibleOnly = $state(false);
+  let criteriaModalOpen = $state(false);
+
+  const isEligible = (id: number): boolean =>
+    boardEligibility?.tickets[id]?.verdict === 'eligible';
+
+  /** The capacity-wait note for an eligible card, or null when nothing is holding it back. */
+  function capacityWait(ticket: AgentTicket): string | null {
+    if (!boardEligibility || !isEligible(ticket.id)) return null;
+    return capacityWaitFor(boardEligibility.capacity, boardEligibility.epicInFlight, ticket.epicId);
+  }
+
+  const eligibleCount = $derived(
+    boardEligibility
+      ? visibleTickets().filter((t) => !t.isEpic && isEligible(t.id)).length
+      : 0,
+  );
+
   // D-054: a non-empty Epic's lane is *derived* from its members, so its own status is inert —
   // setting it in the form silently no-ops. Lock the Status field for that case and explain why.
   // D-080 slice C: a Ticket may be moved between Epics, never out of one.
@@ -248,7 +274,9 @@
   // Tickets-only hides the epic band; Epics & Lone Tickets shows epics + only the tickets
   // that don't belong to an epic.
   let filterType = $state<'all' | 'epics' | 'tickets' | 'epics-lone'>('all');
-  const showEpics = $derived(filterType !== 'tickets');
+  // The Eligible view is a Backlog-ticket list — Epics have no `eligible` verdict, so the band is
+  // hidden there to avoid an empty-looking row (PD-810).
+  const showEpics = $derived(filterType !== 'tickets' && !filterEligibleOnly);
   const showTickets = $derived(filterType !== 'epics');
 
   // Ticket-relation picker (kebab → "Mark as →"). The board owns the single picker instance
@@ -344,6 +372,9 @@
       if (!ticketMatchesAssigneeFilter(t, filterAssignee)) return false;
       if (!ticketMatchesRefineFilter(t, filterRefine)) return false;
       if (!ticketMatchesQuery(t, search)) return false;
+      // Eligible view (PD-810): only the Backlog tickets the promoter would queue. Epics and
+      // non-eligible work drop out, leaving a focused list of what's about to be picked up.
+      if (filterEligibleOnly && !isEligible(t.id)) return false;
       return true;
     });
   }
@@ -371,11 +402,12 @@
     if (!silent) loading = true;
     error = null;
     try {
-      [projects, tickets, relations, epicSummaries] = await Promise.all([
+      [projects, tickets, relations, epicSummaries, boardEligibility] = await Promise.all([
         api.fetchProjects(),
         api.fetchTickets(),
         api.fetchAllRelations(),
         api.fetchEpicSummaries(),
+        api.fetchBoardEligibility(),
       ]);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -1133,6 +1165,7 @@
     bind:filterType
     bind:filterPriority
     bind:filterRefine
+    bind:filterEligibleOnly
     {filterProjectId}
     {filterAssignee}
     {projects}
@@ -1172,11 +1205,27 @@
   onClose={() => (glossaryOpen = false)}
 />
 
+<!-- PD-810: the "Queue eligibility criteria" reference modal, opened from the Eligible view head. -->
+<QueueCriteriaModal open={criteriaModalOpen} onClose={() => (criteriaModalOpen = false)} />
+
 <StatusActionModal
   ticket={statusActionTicket}
   onClose={() => (statusActionTicket = null)}
   onUpdate={() => load(true)}
 />
+
+{#if filterEligibleOnly}
+  <!-- PD-810: the Eligible view's own header — the count, and the info link into the criteria modal. -->
+  <div class="eligible-view-head">
+    <span class="eligible-view-count">
+      {eligibleCount} eligible Backlog ticket{eligibleCount === 1 ? '' : 's'} — the promoter would
+      queue {eligibleCount === 1 ? 'it' : 'these'} as capacity allows
+    </span>
+    <button type="button" class="eligible-criteria-link" onclick={() => (criteriaModalOpen = true)}>
+      Queue eligibility criteria
+    </button>
+  </div>
+{/if}
 
 {#if loading}
   <p class="muted">Loading…</p>
@@ -1229,6 +1278,8 @@
     isLocked={isStatusLocked(ticket)}
     isFrozen={isTerminal(ticket)}
     badges={badgesById.get(ticket.id) ?? NO_BADGES}
+    eligible={isEligible(ticket.id)}
+    capacityWait={filterEligibleOnly ? capacityWait(ticket) : null}
     onRelationAction={(action) => openRelationPicker(ticket, action)}
     onAddToEpic={() => openEpicPicker(ticket)}
     onSpinOff={() => openSpinOff(ticket)}

@@ -112,6 +112,11 @@
         >{refineBadge.text}</a
       >
     {/if}
+    <!-- D-103 (PD-808): mark an Epic switched out of auto-queue, so it is visible at band level that
+         its members will never be promoted automatically (they can still be queued by hand). -->
+    {#if epic.autoQueueExcluded}
+      <span class="auto-queue-pill" title="Excluded from auto-queue — members are never queued automatically">⛔ No auto-queue</span>
+    {/if}
     <select
       class="priority priority-{bandKey(epic.priority)}"
       title="Set priority"

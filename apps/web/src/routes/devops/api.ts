@@ -5,6 +5,8 @@ import type {
   RefineAnswerSet,
   AgentRun,
   AgentTicket,
+  AutoQueueBoardEligibility,
+  AutoQueueEligibilityResponse,
   CreateTicketInput,
   DispatchPauseState,
   EpicSummary,
@@ -344,6 +346,25 @@ export async function fetchRelations(id: number): Promise<ResolvedRelation[]> {
   const res = await fetch(`${BASE}/${id}/relations`);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<ResolvedRelation[]>;
+}
+
+/** D-103 (PD-809): would the auto-queue promoter queue this ticket, and if not, why? The criteria
+ *  (or, on an Epic, its Epic-level criteria + per-member verdicts), the capacity snapshot and the
+ *  promoter's run mode — what the detail-page checklist renders. */
+export async function fetchQueueEligibility(id: number): Promise<AutoQueueEligibilityResponse> {
+  const res = await fetch(`${BASE}/${id}/queue-eligibility`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AutoQueueEligibilityResponse>;
+}
+
+/** D-103 (PD-810): every live Backlog ticket's auto-queue eligibility in one read — the board's
+ *  Eligible view and each card's "eligible" badge derive from this, the same bulk-over-per-card
+ *  pattern as `fetchAllRelations`. Carries the board-wide capacity snapshot + each Epic's in-flight
+ *  count so a card's capacity-wait note is computable client-side without a per-card round-trip. */
+export async function fetchBoardEligibility(): Promise<AutoQueueBoardEligibility> {
+  const res = await fetch(`/api/widgets/task-monitor/queue-eligibility`);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AutoQueueBoardEligibility>;
 }
 
 /** Every relation on the board as raw rows (PD-322) — one fetch for all card badges. */

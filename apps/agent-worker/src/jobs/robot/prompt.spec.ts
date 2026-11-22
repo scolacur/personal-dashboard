@@ -11,6 +11,7 @@ const base = {
   body: '## Context\nx\n## Task\ny\n## Done When\nz\n## Out of scope\nw',
   branch: 'robot/220',
   repo: 'scolacur/personal-dashboard',
+  displayId: 'PD-725',
   issueNumber: 220 as number | null,
   proxy: 'http://egress-proxy:3128',
 };
@@ -105,6 +106,27 @@ describe('buildTaskPrompt', () => {
   it('includes Closes #N when linked, omits it when not', () => {
     expect(buildTaskPrompt(base)).toContain('Closes #220');
     expect(buildTaskPrompt({ ...base, issueNumber: null })).not.toContain('Closes #');
+  });
+
+  // PD-725 (this ticket): the PR must name the ticket it implements, in the title and a deterministic
+  // body line — board tickets have no GitHub issue, so `Closes #N` cannot be relied on for linkage.
+  it('names the ticket in the envelope and the PR title, for a ticket WITH an issue', () => {
+    const p = buildTaskPrompt(base);
+    // The `**Ticket:**` line is the envelope's first body line (the builder fills it in), and sits
+    // above the Closes line.
+    expect(p).toContain('**Ticket:** PD-725 — Add a thing');
+    expect(p.indexOf('**Ticket:** PD-725')).toBeLessThan(p.indexOf('Closes #220'));
+    expect(p.indexOf('Closes #220')).toBeLessThan(p.indexOf('**Status:**'));
+    // The PR-title instruction ends with the literal display id in parentheses, matching human PRs.
+    expect(p).toContain('--title "<concise conventional-commit summary> (PD-725)"');
+  });
+
+  it('names the ticket in the envelope and the PR title, for a ticket WITHOUT an issue', () => {
+    const p = buildTaskPrompt({ ...base, issueNumber: null });
+    expect(p).toContain('**Ticket:** PD-725 — Add a thing');
+    expect(p).not.toContain('Closes #');
+    expect(p.indexOf('**Ticket:** PD-725')).toBeLessThan(p.indexOf('**Status:**'));
+    expect(p).toContain('--title "<concise conventional-commit summary> (PD-725)"');
   });
 
   it('omits the inline git proxy flag when there is no proxy (dev)', () => {

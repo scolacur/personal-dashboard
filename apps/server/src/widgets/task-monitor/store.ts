@@ -39,6 +39,7 @@ import {
   isReady,
   queueEntryRefusals,
   latestActionableProposal,
+  refineRelationsError,
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
@@ -50,10 +51,12 @@ import {
   renderRoundAnswers,
   ROBOT_EVENT,
   ROBOT_MAX_TURNS_LIMIT,
+  AUTO_QUEUE_EVENT,
+  AUTO_QUEUE_LAST_TICK_KEY,
   validateAnswerSet,
   validateQuestionRound,
 } from '@dashboard/shared';
-import type { QueueCriterion } from '@dashboard/shared';
+import type { QueueCriterion, AutoQueueTickSummary } from '@dashboard/shared';
 import { queueGuardFailure, type QueueGateContext } from './ticket-guards';
 
 // Raw DB rows (snake_case). Mapped to camelCase at this boundary so the API and UI
@@ -80,6 +83,7 @@ interface TicketRow {
   max_turns: number | null;
   is_epic: number;
   epic_id: number | null;
+  auto_queue_excluded: number;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -88,6 +92,8 @@ interface TicketRow {
   latest_refine_type?: string | null;
   /** PD-748: the newest backfill-exclude event's `excluded` (1/0), joined like latest_refine_type. */
   backfill_excluded?: number | null;
+  /** PD-811: 1 when the newest lane-changing event is an `auto_queued`, joined like the above. */
+  auto_queued?: number | null;
 }
 
 interface ProjectRow {
@@ -142,11 +148,13 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     refined: row.refined === 1,
     refineStale: row.refine_stale === 1,
     backfillExcluded: row.backfill_excluded === 1,
+    autoQueued: row.auto_queued === 1,
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
     maxTurns: row.max_turns,
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
+    autoQueueExcluded: row.auto_queue_excluded === 1,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -177,6 +185,17 @@ function logEvent(db: Database.Database, ticketId: number, type: string, detail?
   );
 }
 
+/** Public wrapper over the activity log, for callers outside the store (the auto-queue promoter,
+ *  PD-811) that need to record an event on their own path. Same shape as the internal `logEvent`. */
+export function recordTicketEvent(
+  db: Database.Database,
+  ticketId: number,
+  type: string,
+  detail?: unknown,
+): void {
+  logEvent(db, ticketId, type, detail);
+}
+
 /* ── Projects ─────────────────────────────────── */
 
 export function listProjects(db: Database.Database): AgentProject[] {
@@ -186,6 +205,11 @@ export function listProjects(db: Database.Database): AgentProject[] {
 
 export function projectExists(db: Database.Database, id: number): boolean {
   return db.prepare('SELECT 1 FROM agent_projects WHERE id = ?').get(id) !== undefined;
+}
+
+export function getProjectById(db: Database.Database, id: number): AgentProject | null {
+  const row = db.prepare('SELECT * FROM agent_projects WHERE id = ?').get(id) as ProjectRow | undefined;
+  return row ? rowToProject(row) : null;
 }
 
 export function getProjectBySlug(db: Database.Database, slug: string): AgentProject | null {
@@ -224,6 +248,9 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
 // PD-743: the session-ending types (commit, park) count too, so an ended session derives to
 // null instead of reading as awaiting-human forever. The list is the shared one, so this SQL
 // and `refineSessionEnd` cannot disagree about what ends a session.
+// PD-811 (D-103): also derives `auto_queued` — 1 when the ticket's newest lane-changing event is an
+// `auto_queued` (written AFTER updateTicket's own `status_changed`, so it wins the newest-event
+// tiebreak); a later manual `status_changed` flips it back to 0. Drives the card's auto-queued badge.
 const LATEST_REFINE_TYPE_SELECT = `(
   SELECT e.type FROM agent_ticket_events e
    WHERE e.ticket_id = t.id AND e.type IN (${REFINE_STATE_EVENT_TYPES.map((s) => `'${s}'`).join(', ')})
@@ -233,7 +260,12 @@ const LATEST_REFINE_TYPE_SELECT = `(
   SELECT json_extract(e.detail, '$.excluded') FROM agent_ticket_events e
    WHERE e.ticket_id = t.id AND e.type = '${REFINE_BACKFILL_EXCLUDED_EVENT}'
    ORDER BY e.created_at DESC, e.id DESC LIMIT 1
-) AS backfill_excluded`;
+) AS backfill_excluded,
+(
+  SELECT CASE WHEN e.type = '${AUTO_QUEUE_EVENT.queued}' THEN 1 ELSE 0 END FROM agent_ticket_events e
+   WHERE e.ticket_id = t.id AND e.type IN ('${AUTO_QUEUE_EVENT.queued}', 'status_changed')
+   ORDER BY e.created_at DESC, e.id DESC LIMIT 1
+) AS auto_queued`;
 
 /**
  * Turns used by each ticket's LATEST Robot run (PD-230), keyed by ticket id.
@@ -481,6 +513,11 @@ export function updateTicket(
     maxTurns: patch.maxTurns === undefined ? existing.maxTurns : validMaxTurns(patch.maxTurns),
     // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
     epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
+    // D-103: auto-queue exclusion, meaningful on Epics. Defaults to the existing value.
+    autoQueueExcluded:
+      patch.autoQueueExcluded === undefined
+        ? (existing.autoQueueExcluded ?? false)
+        : patch.autoQueueExcluded,
     updatedAt: Date.now(),
   };
 
@@ -621,7 +658,7 @@ export function updateTicket(
     }
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -639,6 +676,7 @@ export function updateTicket(
       next.maxTurns,
       next.isEpic ? 1 : 0,
       next.epicId,
+      next.autoQueueExcluded ? 1 : 0,
       next.updatedAt,
       id,
     );
@@ -1343,8 +1381,9 @@ export function appendRefineReply(
 
 /**
  * Every ticket whose Refine session is waiting on Steve, with the agent turn it waits on — the
- * Decisions inbox (PD-746, D-096 §7). Two queries, never one per ticket: the tickets (refineState
- * derived exactly as the board derives it), then each one's newest `refine_agent` event. Sorted by
+ * Decisions inbox (PD-746, D-096 §7). Three queries, never one per ticket: the tickets (refineState
+ * derived exactly as the board derives it), each one's newest `refine_agent` event, and each one's
+ * proposal lifecycle, so an item carries its actionable proposal (PD-843). Sorted by
  * priority (P0 first, unset last), then oldest question first, so what has waited longest at the
  * highest priority leads.
  */
@@ -1369,6 +1408,26 @@ export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] 
     created_at: number;
   }[];
   const byTicket = new Map(latest.map((r) => [r.ticket_id, r]));
+  // PD-843: each session's proposal lifecycle, oldest first, so `latestActionableProposal` reads it
+  // exactly as the approve path does. One query for all tickets.
+  const lifecycle = db
+    .prepare(
+      `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
+        WHERE ticket_id IN (${placeholders}) AND type IN (?, ?, ?)
+        ORDER BY created_at ASC, id ASC`,
+    )
+    .all(
+      ...ids,
+      REFINE_PROPOSAL_EVENT.proposal,
+      REFINE_PROPOSAL_EVENT.committed,
+      REFINE_PROPOSAL_EVENT.rejected,
+    ) as TicketEventRow[];
+  const proposalEvents = new Map<number, TicketEvent[]>();
+  for (const row of lifecycle) {
+    const list = proposalEvents.get(row.ticket_id) ?? [];
+    list.push(rowToTicketEvent(row));
+    proposalEvents.set(row.ticket_id, list);
+  }
   const epics = new Map(all.filter((t) => t.isEpic).map((t) => [t.id, t]));
   const items: AwaitingRefineItem[] = [];
   for (const t of tickets) {
@@ -1391,8 +1450,10 @@ export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] 
       epicTitle: epic?.title ?? null,
       eventId: ev.id,
       askedAt: ev.created_at,
+      isEpic: t.isEpic,
       agentText: typeof detail.text === 'string' ? detail.text : '',
       round,
+      proposal: latestActionableProposal(proposalEvents.get(t.id) ?? []),
     });
   }
   const rank = (p: string | null) => (p === null ? 99 : Number(p.replace(/^P/, '')));
@@ -1914,6 +1975,10 @@ export function approveRefine(
   const populate = parent.isEpic;
   const children = p.children ?? [];
   if (children.length === 0) return { ok: false, reason: 'invalid_proposal', detail: 'no children' };
+  // PD-842: the propose tool already refuses malformed relations; re-checked here so a stored
+  // proposal can never half-apply — a bad edge would otherwise throw mid-transaction.
+  const relErr = refineRelationsError(p.relations, children.length);
+  if (relErr) return { ok: false, reason: 'invalid_proposal', detail: relErr };
   if (parent.projectId === null) {
     return { ok: false, reason: 'invalid_proposal', detail: 'parent has no project' };
   }
@@ -1967,6 +2032,11 @@ export function approveRefine(
       // `split` lineage is a decompose-only relation; Populate links purely by membership.
       if (!populate) addRelation(db, ticketId, child.id, 'split');
       childIds.push(child.id);
+    }
+    // PD-842: the proposal's sibling relations, now that every child has an id. `origin: 'agent'`
+    // — the Refine agent proposed them, Steve approved; same provenance as the `split` lineage.
+    for (const r of p.relations ?? []) {
+      addRelation(db, childIds[r.from], childIds[r.to], r.type, 'agent');
     }
     // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
     if (!populate) updateTicket(db, ticketId, { status: 'closed' });
@@ -2317,6 +2387,35 @@ function ensureRobotStateTable(db: Database.Database): void {
   );
 }
 
+/** Persist the auto-queue promoter's last-tick summary to `robot_state` (D-103 §4, PD-811). This is
+ *  a SERVER-written `robot_state` key (the promoter runs in the web process); the worker never reads
+ *  or writes it. Lets Dev Ops / the eligibility checklist show "last tick promoted X / would have
+ *  queued X because …" regardless of the promoter's mode. */
+export function setAutoQueueTickSummary(
+  db: Database.Database,
+  summary: AutoQueueTickSummary,
+  now: number = Date.now(),
+): void {
+  ensureRobotStateTable(db);
+  db.prepare(
+    `INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ).run(AUTO_QUEUE_LAST_TICK_KEY, JSON.stringify(summary), now);
+}
+
+/** The auto-queue promoter's last-tick summary, or null if it has never run (PD-811). */
+export function getAutoQueueTickSummary(db: Database.Database): AutoQueueTickSummary | null {
+  try {
+    const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(AUTO_QUEUE_LAST_TICK_KEY) as
+      | { value: string | null }
+      | undefined;
+    if (!row?.value) return null;
+    return JSON.parse(row.value) as AutoQueueTickSummary;
+  } catch {
+    return null; // no robot_state table yet, or a corrupt row — treat as "never ran"
+  }
+}
+
 /** Human pause/resume of Robot dispatch (C4/PD-345). Unlike the worker's auto-pause (which keeps
  *  the first fault reason), a human action overwrites unconditionally: Pause sets the flag with a
  *  human reason, Resume clears it. The loop honors the flag on its next poll. */
@@ -2331,6 +2430,16 @@ export function setDispatchPaused(
     `INSERT INTO robot_state (key, value, updated_at) VALUES ('dispatch_paused', ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
   ).run(paused ? (reason ?? 'paused by human') : null, now);
+  // t974 (D-107): a human resume also resets the circuit breaker's consecutive-deterministic-failure
+  // streak, so the loop starts counting fresh. The worker owns this key (`breaker_consecutive`, in
+  // agent-worker/.../breaker.ts) — resume is the only human reset, so we null it here. Mirrors the
+  // literal `dispatch_paused` convention above (the robot_state keys are not shared constants).
+  if (!paused) {
+    db.prepare(
+      `INSERT INTO robot_state (key, value, updated_at) VALUES ('breaker_consecutive', NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET value = NULL, updated_at = excluded.updated_at`,
+    ).run(now);
+  }
   return getDispatchPauseState(db);
 }
 

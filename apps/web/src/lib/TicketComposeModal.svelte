@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { AgentTicket, TicketSurface } from '@dashboard/shared';
+  import type { AgentTicket, TicketPriority, TicketSurface } from '@dashboard/shared';
+  import { TICKET_PRIORITIES, PRIORITY_LABELS } from '@dashboard/shared';
   import Modal from './Modal.svelte';
   import Button from './Button.svelte';
   import TicketThread from './TicketThread.svelte';
@@ -29,8 +30,14 @@
 
   type Phase = 'compose' | 'filed' | 'grilling';
 
+  // PD-836: suggestions used to land with no priority and sink to the bottom of the backlog.
+  // Default to the middle level so a quick note still lands somewhere sensible; Steve bumps it
+  // when it matters. The triage-inbox Epic is unclassified, so D-080 keeps this value.
+  const DEFAULT_PRIORITY: TicketPriority = 'P3';
+
   let phase = $state<Phase>('compose');
   let text = $state('');
+  let priority = $state<TicketPriority | ''>(DEFAULT_PRIORITY);
   let busy = $state(false);
   let error = $state<string | null>(null);
   let ticket = $state<AgentTicket | null>(null);
@@ -39,6 +46,7 @@
   function reset() {
     phase = 'compose';
     text = '';
+    priority = DEFAULT_PRIORITY;
     error = null;
     ticket = null;
   }
@@ -59,7 +67,12 @@
     busy = true;
     error = null;
     try {
-      const res = await fileSurfaceTicket({ text, surface, refine });
+      const res = await fileSurfaceTicket({
+        text,
+        surface,
+        refine,
+        priority: priority === '' ? null : priority,
+      });
       ticket = res.ticket;
       phase = refine ? 'grilling' : 'filed';
     } catch (e) {
@@ -104,6 +117,15 @@
         </p>
         {#if error}<p class="wt-error" role="alert">{error}</p>{/if}
         <div class="wt-actions">
+          <label class="wt-priority">
+            <span>Priority</span>
+            <select bind:value={priority} disabled={busy}>
+              <option value="">— None</option>
+              {#each TICKET_PRIORITIES as p (p)}
+                <option value={p}>{p} · {PRIORITY_LABELS[p]}</option>
+              {/each}
+            </select>
+          </label>
           <Button
             variant="ghost"
             disabled={busy || text.trim() === ''}

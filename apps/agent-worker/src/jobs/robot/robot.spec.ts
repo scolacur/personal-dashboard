@@ -11,6 +11,7 @@ import {
   pauseDispatch,
 } from './state';
 import { SESSION_LIMIT_FALLBACK_MS } from './faults';
+import { breakerFailures } from './breaker';
 import { ABORT_HUNG, createRunOwnership } from './ownership';
 import { RobotShutdown } from './shutdown';
 import type { RobotSessionResult } from './session';
@@ -22,7 +23,7 @@ function boardDb(): Database.Database {
   db.exec(`
     CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT, robot_enabled INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE agent_tickets (
-      id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
+      id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL, assignee TEXT,
       priority TEXT NOT NULL DEFAULT 'none',
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0, refined INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
@@ -101,8 +102,8 @@ describe('processRobotQueue', () => {
   });
 
   it('branchFor uses the issue number, or t<id> when unlinked', () => {
-    expect(branchFor({ id: 5, issueNumber: 220, repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/220');
-    expect(branchFor({ id: 5, issueNumber: null, repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/t5');
+    expect(branchFor({ id: 5, issueNumber: 220, displayId: 'PD-5', repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/220');
+    expect(branchFor({ id: 5, issueNumber: null, displayId: 'PD-5', repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/t5');
   });
 
   // PD-230: the loop must hand the session a progress callback that persists live turn counts.
@@ -297,6 +298,111 @@ describe('processRobotQueue', () => {
     const n2 = await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2' }), d);
     expect(n2).toBe(0);
     expect(listRunsForTicket(db, 2)).toEqual([]);
+  });
+
+  // ---- t974 (D-107): the circuit breaker ----
+  // A deterministic fault parks one ticket but dispatch carries on. When run after run fails the
+  // same structural way, the breaker stops the whole line after N consecutive deterministic
+  // failures across DISTINCT tickets — a loop-wide pause a human must clear.
+
+  const DET_ERR = 'refused to edit protected path auth/session.ts'; // deterministic on first sight
+
+  it('pauses the loop after N consecutive deterministic failures across distinct tickets (D-107)', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const d = deps();
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: DET_ERR });
+
+    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_BREAKER_FAILURES: '2' }), d);
+
+    // Both parked deterministically, and the 2nd tripped the breaker.
+    expect(agentState(db, 1)).toBe('stuck');
+    expect(agentState(db, 2)).toBe('stuck');
+    const state = dispatchPauseState(db);
+    expect(state.paused).toBe(true);
+    expect(state.reason).toMatch(/circuit-breaker/);
+    // A loop-wide (ticket_id NULL) notification names the breaker.
+    const note = db
+      .prepare("SELECT title, body FROM agent_notifications WHERE ticket_id IS NULL AND kind = 'agent_needs_human'")
+      .get() as { title: string; body: string } | undefined;
+    expect(note?.title).toMatch(/circuit breaker/i);
+    expect(note?.body).toContain('t1');
+    expect(note?.body).toContain('t2');
+  });
+
+  it('a successful hand-off between failures resets the consecutive count (D-107)', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    addQueued(db, 3);
+    const d = deps();
+    // t1 fails deterministically, t2 hands off (resets), t3 fails deterministically → streak back to 1.
+    d.runSession = async (_c, cand) =>
+      cand.id === 2
+        ? { ok: true, verifyOk: true, prNumber: 777 }
+        : { ok: false, verifyOk: false, error: DET_ERR };
+
+    await processRobotQueue(
+      db,
+      cfg({ ROBOT_ALLOWLIST: '1,2,3', ROBOT_CONCURRENCY: '3', ROBOT_BREAKER_FAILURES: '2' }),
+      d,
+    );
+
+    // The success broke the chain, so two deterministic failures around it do NOT reach the threshold.
+    expect(dispatchPauseState(db).paused).toBe(false);
+    expect(agentState(db, 1)).toBe('stuck');
+    expect(agentState(db, 2)).toBe('in-review');
+    expect(agentState(db, 3)).toBe('stuck');
+  });
+
+  it('transient retries do not count toward the breaker (D-107)', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const d = deps();
+    // Distinct transient signatures, each under the retry cap → retried, never parked deterministic.
+    d.runSession = async (_c, cand) => ({ ok: false, verifyOk: false, error: `flake-${cand.id}` });
+
+    await processRobotQueue(
+      db,
+      cfgNoBackoff({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_BREAKER_FAILURES: '2' }),
+      d,
+    );
+
+    // Both are transient faults (queued for retry), so the breaker never trips.
+    expect(agentState(db, 1)).toBe('queued');
+    expect(agentState(db, 2)).toBe('queued');
+    expect(dispatchPauseState(db).paused).toBe(false);
+  });
+
+  it('a human resume clears the breaker so dispatch starts counting fresh (D-107)', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const d = deps();
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: DET_ERR });
+
+    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_BREAKER_FAILURES: '2' }), d);
+    expect(dispatchPauseState(db).paused).toBe(true);
+
+    // The server's resume (setDispatchPaused(false)) clears both the pause and the breaker streak.
+    // Mirror it here: null the dispatch flag and the breaker slot, exactly as the store does.
+    db.prepare("UPDATE robot_state SET value = NULL WHERE key = 'dispatch_paused'").run();
+    db.prepare("UPDATE robot_state SET value = NULL WHERE key = 'breaker_consecutive'").run();
+
+    expect(breakerFailures(db)).toEqual([]);
+    expect(isDispatchPaused(db)).toBe(false);
+  });
+
+  it('is disabled by a threshold of 0 — deterministic parks never pause the loop (D-107)', async () => {
+    addQueued(db, 1);
+    addQueued(db, 2);
+    const d = deps();
+    d.runSession = async () => ({ ok: false, verifyOk: false, error: DET_ERR });
+
+    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_BREAKER_FAILURES: '0' }), d);
+
+    expect(agentState(db, 1)).toBe('stuck');
+    expect(agentState(db, 2)).toBe('stuck');
+    expect(dispatchPauseState(db).paused).toBe(false);
+    expect(breakerFailures(db)).toEqual([]);
   });
 
   // ---- PD-470: the provider session limit ----

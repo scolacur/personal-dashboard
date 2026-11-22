@@ -278,6 +278,8 @@ export async function runRobotSession(
     body: candidate.body,
     branch: worktree.branch,
     repo: candidate.repo,
+    // Fall back to `#<id>` so the envelope never prints `undefined` when display_id is null.
+    displayId: candidate.displayId ?? `#${candidate.id}`,
     issueNumber: candidate.issueNumber,
     proxy: config.httpsProxy,
     resume,

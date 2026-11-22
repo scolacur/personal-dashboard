@@ -169,6 +169,44 @@
   }
 }
 
+// Auto-queue eligibility (D-103, PD-810): the "eligible" badge (shown in any lane) + the capacity
+// wait note (Eligible view only).
+.card-eligible {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.eligible-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-xs);
+  border-radius: var(--radius);
+  border: 1px solid var(--status-done);
+  color: var(--status-done);
+  background: color-mix(in srgb, var(--status-done) 12%, transparent);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  font-weight: 600;
+  cursor: help;
+}
+
+.eligible-wait {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  cursor: help;
+}
+
+// D-103 (PD-811): the auto-queue promoter put this ticket in the Queue. Uses the accent token so it
+// reads as "the system did this", distinct from the green "eligible" (a prediction).
+.eligible-badge.auto-queued {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .card-actions {
   display: flex;
   align-items: center;

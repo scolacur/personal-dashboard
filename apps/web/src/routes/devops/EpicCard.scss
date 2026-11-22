@@ -54,6 +54,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+// D-103 (PD-808): auto-queue exclusion marker. Muted outline — informational, not a warning
+// (nothing is wrong; the Epic is deliberately hand-queued only).
+.auto-queue-pill {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  border-radius: 999px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
 // Priority pill — mirrors TicketCard's `.priority` (scoped styles don't reach this component).
 .priority {
   appearance: none;

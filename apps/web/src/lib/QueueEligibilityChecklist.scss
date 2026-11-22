@@ -1,0 +1,138 @@
+.qec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  h3 {
+    margin: 0 0 var(--space-xs);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .verdict {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text);
+
+    &.verdict-eligible,
+    &.verdict-in-queue {
+      color: var(--status-done);
+    }
+    &.verdict-not-eligible {
+      color: var(--status-stuck);
+    }
+    &.verdict-terminal,
+    &.verdict-human-work {
+      color: var(--muted);
+    }
+  }
+
+  .mode-note {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  .rows,
+  .members {
+    list-style: none;
+    margin: var(--space-xs) 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+
+    li {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-sm);
+      font-size: var(--font-size-sm);
+      line-height: 1.35;
+    }
+  }
+
+  .mark {
+    flex: 0 0 auto;
+    width: 1em;
+    text-align: center;
+    color: var(--status-done);
+    font-weight: 700;
+  }
+
+  li.unmet .mark {
+    color: var(--status-stuck);
+  }
+
+  .body {
+    min-width: 0;
+  }
+
+  .label {
+    color: var(--text);
+  }
+
+  // Definitions mode (PD-810): no marks, so the term carries the emphasis instead.
+  &.qec-defs .label {
+    font-weight: 600;
+  }
+
+  .reason {
+    color: var(--muted);
+
+    a {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin: var(--space-xs) 0 0;
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+
+    &::before,
+    &::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+  }
+
+  .rollup {
+    margin: var(--space-sm) 0 0;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .members {
+    .label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    a.label {
+      color: var(--accent);
+    }
+
+    .mverdict {
+      margin-left: var(--space-sm);
+      color: var(--muted);
+      font-size: var(--font-size-xs);
+    }
+  }
+}

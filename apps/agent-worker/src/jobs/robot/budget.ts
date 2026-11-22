@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { ROBOT_CAPACITY_POLICY_KEY } from '@dashboard/shared';
 import { writeState } from './state';
 
 /**
@@ -90,4 +91,18 @@ export const BUDGET_POLICY_KEY = 'budget_policy';
  */
 export function publishBudgetPolicy(db: Database.Database, policy: BudgetPolicy, now: number = Date.now()): void {
   writeState(db, BUDGET_POLICY_KEY, JSON.stringify(policy), now);
+}
+
+/**
+ * Publish the loop's effective concurrency into `robot_state` under `ROBOT_CAPACITY_POLICY_KEY`
+ * (D-103, PD-808), beside the budget policy and for the same reason: the auto-queue capacity check
+ * runs in the web process, which cannot see `ROBOT_CONCURRENCY`. Its Queue-depth limit is
+ * `concurrency × AUTO_QUEUE_QUEUE_DEPTH_FACTOR`.
+ */
+export function publishCapacityPolicy(
+  db: Database.Database,
+  policy: { concurrency: number },
+  now: number = Date.now(),
+): void {
+  writeState(db, ROBOT_CAPACITY_POLICY_KEY, JSON.stringify(policy), now);
 }

@@ -4,6 +4,7 @@ import { bootstrapSchema } from './schema';
 import { seedIfEmpty } from './seed/seed-if-empty';
 import { registerRoutes } from './routes';
 import { registerAuditJob } from './audit-cron';
+import { registerAutoQueuePromoter } from './auto-queue-promoter';
 
 export const widget: BackendWidget = {
   name: 'task-monitor',
@@ -17,5 +18,8 @@ export const widget: BackendWidget = {
   registerCron(cron, log) {
     // PD-283 (D-045): weekly Ticket Audit — enqueue a run the agent-worker executes.
     registerAuditJob(cron, log, db);
+    // D-103 (PD-811): the auto-queue promoter — moves eligible Backlog members of active Epics into
+    // the Queue each tick. No-op unless AUTO_QUEUE is dry-run/on (defaults off).
+    registerAutoQueuePromoter(cron, log, db);
   },
 };

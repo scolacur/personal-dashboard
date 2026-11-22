@@ -13,6 +13,7 @@ import type { Worktree } from './workspace';
 const candidate: RobotCandidate = {
   id: 429,
   issueNumber: 220,
+  displayId: 'PD-429',
   maxTurns: null,
   repo: 'scolacur/personal-dashboard',
   title: 'T',

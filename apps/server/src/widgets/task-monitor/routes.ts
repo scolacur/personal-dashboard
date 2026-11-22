@@ -13,8 +13,9 @@ import {
   type TicketStatus,
   type UpdateTicketInput,
 } from '@dashboard/shared';
-import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
+import { HUMAN_REPLY_MARKER, parseAutoQueueMode } from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
+import { getTicketAutoQueueEligibility, listBacklogAutoQueueEligibility } from './auto-queue';
 import {
   addRelation,
   appendRefineReply,
@@ -32,6 +33,7 @@ import {
   listEpicSummaries,
   createProject,
   createTicket,
+  getAutoQueueTickSummary,
   getDispatchPauseState,
   getRefineAutostartStatus,
   getRobotBudget,
@@ -405,6 +407,16 @@ export function registerRoutes(
     // silently dropped and the ticket kept the loop default.
     if (body.maxTurns !== undefined) {
       patch.maxTurns = body.maxTurns as number | null;
+    }
+    // D-103 (PD-808): switch an Epic in or out of auto-queue. Meaningful only on an Epic — the
+    // promoter reads it from a member's Epic — so it is stored on any row without an isEpic check.
+    if (body.autoQueueExcluded !== undefined) {
+      if (typeof body.autoQueueExcluded !== 'boolean') {
+        return reply
+          .status(400)
+          .send({ error: 'autoQueueExcluded must be a boolean', code: 'INVALID_AUTO_QUEUE_EXCLUDED' });
+      }
+      patch.autoQueueExcluded = body.autoQueueExcluded;
     }
 
     // PD-542: terminal is read-only and a Ticket never leaves its Epic — enforced here rather than
@@ -885,6 +897,28 @@ export function registerRoutes(
   // relations resource the UI (PD-322) reads for badges + the detail-page management list
   // (D-048, PD-321). Widened from the PD-269 split-only lineage shape (`TicketLineage`); the
   // detail page derives its split subset client-side by filtering `type === 'split'`.
+  // D-103 (PD-808): would the auto-queue promoter queue this ticket, and if not, why? A read — the
+  // criteria (or, on an Epic, its Epic-level criteria + member verdicts) plus the capacity snapshot.
+  app.get(`${base}/tickets/:id/queue-eligibility`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const result = getTicketAutoQueueEligibility(db, id);
+    if (!result) return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+    return result;
+  });
+
+  // D-103 (PD-808): every live Backlog ticket's eligibility in one read, for the board's Eligible
+  // view — the same bulk-over-per-card pattern as /relations.
+  app.get(`${base}/queue-eligibility`, async () => listBacklogAutoQueueEligibility(db));
+
+  // D-103 (PD-811): the promoter's current mode + last-tick summary, so Dev Ops / the checklist can
+  // show what the auto-queue tick did (or would have done) without the promoter being `on`.
+  app.get(`${base}/auto-queue`, async () => ({
+    mode: parseAutoQueueMode(process.env.AUTO_QUEUE),
+    lastTick: getAutoQueueTickSummary(db),
+  }));
+
   app.get(`${base}/tickets/:id/relations`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {

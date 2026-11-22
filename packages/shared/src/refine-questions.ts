@@ -7,6 +7,8 @@
 // the agent-worker (which rejects a malformed round while the agent can still fix it) and the server
 // (which rejects a malformed answer) cannot drift apart.
 
+import type { RefineProposal } from './task-monitor';
+
 /** One choice on a question. `description` states the trade-off — what picking it means. */
 export interface RefineQuestionOption {
   label: string;
@@ -235,12 +237,15 @@ export function roundAsMarkdown(round: RefineQuestionRound): string {
  *  both sides read this constant so the title and the link rule cannot drift apart. */
 export const REFINE_QUESTIONS_NOTIFICATION_PREFIX = 'Refine agent asked';
 
-/** One ticket waiting on Steve's Refine answer, for the Decisions inbox (PD-746). `round` is null
- *  when the agent's latest turn was free text (older sessions); the inbox then links to the thread. */
+/** One ticket waiting on Steve's Refine answer, for the Decisions inbox (PD-746). What it waits
+ *  on is one of three things (PD-843): an actionable commit `proposal` (Approve/Reject), a question
+ *  `round`, or neither (the agent replied without asking or proposing; the inbox links to the thread). */
 export interface AwaitingRefineItem {
   ticketId: number;
   displayId: string | null;
   title: string;
+  /** PD-843: an Epic's decompose is a Populate, and an Epic is never offered "Approve & queue". */
+  isEpic: boolean;
   priority: string | null;
   epicDisplayId: string | null;
   epicTitle: string | null;
@@ -249,6 +254,8 @@ export interface AwaitingRefineItem {
   askedAt: number;
   agentText: string;
   round: RefineQuestionRound | null;
+  /** PD-843: the commit proposal still awaiting Approve/Reject (`latestActionableProposal`), or null. */
+  proposal: { eventId: number; proposal: RefineProposal } | null;
 }
 /** The Refine auto-start scheduler's last-cycle state (PD-747, D-096 §1–2), published by the
  *  agent-worker into `robot_state` and shown in system status. */

@@ -28,6 +28,7 @@ import { classifyFault, decideFault, preflight, INTERRUPTED_SIGNATURE, type Faul
 import { ABORT_HUNG, ABORT_SHUTDOWN, createRunOwnership, type RunOwnership } from './ownership';
 import { RobotShutdown, timeout } from './shutdown';
 import {
+  activeDeployHold,
   activeMaintenanceHold,
   activeSessionLimitHold,
   ensureRobotStateTable,
@@ -35,10 +36,11 @@ import {
   isDispatchPaused,
   pauseDispatch,
 } from './state';
+import { breakerPauseReason, breakerNotificationBody, recordDeterministicFailure, resetBreaker } from './breaker';
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
-import { checkBudget, publishBudgetPolicy, type BudgetPolicy } from './budget';
+import { checkBudget, publishBudgetPolicy, publishCapacityPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
@@ -146,6 +148,7 @@ export async function processRobotQueue(
   // available only after the switch was already flipped, which is backwards for a pre-flight.
   const budget = budgetPolicy(config);
   publishBudgetPolicy(db, budget, now());
+  publishCapacityPolicy(db, { concurrency: config.robot.concurrency }, now()); // D-103: auto-queue reads it
 
   // System-wide fault gate (C2): a prior auth/credit fault paused the whole loop. Stay inert until
   // a human resumes (C4) — auto-resuming would re-burn the board (the PD-320/#202 failure mode).
@@ -176,6 +179,20 @@ export async function processRobotQueue(
     logger.info(
       { until: maintenance.until, reason: maintenance.reason },
       'robot: holding — maintenance window, dispatch resumes when it releases',
+    );
+    return 0;
+  }
+
+  // Deploy hold (PD-802, D-105): a Watchtower pre-update drain is about to recreate this container,
+  // so nothing new may dispatch while it waits for in-flight runs to finish. Its own slot, not a
+  // reason on the maintenance hold above — see the block comment in `state.ts` for why. Bounded by
+  // `stallThresholdMs`, so a drain that dies cannot wedge dispatch shut; the new container also
+  // releases a lingering hold on boot.
+  const deploy = activeDeployHold(db, now());
+  if (deploy) {
+    logger.info(
+      { until: deploy.until, reason: deploy.reason },
+      'robot: holding — deploy drain, dispatch resumes once the new container boots',
     );
     return 0;
   }
@@ -401,6 +418,27 @@ export async function processRobotQueue(
         logMilestone(db, candidate.id, ROBOT_EVENT.parked, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
         notifyNeedsHuman(db, candidate.id, 'Robot ticket stuck', decision.reason, now());
         logger.warn({ ticketId: candidate.id, tier: decision.tier, reason: decision.reason }, 'robot: fault → parking (stuck)');
+        // Circuit breaker (t974, D-107): only a DETERMINISTIC-tier park feeds it — a transient
+        // retry-cap park (tier 'transient') is this ticket's own budget running out, not evidence of
+        // a systemic failure. Count distinct tickets; trip the loop-wide pause at `breakerFailures`.
+        if (decision.tier === 'deterministic' && config.robot.breakerFailures > 0) {
+          const streak = recordDeterministicFailure(
+            db,
+            { ticketId: candidate.id, title: candidate.title, signature: decision.signature },
+            now(),
+          );
+          // Guard on the pause flag so a breaker that trips while the loop is already paused (for any
+          // other reason) neither overwrites that reason (pauseDispatch keeps the first anyway) nor
+          // re-fires the notification.
+          if (streak.length >= config.robot.breakerFailures && !isDispatchPaused(db)) {
+            pauseDispatch(db, breakerPauseReason(streak), now());
+            notifyLoop(db, 'agent_needs_human', 'Robot circuit breaker tripped', breakerNotificationBody(streak), now());
+            logger.error(
+              { failures: streak.map((f) => f.ticketId), threshold: config.robot.breakerFailures },
+              'robot: circuit breaker tripped — PAUSING dispatch after consecutive deterministic failures',
+            );
+          }
+        }
       } else {
         setAgentState(db, candidate.id, 'queued', now());
         logMilestone(db, candidate.id, ROBOT_EVENT.fault, { tier: decision.tier, reason: decision.reason, ...wipDetail }, now());
@@ -510,6 +548,9 @@ export async function processRobotQueue(
         finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
         handedOff = true;
         setAgentState(db, candidate.id, 'in-review', now());
+        // Circuit breaker (t974, D-107): a successful hand-off breaks the "consecutive" chain, so the
+        // deterministic-failure streak resets. Only a success does — a transient retry leaves it be.
+        resetBreaker(db, now());
         dispatched++;
         logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
         // PD-773: the Robot asked for Steve's visual check; the PR waits for it (see visual/gate.ts).

@@ -1,25 +1,15 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { applyMarkdown } from '$lib/markdown';
-  import type { AgentTicket, RefineAnswerSet, RefineChildProposal, RefineMessage, RefineProposal } from '@dashboard/shared';
+  import type { AgentTicket, RefineAnswerSet, RefineMessage, RefineProposal } from '@dashboard/shared';
   import {
-    isReady,
     latestActionableProposal,
     refineSessionEnd,
     refineThreadFromEvents,
     roundAsMarkdown,
   } from '@dashboard/shared';
-  import {
-    approveRefine,
-    fetchTicketEvents,
-    markRefined,
-    parkRefine,
-    postRefineReply,
-    postRefineAnswers,
-    rejectRefine,
-    queueGateBlockers,
-  } from '../routes/devops/api';
-  import { predictQueueRefusals, refusalHint, refusalRows, type RefusalRow } from './refine-queue-gate';
+  import { fetchTicketEvents, parkRefine, postRefineReply, postRefineAnswers } from '../routes/devops/api';
+  import RefineProposalCard from './RefineProposalCard.svelte';
   import RefineQuestionForm from './RefineQuestionForm.svelte';
   import { answerSummary, openRoundMessage, roundsAnsweredBy } from './refine-form-logic';
 
@@ -58,12 +48,8 @@
   let replyText = $state('');
   let sending = $state(false);
   let sendMsg = $state<string | null>(null);
-  let deciding = $state(false);
   let decideMsg = $state<string | null>(null);
   let threadEl = $state<HTMLElement | null>(null);
-  // PD-760: the Queue gate's refusal of "Approve & queue", shown beside the buttons with a remedy per
-  // row. Null when there is none. Nothing has been written while it is showing.
-  let gateRows = $state<RefusalRow[] | null>(null);
   // PD-743: how the session ended (approved commit or parked), or null while it is open.
   let sessionEnd = $state<'committed' | 'parked' | null>(null);
   let parking = $state(false);
@@ -90,24 +76,6 @@
     return `${m}m ${s % 60}s`;
   }
 
-  // "Approve & queue" (D-057) is offered only for a non-Epic refine_in_place — decompose routes
-  // per-child and an Epic can never enter the Queue. `notReady` is a soft hint: the
-  // ticket can still be queued, but its body lacks the four Ready sections.
-  const canQueue = $derived(proposal?.mode === 'refine_in_place' && !isEpic);
-  const notReady = $derived(
-    proposal?.mode === 'refine_in_place' && !isReady(proposal.body ?? null),
-  );
-  // PD-760: what the page can foresee the gate refusing (approval itself refines the ticket, so only
-  // its Epic can). The server stays the authority: an unforeseen 409 is rendered from its criteria.
-  const foreseen = $derived(predictQueueRefusals(ticketId, epic, epicMembers));
-  const gateHint = $derived(refusalHint(foreseen, epic));
-
-  // PD-634: mirrors `approveRefine` — a child lands refined unless the agent said otherwise, or it is
-  // robot-assigned and fails the Ready check. Shown so the panel displays what approval will write.
-  function childBornRefined(child: RefineChildProposal): boolean {
-    return (child.refined ?? true) && (child.assignee !== 'robot' || isReady(child.body));
-  }
-
   // Scroll the thread to the latest message. Called explicitly on initial load and after
   // sending — NOT on every poll: a reactive $effect on `messages` re-scrolled every 5s (load
   // rebuilds the array each poll), which fought the user trying to scroll back up the history.
@@ -130,56 +98,11 @@
     }
   }
 
-  async function decide(action: 'approve' | 'approve-queue' | 'reject') {
-    if (deciding) return;
-    decideMsg = null;
-    gateRows = null;
-    // PD-760: a foreseen refusal is shown without asking the server, which would refuse anyway.
-    if (action === 'approve-queue' && foreseen.length > 0) {
-      gateRows = refusalRows(foreseen, epic, epicMembers, ticketId);
-      return;
-    }
-    deciding = true;
-    try {
-      if (action === 'reject') {
-        await rejectRefine(ticketId);
-        decideMsg = 'Proposal rejected — the agent can propose again.';
-      } else {
-        const { queued, populated } = await approveRefine(ticketId, {
-          queue: action === 'approve-queue',
-        });
-        decideMsg = populated
-          ? 'Approved — members created under this Epic. Queue the ready ones when you are.'
-          : queued
-            ? 'Approved & queued — Robot will pick it up.'
-            : "Approved. Drag to the Robot's Queue when you're ready to dispatch.";
-      }
-      await load();
-      onChanged?.();
-    } catch (e) {
-      const server = queueGateBlockers(e);
-      if (server) gateRows = refusalRows(server, epic, epicMembers, ticketId);
-      else decideMsg = e instanceof Error ? e.message : String(e);
-    } finally {
-      deciding = false;
-    }
-  }
-
-  // PD-760: the remedy for "Epic not refined". The same dedicated route the ticket page's own
-  // button uses (PD-610). It does not approve or queue anything: Steve clicks Approve & queue again.
-  async function markEpicRefined(epicId: number) {
-    if (deciding) return;
-    deciding = true;
-    try {
-      await markRefined(epicId);
-      gateRows = null;
-      decideMsg = 'Epic marked refined. Approve & queue is clear now.';
-      onChanged?.();
-    } catch (e) {
-      decideMsg = e instanceof Error ? e.message : String(e);
-    } finally {
-      deciding = false;
-    }
+  // PD-269: after an approve or reject the proposal is gone, so its message is shown by the thread.
+  async function decided(message: string) {
+    decideMsg = message;
+    await load();
+    onChanged?.();
   }
 
   // PD-745: the round Steve can answer now (newest turn is an agent round, session still open), and
@@ -311,94 +234,15 @@
 
       {#if proposal}
         <li class="turn turn-agent turn-proposal">
-          <div class="bubble proposal" role="group" aria-label="Proposed commit">
-            <div class="turn-head">
-              <span class="who">Refine agent</span>
-              <span class="proposal-badge">Proposed: {proposal.mode === 'decompose' ? (isEpic ? 'Populate' : 'Split') : 'Refine in place'}</span>
-            </div>
-            {#if proposal.rationale}<p class="proposal-rationale">{proposal.rationale}</p>{/if}
-
-            <!-- PD-510: only fields an approval actually writes are shown. Lane and priority used
-                 to be listed here and are no longer applied — a panel that displays a value the
-                 approve button then ignores is worse than one that omits it. -->
-            {#if proposal.mode === 'refine_in_place'}
-              <dl class="proposal-fields">
-                {#if proposal.assignee !== undefined}<div><dt>Assignee</dt><dd>{proposal.assignee ?? '—'}</dd></div>{/if}
-              </dl>
-              {#if proposal.body}<pre class="proposal-body">{proposal.body}</pre>{/if}
-            {:else}
-              <!-- PD-634: approving a Populate rewrites the Epic's description and marks it refined,
-                   so the new description is shown here — the panel is the evidence the claim rests on. -->
-              {#if isEpic && proposal.body}
-                <p class="proposal-section-label">Epic description (rewritten)</p>
-                <pre class="proposal-body">{proposal.body}</pre>
-                <p class="proposal-section-label">Members</p>
-              {/if}
-              <ul class="proposal-children">
-                {#each proposal.children ?? [] as child, i (i)}
-                  <li>
-                    <div class="child-head">
-                      <!-- No lane per child (PD-598). PD-510 stopped reading the proposed lane
-                           and this printed "backlog" as a fact instead — but a value identical on
-                           every row says nothing, and it still read as a lane the agent chose,
-                           which is what PD-510 set out to remove. Where children land is a
-                           property of approval, not of any one child. -->
-                      <span class="child-assignee">{child.assignee ?? '—'}</span>
-                      <span class="child-title">{child.title}</span>
-                      <!-- PD-634: children are born refined unless the agent opted out, or the
-                           server will downgrade a robot child whose body is not Ready-shaped. -->
-                      {#if !childBornRefined(child)}<span class="child-unrefined">not refined</span>{/if}
-                    </div>
-                    <pre class="proposal-body">{child.body}</pre>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-
-            <div class="proposal-actions">
-              <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
-                {deciding ? 'Working…' : 'Approve'}
-              </button>
-              {#if canQueue}
-                <button
-                  class="approve-queue"
-                  onclick={() => decide('approve-queue')}
-                  disabled={deciding}
-                  title={notReady
-                    ? "Not in Robot-ready shape (missing the four sections) — you can still queue it, but Robot works best from a shaped ticket."
-                    : "Approve and move into the Robot's Queue to dispatch now."}
-                >
-                  Approve &amp; queue
-                </button>
-                {#if gateHint}<span class="gate-hint" title="The Queue gate (D-091) will refuse this until it is fixed. Click for the remedy.">{gateHint}</span>{/if}
-                {#if notReady}<span class="shape-hint" title="Body is missing ## Context / ## Task / ## Done When / ## Out of scope.">not formatted</span>{/if}
-              {/if}
-              <button class="reject" onclick={() => decide('reject')} disabled={deciding}>Reject</button>
-            </div>
-            {#if gateRows}
-              <!-- PD-760: the refusal sits under the button that caused it, not at the end of the list. -->
-              <div class="queue-refusal" role="alert">
-                <p class="queue-refusal-lead">Can't queue this yet. Nothing has been written.</p>
-                <ul class="queue-refusal-rows">
-                  {#each gateRows as row (row.id)}
-                    <li>
-                      <span>{row.label}</span>
-                      {#if row.action?.kind === 'mark-epic-refined'}
-                        {@const epicId = row.action.epicId}
-                        <button class="queue-refusal-fix" onclick={() => markEpicRefined(epicId)} disabled={deciding}>{row.action.text}</button>
-                      {:else if row.action?.kind === 'link'}
-                        <a class="queue-refusal-fix" href={row.action.href}>{row.action.text}</a>
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
-                <div class="queue-refusal-actions">
-                  <button class="approve" onclick={() => decide('approve')} disabled={deciding}>Approve without queueing</button>
-                  <button class="queue-refusal-cancel" onclick={() => (gateRows = null)} disabled={deciding}>Cancel</button>
-                </div>
-              </div>
-            {/if}
-          </div>
+          <RefineProposalCard
+            {ticketId}
+            {proposal}
+            {isEpic}
+            {epic}
+            {epicMembers}
+            onDecided={decided}
+            onChanged={() => onChanged?.()}
+          />
         </li>
       {/if}
 

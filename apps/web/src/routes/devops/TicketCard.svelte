@@ -23,6 +23,8 @@
     isLocked,
     isFrozen = false,
     badges,
+    eligible = false,
+    capacityWait = null,
     onDragStart,
     onDragEnd,
     onEdit,
@@ -45,6 +47,10 @@
     /** D-083: terminal — the work is over, so nothing here may change it. */
     isFrozen?: boolean;
     badges: RelationBadges;
+    /** D-103 (PD-810): the auto-queue promoter would queue this Backlog ticket (verdict `eligible`). */
+    eligible?: boolean;
+    /** In the Eligible view only: the capacity limit holding an eligible ticket back, or null. */
+    capacityWait?: string | null;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
     onEdit: () => void;
@@ -74,6 +80,9 @@
   // Queued-but-blocked (D-051 amended, PD-408): a blocked ticket may sit in the queue, but the loop
   // skips it until its blocker resolves — de-emphasize it so the queue reads actionable-vs-waiting.
   const queuedBlocked = $derived(ticket.status === 'queue' && badges.blockedBy > 0);
+  // D-103 (PD-811): the auto-queue promoter put this ticket in the Queue (not a human). Server-derived
+  // from the ticket's newest lane-changing event; shown only while it is still in the Queue.
+  const autoQueued = $derived(ticket.status === 'queue' && ticket.autoQueued === true);
 
   // ⋮ "Mark as →" relation menu (D-051, PD-322).
   let menuOpen = $state(false);
@@ -192,6 +201,22 @@
       {#if badges.split}
         <a class="rel-badge rel-split" href={detailHref} draggable="false" title="Part of a split lineage">{badges.splitOrigin === 'agent' ? 'auto-split 🤖' : 'split'}</a>
       {/if}
+    </div>
+  {/if}
+  {#if eligible}
+    <!-- D-103 (PD-810): the promoter would queue this ticket. In the Eligible view a capacity note
+         says what (if anything) is holding it back right now. -->
+    <div class="card-eligible">
+      <span class="eligible-badge" title="Auto-queue: every criterion is met — the promoter would queue this as capacity allows.">✓ eligible</span>
+      {#if capacityWait}
+        <span class="eligible-wait" title="Waiting on capacity: {capacityWait}">waiting — {capacityWait}</span>
+      {/if}
+    </div>
+  {/if}
+  {#if autoQueued}
+    <!-- D-103 (PD-811): moved into the Queue by the auto-queue promoter, not by hand. -->
+    <div class="card-eligible">
+      <span class="eligible-badge auto-queued" title="Moved into the Queue automatically by the auto-queue promoter (D-103).">🤖 auto-queued</span>
     </div>
   {/if}
   {#if ticket.readyBypassed || notReady}
