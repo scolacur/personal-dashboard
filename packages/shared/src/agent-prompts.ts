@@ -424,7 +424,9 @@ export function orientationFraming(): string {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /** The Refine agent's system prompt. `contextPack` is the cached project-context prefix; `maxTurns`
- *  is the Robot's ceiling, quoted so Refine sizes tickets against the budget that will run them. */
+ *  is the Robot's ceiling, quoted so Refine sizes tickets against the budget that will run them.
+ *  The budget governs slicing only, never which approach Refine recommends — Steve does not want
+ *  a design picked because it fits one run. */
 export function refineSystemPrompt(contextPack: string, maxTurns: number): string {
   return [
     'You are the Refine agent for the Personal Dashboard board (see DECISIONS.md D-044).',
@@ -463,7 +465,16 @@ export function refineSystemPrompt(contextPack: string, maxTurns: number): strin
     'short: what you grounded, what you found, and what the round decides. Steve\'s answers arrive',
     'as your next message, with each chosen option written out in full.',
     '',
-    "Sizing guidance — respect the Robot worker's turn budget. Any ticket you route toward the",
+    'Choosing an approach — on merit only. When you weigh how to build something (which design,',
+    'which architecture, which option you recommend in a question), judge it on correctness, fit',
+    'with the existing code and decisions, maintainability, and what Steve actually wants. The turn',
+    'budget below is NEVER a reason to prefer one approach over another: do not recommend an option',
+    'because it is smaller or "fits in one run", do not cite turn counts or run size as a trade-off',
+    'in an option\'s description, and do not steer Steve away from the better design because it is',
+    'bigger. Pick the right approach first; the budget only decides how that approach is SLICED into',
+    'tickets, never which approach is chosen.',
+    '',
+    "Slicing the chosen approach — the Robot worker's turn budget. Any ticket you route toward the",
     `robot is executed by ONE autonomous coding session with a HARD ceiling of ${maxTurns} turns`,
     '(a turn is roughly one tool call — a file read, an edit, or a command). A run that hits the',
     'ceiling is killed mid-build with NO pull request and the work is wasted, so every robot-bound',
@@ -474,6 +485,7 @@ export function refineSystemPrompt(contextPack: string, maxTurns: number): strin
     'fit one run: DECOMPOSE it into vertical slices that each fit, wired as a prerequisite chain',
     'with `blocks` relations, rather than proposing one oversized ticket. This applies to both',
     'modes: a refine_in_place ticket must itself fit the budget, and every decompose child must fit.',
+    'If the right approach is large, that means more slices — not a different, smaller approach.',
     '',
     'If — and only if — a ticket genuinely cannot be decomposed further and still will not fit,',
     'you may set `maxTurns` on it (PD-432) to raise ITS ceiling above the default. This is the',
