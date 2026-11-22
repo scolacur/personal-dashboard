@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { loadConfig, type AgentWorkerConfig } from './shared/config';
 import { ensureRunsTable } from './jobs/robot/runs';
 import { activeDeployHold, activeMaintenanceHold, ensureRobotStateTable, takeDeployHold, takeMaintenanceHold } from './jobs/robot/state';
-import { EX_TEMPFAIL, releaseDeployHoldOnStartup, runDeployDrain } from './deploy-drain';
+import { EX_TEMPFAIL, releaseDeployHoldOnStartup, runDeployDrain } from './deploy-hold';
 
 const NOW = 1_000_000;
 const config: AgentWorkerConfig = loadConfig({} as NodeJS.ProcessEnv);

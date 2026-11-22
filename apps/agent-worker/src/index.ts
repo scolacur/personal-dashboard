@@ -10,7 +10,7 @@ import { startEvaluatorJob } from './jobs/evaluate';
 import { startConflictJob } from './jobs/conflicts';
 import { startVisualJob } from './jobs/visual';
 import { startMaintenanceCoordinator } from './jobs/maintenance';
-import { releaseDeployHoldOnStartup } from './deploy-drain';
+import { releaseDeployHoldOnStartup } from './deploy-hold';
 import { startHeartbeat } from './heartbeat';
 
 /**
