@@ -99,6 +99,17 @@ export function seedTaskTracker(db: Database.Database): void {
     criteria: [],
     capacity: [],
   });
+
+  // D-103 (PD-808): a self-modifying Epic switched OUT of auto-queue, so the board's Epic band shows
+  // the "⛔ No auto-queue" marker. Its members are never promoted automatically (but can be queued by
+  // hand); set on Robot / Osiris / infra Epics.
+  const excludedEpic = createTicket(db, {
+    title: 'Robot run recovery',
+    projectId: pd,
+    isEpic: true,
+    priority: 'P1',
+  });
+  updateTicket(db, excludedEpic.id, { autoQueueExcluded: true });
 }
 
 export function taskTrackerIsEmpty(db: Database.Database): boolean {

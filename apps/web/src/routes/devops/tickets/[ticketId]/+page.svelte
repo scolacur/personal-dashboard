@@ -44,6 +44,7 @@
   import EpicPicker from '../../EpicPicker.svelte';
   import EpicJoinModal from '../../EpicJoinModal.svelte';
   import BackfillToggle from './BackfillToggle.svelte';
+  import AutoQueueToggle from './AutoQueueToggle.svelte';
   import DetailsPanel from './DetailsPanel.svelte';
   import QueueEligibilityChecklist from '$lib/QueueEligibilityChecklist.svelte';
   import RefineButton from './RefineButton.svelte';
@@ -789,6 +790,11 @@
         <BackfillToggle
           ticketId={ticket.id}
           excluded={ticket.backfillExcluded ?? false}
+          onChanged={() => ticketId && load(ticketId)}
+        />
+        <AutoQueueToggle
+          ticketId={ticket.id}
+          excluded={ticket.autoQueueExcluded ?? false}
           onChanged={() => ticketId && load(ticketId)}
         />
         <section class="epic-members">

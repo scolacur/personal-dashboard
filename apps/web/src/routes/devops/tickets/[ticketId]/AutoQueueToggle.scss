@@ -1,0 +1,25 @@
+// D-103 (PD-808): the Epic's auto-queue exclusion switch. Mirrors BackfillToggle; tokens only.
+.auto-queue-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+  margin: var(--space-xs) 0 var(--space-sm);
+
+  label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    cursor: pointer;
+    color: var(--text);
+  }
+
+  input {
+    accent-color: var(--accent);
+  }
+}
+
+.auto-queue-hint {
+  color: var(--muted);
+}
