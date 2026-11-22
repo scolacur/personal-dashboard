@@ -76,52 +76,29 @@ export function openSessionCount(db: Database.Database): number {
   return row.n;
 }
 
-// A ticket waiting for an auto-start: in Backlog (a Queue ticket is either already refined robot
-// work or Steve's own to-do), unrefined, live, created after the boundary, and never had a Refine
-// thread — so a parked or finished session is never restarted.
-const CANDIDATE_WHERE = `
-  ${inRepoSql('t')} AND
-  t.archived_at IS NULL AND t.status = 'backlog' AND t.refined = 0 AND t.created_at >= ?
-  AND NOT EXISTS (SELECT 1 FROM agent_ticket_events e
-                   WHERE e.ticket_id = t.id AND e.type IN (?, ?))`;
-
-export function autostartQueue(db: Database.Database, since: number, repo: string): number {
-  const row = db
-    .prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${CANDIDATE_WHERE}`)
-    .get(repo, since, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent) as { n: number };
-  return row.n;
-}
-
-/** The oldest new ticket waiting for a session, or null. */
-export function nextAutostartCandidate(
-  db: Database.Database,
-  since: number,
-  repo: string,
-): { id: number; displayId: string | null; title: string; body: string | null } | null {
-  const row = db
-    .prepare(
-      `SELECT t.id, t.display_id, t.title, t.body FROM agent_tickets t WHERE ${CANDIDATE_WHERE}
-        ORDER BY t.created_at ASC, t.id ASC LIMIT 1`,
-    )
-    .get(repo, since, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent) as
-    | { id: number; display_id: string | null; title: string; body: string | null }
-    | undefined;
-  return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
-}
-
-// ── Backfill (PD-748) ─────────────────────────────────────────────────────────
+// ── One candidate list, priority-ordered (T1011) ──────────────────────────────
 //
-// When no new ticket is waiting, the existing backlog drips in: tickets created BEFORE the boundary,
-// highest priority first (P0 → P5, unset last), then oldest. Same pacing as new tickets — the open
-// cap applies to both, and new tickets always go first.
+// Before T1011 there were two lists — new tickets (created at/after the boundary, ordered by age
+// and *ignoring priority*) and the PD-748 backfill (older tickets, priority-ordered with the Epic
+// gate) — tried in that order. Steve files new tickets constantly, so the priority-ordered backfill
+// almost never got a turn: P2 new sessions crowded out P1 Epics that had never been refined. T1011
+// collapses them into one eligibility set, ordered by:
+//   1. priority (P0 → P5, unset last),
+//   2. new before old *within the same priority* (a fresh ticket is refined while it's fresh, but
+//      never jumps a priority),
+//   3. oldest first.
+// The "new" boundary (`since`) is now only a tie-breaker, not an eligibility split.
 //
 // **Epics before their members.** A member waits while its Epic is itself waiting for a session or
 // has one open: the Epic's Populate frames its members, and siblings refined one by one would be
 // asked the same questions again. Once the Epic is refined, or its session ended without refining
-// it, the member is a candidate on its own.
+// it, the member is a candidate on its own. This gate now applies to *every* candidate, new or old.
 //
 // **Excludable per Epic.** The newest `refine_backfill_excluded` event on an Epic switches it — and
 // its members — out (the wishlist Epics for widgets that do not exist yet).
+//
+// **Never restart a thread.** A ticket that has ever had a Refine turn is out — a parked or finished
+// session is never auto-restarted.
 
 /** True when a ticket's own newest backfill-exclude event says excluded. `x` is the table alias. */
 const excludedSql = (x: string) => `COALESCE((SELECT json_extract(b.detail, '$.excluded') FROM agent_ticket_events b
@@ -137,9 +114,12 @@ const openSessionSql = (x: string) => `(SELECT s.type FROM agent_ticket_events s
 const noThreadSql = (x: string) => `NOT EXISTS (SELECT 1 FROM agent_ticket_events n
    WHERE n.ticket_id = ${x}.id AND n.type IN ('refine_human', 'refine_agent'))`;
 
-const BACKFILL_WHERE = `
+// A ticket eligible for an auto-start regardless of age: in Backlog (a Queue ticket is either
+// already refined robot work or Steve's own to-do), unrefined, live, never had a Refine thread, not
+// excluded, and not gated behind an unrefined/open-session/excluded Epic.
+const ELIGIBLE_WHERE = `
   ${inRepoSql('t')} AND
-  t.archived_at IS NULL AND t.status = 'backlog' AND t.refined = 0 AND t.created_at < ?
+  t.archived_at IS NULL AND t.status = 'backlog' AND t.refined = 0
   AND ${noThreadSql('t')}
   AND NOT (${excludedSql('t')})
   AND NOT EXISTS (
@@ -154,21 +134,38 @@ const BACKFILL_WHERE = `
 const PRIORITY_RANK = `CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3
   WHEN 'P4' THEN 4 WHEN 'P5' THEN 5 ELSE 9 END`;
 
-export function backfillRemaining(db: Database.Database, since: number, repo: string): number {
-  return (db.prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${BACKFILL_WHERE}`).get(repo, since) as { n: number }).n;
+/** Order within the single eligibility set: priority, then new-before-old within a priority, then
+ *  oldest. `since` is the "new" boundary, bound as the `?` in the new-first CASE. */
+const CANDIDATE_ORDER = `ORDER BY ${PRIORITY_RANK},
+  CASE WHEN t.created_at >= ? THEN 0 ELSE 1 END, t.created_at ASC, t.id ASC`;
+
+/** New eligible tickets (created at/after the boundary) still waiting for a session. */
+export function autostartQueue(db: Database.Database, since: number, repo: string): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${ELIGIBLE_WHERE} AND t.created_at >= ?`).get(repo, since) as {
+      n: number;
+    }
+  ).n;
 }
 
-/** The next backlog ticket to backfill, or null. */
-export function nextBackfillCandidate(
+/** Older eligible tickets (created before the boundary) still waiting, published alongside the new
+ *  count so the two halves of the one list stay legible. */
+export function backfillRemaining(db: Database.Database, since: number, repo: string): number {
+  return (
+    db.prepare(`SELECT COUNT(*) AS n FROM agent_tickets t WHERE ${ELIGIBLE_WHERE} AND t.created_at < ?`).get(repo, since) as {
+      n: number;
+    }
+  ).n;
+}
+
+/** The next ticket to auto-refine across the whole eligibility set, or null. */
+export function nextAutostartCandidate(
   db: Database.Database,
   since: number,
   repo: string,
 ): { id: number; displayId: string | null; title: string; body: string | null } | null {
   const row = db
-    .prepare(
-      `SELECT t.id, t.display_id, t.title, t.body FROM agent_tickets t WHERE ${BACKFILL_WHERE}
-        ORDER BY ${PRIORITY_RANK}, t.created_at ASC, t.id ASC LIMIT 1`,
-    )
+    .prepare(`SELECT t.id, t.display_id, t.title, t.body FROM agent_tickets t WHERE ${ELIGIBLE_WHERE} ${CANDIDATE_ORDER} LIMIT 1`)
     .get(repo, since) as { id: number; display_id: string | null; title: string; body: string | null } | undefined;
   return row ? { id: row.id, displayId: row.display_id, title: row.title, body: row.body } : null;
 }
@@ -231,8 +228,8 @@ export function runAutostart(db: Database.Database, config: AutostartConfig, now
     return null;
   }
 
-  // New tickets first; the backlog backfill only when none is waiting (PD-748).
-  const candidate = nextAutostartCandidate(db, since, config.repo) ?? nextBackfillCandidate(db, since, config.repo);
+  // One priority-ordered list (T1011): highest priority first, new-before-old within a priority.
+  const candidate = nextAutostartCandidate(db, since, config.repo);
   if (!candidate) {
     publish(0, null);
     return null;

@@ -152,17 +152,34 @@ describe('Refine backlog backfill (PD-748, D-096 §3)', () => {
   const BIG = { enabled: true, openCap: 50, repo: REPO };
   const excluded = (id: number, value: boolean, at: number) => event(id, 'refine_backfill_excluded', at, { excluded: value });
 
-  it('drips older tickets in after new ones, highest priority first, then oldest', () => {
+  it('picks highest priority first across the whole list, new-before-old within a priority (T1011)', () => {
     const p3 = ticket(100, { priority: 'P3' });
     const p1old = ticket(200, { priority: 'P1' });
     const p1new = ticket(300, { priority: 'P1' });
     const unset = ticket(50);
-    runAutostart(db, BIG, 1000); // boundary at 1000 — but nothing new, so the backfill starts at once
-    const fresh = ticket(1100);
+    runAutostart(db, BIG, 1000); // boundary at 1000 — the top-priority oldest, p1old, goes first
+    const fresh = ticket(1100); // new, but unset priority — it does NOT jump the P1/P3 tickets
     const order = [runAutostart(db, BIG, 1200), runAutostart(db, BIG, 1300), runAutostart(db, BIG, 1400), runAutostart(db, BIG, 1500)];
-    // The first cycle (at 1000) already took the top backfill item, p1old.
+    // The first cycle (at 1000) already took the top item, p1old.
     expect(kickoffs(p1old)).toHaveLength(1);
-    expect(order).toEqual([fresh, p1new, p3, unset]);
+    // P1 (p1new) → P3 (p3) → then the two unset ones, new (fresh) before old (unset).
+    expect(order).toEqual([p1new, p3, fresh, unset]);
+  });
+
+  it('picks an older P1 over a newer P2 — priority beats freshness (T1011)', () => {
+    const p1old = ticket(100, { priority: 'P1' }); // old
+    runAutostart(db, BIG, 1000); // boundary at 1000
+    const p2new = ticket(1100, { priority: 'P2' }); // new, lower priority
+    expect(kickoffs(p1old)).toHaveLength(1); // the old P1 already went at the first cycle
+    expect(runAutostart(db, BIG, 1200)).toBe(p2new); // only after the P1 is done
+  });
+
+  it('a new P1 beats an older P1 — freshness breaks a priority tie (T1011)', () => {
+    // created_at is just a stored field, so both can straddle the boundary set by the first cycle.
+    const oldP1 = ticket(900, { priority: 'P1' }); // before the 1000 boundary ⇒ "old"
+    const newP1 = ticket(1100, { priority: 'P1' }); // after the boundary ⇒ "new"
+    expect(runAutostart(db, BIG, 1000)).toBe(newP1); // same priority, new wins the tie
+    expect(runAutostart(db, BIG, 1050)).toBe(oldP1);
   });
 
   it('refines an Epic before its members, then frees the members once the Epic is refined or its session ends', () => {
@@ -201,6 +218,40 @@ describe('Refine backlog backfill (PD-748, D-096 §3)', () => {
     expect(status()).toMatchObject({ backfillRemaining: 1, queued: 0 });
     runAutostart(db, BIG, 1100);
     expect(status()).toMatchObject({ backfillRemaining: 0, queued: 0 });
+  });
+});
+
+describe('T1011: the Epic gate, exclusion, and no-prior-thread rules apply to new tickets too', () => {
+  const BIG = { enabled: true, openCap: 50, repo: REPO };
+  const excluded = (id: number, value: boolean, at: number) => event(id, 'refine_backfill_excluded', at, { excluded: value });
+
+  it('a new member waits while its Epic (also new) is unrefined with no thread', () => {
+    runAutostart(db, BIG, 1000); // boundary at 1000; nothing eligible yet
+    const epic = ticket(1100, { is_epic: 1, priority: 'P1' });
+    const member = ticket(1200, { priority: 'P1', epic_id: epic });
+    // The Epic goes first; the member waits even though both are new.
+    expect(runAutostart(db, BIG, 1300)).toBe(epic);
+    expect(runAutostart(db, BIG, 1400)).toBeNull(); // member still gated by the Epic's open session
+    expect(kickoffs(member)).toHaveLength(0);
+  });
+
+  it('a new ticket under an excluded Epic is never picked', () => {
+    runAutostart(db, BIG, 1000); // boundary at 1000
+    const epic = ticket(1100, { is_epic: 1, priority: 'P1' });
+    const member = ticket(1200, { priority: 'P1', epic_id: epic });
+    excluded(epic, true, 1250);
+    expect(runAutostart(db, BIG, 1300)).toBeNull();
+    expect(kickoffs(epic)).toHaveLength(0);
+    expect(kickoffs(member)).toHaveLength(0);
+  });
+
+  it('a new ticket that already had a Refine thread is never auto-restarted', () => {
+    runAutostart(db, BIG, 1000); // boundary at 1000
+    const parked = ticket(1100, { priority: 'P1' });
+    event(parked, 'refine_human', 1150);
+    event(parked, 'refine_parked', 1200);
+    expect(runAutostart(db, BIG, 1300)).toBeNull();
+    expect(kickoffs(parked)).toHaveLength(1); // only the human turn we seeded, no auto kickoff
   });
 });
 
