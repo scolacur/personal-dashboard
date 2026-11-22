@@ -1325,6 +1325,7 @@
               {epic}
               {project}
               summary={epicSummaryById.get(epic.id)}
+              members={membersOf(epic.id, tickets)}
               dragging={epicDraggingId === epic.id}
               onDragStart={(e) => onEpicDragStart(e, epic)}
               onDragEnd={onEpicDragEnd}

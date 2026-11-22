@@ -35,6 +35,13 @@
     border-color: var(--status-warn);
     background: color-mix(in srgb, var(--status-warn) 12%, transparent);
   }
+  // T979/D-103: an Epic whose plan is refined but some member body is not. Amber like `.refine-stale`
+  // (both say "more refinement to do") but un-filled, to sit a notch below stale — nothing has
+  // expired, the breakdown just is not fully shaped yet. Only ever used on an Epic's composite badge.
+  &.refine-plan {
+    color: var(--status-warn);
+    border-color: var(--status-warn);
+  }
 
   // Idle call-to-action: not yet refined. Muted until hovered, when it invites the click
   // that starts a Refine session (replaces the old Sparkles action button).
@@ -60,4 +67,6 @@
   color: var(--status-done);
   white-space: nowrap;
   line-height: 1.6;
+  // T979: also rendered as an <a> on the Epic card / detail header (the member row uses a <span>).
+  text-decoration: none;
 }

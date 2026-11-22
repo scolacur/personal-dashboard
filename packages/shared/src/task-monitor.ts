@@ -610,6 +610,68 @@ export function epicQueueCriteria(
   ];
 }
 
+// ── Epic refinement DISPLAY (T979, D-089, D-103) ─────────────────────────────
+// The stored `refined` flag on an Epic asserts the *plan* holds (D-089: the description frames the
+// work and the member set is the agreed breakdown), NOT that every member's own body is refined.
+// Shown as a bare "refined", that reads as "everything here is refined" — e.g. PD-555 shows refined
+// while its member PD-553 is not. D-103 settled this: keep the stored flag exactly as-is (deriving
+// it from members was rejected — it would break Refine's Epic-before-members order and blur "the
+// plan changed" with "a ticket needs detail") and change only the DISPLAY to a composite computed
+// from the Epic's flag plus its open members. This is that composite; it is display-only and never
+// a Queue gate (that stays `queueBlockers`).
+
+export type EpicRefinementState = 'fully-refined' | 'plan-refined' | 'stale' | 'not-refined';
+
+export interface EpicRefinementDisplay {
+  state: EpicRefinementState;
+  /** The badge label. `plan-refined` carries the N/M member tally. */
+  label: string;
+  /** Refined open members — the N in "N/M members". Terminal members are excluded (as in
+   *  `members-refined`): finished work needs no read-through. */
+  refinedCount: number;
+  /** Open members — the M in "N/M members". Terminal members excluded. */
+  openCount: number;
+}
+
+/**
+ * An Epic's DISPLAY refinement state, composed from its stored `refined` / `refineStale` flags and
+ * its open members. Terminal members (`completed` / `closed`) are excluded from the tally, matching
+ * `members-refined` in `epicQueueCriteria`.
+ *
+ * - `fully-refined` — Epic refined, not stale, every open member refined (including an Epic with no
+ *   open members). Label "Fully refined".
+ * - `plan-refined` — Epic refined, not stale, some open member unrefined. Label
+ *   "Plan refined · N/M members".
+ * - `stale` — Epic refined once, membership changed since (`refineStale`). Label/treatment unchanged.
+ * - `not-refined` — never refined. Label/treatment unchanged.
+ *
+ * `refineStale` is checked first: when it is set the stored `refined` is already 0 (the invalidation
+ * clears it), but the staleness is the fact worth surfacing, so it wins over the refined branches.
+ */
+export function epicRefinementDisplay(
+  epic: GateEpic,
+  members: readonly GateMember[],
+): EpicRefinementDisplay {
+  const open = members.filter((m) => m.status !== 'completed' && m.status !== 'closed');
+  const openCount = open.length;
+  const refinedCount = open.filter((m) => m.refined).length;
+  if (epic.refineStale) {
+    return { state: 'stale', label: '⚠ Stale', refinedCount, openCount };
+  }
+  if (!epic.refined) {
+    return { state: 'not-refined', label: 'Not refined', refinedCount, openCount };
+  }
+  if (refinedCount === openCount) {
+    return { state: 'fully-refined', label: 'Fully refined', refinedCount, openCount };
+  }
+  return {
+    state: 'plan-refined',
+    label: `Plan refined · ${refinedCount}/${openCount} members`,
+    refinedCount,
+    openCount,
+  };
+}
+
 /**
  * Every criterion for a robot-assigned ticket entering the Queue, in display order. Pass the
  * ticket as it WOULD be after the write (so `PATCH { status: 'queue', refined: true }` is judged on

@@ -37,6 +37,7 @@
     memberAssigneeHint,
     memberLockReason,
     refinementBadge,
+    epicRefinementBadge,
     membersReorderable,
     reorderedMembers,
     stalePauseNotice,
@@ -512,6 +513,12 @@
   // flag has no membership half (D-089).
   const staleEpic = $derived(ticket !== null && ticket.isEpic && ticket.refineStale);
   const pauseNotice = $derived(ticket === null ? null : stalePauseNotice(ticket, epicMembers));
+  // T979/D-103: the header's composite refinement badge. Only the two NEW display states are shown
+  // here — stale keeps its existing banner (unchanged treatment) and not-refined shows nothing — so
+  // the header does not duplicate the stale banner below it.
+  const epicBadge = $derived(
+    ticket !== null && ticket.isEpic ? epicRefinementBadge(ticket, epicMembers) : null,
+  );
 
   const canReorderMembers = $derived(membersReorderable(epicMembers));
   const memberPositions = $derived(dispatchPositions(epicMembers));
@@ -688,6 +695,16 @@
             {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState}
           </span>
         {/if}
+        <!-- T979/D-103: the Epic's composite refinement badge. Rendered only for the two new display
+             states (fully/plan) — stale is covered by the banner below, not-refined shows nothing.
+             The amber plan-refined badge scrolls to the member list, where the unrefined ones are. -->
+        {#if epicBadge && (epicBadge.state === 'fully-refined' || epicBadge.state === 'plan-refined')}
+          {#if epicBadge.linkToMembers}
+            <a class={epicBadge.cls} href="#epic-members" title={epicBadge.title}>{epicBadge.text}</a>
+          {:else}
+            <span class={epicBadge.cls} title={epicBadge.title}>{epicBadge.text}</span>
+          {/if}
+        {/if}
       </div>
       <h1 class="detail-title">{ticket.title}</h1>
     </header>
@@ -797,7 +814,8 @@
           excluded={ticket.autoQueueExcluded ?? false}
           onChanged={() => ticketId && load(ticketId)}
         />
-        <section class="epic-members">
+        <!-- id: the plan-refined badge (header + board card) links here (T979/D-103). -->
+        <section class="epic-members" id="epic-members">
           <div class="epic-members-head">
             <h2>Members</h2>
             <span class="epic-rollup-label">{memberDone}/{memberTotal} done</span>

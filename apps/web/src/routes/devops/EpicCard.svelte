@@ -5,11 +5,13 @@
   import Button from '$lib/Button.svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
+  import { epicRefinementBadge } from './epic-members';
 
   let {
     epic,
     project,
     summary,
+    members = [],
     dragging = false,
     onDragStart,
     onDragEnd,
@@ -20,6 +22,7 @@
     epic: AgentTicket;
     project: AgentProject | undefined;
     summary: EpicSummary | undefined;
+    members?: AgentTicket[];
     dragging?: boolean;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
@@ -33,6 +36,13 @@
   const pct = $derived(total > 0 ? Math.round((done / total) * 100) : 0);
   const detailHref = $derived(
     epic.displayId ? `/devops/tickets/${epic.displayId}` : undefined,
+  );
+  // T979/D-103: the composite refinement badge — plan-vs-members, not a bare "refined". `null` for
+  // a never-refined Epic (shows nothing, as before); the amber plan-refined pill links to the
+  // Epic page's member list where the unrefined members are shaped.
+  const refineBadge = $derived(epicRefinementBadge(epic, members));
+  const refineHref = $derived(
+    refineBadge?.linkToMembers && detailHref ? `${detailHref}#epic-members` : detailHref,
   );
 
   function assigneeLabel(a: TicketAssignee | null): string {
@@ -91,17 +101,15 @@
       >
     {/if}
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
-    <!-- PD-611/D-089: ONLY a stale Epic is marked here. An Epic that has never been refined gets
-         nothing new — 78 of 80 are in that state, and a badge on all of them would be noise that
-         says nothing, while the one thing worth seeing at band level is a claim that has expired.
-         Shares `_refine-badge.scss` with the member rows so the third state looks the same
-         wherever a ticket is shown. -->
-    {#if epic.refineStale}
-      <a
-        class="refine-pill refine-stale"
-        href={detailHref}
-        draggable="false"
-        title="Was refined, but its members changed since — needs re-refinement">⚠ Stale</a
+    <!-- T979/D-103: the composite refinement badge. A never-refined Epic still gets nothing (78 of
+         80 are in that state; a badge on all of them would be noise), but a refined Epic now shows
+         whether the whole breakdown is refined ("Fully refined", green) or only the plan is
+         ("Plan refined · N/M members", amber), and a stale one keeps its ⚠ Stale pill unchanged.
+         Shares `_refine-badge.scss` with the member rows so the states look the same wherever a
+         ticket is shown. -->
+    {#if refineBadge}
+      <a class={refineBadge.cls} href={refineHref} draggable="false" title={refineBadge.title}
+        >{refineBadge.text}</a
       >
     {/if}
     <!-- D-103 (PD-808): mark an Epic switched out of auto-queue, so it is visible at band level that
