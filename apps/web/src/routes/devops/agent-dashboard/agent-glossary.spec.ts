@@ -61,6 +61,14 @@ describe('prompts are rendered from the real builders, not transcribed', () => {
     expect(section.text).toContain(String(ROBOT_MAX_TURNS_DEFAULT));
   });
 
+  it("Refine's prompt forbids choosing an approach because it fits the turn budget", () => {
+    // Steve: the budget decides how work is sliced, never which design is recommended.
+    const text = refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT);
+    expect(text).toContain('Choosing an approach — on merit only.');
+    expect(text).toContain('NEVER a reason to prefer one approach over another');
+    expect(text).not.toContain("respect the Robot worker's turn budget");
+  });
+
   it("Audit's prompt is auditSystemPrompt() verbatim", () => {
     expect(agentGlossaryView('audit').sections[0].text).toBe(auditSystemPrompt(SAMPLE_CONTEXT_PACK));
   });
