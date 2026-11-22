@@ -203,14 +203,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 2px;
+  padding: var(--space-xs) 2px;
 
+  /* A metric value can be arbitrarily long — a multi-select Mood, a long label. Let it wrap and
+   * grow the cell so every value is readable; the grid row then sizes to its tallest cell, which
+   * is why the whole Mood row grows to fit (Steve's review on PD-725). */
   .metric-value {
     font-size: var(--font-size-xs);
     color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+    text-align: center;
   }
 
   &.logged {

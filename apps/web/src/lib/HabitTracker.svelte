@@ -343,7 +343,6 @@
     onToggleLeaf={toggle}
     onToggleSet={toggleSet}
     onMetric={queueMetric}
-    onOpenItem={compact ? undefined : openInCalendar}
     {loaded}
     {compact}
   />
