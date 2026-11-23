@@ -39,13 +39,14 @@ import {
 } from './state';
 import { breakerPauseReason, breakerNotificationBody, recordDeterministicFailure, resetBreaker } from './breaker';
 import { logMilestone, ROBOT_EVENT } from './events';
-import { setAgentState, branchFor } from './board';
+import { setAgentState, branchFor, completeTicket } from './board';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
 import { checkBudget, publishBudgetPolicy, publishCapacityPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
-import { pollInReviewPrs } from './pr-state';
+import { pollInReviewPrs, defaultPrFetcher, type PrFetcher } from './pr-state';
+import { checkRework } from './rework-guard';
 import { runPrStatusUpdate } from './pr-status';
 
 // Re-exported for existing importers (robot.spec.ts) now that these leaf helpers live in board.ts.
@@ -118,6 +119,8 @@ export interface RobotDeps {
   ownership?: RunOwnership;
   /** PD-784/D-104: the graceful-stop coordinator. Defaults to one wrapping `ownership`. */
   shutdown?: RobotShutdown;
+  /** PD-924: PR lookup for the pre-dispatch rework guard. Injectable so tests never shell out. */
+  fetchPr?: PrFetcher;
   now?: () => number;
 }
 
@@ -227,6 +230,7 @@ export async function processRobotQueue(
   // graceful-stop coordinator. Orphan reclaim keys off ownership, not age.
   const ownership = deps.ownership ?? createRunOwnership();
   const shutdown = deps.shutdown ?? new RobotShutdown(ownership);
+  const fetchPr = deps.fetchPr ?? defaultPrFetcher(config);
 
   // ── C5 (PD-346): pre-dispatch reconciliation — the four folded-in bridges. These run BEFORE
   // selection so a ticket they re-queue is picked up in this SAME cycle. All are DB-native (no
@@ -337,6 +341,29 @@ export async function processRobotQueue(
     // off the branch. Both may be present — a human answered AND the Evaluator asked for changes —
     // so they compose rather than override.
     const brief = pendingEvaluatorBrief(db, candidate.id);
+
+    // PD-924: a rework may have sat queued long enough for its PR to move on — merged, closed, or
+    // re-pushed since the Evaluator's revise. Look once before spending a run on it (rework-guard.ts).
+    const guard = await checkRework(db, candidate.id, candidate.repo, fetchPr, resume !== null && resume !== undefined);
+    if (guard.action === 'complete') {
+      completeTicket(db, candidate.id, now());
+      logMilestone(db, candidate.id, ROBOT_EVENT.completed, { prNumber: guard.prNumber, via: 'merged_before_rework' }, now());
+      logger.info({ ticketId: candidate.id, prNumber: guard.prNumber }, 'robot: PR merged while its rework was queued — completed, not dispatched');
+      continue;
+    }
+    if (guard.action === 'park') {
+      setAgentState(db, candidate.id, 'needs-human', now());
+      logMilestone(db, candidate.id, ROBOT_EVENT.reworkSkipped, { prNumber: guard.prNumber, reason: guard.reason }, now());
+      notifyNeedsHuman(db, candidate.id, 'Robot rework skipped', guard.reason, now());
+      logger.warn({ ticketId: candidate.id, reason: guard.reason }, 'robot: rework skipped — PR closed');
+      continue;
+    }
+    if (guard.action === 'back-to-review') {
+      setAgentState(db, candidate.id, 'in-review', now());
+      logMilestone(db, candidate.id, ROBOT_EVENT.reworkSkipped, { prNumber: guard.prNumber, reason: guard.reason }, now());
+      logger.info({ ticketId: candidate.id, reason: guard.reason }, 'robot: rework skipped — PR head moved since the review');
+      continue;
+    }
     // D-094/PD-737: did Steve answer a checkpoint? Read BEFORE the dispatched event below, which is
     // what consumes it. Continue → start from the saved work with more turns; Restart → clean main.
     const checkpoint = checkpointDecision(db, candidate.id);

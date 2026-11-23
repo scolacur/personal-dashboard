@@ -2248,6 +2248,9 @@ export const ROBOT_EVENT = {
   humanReply: 'robot_human_reply',
   resumed: 'robot_resumed',
   reactivated: 'robot_reactivated',
+  // PD-924: a queued rework was dropped at dispatch because its PR changed under it (merged, closed,
+  // or a new head since the Evaluator's revise). Detail carries `prNumber` and `reason`.
+  reworkSkipped: 'robot_rework_skipped',
   stalled: 'robot_stalled',
   // Cutover (C6/PD-347): the board DB is authoritative and github-sync is retired, so the loop's
   // PR-state poll now owns TERMINAL transitions too (was github-sync's closed-issue→completed).
