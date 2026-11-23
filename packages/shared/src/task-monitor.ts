@@ -171,6 +171,19 @@ export const ROBOT_MAX_TURNS_DEFAULT = 50;
  */
 export const ROBOT_MAX_TURNS_LIMIT = 200;
 
+/**
+ * Floor for a Refine turn estimate (D-110, PD-477). Refine now sizes `maxTurns` in BOTH directions —
+ * a low ceiling for a small ticket, not only a raised one for irreducible work — so an estimate must
+ * never be cut so fine it kills a run that would otherwise have finished. Every run pays a fixed tax
+ * no estimate can avoid: orientation + grounding reads, `npm ci`, `npm run verify`, and the
+ * commit/push/PR hand-off. An estimate below this leaves no room for that tax plus any real work, so
+ * Refine never proposes under it. Guidance to the agent, not an enforced bound — the write boundary
+ * still accepts 1..`ROBOT_MAX_TURNS_LIMIT` (D-066), because a human may deliberately set a tighter
+ * ceiling the agent is told to stay above. 20, not lower: the cheapest real Robot hand-offs took
+ * 12–17 turns, so a floor at that level would sit right on the ceiling of the very tickets it sizes.
+ */
+export const REFINE_TURN_ESTIMATE_FLOOR = 20;
+
 /** At/above this fraction of the ceiling a run is flagged as close to the cap. */
 export const TURN_WARN_FRACTION = 0.8;
 

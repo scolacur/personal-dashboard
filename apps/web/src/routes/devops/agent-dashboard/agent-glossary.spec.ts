@@ -3,6 +3,7 @@ import {
   AGENT_PROFILES,
   AGENT_TYPES,
   ROBOT_MAX_TURNS_DEFAULT,
+  REFINE_TURN_ESTIMATE_FLOOR,
   SAMPLE_CONTEXT_PACK,
   SAMPLE_RESUME_CONTEXT,
   auditSystemPrompt,
@@ -57,13 +58,13 @@ describe('prompts are rendered from the real builders, not transcribed', () => {
 
   it("Refine's prompt is refineSystemPrompt() quoting the Robot's real turn ceiling", () => {
     const section = agentGlossaryView('refine').sections[0];
-    expect(section.text).toBe(refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT));
+    expect(section.text).toBe(refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT, REFINE_TURN_ESTIMATE_FLOOR));
     expect(section.text).toContain(String(ROBOT_MAX_TURNS_DEFAULT));
   });
 
   it("Refine's prompt forbids choosing an approach because it fits the turn budget", () => {
     // Steve: the budget decides how work is sliced, never which design is recommended.
-    const text = refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT);
+    const text = refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT, REFINE_TURN_ESTIMATE_FLOOR);
     expect(text).toContain('Choosing an approach — on merit only.');
     expect(text).toContain('NEVER a reason to prefer one approach over another');
     expect(text).not.toContain("respect the Robot worker's turn budget");
