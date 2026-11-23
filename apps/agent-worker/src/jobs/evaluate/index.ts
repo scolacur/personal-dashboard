@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
-import { ensureEvaluatorRunsTable } from './evaluator-runs';
+import { ensureEvaluatorRunsTable, reclaimInterruptedEvaluatorRuns } from './evaluator-runs';
 import { runEvaluatePass } from './evaluate';
 
 /**
@@ -15,6 +15,11 @@ import { runEvaluatePass } from './evaluate';
  */
 export function startEvaluatorJob(db: Database.Database, config: AgentWorkerConfig): void {
   ensureEvaluatorRunsTable(db);
+  // PD-919: before any pass can start, close the review runs a previous process left open, so a
+  // restart never strands a PR or counts as a failed review. Runs even when disabled: the rows
+  // otherwise linger as "live" Evaluators on the Agent Dashboard.
+  const reclaimed = reclaimInterruptedEvaluatorRuns(db);
+  if (reclaimed > 0) logger.warn({ reclaimed }, 'evaluator: closed review runs a worker restart interrupted');
 
   if (!config.evaluator.enabled) {
     logger.info('evaluator: disabled (EVALUATOR_ENABLED unset) — no PRs will be reviewed');
