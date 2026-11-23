@@ -45,6 +45,7 @@ import { reconcileStalledRuns } from './stall';
 import { resumeAskHuman, askHumanResume } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
 import { pollInReviewPrs } from './pr-state';
+import { runPrStatusUpdate } from './pr-status';
 
 // Re-exported for existing importers (robot.spec.ts) now that these leaf helpers live in board.ts.
 export { setAgentState, branchFor };
@@ -224,6 +225,10 @@ export async function processRobotQueue(
   reconcileStalledRuns(db, config, policy, ownership, now()); // watchdog → ownership-based reclaim (D-104)
   resumeAskHuman(db, now()); // ask_human resume off the DB reply
   await pollInReviewPrs(db, config, now()); // review-/conflict-rework → one PR-state poll
+  // PD-901: keep the live loop-status block on each open Robot PR in sync with the ticket timeline.
+  // Best-effort and GitHub-bound — a failure is logged inside and retried next tick, never affecting
+  // dispatch, so it is awaited for ordering but its outcome is deliberately ignored.
+  await runPrStatusUpdate(db, config, now());
 
   // PD-467: name any ticket the selection query passed over purely because of a parked
   // `agent_state`. Runs after the reconciliation above, so a ticket those steps just re-queued is
