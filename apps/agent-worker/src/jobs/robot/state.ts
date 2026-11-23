@@ -322,6 +322,13 @@ export function writeState(db: Database.Database, key: string, value: string, no
   ).run(key, value, now);
 }
 
+/** Read a `robot_state` value as a string, or null when absent/unset. Used by the PR-status
+ *  updater (PD-901) to remember the hash it last rendered for a ticket's PR. */
+export function readStateString(db: Database.Database, key: string): string | null {
+  const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(key) as { value: string | null } | undefined;
+  return row?.value ?? null;
+}
+
 /** Read a `robot_state` value as a number, or 0 when absent/unset/non-numeric. */
 export function readStateNumber(db: Database.Database, key: string): number {
   const row = db.prepare('SELECT value FROM robot_state WHERE key = ?').get(key) as { value: string | null } | undefined;
