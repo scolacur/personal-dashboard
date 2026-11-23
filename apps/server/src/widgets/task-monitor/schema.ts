@@ -201,6 +201,12 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'worker_heartbeat_add_build_sha', (d) => {
     addColumn(d, 'worker_heartbeat', 'build_sha', 'TEXT');
   });
+  // PD-910: live turn/token counts for the Audit agent's tile on the Agent Dashboard. The worker
+  // writes these; it tolerates their absence, so either side can deploy first.
+  migrate(db, 'audit_run_add_turns_tokens', (d) => {
+    addColumn(d, 'audit_run', 'turns', 'INTEGER');
+    addColumn(d, 'audit_run', 'tokens', 'INTEGER');
+  });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');
     addColumn(d, 'agent_projects', 'seq', 'INTEGER NOT NULL DEFAULT 0');

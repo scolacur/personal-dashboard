@@ -172,3 +172,53 @@ describe('getAuditableTickets', () => {
     expect(rows.map((r) => r.title).sort()).toEqual(['a', 'd']);
   });
 });
+
+// ── PD-910: live turns / tokens on audit_run ──────────────────────────────────
+
+describe('runAuditPass — live turns and tokens (PD-910)', () => {
+  function seed(): void {
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+  }
+  const usageOf = (id: number) =>
+    db.prepare('SELECT turns, tokens, status FROM audit_run WHERE id = ?').get(id) as {
+      turns: number | null;
+      tokens: number | null;
+      status: string;
+    };
+
+  it('writes progress live while the agent runs, then the authoritative totals', async () => {
+    db.exec('ALTER TABLE audit_run ADD COLUMN turns INTEGER; ALTER TABLE audit_run ADD COLUMN tokens INTEGER;');
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    let midRun: ReturnType<typeof usageOf> | undefined;
+    const runAgent = async (_c: unknown, _s: string, _p: string, onProgress?: (t: number, k?: number) => void) => {
+      onProgress?.(1, 1200);
+      onProgress?.(2); // unknown this turn — keeps the known total
+      midRun = usageOf(id);
+      return { ok: true, text: '[]', turns: 3, tokens: 4000 };
+    };
+
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+
+    expect(midRun).toMatchObject({ turns: 2, tokens: 1200, status: 'running' });
+    expect(usageOf(id)).toMatchObject({ turns: 3, tokens: 4000, status: 'done' });
+  });
+
+  it('still finishes the audit when audit_run has not been migrated yet (worker deployed first)', async () => {
+    // freshDb's audit_run has no turns/tokens columns — the pre-migration shape.
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async (_c: unknown, _s: string, _p: string, onProgress?: (t: number, k?: number) => void) => {
+      expect(() => onProgress?.(1, 10)).toThrow(); // the raw write fails; the real agent wraps it in safeProgress
+      return { ok: true, text: '[]', turns: 1, tokens: 10 };
+    };
+
+    const counts = await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+
+    expect(counts).toMatchObject({ projects: 1, findings: 0 });
+    expect((db.prepare('SELECT status FROM audit_run WHERE id = ?').get(id) as { status: string }).status).toBe('done');
+  });
+});

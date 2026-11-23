@@ -1,6 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentWorkerConfig } from '../../shared/config';
+import { createLiveUsageCounter, safeProgress } from '../../shared/live-usage';
+import { logger } from '../../shared/logger';
 
 /**
  * The Evaluator's session (PD-487, [[D-076]]).
@@ -24,11 +26,15 @@ export interface EvaluatorTurnResult {
   tokens?: number;
 }
 
+/** PD-909: live progress — the turn count and running token total, once per new turn. */
+export type EvaluatorProgress = (turns: number, tokens?: number) => void;
+
 /** Injectable so orchestration tests never spawn a real agent. */
 export type RunEvaluatorTurn = (
   config: AgentWorkerConfig,
   systemPrompt: string,
   prompt: string,
+  onProgress?: EvaluatorProgress,
 ) => Promise<EvaluatorTurnResult>;
 
 /**
@@ -40,8 +46,10 @@ export async function runEvaluatorTurn(
   config: AgentWorkerConfig,
   systemPrompt: string,
   prompt: string,
+  onProgress?: EvaluatorProgress,
 ): Promise<EvaluatorTurnResult> {
   let result: EvaluatorTurnResult = { text: '', ok: false };
+  const countTurn = createLiveUsageCounter();
 
   for await (const message of query({
     prompt,
@@ -54,6 +62,9 @@ export async function runEvaluatorTurn(
       permissionMode: 'dontAsk' as const,
     },
   }) as AsyncIterable<SDKMessage>) {
+    // PD-909: live turns/tokens so the Agent Dashboard tile moves while the review runs. A
+    // reporting failure never interrupts the review.
+    safeProgress(onProgress, countTurn(message), (err) => logger.warn({ err }, 'evaluator: progress report failed'));
     if (message.type === 'result') {
       const ok = message.subtype === 'success' && !message.is_error;
       const usage = message as unknown as { num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number } };

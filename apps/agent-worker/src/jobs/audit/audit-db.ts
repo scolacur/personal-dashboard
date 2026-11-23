@@ -124,6 +124,32 @@ export function insertFinding(db: Database.Database, f: FindingInput): void {
   );
 }
 
+/**
+ * PD-910: live progress on a running audit. `turns` / `tokens` are added to the server-owned
+ * `audit_run` by a server migration; a worker deployed before that migration gets "no such column"
+ * here, which the caller swallows (safeProgress) — the audit itself is never affected. Scoped to
+ * `status = 'running'`; `COALESCE` keeps a known token total when this turn's is unknown.
+ */
+export function updateAuditRunProgress(db: Database.Database, id: number, turns: number, tokens?: number): void {
+  db.prepare(
+    "UPDATE audit_run SET turns = ?, tokens = COALESCE(?, tokens) WHERE id = ? AND status = 'running'",
+  ).run(turns, tokens ?? null, id);
+}
+
+/**
+ * PD-910: the authoritative totals off the agent's result message. A SEPARATE statement from
+ * `finishRun` on purpose: if the columns don't exist yet (worker deployed before the server
+ * migration) this one throws and is logged, while the run still closes normally.
+ */
+export function recordAuditRunUsage(db: Database.Database, id: number, usage: { turns?: number; tokens?: number }): void {
+  if (usage.turns === undefined && usage.tokens === undefined) return;
+  db.prepare('UPDATE audit_run SET turns = COALESCE(?, turns), tokens = COALESCE(?, tokens) WHERE id = ?').run(
+    usage.turns ?? null,
+    usage.tokens ?? null,
+    id,
+  );
+}
+
 /** Close out a claimed run. `model` is stamped so the report can show what produced it. */
 export function finishRun(
   db: Database.Database,

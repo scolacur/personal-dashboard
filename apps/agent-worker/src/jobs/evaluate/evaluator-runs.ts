@@ -105,6 +105,17 @@ export function startEvaluatorRun(
   return Number(res.lastInsertRowid);
 }
 
+/**
+ * PD-909: record live progress on a still-open evaluation. Scoped to `finished_at IS NULL` so a
+ * late callback can never overwrite the authoritative totals `finishEvaluatorRun` writes, and
+ * `COALESCE` so an unknown token total never blanks a known one. One statement per turn.
+ */
+export function updateEvaluatorRunProgress(db: Database.Database, runId: number, turns: number, tokens?: number): void {
+  db.prepare(
+    'UPDATE evaluator_runs SET turns = ?, tokens = COALESCE(?, tokens) WHERE id = ? AND finished_at IS NULL',
+  ).run(turns, tokens ?? null, runId);
+}
+
 /** Close a run with its verdict, or with an error when the evaluation could not be read. */
 export function finishEvaluatorRun(
   db: Database.Database,

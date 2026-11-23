@@ -17,7 +17,7 @@ import { logMilestone } from '../robot/events';
 import { notifyLoop } from '../robot/notify';
 import { runEvaluatorTurn } from './evaluate-agent';
 import { capDiff, combineReports, defaultDiffFetcher, type EvaluatePassDeps } from './evaluate';
-import { finishEvaluatorRun, headEvaluated, NO_TICKET, prRounds, startEvaluatorRun } from './evaluator-runs';
+import { finishEvaluatorRun, headEvaluated, NO_TICKET, prRounds, startEvaluatorRun, updateEvaluatorRunProgress } from './evaluator-runs';
 import { inReviewPrTargets } from '../robot/pr-state';
 import { defaultHeadShaFetcher, defaultStatusPoster, gateTargetUrl } from './review-gate';
 import { blockingFindings, MAX_EVALUATION_ROUNDS, parseEvaluatorReport } from './verdict';
@@ -301,7 +301,9 @@ export async function evaluateNextOtherPr(
   for (const lens of lenses) {
     const runId = runIds.get(lens)!;
     const system = lens === 'security' ? securityEvaluatorSystemPrompt(contextPack) : evaluatorSystemPrompt(contextPack);
-    const result = await (deps.runAgent ?? runEvaluatorTurn)(config, system, userPrompt);
+    const result = await (deps.runAgent ?? runEvaluatorTurn)(config, system, userPrompt, (t, k) =>
+      updateEvaluatorRunProgress(db, runId, t, k),
+    );
     const report = result.ok ? parseEvaluatorReport(result.text) : null;
     finishEvaluatorRun(
       db,

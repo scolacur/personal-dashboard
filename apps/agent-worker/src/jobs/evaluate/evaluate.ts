@@ -29,6 +29,7 @@ import {
   evaluatorBudgetVerdict,
   finishEvaluatorRun,
   startEvaluatorRun,
+  updateEvaluatorRunProgress,
 } from './evaluator-runs';
 import { runEvaluatorTurn, type RunEvaluatorTurn } from './evaluate-agent';
 // `reworkBrief` is deliberately NOT called here — the brief is derived at dispatch time from the
@@ -220,7 +221,7 @@ export async function evaluateOnePr(
     const runId = runIds.get(lens)!;
     const r = rounds.get(lens)!;
     const system = lens === 'security' ? securityEvaluatorSystemPrompt(contextPack) : evaluatorSystemPrompt(contextPack);
-    const result = await runAgent(config, system, userPrompt);
+    const result = await runAgent(config, system, userPrompt, (t, k) => updateEvaluatorRunProgress(db, runId, t, k));
     if (!result.ok) {
       finishEvaluatorRun(db, runId, { error: result.text || 'agent error', turns: result.turns, tokens: result.tokens }, now);
       logger.warn({ ticketId: target.ticketId, lens, error: result.text }, 'evaluator: agent turn failed');

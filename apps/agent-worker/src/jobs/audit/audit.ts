@@ -8,10 +8,12 @@ import {
   firstProjectWithActiveTickets,
   getAuditableTickets,
   insertFinding,
+  recordAuditRunUsage,
+  updateAuditRunProgress,
   type AuditableTicket,
   type ClaimedRun,
 } from './audit-db';
-import { runAuditTurn } from './audit-agent';
+import { runAuditTurn, type AuditProgress } from './audit-agent';
 
 // Recommendation buckets the audit agent may emit (D-045). 'keep' = no action needed;
 // it's recorded so a re-run can show the ticket was reviewed and deliberately left alone.
@@ -30,7 +32,12 @@ interface RawFinding {
 
 /** Injectable seams so the pass is unit-testable without a live agent or a real checkout. */
 export interface AuditPassDeps {
-  runAgent?: (config: AgentWorkerConfig, systemPrompt: string, prompt: string) => Promise<{ text: string; ok: boolean }>;
+  runAgent?: (
+    config: AgentWorkerConfig,
+    systemPrompt: string,
+    prompt: string,
+    onProgress?: AuditProgress,
+  ) => Promise<{ text: string; ok: boolean; turns?: number; tokens?: number }>;
   buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
 }
 
@@ -92,7 +99,16 @@ export async function runAuditPass(
     logger.warn({ what }, 'audit: context pack is missing an expected section — the agent runs degraded'),
   );
   const systemPrompt = auditSystemPrompt(contextPack);
-  const reply = await runAgent(config, systemPrompt, ticketsPrompt(project.name, tickets));
+  const reply = await runAgent(config, systemPrompt, ticketsPrompt(project.name, tickets), (t, k) =>
+    updateAuditRunProgress(db, run.id, t, k),
+  );
+  // PD-910: authoritative totals, recorded even when the turn failed (spend is spend). Guarded: a
+  // not-yet-migrated audit_run must never turn a finished audit into an errored one.
+  try {
+    recordAuditRunUsage(db, run.id, { turns: reply.turns, tokens: reply.tokens });
+  } catch (err) {
+    logger.warn({ err, runId: run.id }, 'audit: could not record turns/tokens (audit_run not migrated yet?)');
+  }
   if (!reply.ok) {
     // API/billing/rate error — surface it as an errored run so it's retried, don't persist junk.
     throw new Error(`audit agent turn failed: ${reply.text.slice(0, 200)}`);
