@@ -1242,3 +1242,54 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     expect(agentState(db, 1)).toBe('in-review');
   });
 });
+
+// PD-917/PD-918: the hand-off on disk wins over the session's exit status, and a PR the run opened is
+// always recorded. PD-901's run opened PR #496, then hit the turn ceiling, and was parked `stuck`.
+describe('hand-off on disk is authoritative (PD-917, PD-918)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+  const CEILING = 'Claude Code returned an error result: Reached maximum number of turns (50)';
+
+  it('a run that opened its PR and THEN hit the ceiling is handed off, not parked', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), deps({ ok: false, error: CEILING, verifyOk: true, prNumber: 496, turns: 51 }));
+    expect(agentState(db, 1)).toBe('in-review');
+    const run = listRunsForTicket(db, 1)[0];
+    expect(run.status).toBe('handed-off');
+    expect(run.prUrl).toBe('https://github.com/scolacur/personal-dashboard/pull/496');
+    expect(run.error).toBe(CEILING); // the late error stays on the record
+    expect(failedRunsForTicket(db, 1)).toEqual([]);
+    const types = eventTypes(db, 1);
+    expect(types).toContain('robot_handoff');
+    expect(types).not.toContain('robot_parked');
+    expect(types).not.toContain('robot_fault');
+    const handoff = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_handoff'").get() as { detail: string };
+    expect(JSON.parse(handoff.detail)).toMatchObject({ lateError: CEILING });
+  });
+
+  it('a clean hand-off carries no lateError', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), deps());
+    const handoff = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_handoff'").get() as { detail: string };
+    expect(JSON.parse(handoff.detail)).not.toHaveProperty('lateError');
+    expect(listRunsForTicket(db, 1)[0].error).toBeNull();
+  });
+
+  it('a green verify with no PR is still not a hand-off', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), deps({ ok: false, error: 'spawn EACCES', verifyOk: true, prNumber: undefined }));
+    expect(agentState(db, 1)).not.toBe('in-review');
+    expect(listRunsForTicket(db, 1)[0].status).toBe('error');
+  });
+
+  it('a run that opened a PR but did not hand off still records the PR (PD-918)', async () => {
+    addQueued(db, 1);
+    // A PR without the verify marker: not accepted as a hand-off, but the PR must not be forgotten.
+    await processRobotQueue(db, cfg(), deps({ ok: true, verifyOk: false, prNumber: 77 }));
+    const run = listRunsForTicket(db, 1)[0];
+    expect(run.status).toBe('no-verify');
+    expect(run.prUrl).toBe('https://github.com/scolacur/personal-dashboard/pull/77');
+  });
+});

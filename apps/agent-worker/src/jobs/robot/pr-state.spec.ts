@@ -203,3 +203,64 @@ describe('pollInReviewPrs', () => {
     expect(calls).toBe(1);
   });
 });
+
+// PD-918: a parked ticket whose PR merged anyway is completed (PD-901's PR #496 merged while it sat
+// `stuck`, and nothing noticed).
+describe('pollInReviewPrs — parked-PR merge sweep (PD-918)', () => {
+  let db: Database.Database;
+  const cfg = () => loadConfig({ ROBOT_PR_POLL_INTERVAL_MS: '0' });
+  const state = (id: number) =>
+    db.prepare('SELECT status, agent_state AS s FROM agent_tickets WHERE id = ?').get(id) as { status: string; s: string };
+  const completedEvents = (id: number) =>
+    (db.prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = 'robot_completed'").all(id) as { detail: string }[]).map(
+      (r) => JSON.parse(r.detail) as Record<string, unknown>,
+    );
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
+      CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
+    `);
+    ensureRunsTable(db);
+    ensureRobotStateTable(db);
+  });
+
+  /** A ticket parked in `agentState` whose newest run recorded `pr` (a failed run, as on PD-901). */
+  function parked(id: number, agentState: string, pr: number | null): void {
+    db.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (?, 'queue', 'robot', ?)").run(id, agentState);
+    const r = startRun(db, { ticketId: id, issueNumber: null, branch: `robot/t${id}` }, 10);
+    finishRun(db, r, { status: 'error', prUrl: pr ? `https://github.com/scolacur/personal-dashboard/pull/${pr}` : null }, 100);
+  }
+
+  it.each(['stuck', 'checkpoint', 'needs-human'])('completes a %s ticket whose PR merged', async (s) => {
+    parked(1, s, 496);
+    await pollInReviewPrs(db, cfg(), 5000, async () => ({ ...EMPTY, state: 'MERGED', mergedBy: 'scolacur' }));
+    expect(state(1)).toEqual({ status: 'completed', s: 'done' });
+    expect(completedEvents(1)).toEqual([{ prNumber: 496, via: 'parked_pr_merged', fromState: s }]);
+  });
+
+  it.each(['OPEN', 'CLOSED'] as const)('leaves a parked ticket alone when its PR is %s — merge-only', async (prState) => {
+    parked(1, 'stuck', 496);
+    await pollInReviewPrs(db, cfg(), 5000, async () => ({ ...EMPTY, state: prState, mergeable: 'CONFLICTING' }));
+    expect(state(1)).toEqual({ status: 'queue', s: 'stuck' });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM agent_ticket_events').get()).toEqual({ n: 0 });
+  });
+
+  it('ignores a parked ticket with no PR on record, and never asks GitHub about it', async () => {
+    parked(1, 'stuck', null);
+    const asked: number[] = [];
+    await pollInReviewPrs(db, cfg(), 5000, async (_r, n) => (asked.push(n), { ...EMPTY, state: 'MERGED' }));
+    expect(asked).toEqual([]);
+    expect(state(1).s).toBe('stuck');
+  });
+
+  it('completes an in-review ticket once, through the existing path only', async () => {
+    db.prepare("INSERT INTO agent_tickets (id, status, assignee, agent_state) VALUES (1, 'queue', 'robot', 'in-review')").run();
+    const r = startRun(db, { ticketId: 1, issueNumber: null, branch: 'robot/t1' }, 10);
+    finishRun(db, r, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 100);
+    await pollInReviewPrs(db, cfg(), 5000, async () => ({ ...EMPTY, state: 'MERGED', mergedBy: 'scolacur' }));
+    expect(completedEvents(1)).toEqual([{ prNumber: 314 }]);
+  });
+});
