@@ -6,7 +6,12 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { refineSystemPrompt, type RefineProposal, type RefineQuestionRound } from '@dashboard/shared';
+import {
+  refineSystemPrompt,
+  REFINE_TURN_ESTIMATE_FLOOR,
+  type RefineProposal,
+  type RefineQuestionRound,
+} from '@dashboard/shared';
 import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { ASK_TOOL_NAME } from './ask-tool';
@@ -209,7 +214,7 @@ export function refineOptions(
     // result — which `resultFrom` already marks `ok: false`, so it lands on the existing failure
     // path rather than being persisted as the agent's words.
     maxTurns: config.refineMaxTurns,
-    systemPrompt: refineSystemPrompt(contextPack, config.robot.maxTurns),
+    systemPrompt: refineSystemPrompt(contextPack, config.robot.maxTurns, REFINE_TURN_ESTIMATE_FLOOR),
     // `Agent` is listed so spawning the explorer is approved by rule, independent of the hook's
     // `allow`; the hook below still rewrites its input and refuses any other sub-agent type.
     allowedTools: [...READ_ONLY_TOOLS, 'Agent', ...refineTools],

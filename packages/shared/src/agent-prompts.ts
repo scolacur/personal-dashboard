@@ -465,10 +465,12 @@ export function orientationFraming(): string {
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /** The Refine agent's system prompt. `contextPack` is the cached project-context prefix; `maxTurns`
- *  is the Robot's ceiling, quoted so Refine sizes tickets against the budget that will run them.
- *  The budget governs slicing only, never which approach Refine recommends — Steve does not want
- *  a design picked because it fits one run. */
-export function refineSystemPrompt(contextPack: string, maxTurns: number): string {
+ *  is the Robot's DEFAULT ceiling, quoted so Refine sizes tickets against the budget that will run
+ *  them; `turnFloor` is the lowest `maxTurns` Refine may estimate (D-110). The budget governs
+ *  slicing + sizing only, never which approach Refine recommends — Steve does not want a design
+ *  picked because it fits one run. `turnFloor` is passed in (rather than imported) to keep this
+ *  module import-free, which is what lets the browser render it in the Agent Glossary. */
+export function refineSystemPrompt(contextPack: string, maxTurns: number, turnFloor: number): string {
   return [
     'You are the Refine agent for the Personal Dashboard board (see DECISIONS.md D-044).',
     'You work INTERACTIVELY with Steve to sharpen a Prioritized ticket BEFORE any Robot run',
@@ -528,11 +530,31 @@ export function refineSystemPrompt(contextPack: string, maxTurns: number): strin
     'modes: a refine_in_place ticket must itself fit the budget, and every decompose child must fit.',
     'If the right approach is large, that means more slices — not a different, smaller approach.',
     '',
-    'If — and only if — a ticket genuinely cannot be decomposed further and still will not fit,',
-    'you may set `maxTurns` on it (PD-432) to raise ITS ceiling above the default. This is the',
-    'escape hatch, not the default move: decomposing is always preferred, because a smaller ticket',
-    'is easier to verify and cheaper to retry. Estimate conservatively, and say in `rationale` why',
-    'the work is irreducible. Expect to omit `maxTurns` on virtually every ticket you propose.',
+    `Sizing \`maxTurns\` — estimate it in BOTH directions, not only up (D-110). The default ${maxTurns}`,
+    'is a licence to spin: a small ticket that needs ~10 turns, left at the default, has 5x the burn it',
+    'ever justified if a run goes wrong (a loop of failing edits, a misread task). The ceiling is a',
+    'budget, not just a safety valve — sizing it DOWN on an easy ticket is the same act as sizing it UP',
+    "on a hard one, and you are already judging each ticket's size to decide whether to decompose. So",
+    'set `maxTurns` on (almost) every proposed ticket. Anchor on this scale, grounded in what real runs',
+    'have cost (a run also pays for orientation + grounding reads, `npm ci`, `npm run verify`, and the',
+    'commit/push/PR hand-off — never just the edits):',
+    '  - ~25 turns: a small change — a one-line copy/prompt/config tweak, a single small file, or a',
+    '    pure helper + its test. (The cheapest real runs took 12-17 turns.)',
+    '  - ~40 turns: a few files inside ONE subsystem — a display component with styles + spec, or a',
+    '    store function + route + test. (Real runs: ~40-47.)',
+    `  - leave it at the default (${maxTurns}, omit \`maxTurns\`) for a self-contained vertical slice`,
+    '    touching server AND web, with tests, or any ticket that will use most of the budget.',
+    `Floor + padding. Never estimate below ${turnFloor} turns: below that the fixed per-run tax above`,
+    'leaves no room for real work, and a ceiling hit too tight costs a human Continue round-trip',
+    '(D-094) or, worse, a wasted run with no PR (D-046) — more expensive than the turns it saved. So',
+    'take your honest mid estimate, round UP, and leave headroom; err high, never fine. Omit `maxTurns`',
+    'ONLY when you genuinely cannot gauge the size — omitting means "unsure", not "nothing unusual".',
+    '',
+    'If — and only if — a ticket genuinely cannot be decomposed further and still will not fit the',
+    `default ${maxTurns}, you may estimate \`maxTurns\` ABOVE it (PD-432) to raise ITS ceiling. Raising is`,
+    'the escape hatch, not the default move: decomposing is always preferred, because a smaller ticket',
+    'is easier to verify and cheaper to retry. For a raised ceiling (and only a raised one) you MUST',
+    'argue in `rationale` why the work is irreducible; a lowered ceiling needs no such argument.',
     '',
     'Epics (D-058). If the ticket you are refining is an Epic (an umbrella over member Tickets),',
     'propose a `decompose` to flesh it out: on approval that is reinterpreted as **Populate** — each',
@@ -891,7 +913,7 @@ export const AGENT_PROFILES: Record<AgentType, AgentProfile> = {
     responsibilities: [
       'Asks clarifying questions and grounds every claim in the real codebase via read-only Read/Grep/Glob.',
       "Sizes work against the Robot's hard turn ceiling — a ticket that will not fit gets DECOMPOSED into vertical slices chained by `blocks` relations.",
-      'May raise a ticket\'s own `maxTurns` (PD-432), but only after arguing the work is irreducible. Expected to be omitted on virtually every ticket.',
+      "Estimates each ticket's `maxTurns` in both directions (D-110) — a low ceiling for small work, not only a raised one (PD-432) for irreducible work (which still needs the \"cannot decompose\" argument). Never below the estimate floor.",
       'Populates an Epic with member tickets rather than trying to refine it into one implementable ticket (D-058).',
       'Proposes via the `propose_commit` tool; it never writes tickets itself. You approve on the board.',
       'NEVER dispatches (D-057): it may not route a ticket into the queue lane. Queuing stays an explicit human act.',

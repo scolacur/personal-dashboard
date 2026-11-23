@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { ROBOT_MAX_TURNS_LIMIT, coerceTicketStatus, refineRelationsError } from '@dashboard/shared';
+import {
+  ROBOT_MAX_TURNS_DEFAULT,
+  ROBOT_MAX_TURNS_LIMIT,
+  REFINE_TURN_ESTIMATE_FLOOR,
+  coerceTicketStatus,
+  refineRelationsError,
+} from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal, RefineQuestionRound } from '@dashboard/shared';
 import type Database from 'better-sqlite3';
@@ -103,10 +109,13 @@ const DESCRIPTION = [
   'afterwards. Use `assignee` ("robot" | "steve" | null) to hint who should do the work. A ticket',
   'you intend for the robot MUST still carry a Robot-shaped body — the four sections ## Context,',
   '## Task, ## Done When, ## Out of scope — so Steve can queue it as-is.',
-  'OPTIONAL `maxTurns` (PD-432): a conservative estimate of the turns a ticket needs, which raises',
-  'that ticket\'s ceiling above the default. DECOMPOSING REMAINS THE PREFERRED MOVE — only set it',
-  'when you have argued in `rationale` that the work genuinely cannot be split further, and estimate',
-  'conservatively. Omit it for ~every ticket.',
+  `\`maxTurns\` (PD-432, D-110): estimate the ticket's turn ceiling in BOTH directions — a LOW ceiling`,
+  `for a small ticket (not only a raised one for irreducible work). Set it on ~every ticket; the`,
+  `default when omitted is ${ROBOT_MAX_TURNS_DEFAULT}, which is a 5x licence to spin on a small ticket. Anchor on the`,
+  `scale in the system prompt (~25 small / ~40 one subsystem / default for a vertical slice), never below the`,
+  `floor of ${REFINE_TURN_ESTIMATE_FLOOR}, rounding up for headroom. A RAISED ceiling (above ${ROBOT_MAX_TURNS_DEFAULT}) still requires the`,
+  `"cannot decompose further" argument in \`rationale\`; a lowered one does not. Omit only when you`,
+  `genuinely cannot gauge the size.`,
   'SET `kind` (PD-896) — "bug" (something that worked, or should have, is broken), "feature" (new',
   'capability or a change to how something works) or "chore" (maintenance, docs, infra, cleanup with no',
   'user-visible change) — on THIS ticket (refine_in_place) and on each child. A child without `kind`',

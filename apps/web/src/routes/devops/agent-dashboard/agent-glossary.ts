@@ -2,6 +2,7 @@ import {
   AGENT_PROFILES,
   AGENT_TYPES,
   ROBOT_MAX_TURNS_DEFAULT,
+  REFINE_TURN_ESTIMATE_FLOOR,
   SAMPLE_CONTEXT_PACK,
   SAMPLE_RESUME_CONTEXT,
   auditSystemPrompt,
@@ -107,7 +108,7 @@ export function agentGlossaryView(id: AgentType): AgentGlossaryView {
         {
           title: 'System prompt',
           note: `Sent on every Refine session. The turn ceiling it quotes (${ROBOT_MAX_TURNS_DEFAULT}) is the Robot's, not its own — Refine sizes tickets against the budget that will run them.`,
-          text: refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT),
+          text: refineSystemPrompt(SAMPLE_CONTEXT_PACK, ROBOT_MAX_TURNS_DEFAULT, REFINE_TURN_ESTIMATE_FLOOR),
         },
       ],
     };
