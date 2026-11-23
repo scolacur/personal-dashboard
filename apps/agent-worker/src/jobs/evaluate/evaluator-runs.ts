@@ -240,13 +240,16 @@ export function lensStates(db: Database.Database, select: LensRunSelect): Map<Ev
  * it has a terminal verdict (ship/escalate), it has revised up to the round cap, or it has used its
  * one error retry. A lens with a single errored run and no verdict is NOT settled — it is retried on
  * a later poll. A revise below the cap is not settled either, so the revise ping-pong keeps running
- * to `MAX_EVALUATION_ROUNDS` (in production that re-engagement moves the ticket out of in-review).
+ * to the round cap (in production that re-engagement moves the ticket out of in-review).
+ *
+ * `maxRounds` is `config.evaluator.maxRounds` (PD-761); a hard-coded cap here would stop a lens at
+ * the default even when EVALUATOR_MAX_ROUNDS raised it.
  */
-export function lensNeedsRun(state: LensRunState | undefined): boolean {
+export function lensNeedsRun(state: LensRunState | undefined, maxRounds: number = MAX_EVALUATION_ROUNDS): boolean {
   if (!state) return true;
   if (state.hasTerminalVerdict) return false;
   if (state.errorRuns >= MAX_LENS_ERROR_RUNS) return false;
-  if (state.verdictRuns >= MAX_EVALUATION_ROUNDS) return false;
+  if (state.verdictRuns >= maxRounds) return false;
   return true;
 }
 
@@ -290,9 +293,10 @@ export function alreadyEvaluated(
   prNumber: number,
   since: number,
   lenses: EvaluatorLens[] = ['code'],
+  maxRounds: number = MAX_EVALUATION_ROUNDS,
 ): boolean {
   const states = lensStates(db, { ticketId, prNumber, since });
-  return lenses.every((l) => !lensNeedsRun(states.get(l)));
+  return lenses.every((l) => !lensNeedsRun(states.get(l), maxRounds));
 }
 
 /** The Evaluator's spend inside its own rolling window. Mirrors `budgetUsage()` over its own table —

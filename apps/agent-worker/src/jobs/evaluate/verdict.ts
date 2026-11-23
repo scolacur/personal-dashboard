@@ -19,6 +19,10 @@ import { EVALUATOR_VERDICTS, SECURITY_FINDING_KINDS, type EvaluatorFinding, type
  *
  * Two rounds, because the first `revise` is the useful one. A second gives the Robot one chance to
  * respond to it; a third has, in practice, never been a different opinion.
+ *
+ * **This is now only the DEFAULT** (PD-761). The live cap is `EvaluatorConfig.maxRounds`, read from
+ * `EVALUATOR_MAX_ROUNDS`, so Steve can raise it once each round is cheap (PD-419) without a code
+ * change. Both review paths consume the configured value; this constant is the fallback.
  */
 export const MAX_EVALUATION_ROUNDS = 2;
 

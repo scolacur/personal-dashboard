@@ -20,7 +20,7 @@ import { capDiff, combineReports, defaultDiffFetcher, type EvaluatePassDeps } fr
 import { finishEvaluatorRun, headEvaluated, NO_TICKET, prRounds, startEvaluatorRun, updateEvaluatorRunProgress } from './evaluator-runs';
 import { inReviewPrTargets } from '../robot/pr-state';
 import { defaultHeadShaFetcher, defaultStatusPoster, gateTargetUrl } from './review-gate';
-import { blockingFindings, MAX_EVALUATION_ROUNDS, parseEvaluatorReport } from './verdict';
+import { blockingFindings, parseEvaluatorReport } from './verdict';
 
 const run = promisify(execFile);
 
@@ -197,6 +197,7 @@ export function verdictComment(
   report: EvaluatorReport | null,
   round: number,
   tickets: readonly { displayId: string; title: string }[],
+  maxRounds: number,
 ): string {
   const lines: string[] = ['<!-- evaluator:verdict -->'];
   const against = tickets.length > 0 ? ticketList(tickets) : 'the PR description (no linked ticket, so no acceptance criteria)';
@@ -217,7 +218,7 @@ export function verdictComment(
       '',
       report.verdict === 'ship'
         ? 'review-gate is set to success for this commit.'
-        : `review-gate is left to Steve's approval. A new push is reviewed again (up to ${MAX_EVALUATION_ROUNDS} rounds).`,
+        : `review-gate is left to Steve's approval. A new push is reviewed again (up to ${maxRounds} rounds).`,
     );
   }
   return lines.join('\n').split(HUMAN_REPLY_MARKER).join('');
@@ -254,7 +255,7 @@ export async function evaluateNextOtherPr(
   }
 
   const pr = sorted.find(
-    (p) => skipReason(p, inReviewPrNumbers) === null && !headEvaluated(db, p.number, p.headRefOid) && prRounds(db, p.number) < MAX_EVALUATION_ROUNDS,
+    (p) => skipReason(p, inReviewPrNumbers) === null && !headEvaluated(db, p.number, p.headRefOid) && prRounds(db, p.number) < config.evaluator.maxRounds,
   );
   if (!pr) return undefined;
 
@@ -333,7 +334,7 @@ export async function evaluateNextOtherPr(
   }
 
   const combined = combineReports(reports);
-  await (deps.comment ?? defaultPrCommenter(config))(repo, pr.number, verdictComment(combined, round, tickets));
+  await (deps.comment ?? defaultPrCommenter(config))(repo, pr.number, verdictComment(combined, round, tickets, config.evaluator.maxRounds));
   if (combined?.verdict === 'ship' && config.evaluator.reviewGateToken) {
     await (deps.postStatus ?? defaultStatusPoster(config))(
       repo,

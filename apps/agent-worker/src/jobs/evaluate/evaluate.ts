@@ -38,7 +38,7 @@ import { runEvaluatorTurn, type RunEvaluatorTurn } from './evaluate-agent';
 // `reworkBrief` is deliberately NOT called here — the brief is derived at dispatch time from the
 // recorded findings (`brief.ts`), so the wording the Robot receives always matches the stored
 // verdict rather than being a second copy that can drift.
-import { MAX_DIFF_CHARS, MAX_EVALUATION_ROUNDS, MAX_UNPARSEABLE_CHARS, blockingFindings, parseEvaluatorReport } from './verdict';
+import { MAX_DIFF_CHARS, MAX_UNPARSEABLE_CHARS, blockingFindings, parseEvaluatorReport } from './verdict';
 import {
   defaultHeadShaFetcher,
   defaultStatusPoster,
@@ -180,7 +180,7 @@ export async function evaluateOnePr(
   // (shipped/escalated, revised to the round cap, or errored twice) is folded in from the DB below
   // instead of re-run. The revise round for a lens counts its prior VERDICT runs only, so an error
   // retry never consumes a legitimate revise round.
-  const needed = lenses.filter((l) => lensNeedsRun(priorStates.get(l)));
+  const needed = lenses.filter((l) => lensNeedsRun(priorStates.get(l), config.evaluator.maxRounds));
   const roundFor = (l: EvaluatorLens) => (priorStates.get(l)?.verdictRuns ?? 0) + 1;
   const round = Math.max(1, ...needed.map(roundFor));
 
@@ -231,7 +231,7 @@ export async function evaluateOnePr(
   const rawDiff = await fetchDiff(target.repo, target.prNumber);
   if (rawDiff === null) {
     for (const id of runIds.values()) finishEvaluatorRun(db, id, { error: 'diff fetch failed' }, now);
-    await gate(gateForOutcome(null, round, MAX_EVALUATION_ROUNDS));
+    await gate(gateForOutcome(null, round, config.evaluator.maxRounds));
     return null;
   }
   const { diff, truncated } = capDiff(rawDiff);
@@ -312,8 +312,8 @@ export async function evaluateOnePr(
   const reviseRound = Math.max(0, ...needed.filter((l) => reports.get(l)?.verdict === 'revise').map(roundFor));
 
   if (combined?.verdict === 'revise' && reviseRound > 0) {
-    if (reviseRound >= MAX_EVALUATION_ROUNDS) {
-      // The cap is the loop-safety limit (see MAX_EVALUATION_ROUNDS). At the ceiling the finding is
+    if (reviseRound >= config.evaluator.maxRounds) {
+      // The cap is the loop-safety limit (`config.evaluator.maxRounds`, default MAX_EVALUATION_ROUNDS). At the ceiling the finding is
       // recorded and the human decides — sending it back again is the unbounded cycle.
       logger.warn(
         { ticketId: target.ticketId, round: reviseRound },
@@ -346,7 +346,7 @@ export async function evaluateOnePr(
     ? { lens: erroredLenses[0], retryUsed: (finalStates.get(erroredLenses[0])?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS }
     : undefined;
 
-  let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS, failureCtx);
+  let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, config.evaluator.maxRounds, failureCtx);
   // PD-773: a ship on a PR that waits for Steve's visual check holds the gate at pending. His approval
   // releases it (releaseVisualGates); until then he is told it is waiting.
   // PD-793: only while capture is on. With it off there is nothing to look at, so the gate skips
@@ -495,7 +495,7 @@ export async function runEvaluatePass(
   let evaluated = 0;
   for (const target of inReviewPrTargets(db)) {
     const since = reviewBoundary(db, target.ticketId);
-    if (alreadyEvaluated(db, target.ticketId, target.prNumber, since, enabledLenses)) continue;
+    if (alreadyEvaluated(db, target.ticketId, target.prNumber, since, enabledLenses, config.evaluator.maxRounds)) continue;
     try {
       const report = await evaluateOnePr(db, config, target, deps, now);
       if (report) evaluated++;

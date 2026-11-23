@@ -1,5 +1,7 @@
 import path from 'node:path';
 import { ROBOT_MAX_TURNS_DEFAULT } from '@dashboard/shared';
+import { logger } from './logger';
+import { MAX_EVALUATION_ROUNDS } from '../jobs/evaluate/verdict';
 
 /**
  * agent-worker configuration (D-044, D-045). All env-driven so the same image runs in
@@ -117,6 +119,15 @@ export interface EvaluatorConfig {
   /** Turn ceiling per window; 0 disables. Lower than the Robot's — an evaluation is one read-only
    *  pass over a diff, so a high number here means something is wrong, not something is busy. */
   budgetTurns: number;
+  /**
+   * Per-cycle review round cap (`EVALUATOR_MAX_ROUNDS`, PD-761). How many times one ticket/PR may be
+   * sent back for rework before the Evaluator stops and leaves it to Steve — the loop-safety limit
+   * that keeps the revise→rework→hand-off→revise cycle bounded (see `MAX_EVALUATION_ROUNDS`, the
+   * default). Made configurable (not raised) here: the production value stays 2 until each round is
+   * cheap (PD-419). An invalid value falls back to the default with a logged warning, so a typo can
+   * never silently disable the cap or set it to zero.
+   */
+  maxRounds: number;
   /** Token ceiling per window; 0 disables (the default), same reasoning as the Robot's. */
   budgetTokens: number;
   /** PD-767: also run the security reviewer on every PR the Evaluator reviews. On unless
@@ -281,6 +292,23 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
   };
 }
 
+/**
+ * Parse `EVALUATOR_MAX_ROUNDS` (PD-761). Unset/blank ⇒ the default (`MAX_EVALUATION_ROUNDS`). Only a
+ * positive integer is accepted; anything else (0, negative, non-numeric, a float) is rejected and
+ * falls back to the default with a logged warning. The cap is loop safety, so a malformed value must
+ * never be able to turn it off.
+ */
+function parseEvaluatorMaxRounds(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return MAX_EVALUATION_ROUNDS;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n > 0) return n;
+  logger.warn(
+    { EVALUATOR_MAX_ROUNDS: raw },
+    `evaluator: EVALUATOR_MAX_ROUNDS is not a positive integer — falling back to the default (${MAX_EVALUATION_ROUNDS})`,
+  );
+  return MAX_EVALUATION_ROUNDS;
+}
+
 export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
   return {
     enabled: env.EVALUATOR_ENABLED === '1' || env.EVALUATOR_ENABLED === 'true',
@@ -289,6 +317,7 @@ export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
     intervalMs: Number(env.EVALUATOR_INTERVAL_MS ?? 60_000),
     budgetWindowMs: Number(env.EVALUATOR_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
     budgetTurns: Number(env.EVALUATOR_BUDGET_TURNS ?? 200),
+    maxRounds: parseEvaluatorMaxRounds(env.EVALUATOR_MAX_ROUNDS),
     budgetTokens: Number(env.EVALUATOR_BUDGET_TOKENS ?? 0),
     securityEnabled: !(
       env.EVALUATOR_SECURITY_ENABLED === '0' || env.EVALUATOR_SECURITY_ENABLED === 'false'
