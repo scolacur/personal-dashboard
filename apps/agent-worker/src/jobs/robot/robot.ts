@@ -26,7 +26,7 @@ import {
   clearWipRef,
 } from './runs';
 import { classifyFault, decideFault, isTurnCeiling, preflight, INTERRUPTED_SIGNATURE, type FaultClassification, type FaultPolicy } from './faults';
-import { ABORT_HUNG, ABORT_SHUTDOWN, createRunOwnership, type RunOwnership } from './ownership';
+import { ABORT_HUNG, ABORT_SHUTDOWN, ABORT_SUPERSEDED, createRunOwnership, type RunOwnership } from './ownership';
 import { RobotShutdown, timeout } from './shutdown';
 import {
   activeDeployHold,
@@ -47,6 +47,7 @@ import { resumeAskHuman, askHumanResume } from './resume';
 import { pendingEvaluatorBrief } from '../evaluate/brief';
 import { pollInReviewPrs, defaultPrFetcher, type PrFetcher } from './pr-state';
 import { checkRework } from './rework-guard';
+import { defaultHandoffStarted, defaultHasCommit, watchForSupersession, type Supersession } from './supersede';
 import { runPrStatusUpdate } from './pr-status';
 
 // Re-exported for existing importers (robot.spec.ts) now that these leaf helpers live in board.ts.
@@ -121,6 +122,10 @@ export interface RobotDeps {
   shutdown?: RobotShutdown;
   /** PD-924: PR lookup for the pre-dispatch rework guard. Injectable so tests never shell out. */
   fetchPr?: PrFetcher;
+  /** PD-926: is `sha` a commit in the clone (the Robot's own push)? Injectable so tests skip git. */
+  hasCommit?: (wt: Worktree, sha: string) => Promise<boolean>;
+  /** PD-926: has the session reached a green verify? From then on a rework is never stopped. */
+  handoffStarted?: (wt: Worktree) => boolean;
   now?: () => number;
 }
 
@@ -231,6 +236,8 @@ export async function processRobotQueue(
   const ownership = deps.ownership ?? createRunOwnership();
   const shutdown = deps.shutdown ?? new RobotShutdown(ownership);
   const fetchPr = deps.fetchPr ?? defaultPrFetcher(config);
+  const hasCommit = deps.hasCommit ?? defaultHasCommit(config);
+  const handoffStarted = deps.handoffStarted ?? defaultHandoffStarted;
 
   // ── C5 (PD-346): pre-dispatch reconciliation — the four folded-in bridges. These run BEFORE
   // selection so a ticket they re-queue is picked up in this SAME cycle. All are DB-native (no
@@ -509,6 +516,9 @@ export async function processRobotQueue(
     // PD-719: only a hand-off (the work is on GitHub) deletes the clone. A park, a fault or a
     // no-verify keeps it, so the commits survive into the next dispatch of this ticket.
     let handedOff = false;
+    // PD-926: set when the rework's PR moved on under it and the session was stopped for that.
+    let superseded: Supersession | null = null;
+    let stopWatch: () => void = () => {};
 
     // PD-737/T898: preserve a non-hand-off run's WIP to `robot-wip/t<id>` before the clone is
     // dropped/reused. The clone is kept locally (PD-719), but a crashed run's UNCOMMITTED work is
@@ -553,6 +563,33 @@ export async function processRobotQueue(
     /** The hung-session backstop (stall.ts) already closed this run and re-queued its ticket; closing
      *  it again would double-write it. Only salvage the WIP. Unreachable while sessions are awaited
      *  inside the cycle — live once a run can outlive its cycle. */
+    /**
+     * PD-926: the rework's PR merged, closed, or was pushed to by someone else mid-run, so the session
+     * was stopped. Not a failure — no retry used, never the breaker — and no WIP is kept: the work was
+     * for a PR state that no longer exists. The ticket goes where PD-924's dispatch guard would have
+     * sent it.
+     */
+    const closeSuperseded = (
+      s: Supersession,
+      sessionId: string | undefined,
+      metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
+    ): void => {
+      finishRun(db, runId, { status: 'superseded', sessionId, faultReason: s.reason, ...metrics }, now());
+      if (s.kind === 'merged') {
+        completeTicket(db, candidate.id, now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.completed, { prNumber: s.prNumber, via: 'merged_during_rework' }, now());
+      } else if (s.kind === 'closed') {
+        setAgentState(db, candidate.id, 'needs-human', now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.reworkSkipped, { prNumber: s.prNumber, reason: s.reason }, now());
+        notifyNeedsHuman(db, candidate.id, 'Robot rework stopped', s.reason, now());
+      } else {
+        // reworkSkipped also opens a fresh review cycle (reviewBoundary), so the new head is reviewed
+        // without the stale review using up a round.
+        setAgentState(db, candidate.id, 'in-review', now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.reworkSkipped, { prNumber: s.prNumber, reason: s.reason }, now());
+      }
+      logger.warn({ ticketId: candidate.id, kind: s.kind, reason: s.reason }, 'robot: rework superseded — session stopped');
+    };
     const leaveReclaimed = async (): Promise<void> => {
       logger.warn({ ticketId: candidate.id, runId }, 'robot: session aborted as hung — run already reclaimed, not closing it again');
       await preserveWip();
@@ -649,6 +686,23 @@ export async function processRobotQueue(
         }
         resumeCtx = { ...(resumeCtx ?? {}), checkpoint: { report: checkpoint.report, ...restore } };
       }
+      // PD-926: while a rework runs, stop it if its PR moves on (supersede.ts).
+      if (guard.action === 'dispatch' && guard.rework && config.robot.supersedeCheckMs > 0) {
+        const wt = worktree;
+        stopWatch = watchForSupersession({
+          repo: candidate.repo,
+          prNumber: guard.rework.prNumber,
+          baseline: guard.rework.head,
+          intervalMs: config.robot.supersedeCheckMs,
+          fetchPr,
+          hasCommit: (sha) => hasCommit(wt, sha),
+          handoffStarted: () => handoffStarted(wt),
+          onSupersede: (s) => {
+            superseded = s;
+            abort.abort(ABORT_SUPERSEDED);
+          },
+        });
+      }
       // PD-230: persist live turn progress so the board shows a working run closing on the cap.
       // The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only reports.
       // PD-784/D-104: the same callback resets the run's hung-session clock in the ownership registry.
@@ -675,8 +729,11 @@ export async function processRobotQueue(
       // when a clone is reused (`ensureWorktree`), so they can only have come from this run.
       const handoffReady = result.verifyOk && result.prNumber !== undefined;
 
+      stopWatch();
       if (abortReason() === ABORT_HUNG) {
         await leaveReclaimed();
+      } else if (abortReason() === ABORT_SUPERSEDED && superseded && !handoffReady && !result.askHuman) {
+        closeSuperseded(superseded, result.sessionId, metrics);
       } else if (abortReason() === ABORT_SHUTDOWN && !handoffReady && !result.askHuman) {
         // A session that finished its hand-off (or asked its question) before the abort landed keeps
         // that outcome below; anything else the stop cut short is an interrupt, not a ticket failure.
@@ -727,8 +784,11 @@ export async function processRobotQueue(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      stopWatch();
       if (abortReason() === ABORT_HUNG) {
         await leaveReclaimed();
+      } else if (abortReason() === ABORT_SUPERSEDED && superseded) {
+        closeSuperseded(superseded, undefined);
       } else if (abortReason() === ABORT_SHUTDOWN) {
         await closeInterrupted(undefined, msg);
       } else {
@@ -737,6 +797,7 @@ export async function processRobotQueue(
         handleFailure('error', undefined, msg, {}, await preserveWip());
       }
     } finally {
+      stopWatch();
       ownership.end(runId); // PD-784: the run is terminal — the live process no longer owns it.
       if (worktree && handedOff) {
         // The work is on GitHub as a PR now, so the WIP ref is superseded — delete it (best-effort)

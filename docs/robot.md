@@ -129,6 +129,16 @@ label flip, no GitHub round-trip:
   `robot/*` PR CONFLICTING, it re-queues the ticket so the next run resolves it on the existing
   branch. A pure approval is deliberately **not** a re-work trigger.
 - **`stall.ts`** — in-process stall detection (replaces `sortie-watchdog.yml`; see below).
+- **`rework-guard.ts`** (PD-924) — just before a queued rework dispatches, look at its PR once. Merged
+  → complete the ticket; closed → `needs-human`; the only ask is an Evaluator revise of a commit
+  that is no longer the head → back to `in-review` for a fresh review. Otherwise, or if GitHub is
+  unreachable, dispatch.
+- **`supersede.ts`** (PD-926) — the same question *while* a rework runs, every
+  `ROBOT_SUPERSEDE_CHECK_MS` (2 min; 0 disables). If the PR merges, closes, or gets a commit that is
+  not in the Robot's clone (someone else pushed), the session is stopped and the run recorded as
+  `superseded` — not a failure, so no retry is used and the circuit breaker never sees it — and the
+  ticket goes where the dispatch guard would have sent it. A session that has reached a green verify
+  is never stopped (D-046).
 
 **`robot-auto-merge.yml` remains active** as a pure GitHub-side merge workflow — it is not part of
 the loop's state machine.

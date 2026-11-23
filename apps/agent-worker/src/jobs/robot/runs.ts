@@ -21,9 +21,10 @@ export type RunStatus =
   | 'no-verify' // turn ended before a green verify → red PR withheld (D-046 gate); WIP pushed to robot-wip/t<id> (PD-737/T898)
   | 'ask-human' // the Robot posted a question and parked (awaiting-human) — not a failure (C2)
   | 'checkpoint' // reached its turn ceiling: report + WIP saved, parked for Continue/Restart — not a failure (D-094)
+  | 'superseded' // a rework stopped because its PR merged, closed, or was pushed to by someone else — not a failure (PD-926)
   | 'error'; // the coding session itself failed (spawn/SDK/crash)
 
-export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'checkpoint', 'error'];
+export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'checkpoint', 'superseded', 'error'];
 
 export interface RunRow {
   id: number;

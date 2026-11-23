@@ -215,3 +215,8 @@
 .status-badge.status-checkpoint {
   color: var(--status-checkpoint);
 }
+
+// PD-926: stopped because the PR moved on under it — not a failure, so muted rather than red.
+.status-badge.status-superseded {
+  color: var(--muted);
+}
