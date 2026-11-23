@@ -37,7 +37,12 @@
 </script>
 
 <h3 class="intro-title">When bugs were introduced</h3>
-{#if !report || report.computedAt === null}
+{#if report?.outOfScope}
+  <p class="velocity-empty">
+    Nothing for this project. The blame reads only the agent-worker's own repo history, and this
+    project's tickets live in another repo.
+  </p>
+{:else if !report || report.computedAt === null}
   <p class="velocity-empty">
     Not computed yet. The agent-worker's SZZ job fills this in on its next run.
   </p>

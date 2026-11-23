@@ -1,12 +1,16 @@
 <script lang="ts">
   import type {
+    AgentProject,
     BugReport,
     EpicBurndown,
     IntroductionReport,
     RunReport,
     VelocityReport,
   } from '@dashboard/shared';
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
+  import { fetchProjects } from '../api';
   import VelocityChart from './VelocityChart.svelte';
   import RobotLoopSection from './RobotLoopSection.svelte';
   import EpicBurndownSection from './EpicBurndownSection.svelte';
@@ -24,6 +28,8 @@
     fmtNum,
     fmtPct,
     longDate,
+    parseProjectParam,
+    projectSearch,
     sliceRange,
     velocityTiles,
     type VelocityRange,
@@ -44,15 +50,45 @@
   let range = $state<VelocityRange>('26w');
   let throughputKind = $state<'tickets' | 'epics'>('tickets');
 
+  let projects = $state<AgentProject[]>([]);
+  let loading = $state(false);
+
+  // PD-922: the project filter lives in the URL, so a filtered view is linkable and survives reload.
+  const projectId = $derived(parseProjectParam(page.url.searchParams.get('project')));
+
+  function setProject(id: number | undefined) {
+    void goto(`${page.url.pathname}${projectSearch(page.url.searchParams, id)}`, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    });
+  }
+
   $effect(() => {
+    fetchProjects()
+      .then((p) => (projects = p))
+      .catch(() => {
+        /* the filter just offers "All projects" */
+      });
+  });
+
+  // Refetch on every project change. The previous data stays up while loading, and only the latest
+  // request may land — a slow response for an old choice must not overwrite a newer one.
+  let request = 0;
+  $effect(() => {
+    const pid = projectId;
+    const seq = ++request;
+    loading = true;
+    error = null;
     Promise.all([
-      fetchVelocity(),
-      fetchRunReport(),
-      fetchEpicBurndowns(),
-      fetchBugReport(),
-      fetchIntroductions(),
+      fetchVelocity(pid),
+      fetchRunReport(pid),
+      fetchEpicBurndowns(pid),
+      fetchBugReport(pid),
+      fetchIntroductions(pid),
     ])
       .then(([v, r, e, b, i]) => {
+        if (seq !== request) return;
         introductions = i;
         report = v;
         runs = r;
@@ -60,7 +96,11 @@
         bugs = b;
       })
       .catch((e: unknown) => {
+        if (seq !== request) return;
         error = e instanceof Error ? e.message : String(e);
+      })
+      .finally(() => {
+        if (seq === request) loading = false;
       });
   });
 
@@ -156,7 +196,7 @@
   const days = (v: number) => `${Math.round(v * 10) / 10}d`;
 </script>
 
-<section class="velocity-page">
+<section class="velocity-page" aria-busy={loading}>
   <header class="velocity-head">
     <h1 class="velocity-title">Velocity</h1>
     <a class="velocity-back" href="/devops">← Dev Ops</a>
@@ -165,6 +205,29 @@
     How fast work moves through the board, and how the Robot loop is doing. Weeks run Monday to
     Sunday, Eastern.
   </p>
+
+  <div class="velocity-filters">
+    <label class="velocity-project">
+      <select
+        aria-label="Project"
+        value={projectId === undefined ? '' : String(projectId)}
+        onchange={(e) => setProject(parseProjectParam(e.currentTarget.value))}
+      >
+        <option value="">All projects</option>
+        {#each projects as p (p.id)}<option value={String(p.id)}>{p.name}</option>{/each}
+        {#if projectId !== undefined && !projects.some((p) => p.id === projectId)}
+          <option value={String(projectId)}>Project {projectId}</option>
+        {/if}
+      </select>
+    </label>
+    <SegmentedToggle
+      label="Time range"
+      options={VELOCITY_RANGES}
+      value={range}
+      onChange={(v) => (range = v)}
+    />
+    {#if loading && report}<span class="velocity-updating" aria-live="polite">Updating…</span>{/if}
+  </div>
 
   {#if error}
     <p class="velocity-error" role="alert">Couldn't load velocity: {error}</p>
@@ -178,15 +241,6 @@
         <em>current</em> assignee.
       </p>
     {/if}
-
-    <div class="velocity-filters">
-      <SegmentedToggle
-        label="Time range"
-        options={VELOCITY_RANGES}
-        value={range}
-        onChange={(v) => (range = v)}
-      />
-    </div>
 
     <div class="velocity-tiles">
       <div class="tile">

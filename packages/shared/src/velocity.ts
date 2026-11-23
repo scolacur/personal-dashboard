@@ -669,6 +669,9 @@ export interface IntroductionReport {
   per100: { robot: number | null; human: number | null };
   /** The counts behind `per100` — a rate over a handful of PRs means little, so show them. */
   settled: { robotPrs: number; humanPrs: number; robotBugs: number; humanBugs: number };
+  /** True when the report is filtered to a project whose repo the blame did not cover — the
+   *  worker blames only its own repo's history, so there is nothing to show (PD-922). */
+  outOfScope: boolean;
 }
 
 export function buildIntroductionReport(
@@ -721,6 +724,7 @@ export function buildIntroductionReport(
   const rate = (bugsN: number, prsN: number) => (prsN ? (bugsN / prsN) * 100 : null);
 
   return {
+    outOfScope: false,
     computedAt,
     generatedAt: now,
     startDate,

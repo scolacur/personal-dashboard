@@ -123,3 +123,19 @@ export function groupEpics(epics: EpicBurndown[]): {
   const finished = (e: EpicBurndown) => e.status === 'completed' || e.status === 'closed';
   return { open: epics.filter((e) => !finished(e)), finished: epics.filter(finished) };
 }
+
+/** The `?project=` filter (PD-922): a positive integer project id, or undefined for all projects. */
+export function parseProjectParam(raw: string | null): number | undefined {
+  if (raw === null || !/^\d+$/.test(raw)) return undefined;
+  const n = Number(raw);
+  return n > 0 ? n : undefined;
+}
+
+/** The page's query string with the project filter set (or cleared), keeping any other params. */
+export function projectSearch(current: URLSearchParams, projectId: number | undefined): string {
+  const next = new URLSearchParams(current);
+  if (projectId === undefined) next.delete('project');
+  else next.set('project', String(projectId));
+  const q = next.toString();
+  return q ? `?${q}` : '';
+}

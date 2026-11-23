@@ -46,8 +46,24 @@
 
 .velocity-filters {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-md);
   margin-bottom: var(--space-md);
+}
+
+.velocity-project select {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.velocity-updating {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
 }
 
 .velocity-tiles {
