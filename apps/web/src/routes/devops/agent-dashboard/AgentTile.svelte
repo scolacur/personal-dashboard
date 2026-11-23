@@ -3,7 +3,7 @@
   // ticket, turns, tokens, model. Tinted by the run's project colour. Values that change between
   // polls are re-keyed so they fade in (PD-818's "fade-in on change").
   import type { ActiveAgent } from '@dashboard/shared';
-  import PixelRobot from './PixelRobot.svelte';
+  import AgentAvatar from './AgentAvatar.svelte';
   import {
     KIND_LABELS,
     botColor,
@@ -12,13 +12,15 @@
     formatTokens,
     formatTurns,
     nearTurnCap,
+    type AvatarStyle,
   } from './agent-fleet';
 
   interface Props {
     agent: ActiveAgent;
+    avatar: AvatarStyle;
     now: number;
   }
-  let { agent, now }: Props = $props();
+  let { agent, avatar, now }: Props = $props();
 
   let color = $derived(botColor(agent));
   let label = $derived(KIND_LABELS[agent.kind]);
@@ -30,8 +32,7 @@
 
 <article class="agent-tile kind-{agent.kind}" style="--tint: {color}">
   <div class="bot-col">
-    <PixelRobot kind={agent.kind} {color} size={84} label="{label.one} robot" />
-    <span class="bot-name">{label.one}</span>
+    <AgentAvatar kind={agent.kind} style={avatar} {color} size={60} label="{label.one} robot" />
   </div>
 
   <div class="speech" role="group" aria-label="{label.one} status">

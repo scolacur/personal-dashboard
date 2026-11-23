@@ -1,27 +1,30 @@
 <script lang="ts">
   // PD-819: one 8-bit robot (PD-682), drawn as a grid of 1×1 rects so it stays pixel-crisp at any
   // size. The body takes `color` (the run's project colour); every other colour is a class below.
-  // Parts (eyes / antenna / tool) are grouped so each can animate on its own.
+  // Parts (eyes / antenna / tool / tread) are grouped so each can animate on its own.
   import type { ActiveAgentKind } from '@dashboard/shared';
-  import { SPRITE_H, SPRITE_W, spriteFor, type PixelPart } from './pixel-robots';
+  import { SPRITE_H, SPRITE_W, spriteFor, type PixelPart, type SpriteSet } from './pixel-robots';
 
   interface Props {
-    kind: ActiveAgentKind | 'sleeping';
+    kind: ActiveAgentKind;
+    set: SpriteSet;
     color: string;
     /** Rendered width in px; height follows the sprite's aspect. */
     size?: number;
+    /** No run of this kind: drawn still and greyed. */
+    idle?: boolean;
     label?: string;
   }
-  let { kind, color, size = 80, label }: Props = $props();
+  let { kind, set, color, size = 80, idle = false, label }: Props = $props();
 
   const NAMES: Record<string, string> = {
     D: 'outline', B: 'body', S: 'screen', E: 'eye', M: 'mouth', A: 'antenna', L: 'chest',
-    K: 'rim', G: 'glass', W: 'glint', H: 'handle', V: 'visor', v: 'brim', Z: 'zzz',
+    K: 'rim', G: 'glass', W: 'glint', H: 'handle', V: 'visor', v: 'brim', T: 'tread', t: 'stud',
   };
-  const PARTS: PixelPart[] = ['body', 'tool', 'eyes', 'antenna'];
+  const PARTS: PixelPart[] = ['body', 'tool', 'tread', 'eyes', 'antenna'];
 
   let byPart = $derived.by(() => {
-    const pixels = spriteFor(kind);
+    const pixels = spriteFor(kind, set);
     return PARTS.map((part) => ({ part, pixels: pixels.filter((p) => p.part === part) })).filter(
       (g) => g.pixels.length > 0,
     );
@@ -29,7 +32,8 @@
 </script>
 
 <svg
-  class="pixel-robot kind-{kind}"
+  class="pixel-robot kind-{kind} set-{set}"
+  class:idle
   viewBox="0 0 {SPRITE_W} {SPRITE_H}"
   width={size}
   height={(size * SPRITE_H) / SPRITE_W}

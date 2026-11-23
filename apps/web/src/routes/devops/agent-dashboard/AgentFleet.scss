@@ -1,123 +1,64 @@
 /* ── Agent Dashboard fleet view (PD-818 / PD-819) ───── */
-// The three style variants are pure CSS-variable sets on `.fleet[data-variant]`; every tile (here
-// and in AgentTile.scss) reads the same variables, so a variant never has to know the markup.
-// Minimal follows the app theme; Retro is always a dark terminal; Brutalist is always paper —
-// those two are looks, not themes.
 
 .fleet {
-  --fleet-bg: transparent;
-  --fleet-text: var(--text);
-  --fleet-muted: var(--muted);
-  --fleet-font: var(--font-sans);
-  --fleet-heading-font: var(--font-display);
-  --fleet-accent: var(--accent);
-  --tile-bg: var(--surface);
-  --tile-border: 1px solid var(--border);
-  --tile-radius: var(--radius);
-  --tile-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --bubble-bg: var(--surface-2);
-  --bubble-border: 1px solid var(--border);
-  --bubble-radius: 0.6rem;
-  --label-transform: none;
-  --label-spacing: 0.02em;
-  --tint-strength: 10%;
-
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
-  padding: var(--space-md);
-  border-radius: var(--radius);
-  background: var(--fleet-bg);
-  color: var(--fleet-text);
-  font-family: var(--fleet-font);
   font-size: var(--font-size-sm);
-  transition:
-    background 0.2s,
-    color 0.2s;
-
-  // Retro — green phosphor terminal; speech-boxes become 8-bit RPG dialog boxes.
-  &[data-variant='retro'] {
-    --fleet-bg: #0b100c;
-    --fleet-text: #a6f7a0;
-    --fleet-muted: #5c9a5a;
-    --fleet-font: ui-monospace, 'SFMono-Regular', Menlo, monospace;
-    --fleet-heading-font: var(--fleet-font);
-    --fleet-accent: #39ff14;
-    --tile-bg: #0f1a11;
-    --tile-border: 2px solid #2f6b34;
-    --tile-radius: 0;
-    --tile-shadow: 0 0 10px rgba(57, 255, 20, 0.12);
-    --bubble-bg: #050805;
-    --bubble-border: 3px double #a6f7a0;
-    --bubble-radius: 0;
-    --label-transform: uppercase;
-    --label-spacing: 0.12em;
-    --tint-strength: 6%;
-    text-shadow: 0 0 4px rgba(57, 255, 20, 0.35);
-    background-image: repeating-linear-gradient(
-      to bottom,
-      rgba(255, 255, 255, 0.025) 0 1px,
-      transparent 1px 3px
-    );
-  }
-
-  // Brutalist — heavy mono, hard black borders, offset shadows, no radius anywhere.
-  &[data-variant='brutalist'] {
-    --fleet-bg: #f4f1e8;
-    --fleet-text: #111;
-    --fleet-muted: #444;
-    --fleet-font: ui-monospace, 'SFMono-Regular', Menlo, monospace;
-    --fleet-heading-font: var(--fleet-font);
-    --fleet-accent: #111;
-    --tile-bg: #fff;
-    --tile-border: 3px solid #111;
-    --tile-radius: 0;
-    --tile-shadow: 6px 6px 0 #111;
-    --bubble-bg: #ffe14d;
-    --bubble-border: 3px solid #111;
-    --bubble-radius: 0;
-    --label-transform: uppercase;
-    --label-spacing: 0.08em;
-    --tint-strength: 0%;
-    font-weight: 600;
-  }
 }
 
-.switcher {
-  display: inline-flex;
-  align-self: flex-start;
-  border: var(--tile-border);
-  border-radius: var(--tile-radius);
-  overflow: hidden;
+// PD-819: TEMPORARY avatar comparison control — deleted once a style is picked.
+.avatar-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.picker-label {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.picker-family {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
 
   button {
-    border: none;
-    background: transparent;
-    color: var(--fleet-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--muted);
     font: inherit;
-    text-transform: var(--label-transform);
-    letter-spacing: var(--label-spacing);
-    padding: var(--space-xs) var(--space-md);
+    padding: 0.2rem 0.6rem 0.2rem 0.35rem;
     cursor: pointer;
 
-    & + button {
-      border-left: var(--tile-border);
-    }
-
     &.active {
-      background: var(--fleet-accent);
-      color: var(--fleet-bg);
+      border-color: var(--accent);
+      color: var(--text);
+      box-shadow: 0 0 0 1px var(--accent);
     }
   }
 }
 
-[data-variant='minimal'] .switcher button.active {
-  color: var(--on-accent);
+.family-name {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-right: var(--space-xs);
 }
 
 .loading,
 .muted {
-  color: var(--fleet-muted);
+  color: var(--muted);
 }
 
 .mono {
@@ -130,7 +71,7 @@
   align-items: center;
   gap: var(--space-sm);
   padding: 0.5rem 0.8rem;
-  border-radius: var(--tile-radius);
+  border-radius: var(--radius);
   border: 1px solid;
 
   &.fault {
@@ -160,44 +101,54 @@
 .section-label,
 .group-label {
   margin: 0;
-  font-family: var(--fleet-heading-font);
-  text-transform: var(--label-transform);
-  letter-spacing: var(--label-spacing);
+  font-family: var(--font-display);
 }
 
 .section-label {
   font-size: var(--font-size-base);
 }
 
-.group-label {
-  font-size: var(--font-size-sm);
-  color: var(--fleet-muted);
-  margin-bottom: var(--space-sm);
-
-  .count {
-    color: var(--fleet-text);
-  }
-}
-
-.agent-grid {
+// PD-819: one column per agent kind; columns stack on narrow screens.
+.kind-columns {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-md);
+  align-items: start;
 }
 
-.idle-bay {
+.kind-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.group-label {
   display: flex;
   align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-md);
-  border: var(--tile-border);
-  border-style: dashed;
-  border-radius: var(--tile-radius);
-  color: var(--fleet-muted);
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border);
 
-  p {
-    margin: 0;
+  .count {
+    color: var(--text);
+    &.zero {
+      color: var(--muted);
+    }
   }
+}
+
+.column-idle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-style: italic;
 }
 
 .tile-grid {
@@ -207,17 +158,16 @@
 }
 
 .tile {
-  --tile-tone: var(--fleet-muted);
-  position: relative;
+  --tile-tone: var(--muted);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
   padding: var(--space-sm) var(--space-md);
-  background: var(--tile-bg);
-  border: var(--tile-border);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-left: 4px solid var(--tile-tone);
-  border-radius: var(--tile-radius);
-  box-shadow: var(--tile-shadow);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   min-width: 0;
 
   &.wide {
@@ -246,22 +196,16 @@
   }
 }
 
-[data-variant='brutalist'] .tile {
-  border-left-width: 10px;
-}
-
 .tile-label {
   font-size: var(--font-size-xs);
-  color: var(--fleet-muted);
-  text-transform: var(--label-transform);
-  letter-spacing: var(--label-spacing);
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tile-value {
-  font-family: var(--fleet-heading-font);
+  font-family: var(--font-display);
   font-size: 1.8rem;
   font-weight: 700;
   line-height: 1.1;
@@ -273,7 +217,7 @@
 }
 
 .state-tile.idle .tile-value {
-  color: var(--fleet-muted);
+  color: var(--muted);
   font-style: italic;
 }
 
@@ -302,11 +246,10 @@ a.tile-line {
 .tile-action {
   align-self: flex-start;
   margin-top: var(--space-xs);
-  border: var(--tile-border);
-  border-width: 1px;
-  border-radius: var(--tile-radius);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   background: transparent;
-  color: var(--fleet-text);
+  color: var(--text);
   font: inherit;
   font-size: var(--font-size-xs);
   padding: 0.1rem 0.6rem;
@@ -332,12 +275,16 @@ a.tile-line {
 @keyframes tile-pulse {
   0%,
   100% {
-    box-shadow: var(--tile-shadow);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   }
   50% {
-    box-shadow:
-      var(--tile-shadow),
-      0 0 0 3px color-mix(in srgb, var(--tile-tone) 30%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tile-tone) 30%, transparent);
+  }
+}
+
+@media (max-width: 900px) {
+  .kind-columns {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -1,21 +1,36 @@
 import type { ActiveAgent, ActiveAgentKind } from '@dashboard/shared';
+import { SPRITE_SETS, type SpriteSet } from './pixel-robots';
 
 /**
  * Pure view logic for the Agent Dashboard's fleet view (PD-818 / PD-819). Kept out of the Svelte
  * components because apps/web has no DOM test runner — this is the part that can be tested.
  */
 
-/** PD-818: the in-page style switcher. Ephemeral by design — a reload returns to DEFAULT_VARIANT. */
-export const STYLE_VARIANTS = ['minimal', 'retro', 'brutalist'] as const;
-export type StyleVariant = (typeof STYLE_VARIANTS)[number];
-export const DEFAULT_VARIANT: StyleVariant = 'minimal';
-export const VARIANT_LABELS: Record<StyleVariant, string> = {
-  minimal: 'Minimal',
-  retro: 'Retro',
-  brutalist: 'Brutalist',
+/**
+ * PD-819: avatar styles. TEMPORARY comparison set — Steve picks one (or a few) in-page, then the
+ * picker and the losing styles are deleted. Three 8-bit sprite sets and three minimalist vectors.
+ * Ephemeral: not persisted, a reload returns to DEFAULT_AVATAR.
+ */
+export const PIXEL_STYLES = SPRITE_SETS;
+export const MINIMAL_STYLES = ['orb', 'line', 'ripple'] as const;
+export type MinimalStyle = (typeof MINIMAL_STYLES)[number];
+export type AvatarStyle = SpriteSet | MinimalStyle;
+export const DEFAULT_AVATAR: AvatarStyle = 'classic';
+
+export const AVATAR_LABELS: Record<AvatarStyle, string> = {
+  classic: 'Classic',
+  chunky: 'Chunky',
+  tread: 'Tread',
+  orb: 'Orb',
+  line: 'Line',
+  ripple: 'Ripple',
 };
 
-/** Group order on the page. Fixed so groups don't reshuffle between polls. */
+export function isPixelStyle(style: AvatarStyle): style is SpriteSet {
+  return (PIXEL_STYLES as readonly string[]).includes(style);
+}
+
+/** Column order on the page. Fixed so columns don't reshuffle between polls. */
 export const KIND_ORDER: ActiveAgentKind[] = ['robot', 'evaluator', 'auditor'];
 
 export const KIND_LABELS: Record<ActiveAgentKind, { group: string; one: string; blurb: string }> = {
@@ -29,12 +44,13 @@ export interface AgentGroup {
   agents: ActiveAgent[];
 }
 
-/** Agents grouped by kind in KIND_ORDER, oldest run first within a group; empty groups omitted. */
+/** One column per kind in KIND_ORDER — always all of them, so the layout doesn't jump when a kind
+ *  starts or stops — oldest run first within a column. */
 export function groupByKind(agents: readonly ActiveAgent[]): AgentGroup[] {
   return KIND_ORDER.map((kind) => ({
     kind,
     agents: agents.filter((a) => a.kind === kind).sort((a, b) => a.startedAt - b.startedAt),
-  })).filter((g) => g.agents.length > 0);
+  }));
 }
 
 /** "850", "34.2k", "128k", "1.2M"; "—" when unknown (never 0 — unknown is not none). */

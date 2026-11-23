@@ -9,9 +9,10 @@ import {
   formatTokens,
   formatTurns,
   groupByKind,
+  isPixelStyle,
   nearTurnCap,
 } from './agent-fleet';
-import { SPRITE_H, SPRITE_W, _SPRITE_SOURCES, spriteFor } from './pixel-robots';
+import { SPRITE_H, SPRITE_SETS, SPRITE_W, _SPRITE_SOURCES, spriteFor } from './pixel-robots';
 
 function agent(over: Partial<ActiveAgent>): ActiveAgent {
   return {
@@ -30,18 +31,19 @@ function agent(over: Partial<ActiveAgent>): ActiveAgent {
 }
 
 describe('groupByKind', () => {
-  it('groups in fixed kind order, oldest first, and omits empty kinds', () => {
+  it('returns every kind as a column in fixed order, oldest first, empty kinds included', () => {
     const groups = groupByKind([
       agent({ kind: 'auditor', runId: 9, startedAt: 5 }),
       agent({ kind: 'robot', runId: 2, startedAt: 20 }),
       agent({ kind: 'robot', runId: 1, startedAt: 10 }),
     ]);
-    expect(groups.map((g) => g.kind)).toEqual(['robot', 'auditor']);
+    expect(groups.map((g) => g.kind)).toEqual(['robot', 'evaluator', 'auditor']);
+    expect(groups.map((g) => g.agents.length)).toEqual([2, 0, 1]);
     expect(groups[0].agents.map((a) => a.runId)).toEqual([1, 2]);
   });
 
-  it('is empty for an idle fleet', () => {
-    expect(groupByKind([])).toEqual([]);
+  it('keeps all three columns for an idle fleet', () => {
+    expect(groupByKind([]).every((g) => g.agents.length === 0)).toBe(true);
   });
 });
 
@@ -97,20 +99,32 @@ describe('botColor / agentKey', () => {
 });
 
 describe('pixel robots', () => {
-  it('every sprite source row fits the grid', () => {
-    expect(_SPRITE_SOURCES.BASE).toHaveLength(SPRITE_H);
-    for (const rows of [_SPRITE_SOURCES.BASE, ...Object.values(_SPRITE_SOURCES.OVERLAYS)]) {
-      expect(rows.length).toBeLessThanOrEqual(SPRITE_H);
-      for (const r of rows) expect(r).toHaveLength(SPRITE_W);
+  it('every sprite source row fits the grid, in every set', () => {
+    for (const set of SPRITE_SETS) {
+      const { base, overlays } = _SPRITE_SOURCES[set];
+      expect(base).toHaveLength(SPRITE_H);
+      for (const rows of [base, ...Object.values(overlays)]) {
+        expect(rows.length).toBeLessThanOrEqual(SPRITE_H);
+        for (const r of rows) expect(r).toHaveLength(SPRITE_W);
+      }
     }
   });
 
-  it('gives each kind its accessory', () => {
-    const cells = (k: Parameters<typeof spriteFor>[0]) => new Set(spriteFor(k).map((p) => p.c));
-    expect(cells('robot').has('K')).toBe(false);
-    expect(cells('evaluator').has('K')).toBe(true); // magnifying glass
-    expect(cells('auditor').has('V')).toBe(true); // green visor
-    expect(cells('sleeping').has('E')).toBe(false); // eyes shut
-    expect(spriteFor('evaluator').some((p) => p.part === 'tool')).toBe(true);
+  it('gives each kind its accessory in every set', () => {
+    for (const set of SPRITE_SETS) {
+      const cells = (k: 'robot' | 'evaluator' | 'auditor') => new Set(spriteFor(k, set).map((p) => p.c));
+      expect(cells('robot').has('K')).toBe(false);
+      expect(cells('evaluator').has('K')).toBe(true); // magnifying glass
+      expect(cells('auditor').has('V')).toBe(true); // green visor
+      expect(spriteFor('evaluator', set).some((p) => p.part === 'tool')).toBe(true);
+      expect(spriteFor('robot', set).some((p) => p.part === 'eyes')).toBe(true);
+    }
+  });
+});
+
+describe('avatar styles', () => {
+  it('tells sprite sets from minimalist styles', () => {
+    expect(isPixelStyle('tread')).toBe(true);
+    expect(isPixelStyle('orb')).toBe(false);
   });
 });

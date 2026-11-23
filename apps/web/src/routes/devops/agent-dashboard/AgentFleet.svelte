@@ -14,21 +14,27 @@
     budgetLimbsOf,
     formatClockTime,
   } from '../system-status-view';
+  import AgentAvatar from './AgentAvatar.svelte';
   import AgentTile from './AgentTile.svelte';
-  import PixelRobot from './PixelRobot.svelte';
   import {
+    AVATAR_LABELS,
+    DEFAULT_AVATAR,
     DEFAULT_BOT_COLOR,
-    DEFAULT_VARIANT,
     KIND_LABELS,
-    STYLE_VARIANTS,
-    VARIANT_LABELS,
+    MINIMAL_STYLES,
+    PIXEL_STYLES,
     agentKey,
     groupByKind,
-    type StyleVariant,
+    type AvatarStyle,
   } from './agent-fleet';
 
-  // PD-818: ephemeral on purpose — not persisted, a reload returns to Minimal.
-  let variant = $state<StyleVariant>(DEFAULT_VARIANT);
+  // PD-819: TEMPORARY avatar comparison — ephemeral, a reload returns to Classic. Removed once a
+  // style is chosen.
+  let avatar = $state<AvatarStyle>(DEFAULT_AVATAR);
+  const AVATAR_FAMILIES = [
+    { name: '8-bit', styles: PIXEL_STYLES },
+    { name: 'Minimal', styles: MINIMAL_STYLES },
+  ];
 
   let status = $state<SystemStatus | null>(null);
   let now = $state(Date.now());
@@ -83,16 +89,25 @@
   }
 </script>
 
-<div class="fleet" data-variant={variant}>
-  <div class="switcher" role="radiogroup" aria-label="Dashboard style">
-    {#each STYLE_VARIANTS as v (v)}
-      <button
-        type="button"
-        role="radio"
-        aria-checked={variant === v}
-        class:active={variant === v}
-        onclick={() => (variant = v)}>{VARIANT_LABELS[v]}</button
-      >
+<div class="fleet">
+  <div class="avatar-picker" role="radiogroup" aria-label="Avatar style (preview)">
+    <span class="picker-label">Avatar preview</span>
+    {#each AVATAR_FAMILIES as fam (fam.name)}
+      <div class="picker-family">
+        <span class="family-name">{fam.name}</span>
+        {#each fam.styles as st (st)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={avatar === st}
+            class:active={avatar === st}
+            onclick={() => (avatar = st)}
+          >
+            <AgentAvatar kind="robot" style={st} color={DEFAULT_BOT_COLOR} size={26} idle={avatar !== st} />
+            {AVATAR_LABELS[st]}
+          </button>
+        {/each}
+      </div>
     {/each}
   </div>
 
@@ -116,26 +131,27 @@
       </div>
     {/if}
 
-    <!-- PD-819: the robots. -->
+    <!-- PD-819: the agents, one column per kind. -->
     <section class="fleet-section">
       <h3 class="section-label">Agents at work</h3>
-      {#if groups.length === 0}
-        <div class="idle-bay">
-          <PixelRobot kind="sleeping" color={DEFAULT_BOT_COLOR} size={72} label="Idle robot" />
-          <p>Nobody's working right now — the fleet is idle.</p>
-        </div>
-      {:else}
+      <div class="kind-columns">
         {#each groups as g (g.kind)}
-          <div class="kind-group">
-            <h4 class="group-label">{KIND_LABELS[g.kind].group} <span class="count">{g.agents.length}</span></h4>
-            <div class="agent-grid">
-              {#each g.agents as a (agentKey(a))}
-                <AgentTile agent={a} {now} />
-              {/each}
-            </div>
+          <div class="kind-column">
+            <h4 class="group-label">
+              {KIND_LABELS[g.kind].group}
+              <span class="count" class:zero={g.agents.length === 0}>{g.agents.length}</span>
+            </h4>
+            {#each g.agents as a (agentKey(a))}
+              <AgentTile agent={a} {avatar} {now} />
+            {:else}
+              <div class="column-idle">
+                <AgentAvatar kind={g.kind} style={avatar} color={DEFAULT_BOT_COLOR} size={44} idle />
+                <span>No {KIND_LABELS[g.kind].group.toLowerCase()} running</span>
+              </div>
+            {/each}
           </div>
         {/each}
-      {/if}
+      </div>
     </section>
 
     <!-- PD-818: the loop's aggregate state, as tiles. -->
