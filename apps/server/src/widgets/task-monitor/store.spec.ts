@@ -1765,7 +1765,8 @@ describe('epics (D-054, PD-336)', () => {
   // work is dispatched. What replaced the guard is the member cascade, tested here.
   it('D-080: queueing an Epic queues its unstarted members and leaves finished ones alone', () => {
     const e = epic();
-    const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
+    // PD-850 §2b: the cascade only arms members that have an owner, so give this one an assignee.
+    const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e, assignee: 'steve' });
     const done = createTicket(db, { title: 'done', projectId: pd, epicId: e, status: 'completed' });
     updateTicket(db, e, { status: 'queue' });
     expect(getTicket(db, e)!.status).toBe('queue');
@@ -1775,8 +1776,8 @@ describe('epics (D-054, PD-336)', () => {
 
   it('D-080: rolling an Epic back un-queues only members that never started', () => {
     const e = epic();
-    const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e });
-    const live = createTicket(db, { title: 'live', projectId: pd, epicId: e });
+    const fresh = createTicket(db, { title: 'fresh', projectId: pd, epicId: e, assignee: 'steve' });
+    const live = createTicket(db, { title: 'live', projectId: pd, epicId: e, assignee: 'steve' });
     updateTicket(db, e, { status: 'queue' });
     db.prepare("UPDATE agent_tickets SET agent_state = 'working' WHERE id = ?").run(live.id);
     updateTicket(db, e, { status: 'backlog' });
@@ -1990,12 +1991,15 @@ describe('epic refinement staleness (PD-610)', () => {
     pd = p.id;
   });
 
-  /** A refined Epic, optionally already queued, with `members` members already in it. */
+  /** A refined Epic, optionally already queued, with `members` members already in it.
+   *  Members are assigned to `steve` — human work that arms regardless of the D-091 robot gate
+   *  (PD-850 §2b: an UNASSIGNED member is never armed, so an explicit owner keeps these focused on
+   *  the pause/resume behaviour rather than the unassigned rule, which has its own tests). */
   function refinedEpic(opts: { queued?: boolean; members?: number } = {}) {
     const epic = createTicket(db, { title: 'An epic', projectId: pd, isEpic: true, priority: 'P1' });
     const members: number[] = [];
     for (let i = 0; i < (opts.members ?? 0); i += 1) {
-      members.push(createTicket(db, { title: `m${i}`, projectId: pd, epicId: epic.id }).id);
+      members.push(createTicket(db, { title: `m${i}`, projectId: pd, epicId: epic.id, assignee: 'steve' }).id);
     }
     if (opts.queued) updateTicket(db, epic.id, { status: 'queue' });
     // Mark refined LAST: creating members is itself an invalidation, so refining first would be
@@ -2177,6 +2181,196 @@ describe('epic refinement staleness (PD-610)', () => {
 
       expect(stateOf(epicId)).toEqual({ refined: true, stale: false });
       expect(getTicket(db, members[0])!.status).toBe('queue');
+    });
+  });
+
+  /**
+   * PD-850: the stale-pause stranded a queued rework that still owned an open Robot PR, never
+   * resumed members of an Epic that was not itself stored as queued, and armed unassigned members.
+   */
+  describe('PD-850: open-PR sparing, symmetric resume, unassigned members', () => {
+    const detailsOf = (id: number, type: string) =>
+      listTicketEvents(db, id)
+        .filter((e) => e.type === type)
+        .map((e) => (e.detail ?? {}) as Record<string, unknown>);
+
+    /** The worker-owned table, absent on a fresh volume — created only by the tests that need it. */
+    function ensureRuns() {
+      db.exec(`CREATE TABLE IF NOT EXISTS agent_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL, issue_number INTEGER,
+        branch TEXT NOT NULL, status TEXT NOT NULL, session_id TEXT, pr_url TEXT, error TEXT,
+        started_at INTEGER NOT NULL, finished_at INTEGER
+      )`);
+    }
+    function handedOffRun(ticketId: number, prUrl: string | null) {
+      ensureRuns();
+      db.prepare(
+        `INSERT INTO agent_runs (ticket_id, branch, status, pr_url, started_at, finished_at)
+         VALUES (?, 'b', 'handed-off', ?, ?, ?)`,
+      ).run(ticketId, prUrl, Date.now(), Date.now());
+    }
+    const setState = (id: number, state: string | null) =>
+      db.prepare('UPDATE agent_tickets SET agent_state = ? WHERE id = ?').run(state, id);
+
+    it('spares a queued rework with an open Robot PR, and still un-arms a queued member without one', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 2 });
+      const [rework, plain] = members;
+      setState(rework, 'queued');
+      setState(plain, 'queued');
+      handedOffRun(rework, 'https://github.com/o/r/pull/465');
+
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+
+      expect(getTicket(db, rework)).toMatchObject({ status: 'queue', agentState: 'queued' });
+      expect(getTicket(db, plain)).toMatchObject({ status: 'backlog', agentState: null });
+      expect(detailsOf(epicId, 'epic_paused')).toEqual([{ unarmed: 1, reason: 'refine_stale' }]);
+      expect(eventTypes(rework)).not.toContain('epic_unarmed');
+    });
+
+    it('spares an open-PR member whatever its agent_state (needs-human too)', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+      setState(members[0], 'needs-human');
+      handedOffRun(members[0], 'https://github.com/o/r/pull/1');
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      expect(getTicket(db, members[0])!.status).toBe('queue');
+    });
+
+    it('a handed-off run with no pr_url is not an open PR', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+      setState(members[0], 'queued');
+      handedOffRun(members[0], null);
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      expect(getTicket(db, members[0])!.status).toBe('backlog');
+    });
+
+    it('logs epic_unarmed on each un-armed member, naming the Epic and the cause', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 2 });
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId });
+      for (const m of members) {
+        expect(detailsOf(m, 'epic_unarmed')).toEqual([{ epicId, cause: 'members' }]);
+      }
+    });
+
+    it('the body-edit trigger records cause "body" on each un-armed member', () => {
+      const { epicId, members } = refinedEpic({ queued: true, members: 1 });
+      updateTicket(db, epicId, { body: 'a rewritten description', refined: false });
+      expect(getTicket(db, members[0])!.status).toBe('backlog');
+      expect(detailsOf(members[0], 'epic_unarmed')).toEqual([{ epicId, cause: 'body' }]);
+    });
+
+    it('an Epic left in Backlog whose members were queued one by one is paused, then ✓ Mark refined re-arms exactly those', () => {
+      const { epicId, members } = refinedEpic({ members: 3 });
+      const [a, b, neverQueued] = members;
+      updateTicket(db, a, { status: 'queue' });
+      updateTicket(db, b, { status: 'queue' });
+      expect(getTicket(db, epicId)!.status).toBe('backlog');
+      expect(computeEpicSummary(db, epicId).derivedLane).toBe('in_progress');
+
+      createTicket(db, { title: 'late arrival', projectId: pd, epicId, assignee: 'steve' });
+      expect(getTicket(db, a)!.status).toBe('backlog');
+      expect(getTicket(db, b)!.status).toBe('backlog');
+
+      markTicketRefined(db, epicId);
+
+      expect(getTicket(db, a)!.status).toBe('queue');
+      expect(getTicket(db, b)!.status).toBe('queue');
+      // Never queued, and the late arrival: backlog members the pause did not un-arm stay put.
+      expect(getTicket(db, neverQueued)!.status).toBe('backlog');
+      const late = listEpicMembers(db, epicId).find((m) => m.title === 'late arrival')!;
+      expect(getTicket(db, late.id)!.status).toBe('backlog');
+      expect(getTicket(db, epicId)!.status).toBe('backlog');
+      expect(detailsOf(epicId, 'epic_resumed')).toEqual([{ armed: 2 }]);
+    });
+
+    it('the symmetric resume ignores un-arm events from an EARLIER stale episode', () => {
+      const { epicId, members } = refinedEpic({ members: 2 });
+      const [a, b] = members;
+      updateTicket(db, a, { status: 'queue' });
+      updateTicket(db, b, { status: 'queue' });
+      createTicket(db, { title: 'late 1', projectId: pd, epicId, assignee: 'steve' });
+      markTicketRefined(db, epicId); // episode 1 resumes both
+      // b is pulled back to Backlog by hand; it carries an episode-1 epic_unarmed event.
+      updateTicket(db, b, { status: 'backlog' });
+
+      // Episode 2: only `a` is queued, so only `a` is un-armed.
+      createTicket(db, { title: 'late 2', projectId: pd, epicId, assignee: 'steve' });
+      expect(getTicket(db, a)!.status).toBe('backlog');
+      markTicketRefined(db, epicId);
+
+      expect(getTicket(db, a)!.status).toBe('queue');
+      expect(getTicket(db, b)!.status).toBe('backlog');
+    });
+
+    describe('never arms an unassigned member', () => {
+      /** A refined member with a ready body, so it never trips the D-091 members-refined criterion. */
+      function readyMember(epicId: number, assignee: 'robot' | 'steve' | null) {
+        const t = createTicket(db, { title: `m-${assignee}`, body: ROBOT_BODY, projectId: pd, epicId, assignee });
+        db.prepare('UPDATE agent_tickets SET refined = 1 WHERE id = ?').run(t.id);
+        return t.id;
+      }
+
+      it('✓ Mark refined on a stale queued Epic leaves an unassigned member in Backlog, arms robot and steve', () => {
+        const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P1' });
+        const robot = readyMember(epic.id, 'robot');
+        const steve = readyMember(epic.id, 'steve');
+        const nobody = readyMember(epic.id, null);
+        db.prepare("UPDATE agent_tickets SET status = 'queue', refined = 0, refine_stale = 1 WHERE id = ?").run(epic.id);
+
+        markTicketRefined(db, epic.id);
+
+        expect(getTicket(db, robot)!.status).toBe('queue');
+        expect(getTicket(db, steve)!.status).toBe('queue');
+        expect(getTicket(db, nobody)!.status).toBe('backlog');
+        expect(detailsOf(epic.id, 'epic_resumed')).toEqual([{ armed: 2, skippedUnassigned: 1 }]);
+      });
+
+      it('queueing an Epic leaves an unassigned member in Backlog, arms robot and steve, and logs the skip', () => {
+        const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P1' });
+        const robot = readyMember(epic.id, 'robot');
+        const steve = readyMember(epic.id, 'steve');
+        const nobody = readyMember(epic.id, null);
+        markTicketRefined(db, epic.id);
+
+        updateTicket(db, epic.id, { status: 'queue' });
+
+        expect(getTicket(db, robot)!.status).toBe('queue');
+        expect(getTicket(db, steve)!.status).toBe('queue');
+        expect(getTicket(db, nobody)!.status).toBe('backlog');
+        expect(detailsOf(epic.id, 'epic_resumed')).toEqual([
+          { armed: 2, skippedUnassigned: 1, via: 'epic_queue_cascade' },
+        ]);
+      });
+
+      it('the symmetric (Epic-not-queued) resume skips an unassigned member too', () => {
+        const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P1' });
+        const steve = readyMember(epic.id, 'steve');
+        const nobody = readyMember(epic.id, null);
+        markTicketRefined(db, epic.id);
+        // An unassigned member put in the Queue by hand, and then un-armed by the pause.
+        db.prepare("UPDATE agent_tickets SET status = 'queue' WHERE id IN (?, ?)").run(steve, nobody);
+        createTicket(db, { title: 'late', projectId: pd, epicId: epic.id, assignee: 'steve' });
+        expect(getTicket(db, nobody)!.status).toBe('backlog');
+
+        markTicketRefined(db, epic.id);
+
+        expect(getTicket(db, steve)!.status).toBe('queue');
+        expect(getTicket(db, nobody)!.status).toBe('backlog');
+        expect(detailsOf(epic.id, 'epic_resumed')).toEqual([{ armed: 1, skippedUnassigned: 1 }]);
+      });
+
+      it('the D-091 gate still holds robot members on resume (epic_resume_held), while steve arms', () => {
+        const epic = createTicket(db, { title: 'E', projectId: pd, isEpic: true, priority: 'P1' });
+        const robot = readyMember(epic.id, 'robot');
+        const steve = readyMember(epic.id, 'steve');
+        db.prepare('UPDATE agent_tickets SET refined = 0 WHERE id = ?').run(robot); // fails members-refined
+        db.prepare("UPDATE agent_tickets SET status = 'queue', refined = 0, refine_stale = 1 WHERE id = ?").run(epic.id);
+
+        markTicketRefined(db, epic.id);
+
+        expect(getTicket(db, robot)!.status).toBe('backlog');
+        expect(getTicket(db, steve)!.status).toBe('queue');
+        expect(detailsOf(epic.id, 'epic_resume_held')).toEqual([{ held: 1, reason: 'queue_gate' }]);
+      });
     });
   });
 
