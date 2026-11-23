@@ -102,6 +102,8 @@ export interface VelocityTicketInput {
   isEpic: boolean;
   assignee: string | null;
   createdAt: number;
+  /** PD-925: the Robot opened a PR for it — an `agent_runs` row with a PR on a `robot/*` branch. */
+  robotPr?: boolean;
 }
 
 /** The lifecycle events the reconstruction reads. `to` is `detail.to` for `status_changed`. */
@@ -118,7 +120,10 @@ const RESOLVED_STATUSES = new Set(['completed', 'closed']);
 export interface TicketLifecycle {
   id: number;
   isEpic: boolean;
+  /** Current assignee — who owns it now. Splits the open burndown. */
   assignee: VelocityAssignee;
+  /** Who a completion is credited to (PD-925): who opened its PR, not who holds it now. */
+  credit: VelocityAssignee;
   /** The `created` event's time, falling back to the row's `created_at`. */
   createdAt: number;
   /** First completion (`robot_completed`, or `status_changed` → completed); null if never. */
@@ -126,6 +131,18 @@ export interface TicketLifecycle {
   /** Resolution flips in time order: true = resolved (completed/closed), false = reopened.
    *  `completed` tells a completion from a close (split, superseded, abandoned) on a resolve. */
   transitions: { at: number; resolved: boolean; completed?: boolean }[];
+}
+
+/**
+ * Completion credit (PD-925): who opened the PR, read from the branch prefix. Once the Robot can
+ * adopt a session PR (PD-913), the ticket is reassigned to it, so the current assignee would
+ * credit the Robot with work Steve opened. A Robot-assigned ticket with no `robot/*` PR was built
+ * by hand (or adopted), so it is Steve's. Epics have no PR and keep their assignee.
+ */
+export function completionCredit(t: VelocityTicketInput): VelocityAssignee {
+  if (t.isEpic) return assigneeBucket(t.assignee);
+  if (t.robotPr) return 'robot';
+  return t.assignee === 'robot' ? 'steve' : assigneeBucket(t.assignee);
 }
 
 /**
@@ -183,6 +200,7 @@ export function reconstructLifecycles(
       id: t.id,
       isEpic: t.isEpic,
       assignee: assigneeBucket(t.assignee),
+      credit: completionCredit(t),
       createdAt,
       completedAt,
       transitions,
@@ -226,9 +244,9 @@ export function emptyAssigneeCounts(): AssigneeCounts {
 export interface VelocityWeek {
   /** Week start, unix ms (Monday 00:00 America/New_York). */
   weekStart: number;
-  /** Tickets (non-Epic) first completed this week, by current assignee. */
+  /** Tickets (non-Epic) first completed this week, credited to who opened the PR (PD-925). */
   ticketsCompleted: AssigneeCounts;
-  /** Epics first completed this week, by current assignee. */
+  /** Epics first completed this week, by assignee (an Epic has no PR). */
   epicsCompleted: AssigneeCounts;
   /** Burndown, non-Epic tickets: created this week. */
   created: number;
@@ -283,7 +301,7 @@ export function buildVelocityReport(
   };
   const work = lifecycles.filter((l) => !l.isEpic);
   for (const l of completions) {
-    (l.isEpic ? totals.epicsCompleted : totals.ticketsCompleted)[l.assignee]++;
+    (l.isEpic ? totals.epicsCompleted : totals.ticketsCompleted)[l.credit]++;
   }
   for (const l of work) if (isOpenAt(l, now)) totals.openNow[l.assignee]++;
 
@@ -297,9 +315,9 @@ export function buildVelocityReport(
     const cycles: number[] = [];
     for (const l of completions) {
       if (!inWeek(l.completedAt as number)) continue;
-      if (l.isEpic) epicsCompleted[l.assignee]++;
+      if (l.isEpic) epicsCompleted[l.credit]++;
       else {
-        ticketsCompleted[l.assignee]++;
+        ticketsCompleted[l.credit]++;
         cycles.push(((l.completedAt as number) - l.createdAt) / DAY_MS);
       }
     }

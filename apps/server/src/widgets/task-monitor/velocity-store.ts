@@ -36,12 +36,35 @@ export interface VelocityFilter extends ReportWindow {
 /** Event types that carry lifecycle meaning; everything else in the log is ignored. */
 const LIFECYCLE_EVENT_TYPES = ['created', 'robot_completed', 'status_changed'];
 
+/**
+ * Tickets the Robot opened a PR for (PD-925): a run with a PR on a `robot/*` branch. An adopted
+ * session PR (PD-913) is recorded on the session's own branch, so it is not one. `agent_runs` is
+ * worker-owned and absent on a volume where the worker never ran.
+ */
+function robotPrTickets(db: Database.Database): Set<number> {
+  try {
+    return new Set(
+      (
+        db
+          .prepare(
+            `SELECT DISTINCT ticket_id FROM agent_runs
+              WHERE pr_url IS NOT NULL AND branch LIKE 'robot/%'`,
+          )
+          .all() as { ticket_id: number }[]
+      ).map((r) => r.ticket_id),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 /** Every live ticket in scope, replayed into its lifecycle. */
 export function loadLifecycles(
   db: Database.Database,
   projectId?: number | null,
 ): TicketLifecycle[] {
   const scope = projectId != null ? 'AND project_id = @projectId' : '';
+  const robotPr = robotPrTickets(db);
   const tickets = (
     db
       .prepare(
@@ -59,6 +82,7 @@ export function loadLifecycles(
     isEpic: r.is_epic === 1,
     assignee: r.assignee,
     createdAt: r.created_at,
+    robotPr: robotPr.has(r.id),
   }));
   const placeholders = LIFECYCLE_EVENT_TYPES.map(() => '?').join(',');
   const events = (

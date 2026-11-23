@@ -16,6 +16,7 @@ import {
   type IntroducedBug,
   type VelocityEventInput,
   type VelocityRunInput,
+  completionCredit,
 } from '@dashboard/shared';
 
 /**
@@ -118,10 +119,43 @@ describe('reconstructLifecycles', () => {
   });
 });
 
+describe('completion credit (PD-925)', () => {
+  const t = (o: Partial<Parameters<typeof completionCredit>[0]>) =>
+    completionCredit({ id: 1, isEpic: false, assignee: null, createdAt: MON, ...o });
+
+  it('credits the Robot only for a ticket it opened a PR for', () => {
+    expect(t({ assignee: 'robot', robotPr: true })).toBe('robot');
+    expect(t({ assignee: 'steve', robotPr: true })).toBe('robot');
+  });
+
+  it('credits Steve for a Robot-assigned ticket with no robot/* PR (hand-built or adopted)', () => {
+    expect(t({ assignee: 'robot' })).toBe('steve');
+    expect(t({ assignee: 'steve' })).toBe('steve');
+    expect(t({ assignee: null })).toBe('unassigned');
+  });
+
+  it('keeps the assignee for an Epic, which has no PR', () => {
+    expect(t({ isEpic: true, assignee: 'robot' })).toBe('robot');
+  });
+
+  it('splits completions by credit but the open burndown by current assignee', () => {
+    const ls = reconstructLifecycles(
+      [
+        { id: 1, isEpic: false, assignee: 'robot', createdAt: MON }, // adopted: done, Steve's
+        { id: 2, isEpic: false, assignee: 'robot', createdAt: MON }, // still open, held by Robot
+      ],
+      [ev(1, 'robot_completed', MON + DAY)],
+    );
+    const r = buildVelocityReport(ls, MON + 2 * DAY);
+    expect(r.totals.ticketsCompleted).toEqual({ robot: 0, steve: 1, unassigned: 0 });
+    expect(r.totals.openNow).toEqual({ robot: 1, steve: 0, unassigned: 0 });
+  });
+});
+
 describe('buildVelocityReport', () => {
   const lifecycles = reconstructLifecycles(
     [
-      { id: 1, isEpic: false, assignee: 'robot', createdAt: MON },
+      { id: 1, isEpic: false, assignee: 'robot', createdAt: MON, robotPr: true },
       { id: 2, isEpic: false, assignee: 'steve', createdAt: MON },
       { id: 3, isEpic: true, assignee: null, createdAt: MON },
       { id: 4, isEpic: false, assignee: 'robot', createdAt: MON + 8 * DAY },

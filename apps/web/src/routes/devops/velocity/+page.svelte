@@ -245,8 +245,9 @@
     {#if report.startDate !== null}
       <p class="velocity-note">
         History starts <strong>{longDate(report.startDate)}</strong>, the first completion in the
-        event log. Earlier work has no completion record and isn't counted. Splits use each ticket's
-        <em>current</em> assignee.
+        event log. Earlier work has no completion record and isn't counted. Completions are credited
+        to whoever <em>opened the PR</em> (a <code>robot/</code> branch is the Robot's, so a PR of
+        yours the Robot reworked stays yours); the burndown splits by <em>current</em> assignee.
       </p>
     {/if}
 
