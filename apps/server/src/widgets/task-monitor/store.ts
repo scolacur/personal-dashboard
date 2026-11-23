@@ -308,6 +308,37 @@ function latestRunTurns(db: Database.Database, ticketId?: number): Map<number, n
   return byTicket;
 }
 
+/**
+ * The Epic members that still own an open Robot PR, so the stale-pause (PD-850) can spare them.
+ *
+ * `store.ts` runs synchronously with no GitHub reach and cannot read the gitignored worktree
+ * `.robot/scm.json`, so "has an open PR" is the SAME DB proxy `inReviewPrTargets` uses
+ * (pr-state.ts): the member's newest `handed-off` run in `agent_runs` carries a non-null `pr_url`.
+ * Guarded exactly like `latestRunTurns` — `agent_runs` is worker-owned and absent on a fresh
+ * volume, and absence must read as "no open PRs", never throw.
+ */
+function membersWithOpenRobotPr(db: Database.Database, epicId: number): Set<number> {
+  const open = new Set<number>();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT t.id AS id
+           FROM agent_tickets t
+           JOIN agent_runs r ON r.id = (
+             SELECT id FROM agent_runs
+              WHERE ticket_id = t.id AND status = 'handed-off' AND pr_url IS NOT NULL
+              ORDER BY finished_at DESC, id DESC LIMIT 1
+           )
+          WHERE t.epic_id = ? AND t.archived_at IS NULL`,
+      )
+      .all(epicId) as { id: number }[];
+    for (const r of rows) open.add(r.id);
+  } catch {
+    // `agent_runs` absent (worker never ran) — treat as no open PRs, matching the turn-count fallback.
+  }
+  return open;
+}
+
 export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
@@ -716,11 +747,29 @@ export function updateTicket(
 
       // Dispatch. Queueing the Epic arms every member that has not started; `completed`/`closed`
       // members are untouched, because a half-done Epic is the normal state of an in-flight Epic.
+      // PD-850 §2b: an `assignee IS NULL` member has no owner and nothing dispatches it, so it is
+      // left in Backlog rather than parked in the Queue looking like work in progress. The count of
+      // those skipped is surfaced on the Epic.
       if (next.status === 'queue' && existing.status !== 'queue') {
-        db.prepare(
-          `UPDATE agent_tickets SET status = 'queue', updated_at = ?
-            WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL`,
-        ).run(next.updatedAt, id);
+        const cascade = db
+          .prepare(
+            `UPDATE agent_tickets SET status = 'queue', updated_at = ?
+              WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL AND assignee IS NOT NULL`,
+          )
+          .run(next.updatedAt, id);
+        const skipped = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM agent_tickets
+              WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL AND assignee IS NULL`,
+          )
+          .get(id) as { n: number };
+        if (skipped.n > 0) {
+          logEvent(db, id, 'epic_resumed', {
+            armed: cascade.changes,
+            skippedUnassigned: skipped.n,
+            via: 'epic_queue_cascade',
+          });
+        }
       }
 
       // Rollback. Un-queues only members that never started. A member with a live run is left in
@@ -1229,58 +1278,132 @@ function invalidateEpicRefinement(
     return;
   }
   if (computeEpicSummary(db, epicId).derivedLane !== 'in_progress') return;
-  const paused = db
+
+  // PD-850: select the members to un-arm, then un-arm each and log an event on IT — so a member's
+  // own timeline shows why it left the Queue, not just the Epic's.
+  //
+  // In-flight members (`working` / `in-review`) are excluded here and keep running: a run cannot be
+  // interrupted (D-046), and pulling an `in-review` ticket out of the Queue would strand the open PR
+  // its watcher is scoped to — the PD-464 failure exactly.
+  const candidates = db
     .prepare(
-      `UPDATE agent_tickets SET status = 'backlog', agent_state = NULL, ready_bypassed = 0, updated_at = ?
+      `SELECT id FROM agent_tickets
         WHERE epic_id = ? AND status = 'queue' AND archived_at IS NULL
           AND (agent_state IS NULL OR agent_state NOT IN ('working', 'in-review'))`,
     )
-    .run(now, epicId);
-  // In-flight members (`working` / `in-review`) are excluded above and keep running: a run cannot be
-  // interrupted (D-046), and pulling an `in-review` ticket out of the Queue would strand the open PR
-  // its watcher is scoped to — the PD-464 failure exactly.
-  if (paused.changes > 0) {
-    logEvent(db, epicId, 'epic_paused', { unarmed: paused.changes, reason: 'refine_stale' });
+    .all(epicId) as { id: number }[];
+  // PD-850: a member re-activated for rework is `status='queue'`, `agent_state='queued'` (or
+  // needs-human / awaiting-human) and STILL owns its handed-off Robot PR. Un-arming it to Backlog
+  // clears the rework signal and leaves the PR blocked with no owner — the PR-strand of the PD-464
+  // class, from a new state. Spare any Queue member with an open Robot PR WHATEVER its agent_state:
+  // over-sparing is safe (a rework member is still picked up), and it closes the strand in one move.
+  const openPr = membersWithOpenRobotPr(db, epicId);
+  const unarm = db.prepare(
+    `UPDATE agent_tickets SET status = 'backlog', agent_state = NULL, ready_bypassed = 0, updated_at = ?
+      WHERE id = ?`,
+  );
+  let unarmed = 0;
+  for (const c of candidates) {
+    if (openPr.has(c.id)) continue;
+    unarm.run(now, c.id);
+    logEvent(db, c.id, 'epic_unarmed', { epicId, cause });
+    unarmed += 1;
+  }
+  if (unarmed > 0) {
+    logEvent(db, epicId, 'epic_paused', { unarmed, reason: 'refine_stale' });
   }
 }
 
+/** What a resume moved: how many members it armed, and how many it deliberately left in Backlog
+ *  because they had no assignee (PD-850 §2b). The caller folds both into the `epic_resumed` event. */
+interface EpicResumeResult {
+  armed: number;
+  skippedUnassigned: number;
+}
+
 /**
- * Re-arm the members an invalidation un-armed.
+ * Re-arm the members an invalidation un-armed. PD-850 makes pause and resume symmetric.
  *
- * Arms every `backlog` member, which is the same cascade queueing the Epic runs — and correct here
- * for the same reason: the Epic is in `queue`, so any member sitting in `backlog` either was
- * un-armed by the pause, or arrived after the Epic was queued (`createTicket` forces that, D-080).
- * Re-refining says the whole current set is agreed, so the whole current set is armed.
+ * The member set to re-arm depends on whether the Epic itself is STORED as queued:
+ *   - **Epic `status='queue'`** → the D-080 cascade: every `backlog` member, since the Epic being
+ *     queued means any member in `backlog` either was un-armed by the pause or arrived after queueing
+ *     (`createTicket` forces that). Re-refining says the whole current set is agreed, so arm it all.
+ *   - **Epic not queued** → an Epic whose members were queued one-by-one never set its OWN status to
+ *     `queue`, so the cascade would resume nothing (the PD-850 strand). Re-arm exactly the members
+ *     THIS stale episode un-armed: `backlog` members with an `epic_unarmed` event for this Epic logged
+ *     after the Epic's most recent invalidation. A member since re-queued, re-parented out,
+ *     archived or gone terminal is naturally excluded — it is no longer a `backlog` member here.
  */
-function resumeEpicMembers(db: Database.Database, epicId: number, now: number): number {
+function resumeEpicMembers(db: Database.Database, epicId: number, now: number): EpicResumeResult {
   const epic = db.prepare('SELECT status, is_epic FROM agent_tickets WHERE id = ?').get(epicId) as
     | { status: string; is_epic: number }
     | undefined;
-  if (!epic || epic.is_epic !== 1 || epic.status !== 'queue') return 0;
+  if (!epic || epic.is_epic !== 1) return { armed: 0, skippedUnassigned: 0 };
+
+  let candidateIds: number[];
+  if (epic.status === 'queue') {
+    candidateIds = (
+      db
+        .prepare(
+          `SELECT id FROM agent_tickets WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL`,
+        )
+        .all(epicId) as { id: number }[]
+    ).map((r) => r.id);
+  } else {
+    // The current stale episode begins at the Epic's most recent invalidation. Its `epic_unarmed`
+    // events are written in the same transaction, straight AFTER that `invalidated` event, so they
+    // carry larger event ids. Ordering by id, not `created_at`, keeps two episodes landing in the
+    // same millisecond from bleeding into each other (an earlier episode's un-arm must not count).
+    const lastInvalidated = db
+      .prepare(`SELECT MAX(id) AS id FROM agent_ticket_events WHERE ticket_id = ? AND type = ?`)
+      .get(epicId, REFINE_STATE_EVENT.invalidated) as { id: number | null };
+    const episodeStart = lastInvalidated.id ?? 0;
+    candidateIds = (
+      db
+        .prepare(
+          `SELECT t.id AS id FROM agent_tickets t
+            WHERE t.epic_id = ? AND t.status = 'backlog' AND t.archived_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM agent_ticket_events e
+                 WHERE e.ticket_id = t.id AND e.type = 'epic_unarmed' AND e.id > ?
+                   AND json_extract(e.detail, '$.epicId') = ?
+              )`,
+        )
+        .all(epicId, episodeStart, epicId) as { id: number }[]
+    ).map((r) => r.id);
+  }
+  if (candidateIds.length === 0) return { armed: 0, skippedUnassigned: 0 };
+  const placeholders = candidateIds.map(() => '?').join(', ');
+
   // D-091: re-arming is a way into the Queue, so robot members pass the same gate as everywhere
   // else. The Epic-level criteria are one answer for every member, so this is all-or-none for robot
-  // work; human members are armed regardless. Holding robot members back — rather than refusing the
-  // ✓ Mark refined that triggered this — keeps the mark doing what it says, and never leaves a
-  // queued card the loop will not pick (the PD-467 trap D-089 §6 avoids).
+  // work. Holding robot members back — rather than refusing the ✓ Mark refined that triggered this —
+  // keeps the mark doing what it says, and never leaves a queued card the loop will not pick.
   const epicNow = getTicket(db, epicId);
   const robotOk = queueEntryRefusals(epicQueueCriteria(epicNow, listEpicMembers(db, epicId))).length === 0;
+
+  // PD-850 §2b: NEVER arm an unassigned member — it has no owner and nothing dispatches it, so it
+  // would just sit in the Queue looking like work in progress. Robot members arm only when the gate
+  // is clear; a member with an explicit non-robot assignee (e.g. `steve`) is human work and arms
+  // regardless; `assignee IS NULL` is left in Backlog.
   const armed = db
     .prepare(
       `UPDATE agent_tickets SET status = 'queue', updated_at = ?
-        WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL
-          AND (? = 1 OR assignee IS NULL OR assignee <> 'robot')`,
+        WHERE id IN (${placeholders})
+          AND ((assignee = 'robot' AND ? = 1) OR (assignee IS NOT NULL AND assignee <> 'robot'))`,
     )
-    .run(now, epicId, robotOk ? 1 : 0);
+    .run(now, ...candidateIds, robotOk ? 1 : 0);
+
   if (!robotOk) {
     const held = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM agent_tickets
-          WHERE epic_id = ? AND status = 'backlog' AND archived_at IS NULL AND assignee = 'robot'`,
-      )
-      .get(epicId) as { n: number };
+      .prepare(`SELECT COUNT(*) AS n FROM agent_tickets WHERE id IN (${placeholders}) AND assignee = 'robot'`)
+      .get(...candidateIds) as { n: number };
     if (held.n > 0) logEvent(db, epicId, 'epic_resume_held', { held: held.n, reason: 'queue_gate' });
   }
-  return armed.changes;
+  const skipped = db
+    .prepare(`SELECT COUNT(*) AS n FROM agent_tickets WHERE id IN (${placeholders}) AND assignee IS NULL`)
+    .get(...candidateIds) as { n: number };
+  return { armed: armed.changes, skippedUnassigned: skipped.n };
 }
 
 /**
@@ -1300,8 +1423,10 @@ export function markTicketRefined(db: Database.Database, id: number, now: number
     db.prepare('UPDATE agent_tickets SET refined = 1, refine_stale = 0, updated_at = ? WHERE id = ?').run(now, id);
     logEvent(db, id, REFINE_STATE_EVENT.marked, { wasStale, via: 'mark' });
     if (wasStale && existing.isEpic) {
-      const armed = resumeEpicMembers(db, id, now);
-      if (armed > 0) logEvent(db, id, 'epic_resumed', { armed });
+      const { armed, skippedUnassigned } = resumeEpicMembers(db, id, now);
+      if (armed > 0 || skippedUnassigned > 0) {
+        logEvent(db, id, 'epic_resumed', { armed, ...(skippedUnassigned > 0 ? { skippedUnassigned } : {}) });
+      }
     }
   });
   apply();
@@ -1976,8 +2101,14 @@ export function approveRefine(
       // stops there; only this puts the paused members back in the Queue, because D-057 reserves
       // dispatch to an explicit human act rather than to approving what an agent proposed.
       if (opts.resume === true && parent.isEpic) {
-        const armed = resumeEpicMembers(db, ticketId, Date.now());
-        if (armed > 0) logEvent(db, ticketId, 'epic_resumed', { armed, via: 'approve_resume' });
+        const { armed, skippedUnassigned } = resumeEpicMembers(db, ticketId, Date.now());
+        if (armed > 0 || skippedUnassigned > 0) {
+          logEvent(db, ticketId, 'epic_resumed', {
+            armed,
+            via: 'approve_resume',
+            ...(skippedUnassigned > 0 ? { skippedUnassigned } : {}),
+          });
+        }
       }
       logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, { mode: p.mode, queued });
     });
