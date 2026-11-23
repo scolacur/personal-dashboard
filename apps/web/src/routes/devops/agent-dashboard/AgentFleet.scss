@@ -1,0 +1,302 @@
+/* ── Agent Dashboard fleet view (PD-818 / PD-819) ───── */
+
+.fleet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  font-size: var(--font-size-sm);
+}
+
+// PD-819: TEMPORARY avatar comparison control — deleted once a style is picked.
+.avatar-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.picker-label {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.picker-family {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--muted);
+    font: inherit;
+    padding: 0.2rem 0.6rem 0.2rem 0.35rem;
+    cursor: pointer;
+
+    &.active {
+      border-color: var(--accent);
+      color: var(--text);
+      box-shadow: 0 0 0 1px var(--accent);
+    }
+  }
+}
+
+.family-name {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-right: var(--space-xs);
+}
+
+.loading,
+.muted {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+.callout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.5rem 0.8rem;
+  border-radius: var(--radius);
+  border: 1px solid;
+
+  &.fault {
+    border-color: color-mix(in srgb, var(--status-stuck) 45%, transparent);
+    background: color-mix(in srgb, var(--status-stuck) 12%, transparent);
+    strong {
+      color: var(--status-stuck);
+    }
+  }
+
+  // PD-791: amber, one line.
+  &.holding {
+    border-color: color-mix(in srgb, var(--status-warn) 45%, transparent);
+    background: color-mix(in srgb, var(--status-warn) 12%, transparent);
+    strong {
+      color: var(--status-warn);
+    }
+  }
+}
+
+.fleet-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.section-label,
+.group-label {
+  margin: 0;
+  font-family: var(--font-display);
+}
+
+.section-label {
+  font-size: var(--font-size-base);
+}
+
+// PD-819: one column per agent kind; columns stack on narrow screens.
+.kind-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.kind-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.group-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+  padding-bottom: var(--space-xs);
+  border-bottom: 1px solid var(--border);
+
+  .count {
+    color: var(--text);
+    &.zero {
+      color: var(--muted);
+    }
+  }
+}
+
+.column-idle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: var(--space-md);
+}
+
+.tile {
+  --tile-tone: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--tile-tone);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  min-width: 0;
+
+  &.wide {
+    grid-column: span 2;
+  }
+  &.warn {
+    --tile-tone: var(--status-warn);
+  }
+  &.bad {
+    --tile-tone: var(--status-stuck);
+  }
+  &.needs {
+    --tile-tone: var(--status-needs-human);
+  }
+
+  &.agent-state-queued { --tile-tone: var(--status-queued); }
+  &.agent-state-working { --tile-tone: var(--status-working); }
+  &.agent-state-in-review { --tile-tone: var(--status-in-review); }
+  &.agent-state-awaiting-human { --tile-tone: var(--status-awaiting-human); }
+  &.agent-state-needs-human { --tile-tone: var(--status-needs-human); }
+  &.agent-state-stuck { --tile-tone: var(--status-stuck); }
+
+  // PD-818: a soft pulse on the working state.
+  &.pulse {
+    animation: tile-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+.tile-label {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile-value {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--tile-tone);
+
+  &.small {
+    font-size: var(--font-size-lg);
+  }
+}
+
+.state-tile.idle .tile-value {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.tile-line {
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+
+  &.warn {
+    color: var(--status-warn);
+  }
+  &.bad {
+    color: var(--status-stuck);
+  }
+}
+
+a.tile-line {
+  text-decoration: none;
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.tile-action {
+  align-self: flex-start;
+  margin-top: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  padding: 0.1rem 0.6rem;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+// PD-818: values fade in when they change between polls ({#key} remounts them).
+.fresh {
+  animation: fade-in 0.6s ease-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes tile-pulse {
+  0%,
+  100% {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tile-tone) 30%, transparent);
+  }
+}
+
+@media (max-width: 900px) {
+  .kind-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .tile.wide {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile.pulse,
+  .fresh {
+    animation: none;
+  }
+}

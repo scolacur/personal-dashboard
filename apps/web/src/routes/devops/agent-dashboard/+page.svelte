@@ -5,7 +5,10 @@
   //
   // PD-306 added the Agent Glossary: what each agent is responsible for and the exact prompts it
   // receives, rendered from the same code the worker runs.
-  import SystemStatus from '../SystemStatus.svelte';
+  //
+  // PD-818 / PD-819 (Epic PD-682): the page renders its own tiled fleet view with live 8-bit robot
+  // tiles; the compact /devops card keeps the plain SystemStatus strip.
+  import AgentFleet from './AgentFleet.svelte';
   import AgentGlossaryModal from './AgentGlossaryModal.svelte';
 
   let glossaryOpen = $state(false);
@@ -16,7 +19,7 @@
     <h2 class="section-title">Agent Dashboard</h2>
     <button class="glossary-button" type="button" onclick={() => (glossaryOpen = true)}>Agent Glossary</button>
   </div>
-  <SystemStatus />
+  <AgentFleet />
 </section>
 
 <AgentGlossaryModal open={glossaryOpen} onClose={() => (glossaryOpen = false)} />
