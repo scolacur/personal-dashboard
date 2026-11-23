@@ -2,6 +2,7 @@
   import type { AgentProject, AgentTicket, TicketStatus } from '@dashboard/shared';
   import {
     ASSIGNEE_LABELS,
+    TICKET_KIND_LABELS,
     PRIORITY_LABELS,
     REFINE_STATE_LABELS,
     ROBOT_MAX_TURNS_DEFAULT,
@@ -183,6 +184,7 @@
           isEpic: form.isEpic,
           epicId,
           maxTurns,
+          kind: form.isEpic ? null : form.kind,
           // An agent-controlled ticket's status is not ours to send.
           ...(locked ? {} : { status: form.status }),
           ...(refinedChoice !== undefined ? { refined: refinedChoice } : {}),
@@ -231,6 +233,12 @@
       {/if}
     </dd>
   </div>
+  {#if !ticket.isEpic}
+    <div>
+      <dt>Kind</dt>
+      <dd>{ticket.kind ? TICKET_KIND_LABELS[ticket.kind] : 'Unclassified'}</dd>
+    </div>
+  {/if}
   <div>
     <dt>Lane</dt>
     <dd title={ticket.isEpic && memberCount > 0 ? "An Epic's lane is derived from its members" : undefined}>

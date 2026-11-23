@@ -26,6 +26,7 @@ function epic(o: Partial<AgentTicket> = {}): AgentTicket {
     githubIssueUrl: null,
     agentState: null,
     maxTurns: null,
+    kind: null,
     agentTurns: null,
     refineState: null,
     refined: false,

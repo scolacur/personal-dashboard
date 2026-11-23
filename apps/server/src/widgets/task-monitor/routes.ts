@@ -9,6 +9,7 @@ import {
   type RefineAnswerSet,
   type RelationType,
   type TicketAssignee,
+  type TicketKind,
   type TicketPriority,
   type TicketStatus,
   type UpdateTicketInput,
@@ -222,6 +223,8 @@ export function registerRoutes(
       // The store validates it (`validMaxTurns`) and throws ValidationError → 400 below. It was
       // never copied here, so a per-ticket turn budget sent on create was silently dropped.
       maxTurns: body.maxTurns === undefined ? undefined : (body.maxTurns as number | null),
+      // PD-896: validated by the store (→ 400 INVALID_KIND).
+      kind: body.kind === undefined ? undefined : (body.kind as TicketKind | null),
     };
     // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-080 / PD-509),
     // which until now only the board's form enforced.
@@ -409,6 +412,10 @@ export function registerRoutes(
     // silently dropped and the ticket kept the loop default.
     if (body.maxTurns !== undefined) {
       patch.maxTurns = body.maxTurns as number | null;
+    }
+    // PD-896: bug / feature / chore, or null to unclassify. Validated by the store (→ 400 INVALID_KIND).
+    if (body.kind !== undefined) {
+      patch.kind = body.kind as TicketKind | null;
     }
     // D-103 (PD-808): switch an Epic in or out of auto-queue. Meaningful only on an Epic — the
     // promoter reads it from a member's Epic — so it is stored on any row without an isEpic check.

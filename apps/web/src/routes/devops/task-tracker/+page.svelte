@@ -559,6 +559,7 @@
           isEpic: form.isEpic,
           epicId,
           maxTurns,
+          kind: form.isEpic ? null : form.kind,
         }, joinOpts);
       } else {
         const nextBody = form.body.trim() || null;
@@ -578,6 +579,7 @@
           isEpic: form.isEpic,
           epicId,
           maxTurns,
+          kind: form.isEpic ? null : form.kind,
           // Don't send status for agent-locked tickets (it's externally controlled).
           ...(editingLocked ? {} : { status: form.status }),
           ...(bypass ? { readyBypassed: true } : {}),

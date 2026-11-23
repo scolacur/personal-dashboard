@@ -7,6 +7,8 @@
     PRIORITY_LABELS,
     ROBOT_MAX_TURNS_DEFAULT,
     ROBOT_MAX_TURNS_LIMIT,
+    TICKET_KINDS,
+    TICKET_KIND_LABELS,
   } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import Button from '$lib/Button.svelte';
@@ -150,6 +152,18 @@
         <small class="field-note">Locked — controlled by its agent.</small>
       {/if}
     </label>
+    {#if !form.isEpic}
+      <!-- PD-896: what the work is. The Velocity bug-rate charts (PD-881) count `bug`. -->
+      <label>
+        <span>Kind</span>
+        <select bind:value={form.kind}>
+          <option value={null}>— Unclassified</option>
+          {#each TICKET_KINDS as k (k)}
+            <option value={k}>{TICKET_KIND_LABELS[k]}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
     <label>
       <span>Turn ceiling</span>
       <input
