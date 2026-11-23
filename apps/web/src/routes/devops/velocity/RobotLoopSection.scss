@@ -1,0 +1,9 @@
+// Velocity › Robot loop (PD-862).
+@use './cards';
+
+.velocity-note,
+.velocity-empty {
+  margin: var(--space-xs) 0 var(--space-md);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}

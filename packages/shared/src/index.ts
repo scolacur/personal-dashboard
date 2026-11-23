@@ -426,3 +426,32 @@ export {
 } from './refine-questions';
 export type { RefineAutostartStatus } from './refine-questions';
 export { REFINE_AUTOSTART_STATUS_KEY, REFINE_BACKFILL_EXCLUDED_EVENT } from './refine-questions';
+export type {
+  AssigneeCounts,
+  ReportWindow,
+  RunFaultCounts,
+  RunReport,
+  RunWeek,
+  TicketLifecycle,
+  VelocityAssignee,
+  VelocityEventInput,
+  VelocityReport,
+  VelocityRunInput,
+  VelocityTicketInput,
+  VelocityWeek,
+} from './velocity';
+export {
+  VELOCITY_ASSIGNEES,
+  VELOCITY_TIMEZONE,
+  WEEK_MS,
+  nextWeek,
+  assigneeBucket,
+  buildRunReport,
+  buildVelocityReport,
+  emptyAssigneeCounts,
+  isOpenAt,
+  percentile,
+  reconstructLifecycles,
+  weekOf,
+  weekRange,
+} from './velocity';

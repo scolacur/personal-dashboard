@@ -29,6 +29,13 @@
      but less urgent than a red stuck/needs-human Robot job. */
   --status-refine-needs: #d6336c; /* pink */
 
+  /* Chart series (Velocity, PD-895). Robot = purple, Steve = green, matching --accent-2/--accent
+     in light. Dark gets its own steps: the dark accents are near-white, outside the chart
+     lightness band, so these are toned to stay distinguishable. Validated with the dataviz
+     palette checker (light vs --surface, dark vs dark --surface). */
+  --chart-robot: #954cb1;
+  --chart-steve: #33a27d;
+
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-display: 'Sora', system-ui, sans-serif;
@@ -46,7 +53,6 @@
 
   /* Shape */
   --radius: 0.5rem;
-
 }
 
 :global([data-theme='dark']) {
@@ -61,4 +67,6 @@
   --accent-2: #ddaeef; /* accent */
   --accent-3: #f97316; /* orange */
   --on-accent: #242424;
+  --chart-robot: #a46bc0;
+  --chart-steve: #a6951c;
 }
