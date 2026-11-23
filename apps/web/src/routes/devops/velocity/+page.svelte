@@ -27,6 +27,8 @@
     VELOCITY_RANGES,
     fmtNum,
     fmtPct,
+    fmtSigned,
+    netFlow,
     longDate,
     parseProjectParam,
     projectSearch,
@@ -49,6 +51,7 @@
   let error = $state<string | null>(null);
   let range = $state<VelocityRange>('26w');
   let throughputKind = $state<'tickets' | 'epics'>('tickets');
+  let flowView = $state<'lines' | 'net'>('lines');
 
   let projects = $state<AgentProject[]>([]);
   let loading = $state(false);
@@ -177,6 +180,11 @@
     },
   ]);
 
+  // PD-923: one signed bar per week — the first bar above zero is the week the backlog shrank.
+  const net = $derived([
+    { key: 'net', label: 'Net change', tone: 'gain' as const, values: netFlow(weeks) },
+  ]);
+
   const cycle = $derived([
     {
       key: 'median',
@@ -296,11 +304,37 @@
       </article>
 
       <article class="card">
-        <header class="card-head"><h3>Created vs resolved</h3></header>
-        <VelocityChart weeks={ws} series={flow} label="Tickets created and resolved per week" />
-        <p class="card-note">
-          Resolved means completed or closed. Above the created line, the backlog is shrinking.
-        </p>
+        <header class="card-head">
+          <h3>Created vs resolved</h3>
+          <SegmentedToggle
+            label="Lines or net change"
+            options={[
+              { value: 'lines', label: 'Lines' },
+              { value: 'net', label: 'Net' },
+            ]}
+            value={flowView}
+            onChange={(v) => (flowView = v)}
+          />
+        </header>
+        {#if flowView === 'lines'}
+          <VelocityChart weeks={ws} series={flow} label="Tickets created and resolved per week" />
+          <p class="card-note">
+            Resolved means completed or closed. Above the created line, the backlog is shrinking.
+          </p>
+        {:else}
+          <VelocityChart
+            weeks={ws}
+            series={net}
+            kind="diverging"
+            format={fmtSigned}
+            signLabels={['Backlog shrank', 'Backlog grew']}
+            label="Net change in open tickets per week: resolved minus created"
+          />
+          <p class="card-note">
+            Resolved minus created. Above zero, more was resolved than created that week, so the
+            backlog shrank.
+          </p>
+        {/if}
       </article>
 
       <article class="card">
