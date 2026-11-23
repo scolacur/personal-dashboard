@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { ActiveAgent } from '@dashboard/shared';
 import {
+  AVATAR_FAMILIES,
+  AVATAR_LABELS,
   DEFAULT_BOT_COLOR,
   agentKey,
   botColor,
@@ -9,10 +11,9 @@ import {
   formatTokens,
   formatTurns,
   groupByKind,
-  isPixelStyle,
+  isLineStyle,
   nearTurnCap,
 } from './agent-fleet';
-import { SPRITE_H, SPRITE_SETS, SPRITE_W, _SPRITE_SOURCES, spriteFor } from './pixel-robots';
 
 function agent(over: Partial<ActiveAgent>): ActiveAgent {
   return {
@@ -98,33 +99,15 @@ describe('botColor / agentKey', () => {
   });
 });
 
-describe('pixel robots', () => {
-  it('every sprite source row fits the grid, in every set', () => {
-    for (const set of SPRITE_SETS) {
-      const { base, overlays } = _SPRITE_SOURCES[set];
-      expect(base).toHaveLength(SPRITE_H);
-      for (const rows of [base, ...Object.values(overlays)]) {
-        expect(rows.length).toBeLessThanOrEqual(SPRITE_H);
-        for (const r of rows) expect(r).toHaveLength(SPRITE_W);
-      }
-    }
-  });
-
-  it('gives each kind its accessory in every set', () => {
-    for (const set of SPRITE_SETS) {
-      const cells = (k: 'robot' | 'evaluator' | 'auditor') => new Set(spriteFor(k, set).map((p) => p.c));
-      expect(cells('robot').has('K')).toBe(false);
-      expect(cells('evaluator').has('K')).toBe(true); // magnifying glass
-      expect(cells('auditor').has('V')).toBe(true); // green visor
-      expect(spriteFor('evaluator', set).some((p) => p.part === 'tool')).toBe(true);
-      expect(spriteFor('robot', set).some((p) => p.part === 'eyes')).toBe(true);
-    }
-  });
-});
-
 describe('avatar styles', () => {
-  it('tells sprite sets from minimalist styles', () => {
-    expect(isPixelStyle('tread')).toBe(true);
-    expect(isPixelStyle('orb')).toBe(false);
+  it('every style has a label and belongs to exactly one family', () => {
+    const all = AVATAR_FAMILIES.flatMap((f) => f.styles);
+    expect(new Set(all).size).toBe(all.length);
+    for (const st of all) expect(AVATAR_LABELS[st]).toBeTruthy();
+  });
+
+  it('tells line faces from signal shapes', () => {
+    expect(isLineStyle('tv')).toBe(true);
+    expect(isLineStyle('sonar')).toBe(false);
   });
 });

@@ -17,24 +17,19 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import AgentTile from './AgentTile.svelte';
   import {
+    AVATAR_FAMILIES,
     AVATAR_LABELS,
     DEFAULT_AVATAR,
     DEFAULT_BOT_COLOR,
     KIND_LABELS,
-    MINIMAL_STYLES,
-    PIXEL_STYLES,
     agentKey,
     groupByKind,
     type AvatarStyle,
   } from './agent-fleet';
 
-  // PD-819: TEMPORARY avatar comparison — ephemeral, a reload returns to Classic. Removed once a
+  // PD-819: TEMPORARY avatar comparison — ephemeral, a reload returns to Line. Removed once a
   // style is chosen.
   let avatar = $state<AvatarStyle>(DEFAULT_AVATAR);
-  const AVATAR_FAMILIES = [
-    { name: '8-bit', styles: PIXEL_STYLES },
-    { name: 'Minimal', styles: MINIMAL_STYLES },
-  ];
 
   let status = $state<SystemStatus | null>(null);
   let now = $state(Date.now());
