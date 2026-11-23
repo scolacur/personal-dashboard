@@ -17,10 +17,22 @@ import { logMilestone } from '../robot/events';
 import { notifyLoop } from '../robot/notify';
 import { runEvaluatorTurn } from './evaluate-agent';
 import { capDiff, combineReports, defaultDiffFetcher, type EvaluatePassDeps } from './evaluate';
-import { finishEvaluatorRun, headEvaluated, NO_TICKET, prRounds, startEvaluatorRun, updateEvaluatorRunProgress } from './evaluator-runs';
+import {
+  finishEvaluatorRun,
+  HEAD_VERDICT_ROUNDS,
+  headEvaluated,
+  latestLensReport,
+  lensNeedsRun,
+  lensStates,
+  MAX_LENS_ERROR_RUNS,
+  NO_TICKET,
+  prRounds,
+  startEvaluatorRun,
+  updateEvaluatorRunProgress,
+} from './evaluator-runs';
 import { inReviewPrTargets } from '../robot/pr-state';
 import { defaultHeadShaFetcher, defaultStatusPoster, gateTargetUrl } from './review-gate';
-import { blockingFindings, parseEvaluatorReport } from './verdict';
+import { blockingFindings, MAX_UNPARSEABLE_CHARS, parseEvaluatorReport } from './verdict';
 
 const run = promisify(execFile);
 
@@ -244,6 +256,8 @@ export async function evaluateNextOtherPr(
   const inReviewPrNumbers = new Set(inReviewTargets.map((t) => t.prNumber));
   const inReviewTicketByPr = new Map(inReviewTargets.map((t) => [t.prNumber, t.ticketId]));
 
+  const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
+
   const sorted = [...prs].sort((a, b) => a.number - b.number);
   for (const p of sorted) {
     if (p.headRefName.startsWith('robot/') && inReviewPrNumbers.has(p.number)) {
@@ -254,20 +268,32 @@ export async function evaluateNextOtherPr(
     }
   }
 
+  // A head is reviewed while any enabled lens still owes a run on it (no verdict, retry not yet
+  // used), and while the PR is under its distinct-head round cap (PD-884).
   const pr = sorted.find(
-    (p) => skipReason(p, inReviewPrNumbers) === null && !headEvaluated(db, p.number, p.headRefOid) && prRounds(db, p.number) < config.evaluator.maxRounds,
+    (p) =>
+      skipReason(p, inReviewPrNumbers) === null &&
+      !headEvaluated(db, p.number, p.headRefOid, lenses) &&
+      prRounds(db, p.number) < config.evaluator.maxRounds,
   );
   if (!pr) return undefined;
 
-  const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
-  const round = prRounds(db, pr.number) + 1;
+  // Per-lens state over THIS head. Only the lenses still owing a run are re-run; a lens that already
+  // decided this head (shipped / revised / escalated, or errored its retry out) is folded in from the
+  // DB rather than re-run (PD-884), mirroring the Robot path.
+  const select = { prNumber: pr.number, headSha: pr.headRefOid };
+  const priorStates = lensStates(db, select);
+  const needed = lenses.filter((l) => lensNeedsRun(priorStates.get(l), HEAD_VERDICT_ROUNDS));
+
+  // A retry on the same head keeps its round; only a new head advances the PR-level counter.
+  const round = priorStates.size > 0 ? prRounds(db, pr.number) : prRounds(db, pr.number) + 1;
   const tickets = linkedTickets(db, pr);
   // An evaluator run row has one ticket; the first is the PR's primary (its branch, else its title).
   const ticketId = tickets[0]?.id ?? NO_TICKET;
   const repo = config.githubRepo;
 
   const runIds = new Map<EvaluatorLens, number>();
-  for (const lens of lenses) {
+  for (const lens of needed) {
     runIds.set(lens, startEvaluatorRun(db, { ticketId, prNumber: pr.number, round, model: config.evaluator.model, lens, headSha: pr.headRefOid }, now));
     for (const t of tickets) logMilestone(db, t.id, ROBOT_EVENT.evaluating, { round, prNumber: pr.number, lens }, now);
   }
@@ -298,8 +324,15 @@ export async function evaluateNextOtherPr(
   });
   const contextPack = (deps.buildContext ?? buildContextPack)(config.checkoutDir);
 
-  const reports: (EvaluatorReport | null)[] = [];
-  for (const lens of lenses) {
+  // Start each lens's decision from what this head already holds: a lens we are NOT re-running folds
+  // in its latest verdict (so a lens that already shipped is not read as a missing verdict); a lens
+  // that errored its retry out folds in as null and keeps the PR from passing (PD-884).
+  const reports = new Map<EvaluatorLens, EvaluatorReport | null>();
+  for (const l of lenses) {
+    if (!needed.includes(l)) reports.set(l, latestLensReport(db, select, l));
+  }
+
+  for (const lens of needed) {
     const runId = runIds.get(lens)!;
     const system = lens === 'security' ? securityEvaluatorSystemPrompt(contextPack) : evaluatorSystemPrompt(contextPack);
     const result = await (deps.runAgent ?? runEvaluatorTurn)(config, system, userPrompt, (t, k) =>
@@ -311,7 +344,13 @@ export async function evaluateNextOtherPr(
       runId,
       report
         ? { report, turns: result.turns, tokens: result.tokens }
-        : { error: result.ok ? `unparseable report: ${result.text.slice(0, 500)}` : result.text || 'agent error', turns: result.turns, tokens: result.tokens },
+        : {
+            // PD-884: keep the full reply (bounded), not a 500-char head — the tail is usually where
+            // the malformed JSON or truncation is.
+            error: result.ok ? `unparseable report: ${result.text.slice(0, MAX_UNPARSEABLE_CHARS)}` : result.text || 'agent error',
+            turns: result.turns,
+            tokens: result.tokens,
+          },
       now,
     );
     if (report) {
@@ -330,10 +369,11 @@ export async function evaluateNextOtherPr(
     if (report && lens === 'security' && report.findings.some((f) => f.kind === 'secret')) {
       notifyLoop(db, 'agent_needs_human', `Possible secret in PR #${pr.number}: rotate it`, 'The security reviewer found a credential in a PR. The repo is public, so treat it as leaked: rotate it now, then remove it from the branch.', now);
     }
-    reports.push(report);
+    reports.set(lens, report);
   }
 
-  const combined = combineReports(reports);
+  // One decision from every lens (fresh this pass or folded). Any missing verdict means no pass.
+  const combined = combineReports(lenses.map((l) => reports.get(l) ?? null));
   await (deps.comment ?? defaultPrCommenter(config))(repo, pr.number, verdictComment(combined, round, tickets, config.evaluator.maxRounds));
   if (combined?.verdict === 'ship' && config.evaluator.reviewGateToken) {
     await (deps.postStatus ?? defaultStatusPoster(config))(
@@ -343,6 +383,26 @@ export async function evaluateNextOtherPr(
       gateTargetUrl(config, tickets[0]?.displayId ?? null),
     );
   }
+
+  // PD-884: when a lens has used its one retry on this head (errored twice, no verdict), the PR is
+  // left to Steve — this path posts nothing to review-gate on a non-ship, so the notification is the
+  // actionable terminal signal. No owning ticket here, so it is a loop notification; the title is
+  // head/PR-specific so notifyLoop's (kind, title) dedup fires it exactly once per failed head.
+  const finalStates = lensStates(db, select);
+  const exhausted = lenses.filter((l) => {
+    const s = finalStates.get(l);
+    return !!s && s.verdictRuns === 0 && s.errorRuns >= MAX_LENS_ERROR_RUNS;
+  });
+  if (exhausted.length > 0) {
+    notifyLoop(
+      db,
+      'agent_needs_human',
+      `Evaluator could not review PR #${pr.number} (${pr.headRefOid.slice(0, 7)})`,
+      `The ${exhausted.join(' and ')} review of PR #${pr.number} produced no usable verdict after its one retry. review-gate is left to Steve; this PR needs a human review.`,
+      now,
+    );
+  }
+
   logger.info(
     { prNumber: pr.number, headRef: pr.headRefName, verdict: combined?.verdict ?? null, tickets: tickets.map((t) => t.displayId) },
     'evaluator: reviewed a PR via the all-PRs path',

@@ -97,20 +97,36 @@ export function reclaimInterruptedEvaluatorRuns(db: Database.Database, now: numb
     .run(INTERRUPTED_RUN_ERROR, now).changes;
 }
 
-/** Whether this exact head of a non-Robot PR has been reviewed (PD-712). */
-export function headEvaluated(db: Database.Database, prNumber: number, headSha: string): boolean {
-  return (
-    (db
-      .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha = ? AND lens = 'code' AND ${COUNTED}`)
-      .get(prNumber, headSha) as { n: number }).n > 0
-  );
+/**
+ * The per-head verdict cap for the non-Robot path (PD-884). Unlike the Robot path's revise
+ * ping-pong — which runs one head up to `maxRounds` verdicts — a non-Robot head is a single literal
+ * commit: one verdict settles a lens on it, and a new push is a new head (the next PR-level round,
+ * counted by `prRounds`). So the per-head settle check always uses a verdict cap of 1.
+ */
+export const HEAD_VERDICT_ROUNDS = 1;
+
+/**
+ * Whether this exact head of a non-Robot PR is fully reviewed (PD-712, PD-884): every enabled lens is
+ * settled for this `head_sha` — it has a verdict (ship / revise / escalate) OR has used its one error
+ * retry. A lens with a single errored run and no verdict is NOT settled: it is retried on a later
+ * poll rather than the head being treated as "a code row exists".
+ */
+export function headEvaluated(
+  db: Database.Database,
+  prNumber: number,
+  headSha: string,
+  lenses: EvaluatorLens[] = ['code'],
+): boolean {
+  const states = lensStates(db, { prNumber, headSha });
+  return lenses.every((l) => !lensNeedsRun(states.get(l), HEAD_VERDICT_ROUNDS));
 }
 
-/** How many heads of a non-Robot PR have been reviewed by this lens: its round count (PD-712). */
-export function prRounds(db: Database.Database, prNumber: number, lens: EvaluatorLens = 'code'): number {
+/** How many DISTINCT heads of a non-Robot PR have been reviewed: its round count (PD-712, PD-884).
+ *  Per distinct `head_sha`, so a retry on the same head never consumes a PR-level round. */
+export function prRounds(db: Database.Database, prNumber: number): number {
   return (db
-    .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha IS NOT NULL AND lens = ? AND ${COUNTED}`)
-    .get(prNumber, lens) as { n: number }).n;
+    .prepare(`SELECT COUNT(DISTINCT head_sha) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha IS NOT NULL AND ${COUNTED}`)
+    .get(prNumber) as { n: number }).n;
 }
 
 /** Open a run row and return its id. Written BEFORE the agent starts so a crashed evaluation leaves

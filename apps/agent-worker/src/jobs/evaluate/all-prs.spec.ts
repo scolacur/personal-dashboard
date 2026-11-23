@@ -251,6 +251,106 @@ describe('evaluateNextOtherPr (PD-712)', () => {
   });
 });
 
+describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notification (PD-884)', () => {
+  const secShip = JSON.stringify({ verdict: 'ship', summary: 'security ship', findings: [] });
+
+  /** An agent that answers per lens (the security prompt self-identifies) and records which it saw. */
+  function lensDeps(answers: { code: string; security: string }, list: OtherPr[] = [pr()]) {
+    const comments: string[] = [];
+    const statuses: { sha: string; state: string }[] = [];
+    const calls: string[] = [];
+    const runAgent = vi.fn(async (_c: unknown, system: string): Promise<EvaluatorTurnResult> => {
+      const lens = system.includes('the security reviewer') ? 'security' : 'code';
+      calls.push(lens);
+      return { text: lens === 'security' ? answers.security : answers.code, ok: true, turns: 3, tokens: 100 };
+    });
+    return {
+      comments,
+      statuses,
+      calls,
+      runAgent,
+      d: {
+        listPrs: async () => list,
+        fetchHeadSha: async () => list[0]?.headRefOid ?? SHA,
+        fetchDiff: async () => 'diff',
+        buildContext: () => 'ctx',
+        runAgent,
+        comment: async (_r: string, _n: number, body: string) => void comments.push(body),
+        postStatus: async (_r: string, sha: string, s: { state: string }) => (statuses.push({ sha, state: s.state }), true),
+      },
+    };
+  }
+
+  const needsHuman = () =>
+    db.prepare("SELECT title, body FROM agent_notifications WHERE kind = 'agent_needs_human'").all() as { title: string; body: string }[];
+
+  it('re-runs ONLY the errored security lens next pass; its ship folds the code ship into review-gate success', async () => {
+    const c = cfg({ securityEnabled: true });
+    // Pass 1: code ships, the security reviewer returns garbage → no verdict, retry pending.
+    const h1 = lensDeps({ code: ship, security: 'not json' });
+    const out1 = await evaluateNextOtherPr(db, c, 1000, h1.d);
+    expect(h1.calls).toEqual(['code', 'security']);
+    expect(out1).toBeNull(); // any missing verdict → no full ship
+    expect(h1.statuses).toEqual([]); // nothing posted on a non-ship
+    expect(needsHuman()).toHaveLength(0); // retry still pending
+
+    // Pass 2: ONLY security re-runs (code already shipped this head); its ship combines with the
+    // folded code ship to open review-gate.
+    const h2 = lensDeps({ code: ship, security: secShip });
+    const out2 = await evaluateNextOtherPr(db, c, 2000, h2.d);
+    expect(h2.calls).toEqual(['security']);
+    expect(out2?.verdict).toBe('ship');
+    expect(h2.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+  });
+
+  it('a second security error leaves the gate to Steve, does not run a third time, and notifies once naming security', async () => {
+    const c = cfg({ securityEnabled: true });
+    await evaluateNextOtherPr(db, c, 1000, lensDeps({ code: ship, security: 'nope' }).d); // security error #1
+    expect(needsHuman()).toHaveLength(0);
+
+    const h2 = lensDeps({ code: ship, security: 'still nope' });
+    const out2 = await evaluateNextOtherPr(db, c, 2000, h2.d); // security error #2 (retry used)
+    expect(h2.calls).toEqual(['security']);
+    expect(out2).toBeNull();
+    expect(h2.statuses).toEqual([]); // no success posted — left to Steve
+    const notifs = needsHuman();
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].title).toContain('PR #500');
+    expect(notifs[0].body).toContain('security');
+
+    // Third pass: the head is settled — no third security run, and still exactly one notification.
+    const h3 = lensDeps({ code: ship, security: secShip });
+    const out3 = await evaluateNextOtherPr(db, c, 3000, h3.d);
+    expect(out3).toBeUndefined();
+    expect(h3.calls).toEqual([]);
+    expect(needsHuman()).toHaveLength(1);
+  });
+
+  it('a new head_sha resets the retry — the new head is reviewed fresh', async () => {
+    const c = cfg({ securityEnabled: true });
+    // Exhaust the security retry on head A.
+    await evaluateNextOtherPr(db, c, 1000, lensDeps({ code: ship, security: 'nope' }).d);
+    await evaluateNextOtherPr(db, c, 2000, lensDeps({ code: ship, security: 'nope' }).d);
+    // A new push is a fresh review: both lenses run again, and a full ship opens the gate on head B.
+    const headB = 'b'.repeat(40);
+    const h = lensDeps({ code: ship, security: secShip }, [pr({ headRefOid: headB })]);
+    const out = await evaluateNextOtherPr(db, c, 3000, h.d);
+    expect(h.calls).toEqual(['code', 'security']);
+    expect(out?.verdict).toBe('ship');
+    expect(h.statuses).toEqual([{ sha: headB, state: 'success' }]);
+  });
+
+  it('stores the full unparseable reply up to the 20k cap, not a 500-char head', async () => {
+    const long = `${'x'.repeat(30_000)} no-json-here`; // no JSON object → unparseable
+    await evaluateNextOtherPr(db, cfg(), 1000, deps(long).d);
+    const err =
+      (db.prepare('SELECT error FROM evaluator_runs WHERE pr_number = 500 ORDER BY id DESC LIMIT 1').get() as { error: string | null }).error ?? '';
+    expect(err).toMatch(/unparseable/);
+    expect(err.length).toBeGreaterThan(500); // not the old 500-char slice
+    expect(err.length).toBeLessThanOrEqual(20_100); // bounded by the ~20k cap (+ short prefix)
+  });
+});
+
 describe('acceptanceBrief (PD-804)', () => {
   const t = (n: number) => ({ id: n, displayId: `PD-${n}`, title: `T${n}`, body: `body ${n}` });
 
