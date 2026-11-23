@@ -51,6 +51,9 @@ export interface PrState {
   inlineComments: PrComment[];
   /** Login of whoever merged the PR (PD-765); null/absent while it is unmerged or unknown. */
   mergedBy?: string | null;
+  /** PD-924: the PR's current head commit, so a queued rework can tell it was reviewed against an
+   *  older one. Absent when the fetch didn't carry it. */
+  headRefOid?: string;
 }
 
 /** Fetch a PR's state (injectable so tests never shell out). Returns null on any failure. */
@@ -73,7 +76,7 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
       };
       const { stdout } = await run(
         'gh',
-        ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,mergeable,reviewDecision,reviews,comments,mergedBy'],
+        ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'state,mergeable,reviewDecision,reviews,comments,mergedBy,headRefOid'],
         { env },
       );
       const raw = JSON.parse(stdout) as {
@@ -83,6 +86,7 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
         reviews?: { author?: { login?: string }; authorAssociation?: string; state?: string; body?: string; submittedAt?: string }[];
         comments?: { author?: { login?: string }; authorAssociation?: string; body?: string; createdAt?: string }[];
         mergedBy?: { login?: string } | null;
+        headRefOid?: string;
       };
       return {
         state: raw.state ?? 'OPEN',
@@ -103,6 +107,7 @@ export function defaultPrFetcher(config: AgentWorkerConfig): PrFetcher {
         })),
         inlineComments: await fetchInlineComments(repo, prNumber, env),
         mergedBy: raw.mergedBy?.login ?? null,
+        ...(raw.headRefOid ? { headRefOid: raw.headRefOid } : {}),
       };
     } catch (err) {
       logger.warn({ err, repo, prNumber }, 'robot: PR-state fetch failed (skipping this poll)');

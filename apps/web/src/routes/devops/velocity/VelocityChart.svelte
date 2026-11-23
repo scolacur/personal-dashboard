@@ -3,7 +3,17 @@
    *  steve are the two categorical identities; the rest are neutral or reserved status colours
    *  (used only where the series IS a state: succeeded / failed / parked). */
   export type SeriesTone =
-    'robot' | 'steve' | 'neutral' | 'text' | 'accent' | 'done' | 'stuck' | 'warn' | 'park';
+    | 'robot'
+    | 'steve'
+    | 'neutral'
+    | 'text'
+    | 'accent'
+    | 'done'
+    | 'stuck'
+    | 'warn'
+    | 'park'
+    | 'gain'
+    | 'loss';
 
   export interface ChartSeries {
     key: string;
@@ -17,7 +27,7 @@
 </script>
 
 <script lang="ts">
-  import { niceScale, spreadLabels, tickIndices, weekLabel } from './velocity-view';
+  import { niceRange, niceScale, spreadLabels, tickIndices, weekLabel } from './velocity-view';
 
   /**
    * Weekly chart for the Velocity page (Epic PD-895): lines or stacked bars over week buckets.
@@ -28,7 +38,10 @@
   interface Props {
     weeks: number[];
     series: ChartSeries[];
-    kind?: 'line' | 'stacked';
+    /** `diverging` (PD-923): one signed series as bars from a zero baseline, coloured by sign. */
+    kind?: 'line' | 'stacked' | 'diverging';
+    /** Diverging only: legend labels for the positive and negative sides. */
+    signLabels?: [string, string];
     /** Accessible name, e.g. "Tickets completed per week". */
     label: string;
     format?: (v: number) => string;
@@ -49,6 +62,7 @@
     yMax,
     height = 220,
     shadeFrom = null,
+    signLabels = ['Above zero', 'Below zero'],
   }: Props = $props();
 
   const PAD = { top: 12, bottom: 26, left: 40 };
@@ -76,11 +90,38 @@
     }
     return m;
   });
-  const scale = $derived(yMax !== undefined ? niceScale(yMax) : niceScale(dataMax));
+  const scale = $derived.by((): { min: number; max: number; ticks: number[] } => {
+    if (kind === 'diverging') {
+      const vals = series.flatMap((s) => s.values.filter((v): v is number => v !== null));
+      return niceRange(Math.min(0, ...vals), Math.max(0, ...vals));
+    }
+    return { min: 0, ...(yMax !== undefined ? niceScale(yMax) : niceScale(dataMax)) };
+  });
 
   const band = $derived(n ? plotW / n : plotW);
   const cx = (i: number) => PAD.left + band * (i + 0.5);
-  const sy = (v: number) => PAD.top + plotH - (v / scale.max) * plotH;
+  const sy = (v: number) => PAD.top + plotH - ((v - scale.min) / (scale.max - scale.min)) * plotH;
+
+  /** Diverging bars: anchored at zero, 4px rounded end away from it, tone by sign. */
+  const divBars = $derived.by(() => {
+    if (kind !== 'diverging' || !series[0]) return [];
+    const barW = Math.max(2, Math.min(band * 0.7, 28));
+    const zero = sy(0);
+    return series[0].values.map((v, i) => {
+      if (v === null || v === 0) return null;
+      const end = sy(v);
+      const x = cx(i) - barW / 2;
+      const h = Math.abs(zero - end);
+      const r = Math.min(4, h, barW / 2);
+      const up = v > 0;
+      const d = up
+        ? `M${x},${zero}V${end + r}Q${x},${end} ${x + r},${end}H${x + barW - r}` +
+          `Q${x + barW},${end} ${x + barW},${end + r}V${zero}Z`
+        : `M${x},${zero}V${end - r}Q${x},${end} ${x + r},${end}H${x + barW - r}` +
+          `Q${x + barW},${end} ${x + barW},${end - r}V${zero}Z`;
+      return { i, d, tone: up ? 'gain' : 'loss' };
+    });
+  });
 
   function linePath(values: (number | null)[]): string {
     let d = '';
@@ -230,7 +271,14 @@
         <line class="crosshair" x1={cx(hover)} x2={cx(hover)} y1={PAD.top} y2={PAD.top + plotH} />
       {/if}
 
-      {#if kind === 'stacked'}
+      {#if kind === 'diverging'}
+        {#each divBars as b, i (weeks[i])}
+          {#if b}
+            <path class="bar tone-{b.tone}" class:dim={hover !== null && hover !== b.i} d={b.d} />
+          {/if}
+        {/each}
+        <line class="zero" x1={PAD.left} x2={PAD.left + plotW} y1={sy(0)} y2={sy(0)} />
+      {:else if kind === 'stacked'}
         {#each stacks as segs, i (weeks[i])}
           {#each segs as g (g.key)}
             <path class="bar tone-{g.tone}" class:dim={hover !== null && hover !== i} d={g.d} />
@@ -268,7 +316,12 @@
     {/if}
 
     <div class="foot">
-      {#if series.length > 1}
+      {#if kind === 'diverging'}
+        <div class="legend">
+          <span><i class="swatch tone-gain"></i>{signLabels[0]}</span>
+          <span><i class="swatch tone-loss"></i>{signLabels[1]}</span>
+        </div>
+      {:else if series.length > 1}
         <div class="legend">
           {#each series as s (s.key)}
             <span><i class="swatch tone-{s.tone}" class:dashed={s.dashed}></i>{s.label}</span>

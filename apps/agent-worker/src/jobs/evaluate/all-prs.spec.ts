@@ -5,7 +5,8 @@ import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { ensureEvaluatorRunsTable } from './evaluator-runs';
 import { ensureRunsTable, finishRun, startRun } from '../robot/runs';
 import type { EvaluatorTurnResult } from './evaluate-agent';
-import { acceptanceBrief, evaluateNextOtherPr, linkedTickets, skipReason, verdictComment, type OtherPr } from './all-prs';
+import type { StatusRead } from './review-gate';
+import { acceptanceBrief, evaluateNextOtherPr, linkedTickets, sessionGateFor, skipReason, verdictComment, type OtherPr } from './all-prs';
 
 const SHA = 'a'.repeat(40);
 const pr = (over: Partial<OtherPr> = {}): OtherPr => ({
@@ -63,10 +64,12 @@ function seedInReviewTarget(ticketId: number, prNumber: number): void {
 function deps(reply: string, list: OtherPr[] = [pr()]) {
   const comments: string[] = [];
   const statuses: { sha: string; state: string }[] = [];
+  const descriptions: string[] = [];
   const runAgent = vi.fn(async (_c: unknown, _s: string, _u: string): Promise<EvaluatorTurnResult> => ({ text: reply, ok: true, turns: 3, tokens: 100 }));
   return {
     comments,
     statuses,
+    descriptions,
     runAgent,
     d: {
       listPrs: async () => list,
@@ -75,7 +78,10 @@ function deps(reply: string, list: OtherPr[] = [pr()]) {
       buildContext: () => 'ctx',
       runAgent,
       comment: async (_r: string, _n: number, body: string) => void comments.push(body),
-      postStatus: async (_r: string, sha: string, s: { state: string }) => (statuses.push({ sha, state: s.state }), true),
+      postStatus: async (_r: string, sha: string, s: { state: string; description: string }) => (
+        statuses.push({ sha, state: s.state }), descriptions.push(s.description), true
+      ),
+      readStatus: async (): Promise<StatusRead> => ({ ok: true, current: null }),
     },
   };
 }
@@ -142,7 +148,7 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     const h = deps(ship);
     const out = await evaluateNextOtherPr(db, cfg(), 1000, h.d);
     expect(out?.verdict).toBe('ship');
-    expect(h.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'pending' }, { sha: SHA, state: 'success' }]);
     expect(h.comments[0]).toMatch(/Evaluator \(round 1\): ship\*\*, judged against PD-705 \(Do the thing\)/);
     const types = (db.prepare('SELECT type FROM agent_ticket_events WHERE ticket_id = 705').all() as { type: string }[]).map((r) => r.type);
     expect(types).toEqual(['robot_evaluating', 'robot_evaluated']);
@@ -162,10 +168,12 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     }
   });
 
-  it('on revise posts no status (Steve decides), and the comment never carries the human-reply marker', async () => {
+  it('on revise posts pending "push a fix" (PD-914), and the comment never carries the human-reply marker', async () => {
     const h = deps(revise);
     await evaluateNextOtherPr(db, cfg(), 1000, h.d);
-    expect(h.statuses).toEqual([]);
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'pending' }, { sha: SHA, state: 'pending' }]);
+    expect(h.descriptions).toEqual(['Evaluator reviewing (round 1)', 'Evaluator requested changes (round 1); push a fix']);
+    expect(h.comments[0]).toContain('review-gate is pending: push a fix.');
     expect(h.comments[0]).not.toContain(HUMAN_REPLY_MARKER);
     expect(h.comments[0]).toContain('| blocking | a.ts:1 | off by one \\| here |');
   });
@@ -236,7 +244,7 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     const h = deps(ship, [robotPr]);
     const out = await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, fetchHeadSha: async () => robotPr.headRefOid });
     expect(out?.verdict).toBe('ship');
-    expect(h.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'pending' }, { sha: SHA, state: 'success' }]);
     expect(h.comments[0]).toMatch(/Evaluator \(round 1\): ship\*\*, judged against PD-977 \(Finish by hand\)/);
   });
 
@@ -246,7 +254,7 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     const out = await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, fetchHeadSha: async () => robotPr.headRefOid });
     expect(out?.verdict).toBe('ship');
     expect(h.runAgent.mock.calls[0][2]).toMatch(/NO LINKED TICKET/);
-    expect(h.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'pending' }, { sha: SHA, state: 'success' }]);
     expect(h.comments[0]).toMatch(/no linked ticket, so no acceptance criteria/);
   });
 });
@@ -291,7 +299,12 @@ describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notif
     const out1 = await evaluateNextOtherPr(db, c, 1000, h1.d);
     expect(h1.calls).toEqual(['code', 'security']);
     expect(out1).toBeNull(); // any missing verdict → no full ship
-    expect(h1.statuses).toEqual([]); // nothing posted on a non-ship
+    // PD-914 x PD-884: reviewing, then pending while the retry is owed — not a "Needs Steve" failure.
+    expect(h1.statuses).toEqual([
+      { sha: SHA, state: 'pending' },
+      { sha: SHA, state: 'pending' },
+    ]);
+    expect(h1.comments[0]).toContain('retried once on the next pass');
     expect(needsHuman()).toHaveLength(0); // retry still pending
 
     // Pass 2: ONLY security re-runs (code already shipped this head); its ship combines with the
@@ -300,7 +313,7 @@ describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notif
     const out2 = await evaluateNextOtherPr(db, c, 2000, h2.d);
     expect(h2.calls).toEqual(['security']);
     expect(out2?.verdict).toBe('ship');
-    expect(h2.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+    expect(h2.statuses.at(-1)).toEqual({ sha: SHA, state: 'success' });
   });
 
   it('a second security error leaves the gate to Steve, does not run a third time, and notifies once naming security', async () => {
@@ -312,11 +325,11 @@ describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notif
     const out2 = await evaluateNextOtherPr(db, c, 2000, h2.d); // security error #2 (retry used)
     expect(h2.calls).toEqual(['security']);
     expect(out2).toBeNull();
-    expect(h2.statuses).toEqual([]); // no success posted — left to Steve
+    expect(h2.statuses.at(-1)).toEqual({ sha: SHA, state: 'failure' }); // no success — left to Steve
     const notifs = needsHuman();
     expect(notifs).toHaveLength(1);
     expect(notifs[0].title).toContain('PR #500');
-    expect(notifs[0].body).toContain('security');
+    expect(notifs[0].title).toContain('security review produced no verdict (retry used)');
 
     // Third pass: the head is settled — no third security run, and still exactly one notification.
     const h3 = lensDeps({ code: ship, security: secShip });
@@ -337,7 +350,7 @@ describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notif
     const out = await evaluateNextOtherPr(db, c, 3000, h.d);
     expect(h.calls).toEqual(['code', 'security']);
     expect(out?.verdict).toBe('ship');
-    expect(h.statuses).toEqual([{ sha: headB, state: 'success' }]);
+    expect(h.statuses.at(-1)).toEqual({ sha: headB, state: 'success' });
   });
 
   it('stores the full unparseable reply up to the 20k cap, not a 500-char head', async () => {
@@ -368,9 +381,98 @@ describe('acceptanceBrief (PD-804)', () => {
   });
 });
 
+describe('session PR review-gate and needs-human (PD-914)', () => {
+  const needsHuman = () =>
+    db.prepare("SELECT ticket_id AS ticketId, title FROM agent_notifications WHERE kind = 'agent_needs_human'").all() as { ticketId: number | null; title: string }[];
+  const escalate = '{"verdict":"escalate","summary":"Unclear.","findings":[]}';
+
+  it('ship: reviewing, then success, and nobody is notified', async () => {
+    const h = deps(ship);
+    await evaluateNextOtherPr(db, cfg(), 1000, h.d);
+    expect(h.descriptions).toEqual(['Evaluator reviewing (round 1)', 'Evaluator: ship (round 1)']);
+    expect(needsHuman()).toEqual([]);
+  });
+
+  it('revise below the cap: pending, and needs-human on the PR’s ticket', async () => {
+    const h = deps(revise);
+    await evaluateNextOtherPr(db, cfg(), 1000, h.d);
+    expect(needsHuman()).toEqual([{ ticketId: 705, title: 'PR #500 (PD-705: Do the thing): Evaluator requested changes (round 1); push a fix' }]);
+  });
+
+  it('revise with no ticket: needs-human is loop-wide, titled by the PR', async () => {
+    const h = deps(revise, [pr({ headRefName: 'misc', title: 'tidy', body: 'Tidies.' })]);
+    await evaluateNextOtherPr(db, cfg(), 1000, h.d);
+    expect(needsHuman()).toEqual([{ ticketId: null, title: 'PR #500: Evaluator requested changes (round 1); push a fix' }]);
+  });
+
+  it('revise at the round cap: failure "Needs Steve", and the comment says review has stopped', async () => {
+    const h = deps(revise);
+    await evaluateNextOtherPr(db, cfg({ maxRounds: 1 }), 1000, h.d);
+    expect(h.statuses.at(-1)).toEqual({ sha: SHA, state: 'failure' });
+    expect(h.descriptions.at(-1)).toBe('Needs Steve: changes still requested at the round cap (1/1)');
+    expect(h.comments[0]).toContain('review-gate is set to failure: this needs Steve. No further automatic review.');
+    expect(needsHuman()).toHaveLength(1);
+  });
+
+  it('escalate: failure "Needs Steve" and needs-human', async () => {
+    const h = deps(escalate);
+    await evaluateNextOtherPr(db, cfg(), 1000, h.d);
+    expect(h.descriptions.at(-1)).toBe('Needs Steve: the Evaluator escalated (round 1)');
+    expect(needsHuman()).toHaveLength(1);
+  });
+
+  it('no verdict: pending while the one retry is owed, then failure "Needs Steve" and needs-human (PD-884)', async () => {
+    const h1 = deps('not json at all');
+    await evaluateNextOtherPr(db, cfg(), 1000, h1.d);
+    expect(h1.statuses.at(-1)).toEqual({ sha: SHA, state: 'pending' });
+    expect(h1.descriptions.at(-1)).toBe('Evaluator: code review produced no verdict; retrying once');
+    expect(h1.comments[0]).toContain('retried once on the next pass');
+    expect(needsHuman()).toHaveLength(0);
+
+    const h2 = deps('still not json');
+    await evaluateNextOtherPr(db, cfg(), 2000, h2.d);
+    expect(h2.statuses.at(-1)).toEqual({ sha: SHA, state: 'failure' });
+    expect(h2.descriptions.at(-1)).toBe('Needs Steve: code review produced no verdict (retry used)');
+    expect(h2.comments[0]).toContain('review-gate is set to failure: this needs Steve.');
+    expect(needsHuman()).toHaveLength(1);
+  });
+
+  it("never replaces Steve's approval with pending or failure (D-101 point 5)", async () => {
+    const h = deps(revise);
+    const approved = async (): Promise<StatusRead> => ({ ok: true, current: { state: 'success', description: 'Approved by Steve' } });
+    await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, readStatus: approved });
+    expect(h.statuses).toEqual([]);
+  });
+
+  it('posts nothing but a success when the current status cannot be read', async () => {
+    const h = deps(ship);
+    await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, readStatus: async (): Promise<StatusRead> => ({ ok: false }) });
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'success' }]); // the reviewing pending was skipped
+  });
+
+  it("replaces an Evaluator status or review-gate.yml's waiting pending", async () => {
+    const h = deps(revise);
+    const waiting = async (): Promise<StatusRead> => ({ ok: true, current: { state: 'pending', description: "Waiting for Steve's approval or an Evaluator ship" } });
+    await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, readStatus: waiting });
+    expect(h.statuses).toHaveLength(2);
+  });
+});
+
+describe('sessionGateFor (PD-914)', () => {
+  const r = (verdict: 'ship' | 'revise' | 'escalate') => ({ verdict, summary: '', findings: [] });
+  it('matches the Robot table except a revise below the cap', () => {
+    expect(sessionGateFor(r('ship'), 1, 2)).toEqual({ state: 'success', description: 'Evaluator: ship (round 1)' });
+    expect(sessionGateFor(r('revise'), 1, 2)).toEqual({ state: 'pending', description: 'Evaluator requested changes (round 1); push a fix' });
+    expect(sessionGateFor(r('revise'), 2, 2).state).toBe('failure');
+    expect(sessionGateFor(r('escalate'), 1, 2).state).toBe('failure');
+    expect(sessionGateFor(null, 1, 2).state).toBe('failure');
+  });
+});
+
 describe('verdictComment', () => {
   it('says a failed review is neither ship nor revise', () => {
     expect(verdictComment(null, 1, [], 2)).toMatch(/no usable verdict/);
+    expect(verdictComment(null, 1, [], 2)).toContain('this needs Steve');
   });
 
   it('states the configured round cap in the revise text (PD-761)', () => {

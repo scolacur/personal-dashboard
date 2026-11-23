@@ -85,6 +85,8 @@ function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
     // override these to observe/record.
     pushWip: async () => null,
     deleteWip: async () => {},
+    // PD-924: never shell out to gh; the rework-guard tests override this.
+    fetchPr: async () => null,
     runSession: async () => ({ ok: true, sessionId: 'sess-1', verifyOk: true, prNumber: 314, ...sessionResult }),
     now: () => 1000,
   };
@@ -1291,5 +1293,102 @@ describe('hand-off on disk is authoritative (PD-917, PD-918)', () => {
     const run = listRunsForTicket(db, 1)[0];
     expect(run.status).toBe('no-verify');
     expect(run.prUrl).toBe('https://github.com/scolacur/personal-dashboard/pull/77');
+  });
+});
+
+describe('pre-dispatch rework guard (PD-924)', () => {
+  let db: Database.Database;
+  let fetched: number[];
+  beforeEach(() => {
+    db = boardDb();
+    fetched = [];
+    db.exec(`CREATE TABLE evaluator_runs (
+      id INTEGER PRIMARY KEY, ticket_id INTEGER, pr_number INTEGER, lens TEXT, verdict TEXT, findings TEXT,
+      summary TEXT, head_sha TEXT, error TEXT, started_at INTEGER, finished_at INTEGER)`);
+  });
+
+  /** A rework queued by the Evaluator: a revise of `reviewedSha` and its `robot_reactivated`. */
+  function queueEvaluatorRework(id: number, reviewedSha: string | null): void {
+    addQueued(db, id);
+    db.prepare(
+      `INSERT INTO evaluator_runs (ticket_id, pr_number, lens, verdict, findings, summary, head_sha, started_at, finished_at)
+       VALUES (?, 487, 'code', 'revise', ?, 's', ?, 500, 510)`,
+    ).run(id, JSON.stringify([{ kind: 'correctness', blocking: true, where: 'a.ts:1', what: 'fix it' }]), reviewedSha);
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, 'robot_reactivated', ?, 520)").run(
+      id,
+      JSON.stringify({ reason: 'evaluator requested changes (round 1)', prNumber: 487 }),
+    );
+  }
+
+  function withPr(state: string, headRefOid?: string): RobotDeps {
+    return {
+      ...deps(),
+      fetchPr: async (_repo, n) => {
+        fetched.push(n);
+        return { state, mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [], inlineComments: [], headRefOid };
+      },
+    };
+  }
+
+  it('completes a ticket whose PR merged while its rework was queued — no run', async () => {
+    queueEvaluatorRework(1, 'aaaaaaa');
+    expect(await processRobotQueue(db, cfg(), withPr('MERGED'))).toBe(0);
+    expect(fetched).toEqual([487]);
+    expect(listRunsForTicket(db, 1)).toEqual([]);
+    expect((db.prepare('SELECT status FROM agent_tickets WHERE id = 1').get() as { status: string }).status).toBe('completed');
+    const ev = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_completed'").get() as { detail: string };
+    expect(JSON.parse(ev.detail)).toMatchObject({ prNumber: 487, via: 'merged_before_rework' });
+  });
+
+  it('parks for a human when the PR was closed unmerged', async () => {
+    queueEvaluatorRework(1, 'aaaaaaa');
+    await processRobotQueue(db, cfg(), withPr('CLOSED'));
+    expect(listRunsForTicket(db, 1)).toEqual([]);
+    expect(agentState(db, 1)).toBe('needs-human');
+    expect(eventTypes(db, 1)).toContain('robot_rework_skipped');
+  });
+
+  it('sends an Evaluator rework back to review when the PR head moved since the revise', async () => {
+    queueEvaluatorRework(1, 'aaaaaaa1111');
+    await processRobotQueue(db, cfg(), withPr('OPEN', 'bbbbbbb2222'));
+    expect(listRunsForTicket(db, 1)).toEqual([]);
+    expect(agentState(db, 1)).toBe('in-review');
+    const ev = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_rework_skipped'").get() as { detail: string };
+    expect(JSON.parse(ev.detail).reason).toMatch(/aaaaaaa.*bbbbbbb/);
+  });
+
+  it('dispatches when the revise was of the current head', async () => {
+    queueEvaluatorRework(1, 'aaaaaaa1111');
+    expect(await processRobotQueue(db, cfg(), withPr('OPEN', 'aaaaaaa1111'))).toBe(1);
+    expect(listRunsForTicket(db, 1)).toHaveLength(1);
+  });
+
+  it('dispatches when the revise did not record its head — nothing proves it stale', async () => {
+    queueEvaluatorRework(1, null);
+    expect(await processRobotQueue(db, cfg(), withPr('OPEN', 'bbbbbbb'))).toBe(1);
+  });
+
+  it('dispatches a non-Evaluator rework (e.g. a conflict) even though the head moved', async () => {
+    addQueued(db, 1);
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_reactivated', ?, 520)").run(
+      JSON.stringify({ reason: 'PR conflicts with main', prNumber: 487 }),
+    );
+    expect(await processRobotQueue(db, cfg(), withPr('OPEN', 'bbbbbbb'))).toBe(1);
+  });
+
+  it('fails open when GitHub cannot be reached', async () => {
+    queueEvaluatorRework(1, 'aaaaaaa');
+    expect(await processRobotQueue(db, cfg(), deps())).toBe(1);
+  });
+
+  it('never looks up a PR for a fresh dispatch, or for a reactivation consumed by an earlier dispatch', async () => {
+    addQueued(db, 1);
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_reactivated', ?, 100)").run(
+      JSON.stringify({ reason: 'evaluator requested changes (round 1)', prNumber: 12 }),
+    );
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_dispatched', '{}', 200)").run();
+    await processRobotQueue(db, cfg(), withPr('MERGED'));
+    expect(fetched).toEqual([]);
+    expect(listRunsForTicket(db, 1)).toHaveLength(1);
   });
 });

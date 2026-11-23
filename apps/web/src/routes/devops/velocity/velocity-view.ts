@@ -139,3 +139,37 @@ export function projectSearch(current: URLSearchParams, projectId: number | unde
   const q = next.toString();
   return q ? `?${q}` : '';
 }
+
+/**
+ * A nice axis for a range that may cross zero (PD-923's net bars): ticks on one step that always
+ * include 0, so the baseline is a gridline. An all-positive range is `niceScale` with min 0.
+ */
+export function niceRange(
+  lo: number,
+  hi: number,
+  targetTicks = 4,
+): { min: number; max: number; ticks: number[] } {
+  const min0 = Math.min(0, lo);
+  const max0 = Math.max(0, hi);
+  if (!(max0 - min0 > 0)) return { min: 0, max: 1, ticks: [0, 1] };
+  const rough = (max0 - min0) / targetTicks;
+  const mag = 10 ** Math.floor(Math.log10(rough));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= rough) ?? 10 * mag;
+  const min = Math.floor(min0 / step) * step;
+  const max = Math.ceil(max0 / step) * step;
+  const ticks: number[] = [];
+  for (let t = min; t <= max + step / 2; t += step) ticks.push(Number(t.toFixed(10)) || 0);
+  return { min, max, ticks };
+}
+
+/** Net change in the backlog per week (PD-923): resolved − created. Above zero, it shrank. */
+export function netFlow(weeks: { created: number; resolved: number }[]): number[] {
+  return weeks.map((w) => w.resolved - w.created);
+}
+
+/** A signed count: `+6`, `−49` (a true minus sign), `0`. */
+export function fmtSigned(v: number): string {
+  const r = Math.round(v * 10) / 10;
+  if (r === 0) return '0';
+  return r > 0 ? `+${r}` : `\u2212${Math.abs(r)}`;
+}

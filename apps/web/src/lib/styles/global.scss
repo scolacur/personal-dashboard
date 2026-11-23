@@ -36,6 +36,9 @@
      palette checker (light vs --surface, dark vs dark --surface). */
   --chart-robot: #954cb1;
   --chart-steve: #33a27d;
+  /* PD-923 diverging pair (net backlog change): blue = shrank, red = grew. */
+  --chart-gain: #2f6fb5;
+  --chart-loss: #c8553d;
 
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -70,4 +73,6 @@
   --on-accent: #242424;
   --chart-robot: #a46bc0;
   --chart-steve: #a6951c;
+  --chart-gain: #5b93d1;
+  --chart-loss: #d9714f;
 }

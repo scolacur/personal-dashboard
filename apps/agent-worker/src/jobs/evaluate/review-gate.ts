@@ -74,6 +74,50 @@ export function gateReviewing(round: number): GateStatus {
 export type HeadShaFetcher = (repo: string, prNumber: number) => Promise<string | null>;
 export type StatusPoster = (repo: string, sha: string, status: GateStatus, targetUrl: string | null) => Promise<boolean>;
 
+/**
+ * The description `review-gate.yml` posts when Steve's approval opens the gate. The Evaluator must
+ * never replace that success with pending or failure (D-101 point 5), so it reads the current status
+ * before posting anything but success (PD-914). Keep in step with the workflow's `DESC`.
+ */
+export const STEVE_APPROVED_DESCRIPTION = 'Approved by Steve';
+
+/**
+ * The newest `review-gate` status on a commit: `{ ok: true, current }` (`current` null when there is
+ * none yet), or `{ ok: false }` when the read failed. A failed read must not be mistaken for "no
+ * status", because posting over an unseen approval is exactly what the read exists to prevent.
+ */
+export type StatusRead = { ok: true; current: GateStatus | null } | { ok: false };
+export type StatusReader = (repo: string, sha: string) => Promise<StatusRead>;
+
+/** The head commit's newest `review-gate` status via the READ-ONLY token. Never throws. */
+export function defaultStatusReader(config: AgentWorkerConfig): StatusReader {
+  return async (repo, sha) => {
+    try {
+      const { stdout } = await run(
+        'gh',
+        [
+          'api',
+          `repos/${repo}/commits/${sha}/statuses`,
+          '--jq',
+          `[.[] | select(.context == "${REVIEW_GATE_CONTEXT}")][0] // null | if . == null then null else {state, description} end`,
+        ],
+        { env: ghEnv(config, config.githubReadToken) },
+      );
+      const parsed = JSON.parse(stdout.trim() || 'null') as { state: string; description: string | null } | null;
+      if (!parsed) return { ok: true, current: null };
+      return { ok: true, current: { state: parsed.state as GateState, description: parsed.description ?? '' } };
+    } catch (err) {
+      logger.warn({ err, repo, sha }, 'review-gate: status read failed');
+      return { ok: false };
+    }
+  };
+}
+
+/** Whether `current` is the success Steve's approval posted, which the Evaluator must leave alone. */
+export function isSteveApproval(current: GateStatus | null): boolean {
+  return current?.state === 'success' && current.description.startsWith(STEVE_APPROVED_DESCRIPTION);
+}
+
 function ghEnv(config: AgentWorkerConfig, token: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
