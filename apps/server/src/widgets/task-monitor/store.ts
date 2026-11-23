@@ -30,6 +30,7 @@ import type {
   UpdateTicketInput,
   WorkerHeartbeat,
   DispatchPauseState,
+  BreakerFailureView,
   SessionLimitHoldState,
   GithubRateLimitStatus,
   RobotBudgetStatus,
@@ -2402,7 +2403,43 @@ export function getDispatchPauseState(db: Database.Database): DispatchPauseState
     }
   })();
   if (!row || row.value === null) return { paused: false, reason: null, since: null };
-  return { paused: true, reason: row.value, since: row.updated_at };
+  const state: DispatchPauseState = { paused: true, reason: row.value, since: row.updated_at };
+  // PD-921: a breaker trip carries its evidence, so the nav can explain it instead of showing a
+  // jargon label. Keyed on the same `circuit-breaker` token the worker writes (breaker.ts).
+  if (/circuit-breaker/i.test(row.value)) {
+    const breaker = getBreakerStreak(db);
+    if (breaker.length > 0) state.breaker = breaker;
+  }
+  return state;
+}
+
+/** PD-921: the worker's circuit-breaker streak (`robot_state.breaker_consecutive`, D-107), joined to
+ *  the board for display ids and current titles. Read-only; malformed or missing ⇒ empty. */
+export function getBreakerStreak(db: Database.Database): BreakerFailureView[] {
+  let parsed: unknown;
+  try {
+    const row = db.prepare("SELECT value FROM robot_state WHERE key = 'breaker_consecutive'").get() as
+      | { value: string | null }
+      | undefined;
+    if (!row?.value) return [];
+    parsed = JSON.parse(row.value);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const lookup = db.prepare('SELECT display_id, title FROM agent_tickets WHERE id = ?');
+  const out: BreakerFailureView[] = [];
+  for (const f of parsed) {
+    if (!f || typeof f.ticketId !== 'number' || typeof f.signature !== 'string') continue;
+    const t = lookup.get(f.ticketId) as { display_id: string | null; title: string } | undefined;
+    out.push({
+      ticketId: f.ticketId,
+      displayId: t?.display_id ?? null,
+      title: t?.title ?? (typeof f.title === 'string' ? f.title : `ticket ${f.ticketId}`),
+      signature: f.signature,
+    });
+  }
+  return out;
 }
 
 /** The Refine auto-start scheduler's last published state (PD-747), or null before the worker has
