@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import type { EvaluatorLens } from '@dashboard/shared';
 import type { EvaluatorFinding, EvaluatorReport, EvaluatorVerdict } from '@dashboard/shared';
 import { evaluateBudget, type BudgetPolicy, type BudgetUsage, type BudgetVerdict } from '../robot/budget';
+import { MAX_EVALUATION_ROUNDS } from './verdict';
 
 /**
  * `evaluator_runs` — the Evaluator's own spend ledger (PD-487, [[D-076]]).
@@ -155,16 +156,121 @@ export function evaluationRounds(db: Database.Database, ticketId: number, since 
   return row.n;
 }
 
-/** Whether this exact PR has already been evaluated at or after `since` — the idempotence guard that
- *  stops a poll tick from re-evaluating the same unchanged hand-off. */
-export function alreadyEvaluated(db: Database.Database, ticketId: number, prNumber: number, since: number): boolean {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM evaluator_runs
-        WHERE ticket_id = ? AND pr_number = ? AND started_at >= ? AND lens = 'code'`,
-    )
-    .get(ticketId, prNumber, since) as { n: number };
-  return row.n > 0;
+/**
+ * How many no-verdict (errored) runs a lens may have in one review cycle before it is "done" (PD-883):
+ * the original run plus its single retry. SEPARATE from `MAX_EVALUATION_ROUNDS` (the revise
+ * ping-pong limit) so an error retry never silently consumes a legitimate revise round.
+ */
+export const MAX_LENS_ERROR_RUNS = 2;
+
+/** Per-lens state over the runs of one review unit (PD-883). */
+export interface LensRunState {
+  /** Runs that produced a verdict (ship / revise / escalate). */
+  verdictRuns: number;
+  /** Runs that produced no verdict — an agent error or an unparseable reply. */
+  errorRuns: number;
+  /** A terminal verdict (ship or escalate) was recorded — the lens is settled whatever its round. */
+  hasTerminalVerdict: boolean;
+}
+
+/**
+ * How the runs of one review unit are selected (PD-883). The unit differs by path:
+ *  - the **Robot** path's unit is the review cycle since the last hand-off — its runs leave `head_sha`
+ *    null, so they are keyed on `ticketId` + `prNumber` with `started_at >= since` (`reviewBoundary`);
+ *  - the **non-Robot** path's unit is a single head commit — keyed on `prNumber` + `head_sha`.
+ * Both reduce to the same per-lens `{verdictRuns, errorRuns, hasTerminalVerdict}`.
+ */
+export type LensRunSelect =
+  | { ticketId: number; prNumber: number; since: number }
+  | { prNumber: number; headSha: string };
+
+function lensRunRows(db: Database.Database, select: LensRunSelect): { lens: string | null; verdict: string | null }[] {
+  return (
+    'headSha' in select
+      ? db
+          .prepare('SELECT lens, verdict FROM evaluator_runs WHERE pr_number = ? AND head_sha = ?')
+          .all(select.prNumber, select.headSha)
+      : db
+          .prepare('SELECT lens, verdict FROM evaluator_runs WHERE ticket_id = ? AND pr_number = ? AND started_at >= ?')
+          .all(select.ticketId, select.prNumber, select.since)
+  ) as { lens: string | null; verdict: string | null }[];
+}
+
+/** Per-lens evaluation state over a review unit's runs (PD-883). */
+export function lensStates(db: Database.Database, select: LensRunSelect): Map<EvaluatorLens, LensRunState> {
+  const map = new Map<EvaluatorLens, LensRunState>();
+  for (const r of lensRunRows(db, select)) {
+    const lens = (r.lens ?? 'code') as EvaluatorLens;
+    const s = map.get(lens) ?? { verdictRuns: 0, errorRuns: 0, hasTerminalVerdict: false };
+    if (r.verdict === null) {
+      s.errorRuns += 1;
+    } else {
+      s.verdictRuns += 1;
+      if (r.verdict === 'ship' || r.verdict === 'escalate') s.hasTerminalVerdict = true;
+    }
+    map.set(lens, s);
+  }
+  return map;
+}
+
+/**
+ * Whether a lens still needs an evaluation run in this cycle (PD-883). It does NOT when it is settled:
+ * it has a terminal verdict (ship/escalate), it has revised up to the round cap, or it has used its
+ * one error retry. A lens with a single errored run and no verdict is NOT settled — it is retried on
+ * a later poll. A revise below the cap is not settled either, so the revise ping-pong keeps running
+ * to `MAX_EVALUATION_ROUNDS` (in production that re-engagement moves the ticket out of in-review).
+ */
+export function lensNeedsRun(state: LensRunState | undefined): boolean {
+  if (!state) return true;
+  if (state.hasTerminalVerdict) return false;
+  if (state.errorRuns >= MAX_LENS_ERROR_RUNS) return false;
+  if (state.verdictRuns >= MAX_EVALUATION_ROUNDS) return false;
+  return true;
+}
+
+/** The latest verdict-bearing run for a lens in a review unit, as a report (PD-883). Used to FOLD a
+ *  lens that already decided this cycle into the combined decision without re-running it. */
+export function latestLensReport(db: Database.Database, select: LensRunSelect, lens: EvaluatorLens): EvaluatorReport | null {
+  const row = (
+    'headSha' in select
+      ? db
+          .prepare(
+            `SELECT verdict, findings, summary FROM evaluator_runs
+              WHERE pr_number = ? AND head_sha = ? AND lens = ? AND verdict IS NOT NULL
+              ORDER BY started_at DESC, id DESC LIMIT 1`,
+          )
+          .get(select.prNumber, select.headSha, lens)
+      : db
+          .prepare(
+            `SELECT verdict, findings, summary FROM evaluator_runs
+              WHERE ticket_id = ? AND pr_number = ? AND started_at >= ? AND lens = ? AND verdict IS NOT NULL
+              ORDER BY started_at DESC, id DESC LIMIT 1`,
+          )
+          .get(select.ticketId, select.prNumber, select.since, lens)
+  ) as { verdict: string; findings: string | null; summary: string | null } | undefined;
+  if (!row) return null;
+  return {
+    verdict: row.verdict as EvaluatorVerdict,
+    findings: parseFindings(row.findings),
+    summary: row.summary ?? '',
+  };
+}
+
+/**
+ * Whether this PR has been fully evaluated for its current review cycle — the idempotence guard that
+ * stops a poll tick re-evaluating an unchanged hand-off (PD-883). True when EVERY enabled lens is
+ * settled (has a verdict, or has used its one error retry); false while any lens still owes a run,
+ * so an errored lens is re-evaluated on a later poll rather than stranding the PR.
+ */
+export function alreadyEvaluated(
+  db: Database.Database,
+  ticketId: number,
+  prNumber: number,
+  since: number,
+  lenses: EvaluatorLens[] = ['code'],
+): boolean {
+  const states = lensStates(db, { ticketId, prNumber, since });
+  return lenses.every((l) => !lensNeedsRun(states.get(l)));
 }
 
 /** The Evaluator's spend inside its own rolling window. Mirrors `budgetUsage()` over its own table —

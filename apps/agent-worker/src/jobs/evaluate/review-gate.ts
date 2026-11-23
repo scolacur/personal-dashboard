@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { EvaluatorReport } from '@dashboard/shared';
+import type { EvaluatorLens, EvaluatorReport } from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 
@@ -33,9 +33,31 @@ export interface GateStatus {
 
 const clip = (s: string) => (s.length <= 140 ? s : `${s.slice(0, 139)}…`);
 
+/**
+ * Which lens could not produce a verdict, and whether its one error retry is still pending or has
+ * been used (PD-883). Passed when the combined outcome is a no-verdict failure so the gate names the
+ * culprit rather than a generic "could not produce a verdict".
+ */
+export interface GateFailureContext {
+  lens: EvaluatorLens;
+  /** The lens has used its one retry (errored twice) — this is terminal, not a transient miss. */
+  retryUsed: boolean;
+}
+
 /** Pure: the status for an evaluation outcome. `report` null = no usable verdict. */
-export function gateForOutcome(report: EvaluatorReport | null, round: number, maxRounds: number): GateStatus {
-  if (!report) return { state: 'failure', description: clip('Needs Steve: the Evaluator could not produce a verdict') };
+export function gateForOutcome(
+  report: EvaluatorReport | null,
+  round: number,
+  maxRounds: number,
+  failure?: GateFailureContext,
+): GateStatus {
+  if (!report) {
+    if (failure) {
+      const retry = failure.retryUsed ? 'retry used' : 'retry pending';
+      return { state: 'failure', description: clip(`Needs Steve: ${failure.lens} review produced no verdict (${retry})`) };
+    }
+    return { state: 'failure', description: clip('Needs Steve: the Evaluator could not produce a verdict') };
+  }
   if (report.verdict === 'ship') return { state: 'success', description: clip(`Evaluator: ship (round ${round})`) };
   if (report.verdict === 'escalate') return { state: 'failure', description: clip(`Needs Steve: the Evaluator escalated (round ${round})`) };
   if (round >= maxRounds) {

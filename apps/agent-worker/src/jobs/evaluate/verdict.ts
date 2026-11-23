@@ -26,6 +26,13 @@ export const MAX_EVALUATION_ROUNDS = 2;
  *  reviewer, human or otherwise — it is truncated with an explicit note rather than silently. */
 export const MAX_DIFF_CHARS = 120_000;
 
+/**
+ * How much of an unparseable reply is kept on the run's `error` (PD-883). The old 500-char slice
+ * threw away the tail — which, for a reply that failed to parse, is exactly where the malformed JSON
+ * or the truncation usually is. 20k is generous enough to hold a whole over-long reply while still
+ * bounding a pathological one. */
+export const MAX_UNPARSEABLE_CHARS = 20_000;
+
 const FINDING_KINDS: readonly EvaluatorFinding['kind'][] = [
   'ac-unmet',
   'out-of-scope',
