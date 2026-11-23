@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { getBugReport, getEpicBurndowns, getRunReport, getVelocityReport } from './velocity-store';
+import {
+  getBugReport,
+  getEpicBurndowns,
+  getIntroductionReport,
+  getRunReport,
+  getVelocityReport,
+} from './velocity-store';
 
 /** Epic PD-895 — the cross-ticket SQL feeding the pure velocity reconstruction. */
 
@@ -149,5 +155,47 @@ describe('getBugReport', () => {
     expect(r.totals).toEqual({ bugs: 1, fixed: 1, openNow: { high: 0, medium: 0, low: 0 } });
     expect(r.weeks[0].fixed.high).toBe(1);
     expect(getBugReport(db, {}, MON + 3 * DAY).totals.bugs).toBe(2);
+  });
+});
+
+describe('getIntroductionReport', () => {
+  it('is empty when the worker never created the szz tables', () => {
+    expect(getIntroductionReport(freshDb(), {}, MON)).toMatchObject({
+      computedAt: null,
+      bugs: [],
+      weeks: [],
+    });
+  });
+
+  it('joins the worker rows to ticket title, filing and fix dates', () => {
+    const db = freshDb();
+    const [a] = projectIds(db);
+    const b = ticket(db, { project: a });
+    event(db, b, 'created', MON + 10 * DAY);
+    event(db, b, 'status_changed', MON + 12 * DAY, { to: 'completed' });
+    db.exec(`
+      CREATE TABLE szz_bug (ticket_id INTEGER PRIMARY KEY, status TEXT, fix_shas TEXT, computed_at INTEGER);
+      CREATE TABLE szz_candidate (ticket_id INTEGER, sha TEXT, pr_number INTEGER, ticket_ids TEXT, robot INTEGER,
+        committed_at INTEGER, lines INTEGER, is_top INTEGER);
+      CREATE TABLE szz_pr (pr_number INTEGER PRIMARY KEY, sha TEXT, merged_at INTEGER, robot INTEGER);
+    `);
+    db.prepare('INSERT INTO szz_bug VALUES (?, ?, ?, ?)').run(b, 'traced', '[]', 99);
+    const ins = db.prepare('INSERT INTO szz_candidate VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    ins.run(b, 'top', 251, '["PD-346"]', 0, MON, 20, 1);
+    ins.run(b, 'other', 230, '["PD-342"]', 0, MON - DAY, 8, 0);
+    db.prepare('INSERT INTO szz_pr VALUES (?, ?, ?, ?)').run(251, 'top', MON, 0);
+
+    const r = getIntroductionReport(db, { projectId: a }, MON + 20 * DAY);
+    expect(r.bugs).toHaveLength(1);
+    expect(r.bugs[0]).toMatchObject({
+      ticketId: b,
+      status: 'traced',
+      filedAt: MON + 10 * DAY,
+      fixedAt: MON + 12 * DAY,
+      top: { prNumber: 251, tickets: ['PD-346'], lines: 20 },
+    });
+    expect(r.bugs[0].candidates.map((c) => c.prNumber)).toEqual([251, 230]);
+    expect(r.medianLagDays).toBe(10);
+    expect(r.computedAt).toBe(99);
   });
 });

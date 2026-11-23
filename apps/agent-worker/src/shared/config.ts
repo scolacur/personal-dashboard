@@ -49,6 +49,10 @@ export interface AgentWorkerConfig {
   evaluator: EvaluatorConfig;
   /** PD-774 (D-099): the mechanical merge-conflict resolver. Off by default: it pushes to PR branches. */
   conflictResolver: { enabled: boolean; intervalMs: number };
+  /** PD-916: SZZ — blame each fixed bug back to the PR that introduced it. Read-only and model-free,
+   *  so on by default (SZZ_ENABLED=0 turns it off). Keeps its own FULL clone at `historyDir`: the
+   *  grounding checkout is `--depth 1`, and blame needs history. */
+  szz: { enabled: boolean; intervalMs: number; historyDir: string };
   /** PD-773: screenshots of Robot UI PRs. Off by default: it builds and serves PR code. */
   visual: {
     enabled: boolean;
@@ -286,7 +290,9 @@ export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
     budgetWindowMs: Number(env.EVALUATOR_BUDGET_WINDOW_MS ?? 24 * 60 * 60_000),
     budgetTurns: Number(env.EVALUATOR_BUDGET_TURNS ?? 200),
     budgetTokens: Number(env.EVALUATOR_BUDGET_TOKENS ?? 0),
-    securityEnabled: !(env.EVALUATOR_SECURITY_ENABLED === '0' || env.EVALUATOR_SECURITY_ENABLED === 'false'),
+    securityEnabled: !(
+      env.EVALUATOR_SECURITY_ENABLED === '0' || env.EVALUATOR_SECURITY_ENABLED === 'false'
+    ),
     reviewGateToken: env.REVIEW_GATE_TOKEN ?? '',
     allPrs: !(env.EVALUATOR_ALL_PRS === '0' || env.EVALUATOR_ALL_PRS === 'false'),
     reviewGateTicketUrlBase: env.REVIEW_GATE_TICKET_URL_BASE ?? '',
@@ -314,6 +320,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     conflictResolver: {
       enabled: env.CONFLICT_RESOLVER_ENABLED === '1' || env.CONFLICT_RESOLVER_ENABLED === 'true',
       intervalMs: Number(env.CONFLICT_RESOLVER_INTERVAL_MS ?? 5 * 60_000),
+    },
+    szz: {
+      enabled: env.SZZ_ENABLED !== '0' && env.SZZ_ENABLED !== 'false',
+      intervalMs: Number(env.SZZ_INTERVAL_MS ?? 60 * 60_000),
+      historyDir:
+        env.SZZ_HISTORY_DIR ??
+        path.join(env.DATA_DIR ?? path.join(process.cwd(), 'data'), 'agent-worker-history'),
     },
     visual: {
       enabled: env.VISUAL_CAPTURE_ENABLED === '1' || env.VISUAL_CAPTURE_ENABLED === 'true',

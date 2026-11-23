@@ -1,11 +1,24 @@
 <script lang="ts">
-  import type { BugReport, EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
+  import type {
+    BugReport,
+    EpicBurndown,
+    IntroductionReport,
+    RunReport,
+    VelocityReport,
+  } from '@dashboard/shared';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import VelocityChart from './VelocityChart.svelte';
   import RobotLoopSection from './RobotLoopSection.svelte';
   import EpicBurndownSection from './EpicBurndownSection.svelte';
   import QualitySection from './QualitySection.svelte';
-  import { fetchBugReport, fetchEpicBurndowns, fetchRunReport, fetchVelocity } from './api';
+  import IntroducedSection from './IntroducedSection.svelte';
+  import {
+    fetchBugReport,
+    fetchEpicBurndowns,
+    fetchIntroductions,
+    fetchRunReport,
+    fetchVelocity,
+  } from './api';
   import {
     VELOCITY_RANGES,
     fmtNum,
@@ -26,13 +39,21 @@
   let runs = $state<RunReport | null>(null);
   let epics = $state<EpicBurndown[]>([]);
   let bugs = $state<BugReport | null>(null);
+  let introductions = $state<IntroductionReport | null>(null);
   let error = $state<string | null>(null);
   let range = $state<VelocityRange>('26w');
   let throughputKind = $state<'tickets' | 'epics'>('tickets');
 
   $effect(() => {
-    Promise.all([fetchVelocity(), fetchRunReport(), fetchEpicBurndowns(), fetchBugReport()])
-      .then(([v, r, e, b]) => {
+    Promise.all([
+      fetchVelocity(),
+      fetchRunReport(),
+      fetchEpicBurndowns(),
+      fetchBugReport(),
+      fetchIntroductions(),
+    ])
+      .then(([v, r, e, b, i]) => {
+        introductions = i;
         report = v;
         runs = r;
         epics = e;
@@ -244,6 +265,7 @@
     </div>
 
     <QualitySection report={bugs} {range} />
+    <IntroducedSection report={introductions} {range} />
 
     <EpicBurndownSection {epics} {range} />
 

@@ -600,3 +600,139 @@ export function buildBugReport(bugs: BugInput[], now: number, win: ReportWindow 
   });
   return { startDate, generatedAt: now, weeks, totals };
 }
+
+/* ── When bugs were introduced — SZZ (PD-916) ────────────────────────────────────────────── */
+
+/** A commit blamed for some of the lines a bug's fix changed. */
+export interface IntroCandidate {
+  sha: string;
+  prNumber: number | null;
+  /** Ticket ids its subject names — usually the ticket the PR built. */
+  tickets: string[];
+  /** Its PR was a Robot run's. */
+  robot: boolean;
+  committedAt: number;
+  lines: number;
+}
+
+export type IntroStatus = 'traced' | 'untraceable' | 'unlinked';
+
+export interface IntroducedBug {
+  ticketId: number;
+  displayId: string | null;
+  title: string;
+  priority: string | null;
+  filedAt: number;
+  fixedAt: number | null;
+  /** traced: blamed to ≥1 commit. untraceable: the fix only added code. unlinked: no fix commit
+   *  on main names the bug. */
+  status: IntroStatus;
+  /** The suspect the charts credit — most blamed lines. */
+  top: IntroCandidate | null;
+  /** Every suspect, most lines first. */
+  candidates: IntroCandidate[];
+}
+
+export interface MergedPr {
+  prNumber: number;
+  mergedAt: number;
+  robot: boolean;
+}
+
+export interface RobotHumanCounts {
+  robot: number;
+  human: number;
+}
+
+export interface IntroductionWeek {
+  weekStart: number;
+  /** Bugs whose top suspect merged this week. */
+  introduced: RobotHumanCounts;
+  /** PRs merged this week — the denominator. */
+  prsMerged: RobotHumanCounts;
+}
+
+export interface IntroductionReport {
+  /** When the worker last computed the blame; null when it never has. */
+  computedAt: number | null;
+  generatedAt: number;
+  startDate: number | null;
+  weeks: IntroductionWeek[];
+  bugs: IntroducedBug[];
+  counts: Record<IntroStatus, number>;
+  /** Median days from introduction (top suspect merged) to the bug being filed. */
+  medianLagDays: number | null;
+  /** Weeks from this one on are still accumulating: most of their bugs aren't found yet. Null
+   *  when there is no lag to measure. */
+  accumulatingFrom: number | null;
+  /** Bugs introduced per 100 PRs merged, over the settled weeks only (before `accumulatingFrom`). */
+  per100: { robot: number | null; human: number | null };
+  /** The counts behind `per100` — a rate over a handful of PRs means little, so show them. */
+  settled: { robotPrs: number; humanPrs: number; robotBugs: number; humanBugs: number };
+}
+
+export function buildIntroductionReport(
+  bugs: IntroducedBug[],
+  prs: MergedPr[],
+  now: number,
+  computedAt: number | null,
+  win: ReportWindow = {},
+): IntroductionReport {
+  const counts: Record<IntroStatus, number> = { traced: 0, untraceable: 0, unlinked: 0 };
+  for (const b of bugs) counts[b.status]++;
+  const traced = bugs.filter((b): b is IntroducedBug & { top: IntroCandidate } => b.top !== null);
+  const lags = traced.map((b) => Math.max(0, (b.filedAt - b.top.committedAt) / DAY_MS));
+  const medianLagDays = percentile(lags, 0.5);
+
+  let accumulatingFrom: number | null = null;
+  if (medianLagDays !== null) {
+    // The week containing `now − lag`: anything merged from then on has had less than the typical
+    // time to be found.
+    accumulatingFrom = weekOf(now - medianLagDays * DAY_MS);
+  }
+
+  const starts = [...prs.map((p) => p.mergedAt), ...traced.map((b) => b.top.committedAt)];
+  const startDate = starts.length ? Math.min(...starts) : null;
+  const weeks =
+    startDate === null
+      ? []
+      : windowWeeks(startDate, now, win).map((weekStart): IntroductionWeek => {
+          const end = nextWeek(weekStart);
+          const inWeek = (ts: number) => ts >= weekStart && ts < end;
+          const introduced = { robot: 0, human: 0 };
+          for (const b of traced)
+            if (inWeek(b.top.committedAt)) introduced[b.top.robot ? 'robot' : 'human']++;
+          const prsMerged = { robot: 0, human: 0 };
+          for (const p of prs) if (inWeek(p.mergedAt)) prsMerged[p.robot ? 'robot' : 'human']++;
+          return { weekStart, introduced, prsMerged };
+        });
+
+  const settledEnd = accumulatingFrom ?? Infinity;
+  const settledPrs = (robot: boolean) =>
+    prs.filter((p) => p.robot === robot && p.mergedAt < settledEnd).length;
+  const settledBugs = (robot: boolean) =>
+    traced.filter((b) => b.top.robot === robot && b.top.committedAt < settledEnd).length;
+  const settled = {
+    robotPrs: settledPrs(true),
+    humanPrs: settledPrs(false),
+    robotBugs: settledBugs(true),
+    humanBugs: settledBugs(false),
+  };
+  const rate = (bugsN: number, prsN: number) => (prsN ? (bugsN / prsN) * 100 : null);
+
+  return {
+    computedAt,
+    generatedAt: now,
+    startDate,
+    weeks,
+    bugs,
+    counts,
+    medianLagDays,
+    accumulatingFrom,
+    per100: {
+      robot: rate(settled.robotBugs, settled.robotPrs),
+      human: rate(settled.humanBugs, settled.humanPrs),
+    },
+    settled,
+  };
+}

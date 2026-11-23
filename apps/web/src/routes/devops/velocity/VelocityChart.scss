@@ -50,6 +50,19 @@ svg {
   stroke-width: 1;
 }
 
+.accumulating {
+  fill: var(--muted);
+  fill-opacity: 0.12;
+  pointer-events: none;
+}
+
+.accumulating-label {
+  fill: var(--muted);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  pointer-events: none;
+}
+
 .crosshair {
   stroke: var(--muted);
   stroke-width: 1;

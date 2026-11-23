@@ -7,8 +7,18 @@ import {
   REFINE_PROPOSAL_EVENT,
   REFINE_QUESTIONS_NOTIFICATION_PREFIX,
 } from '@dashboard/shared';
-import { type AgentWorkerConfig, loadRobotConfig, loadEvaluatorConfig, loadMaintenanceConfig } from '../../shared/config';
-import type { RefineSession, RefineTurnResult, OpenRefineSession, OpenSessionInput } from './session';
+import {
+  type AgentWorkerConfig,
+  loadRobotConfig,
+  loadEvaluatorConfig,
+  loadMaintenanceConfig,
+} from '../../shared/config';
+import type {
+  RefineSession,
+  RefineTurnResult,
+  OpenRefineSession,
+  OpenSessionInput,
+} from './session';
 import {
   nextRefineWork,
   findPendingRefineTicketIds,
@@ -59,12 +69,9 @@ function addTicket(db: Database.Database, id: number, displayId: string, isEpic 
 }
 function addEvent(db: Database.Database, ticketId: number, type: string, detail: unknown): void {
   // Monotonic created_at so ordering is deterministic regardless of clock resolution.
-  db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
-    ticketId,
-    type,
-    detail === undefined ? null : JSON.stringify(detail),
-    ++seq,
-  );
+  db.prepare(
+    'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+  ).run(ticketId, type, detail === undefined ? null : JSON.stringify(detail), ++seq);
 }
 
 const CONFIG: AgentWorkerConfig = {
@@ -81,6 +88,7 @@ const CONFIG: AgentWorkerConfig = {
   httpsProxy: '',
   robot: loadRobotConfig({}),
   conflictResolver: { enabled: false, intervalMs: 1 },
+  szz: { enabled: false, intervalMs: 1, historyDir: '/tmp/szz' },
   visual: { enabled: false, intervalMs: 1, chromiumPath: '', publicUrl: '' },
   evaluator: loadEvaluatorConfig({}),
   maintenance: loadMaintenanceConfig({}),
@@ -130,7 +138,10 @@ describe('nextRefineWork (pure)', () => {
   });
 
   it('first turn: prompt is the human text, no resume id', () => {
-    const work = nextRefineWork([ev('created', null, 1), ev(REFINE_EVENT_TYPE.human, { text: 'the body' }, 2)]);
+    const work = nextRefineWork([
+      ev('created', null, 1),
+      ev(REFINE_EVENT_TYPE.human, { text: 'the body' }, 2),
+    ]);
     expect(work).toEqual({ prompt: 'the body', resumeSessionId: undefined });
   });
 
@@ -234,7 +245,10 @@ describe('processPendingRefines (orchestration)', () => {
     const agentTurns = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
     expect(agentTurns).toHaveLength(1);
     expect((agentTurns[0].detail as { sessionId?: string }).sessionId).toBe('sess-1');
-    const notif = db.prepare('SELECT * FROM agent_notifications').get() as { kind: string; title: string };
+    const notif = db.prepare('SELECT * FROM agent_notifications').get() as {
+      kind: string;
+      title: string;
+    };
     expect(notif.kind).toBe('agent_refine');
     expect(notif.title).toContain('PD-1');
   });
@@ -248,7 +262,11 @@ describe('processPendingRefines (orchestration)', () => {
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'a follow-up' });
     const fake = fakeSessions('answer', 'sess-OLD');
 
-    await processPendingRefines(db, CONFIG, { sessions: new WarmSessions(fake.open), buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fake.open),
+      buildContext: noContext,
+      now: () => ++seq,
+    });
 
     expect(fake.opens[0].resumeSessionId).toBe('sess-OLD'); // cold open rehydrated
     expect(fake.sends[0].prompt).toBe('a follow-up');
@@ -261,9 +279,17 @@ describe('processPendingRefines (orchestration)', () => {
     const fake = fakeSessions('a1 — which one?', 'sess-1');
     const sessions = new WarmSessions(fake.open);
 
-    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      buildContext: noContext,
+      now: () => ++seq,
+    });
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q2' });
-    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      buildContext: noContext,
+      now: () => ++seq,
+    });
 
     expect(fake.opens).toHaveLength(1); // opened once, reused for the 2nd turn
     expect(fake.sends.map((s) => s.prompt)).toEqual(['q1', 'q2']);
@@ -274,8 +300,20 @@ describe('processPendingRefines (orchestration)', () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q' });
     const sessions = new WarmSessions(fakeSessions('a').open);
-    expect(await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq })).toBe(1);
-    expect(await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq })).toBe(0);
+    expect(
+      await processPendingRefines(db, CONFIG, {
+        sessions,
+        buildContext: noContext,
+        now: () => ++seq,
+      }),
+    ).toBe(1);
+    expect(
+      await processPendingRefines(db, CONFIG, {
+        sessions,
+        buildContext: noContext,
+        now: () => ++seq,
+      }),
+    ).toBe(0);
   });
 
   it('leaves the ticket pending when the turn returns empty text (no bogus agent turn)', async () => {
@@ -319,10 +357,20 @@ describe('processPendingRefines (orchestration)', () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q1' });
     const sessions = new WarmSessions(fakeSessions('a1').open);
-    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      buildContext: noContext,
+      now: () => ++seq,
+    });
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'q2' });
-    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
-    const count = db.prepare('SELECT COUNT(*) AS c FROM agent_notifications').get() as { c: number };
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      buildContext: noContext,
+      now: () => ++seq,
+    });
+    const count = db.prepare('SELECT COUNT(*) AS c FROM agent_notifications').get() as {
+      c: number;
+    };
     expect(count.c).toBe(1); // first is still unread → deduped
   });
 
@@ -440,7 +488,9 @@ describe('propose_commit path (D-044, PD-269)', () => {
       now: () => ++seq,
     });
 
-    const proposals = listTicketEvents(db, 1).filter((e) => e.type === REFINE_PROPOSAL_EVENT.proposal);
+    const proposals = listTicketEvents(db, 1).filter(
+      (e) => e.type === REFINE_PROPOSAL_EVENT.proposal,
+    );
     expect(proposals).toHaveLength(1);
     expect((proposals[0].detail as RefineProposal).body).toBe('tightened');
   });
@@ -496,19 +546,26 @@ describe('ask_questions path (PD-744, D-096)', () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
     const fake = askingSessions([{ ask: true, text: '' }]);
-    await processPendingRefines(db, CONFIG, { sessions: new WarmSessions(fake.open), buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fake.open),
+      buildContext: noContext,
+      now: () => ++seq,
+    });
     const agent = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
     expect(agent).toHaveLength(1);
     const detail = agent[0].detail as { text: string; round?: RefineQuestionRound };
     expect(detail.round?.questions[0].id).toBe('bar');
     expect(detail.text).toBe(roundOnlyText(ROUND));
-    const notif = db.prepare('SELECT title, body FROM agent_notifications').get() as { title: string; body: string };
+    const notif = db.prepare('SELECT title, body FROM agent_notifications').get() as {
+      title: string;
+      body: string;
+    };
     expect(notif.body).toContain('Which bar are we clearing?');
     // PD-746: the round's own title, which the web links to the Decisions inbox.
     expect(notif.title).toBe(`${REFINE_QUESTIONS_NOTIFICATION_PREFIX} 1 question on PD-1`);
   });
 
-  it('a warm session\'s second turn gets its own round, and a turn without one carries none', async () => {
+  it("a warm session's second turn gets its own round, and a turn without one carries none", async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
     const fake = askingSessions([
@@ -516,12 +573,23 @@ describe('ask_questions path (PD-744, D-096)', () => {
       { ask: true, text: 'now my questions' },
     ]);
     const sessions = new WarmSessions(fake.open);
-    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      buildContext: noContext,
+      now: () => ++seq,
+    });
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'go on' });
-    await processPendingRefines(db, CONFIG, { sessions, buildContext: noContext, now: () => ++seq });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      buildContext: noContext,
+      now: () => ++seq,
+    });
     expect(fake.opens()).toBe(1); // the same warm session served both turns
     const agent = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
-    expect(agent.map((e) => (e.detail as { round?: unknown }).round !== undefined)).toEqual([false, true]);
+    expect(agent.map((e) => (e.detail as { round?: unknown }).round !== undefined)).toEqual([
+      false,
+      true,
+    ]);
   });
 
   it('drops the round of a failed turn, so a retry never inherits stale questions', async () => {
@@ -534,15 +602,24 @@ describe('ask_questions path (PD-744, D-096)', () => {
     const sessions = new WarmSessions(fake.open);
     let t = 0;
     const backoff = new RefineBackoff();
-    await processPendingRefines(db, CONFIG, { sessions, backoff, buildContext: noContext, now: () => (t += 1) });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      backoff,
+      buildContext: noContext,
+      now: () => (t += 1),
+    });
     // Jump past the backoff so the retry runs.
-    await processPendingRefines(db, CONFIG, { sessions, backoff, buildContext: noContext, now: () => (t += 10 * 60 * 60_000) });
+    await processPendingRefines(db, CONFIG, {
+      sessions,
+      backoff,
+      buildContext: noContext,
+      now: () => (t += 10 * 60 * 60_000),
+    });
     const agent = listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent);
     expect(agent).toHaveLength(1);
     expect((agent[0].detail as { round?: unknown }).round).toBeUndefined();
   });
 });
-
 
 /**
  * PD-618. On 2026-09-01 a single refine turn that could not succeed was retried every 5 seconds
@@ -640,7 +717,11 @@ describe('a provider session limit stops every refine turn (PD-618)', () => {
       async send(): Promise<RefineTurnResult> {
         // The literal string the worker logged on 2026-09-01, kept verbatim: this test exists
         // because that text was retried every 5s for eight hours instead of being recognised.
-        return { text: "You've hit your session limit · resets 9am (UTC)", ok: false, sessionId: 'sess-1' };
+        return {
+          text: "You've hit your session limit · resets 9am (UTC)",
+          ok: false,
+          sessionId: 'sess-1',
+        };
       },
       async close() {},
     });
@@ -724,10 +805,14 @@ describe('no-question backstop (PD-844)', () => {
 
   describe('turnNeedsNudge (pure)', () => {
     it('nudges a turn with no round, no proposal and no closing question', () => {
-      expect(turnNeedsNudge({ text: "I'll wait for the explorers to report back.", proposed: false })).toBe(true);
+      expect(
+        turnNeedsNudge({ text: "I'll wait for the explorers to report back.", proposed: false }),
+      ).toBe(true);
       expect(turnNeedsNudge({ text: '', proposed: false })).toBe(true);
       // A question mid-reply is not a question TO Steve at the end of the turn.
-      expect(turnNeedsNudge({ text: 'Is it wired? Yes. Waiting on explorers.', proposed: false })).toBe(true);
+      expect(
+        turnNeedsNudge({ text: 'Is it wired? Yes. Waiting on explorers.', proposed: false }),
+      ).toBe(true);
     });
     it('leaves a turn alone when it staged a round or recorded a proposal', () => {
       expect(turnNeedsNudge({ text: 'grounding', round: ROUND, proposed: false })).toBe(false);
@@ -748,7 +833,9 @@ describe('no-question backstop (PD-844)', () => {
   });
 
   /** A session that plays `plan` turn by turn, calling the tools through the callbacks bound AT OPEN. */
-  function scriptedSessions(plan: { text: string; ok?: boolean; ask?: boolean; propose?: boolean }[]) {
+  function scriptedSessions(
+    plan: { text: string; ok?: boolean; ask?: boolean; propose?: boolean }[],
+  ) {
     const sends: string[] = [];
     const open: OpenRefineSession = (input: OpenSessionInput) => ({
       get sessionId() {
@@ -777,7 +864,10 @@ describe('no-question backstop (PD-844)', () => {
   it('nudges exactly once and persists only the nudged turn', async () => {
     addTicket(db, 1, 'PD-1');
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'refine me' });
-    const fake = scriptedSessions([{ text: "I'll wait for the explorers." }, { text: 'grounded; my questions', ask: true }]);
+    const fake = scriptedSessions([
+      { text: "I'll wait for the explorers." },
+      { text: 'grounded; my questions', ask: true },
+    ]);
     await run(fake.open);
     expect(fake.sends).toEqual(['refine me', REFINE_NUDGE]);
     const turns = agentTurns();
@@ -825,7 +915,10 @@ describe('no-question backstop (PD-844)', () => {
     addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'thanks' });
     await run(fake.open, sessions);
     expect(fake.sends).toEqual(['refine me', 'thanks', REFINE_NUDGE]);
-    expect(agentTurns().map((t) => t.text)).toEqual(['plan recorded.', 'Want me to split it instead?']);
+    expect(agentTurns().map((t) => t.text)).toEqual([
+      'plan recorded.',
+      'Want me to split it instead?',
+    ]);
   });
 
   it('keeps the original turn when the nudge fails', async () => {

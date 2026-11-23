@@ -35,6 +35,9 @@
     /** Fixed axis ceiling (e.g. 1 for a rate); otherwise derived from the data. */
     yMax?: number;
     height?: number;
+    /** PD-916: shade from this week start to the end as "still accumulating" — data that will
+     *  keep growing as bugs are found. Null/omitted = no shading. */
+    shadeFrom?: number | null;
   }
 
   let {
@@ -45,6 +48,7 @@
     format = (v: number) => String(Math.round(v * 10) / 10),
     yMax,
     height = 220,
+    shadeFrom = null,
   }: Props = $props();
 
   const PAD = { top: 12, bottom: 26, left: 40 };
@@ -132,6 +136,13 @@
 
   const xTicks = $derived(tickIndices(n, plotW));
 
+  /** First week index inside the shaded region, or null when nothing in range is shaded. */
+  const shadeIdx = $derived.by(() => {
+    if (shadeFrom === null) return null;
+    const i = weeks.findIndex((w) => w >= shadeFrom);
+    return i === -1 ? null : i;
+  });
+
   /** Last non-null value per series, for direct labels. */
   const endLabels = $derived.by(() => {
     if (!directLabels) return [];
@@ -201,6 +212,19 @@
       {#each xTicks as i (i)}
         <text class="tick x" x={cx(i)} y={height - 8}>{weekLabel(weeks[i])}</text>
       {/each}
+
+      {#if shadeIdx !== null}
+        <rect
+          class="accumulating"
+          x={PAD.left + band * shadeIdx}
+          y={PAD.top}
+          width={band * (n - shadeIdx)}
+          height={plotH}
+        />
+        <text class="accumulating-label" x={PAD.left + band * shadeIdx + 4} y={PAD.top + 10}
+          >still accumulating</text
+        >
+      {/if}
 
       {#if hover !== null}
         <line class="crosshair" x1={cx(hover)} x2={cx(hover)} y1={PAD.top} y2={PAD.top + plotH} />
