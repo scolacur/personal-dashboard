@@ -18,6 +18,7 @@ import { notifyLoop } from '../robot/notify';
 import { runEvaluatorTurn } from './evaluate-agent';
 import { capDiff, combineReports, defaultDiffFetcher, type EvaluatePassDeps } from './evaluate';
 import { finishEvaluatorRun, headEvaluated, NO_TICKET, prRounds, startEvaluatorRun } from './evaluator-runs';
+import { inReviewPrTargets } from '../robot/pr-state';
 import { defaultHeadShaFetcher, defaultStatusPoster, gateTargetUrl } from './review-gate';
 import { blockingFindings, MAX_EVALUATION_ROUNDS, parseEvaluatorReport } from './verdict';
 
@@ -63,9 +64,17 @@ export interface AllPrsDeps extends EvaluatePassDeps {
 
 export const SKIP_LABEL = 'skip-evaluator';
 
-/** Why a PR is not reviewed by this path, or null when it should be. */
-export function skipReason(pr: OtherPr): string | null {
-  if (pr.headRefName.startsWith('robot/')) return 'robot PR (its own path)';
+/**
+ * Why a PR is not reviewed by this path, or null when it should be.
+ *
+ * A `robot/*` PR is skipped ONLY when the Robot path (`evaluateOnePr`) will actually review it —
+ * i.e. its number is a current `inReviewPrTargets` PR (passed in as `inReviewPrNumbers`). That set
+ * IS the Robot path's target list, so a PR is reviewed by exactly one path and never both; a
+ * `robot/*` PR whose ticket is NOT in-review (hand-finished on its own branch, reassigned, stuck,
+ * needs-human, or no matching ticket) falls through to this path (PD-825, D-098/D-101).
+ */
+export function skipReason(pr: OtherPr, inReviewPrNumbers: ReadonlySet<number>): string | null {
+  if (pr.headRefName.startsWith('robot/') && inReviewPrNumbers.has(pr.number)) return 'robot PR (its own path)';
   if (pr.baseRefName !== 'main') return 'not into main';
   if (pr.isCrossRepository) return 'from a fork';
   if (pr.isDraft) return 'draft';
@@ -226,9 +235,27 @@ export async function evaluateNextOtherPr(
 ): Promise<EvaluatorReport | null | undefined> {
   const prs = await (deps.listPrs ?? defaultOtherPrLister(config))(config.githubRepo);
   if (!prs) return undefined;
-  const pr = [...prs]
-    .sort((a, b) => a.number - b.number)
-    .find((p) => skipReason(p) === null && !headEvaluated(db, p.number, p.headRefOid) && prRounds(db, p.number) < MAX_EVALUATION_ROUNDS);
+
+  // Mirror the Robot path's target list directly rather than re-deriving its condition, so a PR is
+  // reviewed by exactly one path and never both (PD-825). A `robot/*` PR is left to the Robot path
+  // iff its number is in this set; anything else `robot/*` is reviewed here.
+  const inReviewTargets = inReviewPrTargets(db);
+  const inReviewPrNumbers = new Set(inReviewTargets.map((t) => t.prNumber));
+  const inReviewTicketByPr = new Map(inReviewTargets.map((t) => [t.prNumber, t.ticketId]));
+
+  const sorted = [...prs].sort((a, b) => a.number - b.number);
+  for (const p of sorted) {
+    if (p.headRefName.startsWith('robot/') && inReviewPrNumbers.has(p.number)) {
+      logger.info(
+        { prNumber: p.number, ticketId: inReviewTicketByPr.get(p.number) },
+        `evaluator: skipping robot PR #${p.number} — owned by the Robot path (ticket ${inReviewTicketByPr.get(p.number)})`,
+      );
+    }
+  }
+
+  const pr = sorted.find(
+    (p) => skipReason(p, inReviewPrNumbers) === null && !headEvaluated(db, p.number, p.headRefOid) && prRounds(db, p.number) < MAX_EVALUATION_ROUNDS,
+  );
   if (!pr) return undefined;
 
   const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
@@ -313,6 +340,9 @@ export async function evaluateNextOtherPr(
       gateTargetUrl(config, tickets[0]?.displayId ?? null),
     );
   }
-  logger.info({ prNumber: pr.number, verdict: combined?.verdict ?? null, tickets: tickets.map((t) => t.displayId) }, 'evaluator: reviewed a non-Robot PR');
+  logger.info(
+    { prNumber: pr.number, headRef: pr.headRefName, verdict: combined?.verdict ?? null, tickets: tickets.map((t) => t.displayId) },
+    'evaluator: reviewed a PR via the all-PRs path',
+  );
   return combined;
 }

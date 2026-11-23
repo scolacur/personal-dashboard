@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HUMAN_REPLY_MARKER } from '@dashboard/shared';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { ensureEvaluatorRunsTable } from './evaluator-runs';
+import { ensureRunsTable, finishRun, startRun } from '../robot/runs';
 import type { EvaluatorTurnResult } from './evaluate-agent';
 import { acceptanceBrief, evaluateNextOtherPr, linkedTickets, skipReason, verdictComment, type OtherPr } from './all-prs';
 
@@ -37,13 +38,27 @@ let db: Database.Database;
 beforeEach(() => {
   db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, body TEXT, archived_at INTEGER);
+    CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, body TEXT, status TEXT, assignee TEXT, agent_state TEXT, archived_at INTEGER);
     CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
   `);
   ensureEvaluatorRunsTable(db);
+  ensureRunsTable(db);
   db.prepare("INSERT INTO agent_tickets (id, display_id, title, body) VALUES (705, 'PD-705', 'Do the thing', '## Done When\n- it works')").run();
 });
+
+/**
+ * Make `ticketId` a current in-review Robot target for `prNumber` — the condition `inReviewPrTargets`
+ * selects: status='queue', assignee='robot', agent_state='in-review', with a newest handed-off run
+ * carrying the PR url.
+ */
+function seedInReviewTarget(ticketId: number, prNumber: number): void {
+  db.prepare(
+    "INSERT OR REPLACE INTO agent_tickets (id, display_id, title, body, status, assignee, agent_state) VALUES (?, ?, 'In review', '## Done When\n- it works', 'queue', 'robot', 'in-review')",
+  ).run(ticketId, `PD-${ticketId}`);
+  const runId = startRun(db, { ticketId, issueNumber: prNumber, branch: `robot/t${ticketId}` }, 10);
+  finishRun(db, runId, { status: 'handed-off', prUrl: `https://github.com/scolacur/personal-dashboard/pull/${prNumber}` }, 100);
+}
 
 function deps(reply: string, list: OtherPr[] = [pr()]) {
   const comments: string[] = [];
@@ -66,15 +81,23 @@ function deps(reply: string, list: OtherPr[] = [pr()]) {
 }
 
 describe('skipReason / linkedTicket (PD-712)', () => {
-  it('skips Robot, forks, drafts, other bases, the skip label and MEMORY-only PRs', () => {
-    expect(skipReason(pr())).toBeNull();
-    expect(skipReason(pr({ headRefName: 'robot/t1' }))).toMatch(/robot/);
-    expect(skipReason(pr({ isCrossRepository: true }))).toMatch(/fork/);
-    expect(skipReason(pr({ isDraft: true }))).toMatch(/draft/);
-    expect(skipReason(pr({ baseRefName: 'release' }))).toMatch(/main/);
-    expect(skipReason(pr({ labels: [{ name: 'skip-evaluator' }] }))).toMatch(/skip-evaluator/);
-    expect(skipReason(pr({ files: [{ path: 'MEMORY/runs/x.md' }] }))).toMatch(/MEMORY/);
-    expect(skipReason(pr({ files: [{ path: 'MEMORY/runs/x.md' }, { path: 'DECISIONS/D-1.md' }] }))).toBeNull();
+  const none = new Set<number>();
+
+  it('skips forks, drafts, other bases, the skip label and MEMORY-only PRs', () => {
+    expect(skipReason(pr(), none)).toBeNull();
+    expect(skipReason(pr({ isCrossRepository: true }), none)).toMatch(/fork/);
+    expect(skipReason(pr({ isDraft: true }), none)).toMatch(/draft/);
+    expect(skipReason(pr({ baseRefName: 'release' }), none)).toMatch(/main/);
+    expect(skipReason(pr({ labels: [{ name: 'skip-evaluator' }] }), none)).toMatch(/skip-evaluator/);
+    expect(skipReason(pr({ files: [{ path: 'MEMORY/runs/x.md' }] }), none)).toMatch(/MEMORY/);
+    expect(skipReason(pr({ files: [{ path: 'MEMORY/runs/x.md' }, { path: 'DECISIONS/D-1.md' }] }), none)).toBeNull();
+  });
+
+  it('skips a robot/* PR only when its number is a current in-review Robot target (PD-825)', () => {
+    // In-review: the Robot path owns it, so this path skips it.
+    expect(skipReason(pr({ headRefName: 'robot/t1' }), new Set([500]))).toMatch(/robot/);
+    // Not in-review (hand-finished on its own branch, reassigned, stuck, …): reviewed here.
+    expect(skipReason(pr({ headRefName: 'robot/t1' }), none)).toBeNull();
   });
 
   const ids = (p: OtherPr) => linkedTickets(db, p).map((t) => t.displayId);
@@ -177,6 +200,40 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     const h = deps(ship);
     await evaluateNextOtherPr(db, cfg({ reviewGateToken: '' }), 1000, h.d);
     expect(h.statuses).toEqual([]);
+  });
+
+  it('skips a robot/* PR whose ticket IS in-review (the Robot path owns it) (PD-825)', async () => {
+    seedInReviewTarget(977, 463);
+    const h = deps(ship, [pr({ number: 463, headRefName: 'robot/t977', title: 'feat: thing', body: '**Ticket:** PD-977' })]);
+    const out = await evaluateNextOtherPr(db, cfg(), 1000, h.d);
+    expect(out).toBeUndefined(); // nothing left to review on this path
+    expect(h.runAgent).not.toHaveBeenCalled();
+    expect(h.comments).toEqual([]);
+    expect(h.statuses).toEqual([]);
+  });
+
+  it('reviews a robot/* PR whose ticket is NOT in-review and ships review-gate success (PD-825)', async () => {
+    // Its ticket exists but sits at queue/steve — not an in-review Robot target — so the Robot path
+    // never sees it. The all-PRs path reviews it and a ship opens review-gate.
+    db.prepare(
+      "INSERT INTO agent_tickets (id, display_id, title, body, status, assignee, agent_state) VALUES (977, 'PD-977', 'Finish by hand', '## Done When\n- done', 'queue', 'steve', 'queued')",
+    ).run();
+    const robotPr = pr({ number: 463, headRefName: 'robot/t977', title: 'feat: thing', body: '**Ticket:** PD-977' });
+    const h = deps(ship, [robotPr]);
+    const out = await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, fetchHeadSha: async () => robotPr.headRefOid });
+    expect(out?.verdict).toBe('ship');
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+    expect(h.comments[0]).toMatch(/Evaluator \(round 1\): ship\*\*, judged against PD-977 \(Finish by hand\)/);
+  });
+
+  it('reviews a robot/* PR with no matching ticket, judged without acceptance criteria (PD-825)', async () => {
+    const robotPr = pr({ number: 463, headRefName: 'robot/t999', title: 'tidy', body: 'No ticket.' });
+    const h = deps(ship, [robotPr]);
+    const out = await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, fetchHeadSha: async () => robotPr.headRefOid });
+    expect(out?.verdict).toBe('ship');
+    expect(h.runAgent.mock.calls[0][2]).toMatch(/NO LINKED TICKET/);
+    expect(h.statuses).toEqual([{ sha: SHA, state: 'success' }]);
+    expect(h.comments[0]).toMatch(/no linked ticket, so no acceptance criteria/);
   });
 });
 

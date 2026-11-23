@@ -1,9 +1,16 @@
-# review-gate for non-Robot PRs (PD-764, D-098).
+# review-gate — turn Steve's approval into the `review-gate` commit status (PD-764, D-098).
 #
 # Branch protection will require a `review-gate` commit status in place of an approving review
-# (PD-766). On a Robot PR (`robot/*` head branch) the agent-worker owns it, posting it from the
-# Evaluator's verdicts (PD-763, PD-767). On every OTHER PR — Steve's, and hand-built session PRs — it
-# means what branch protection means today: a standing authorized approval. This workflow posts it.
+# (PD-766). The agent-worker owns `pending`/`failure` on an in-review Robot PR (`robot/*` head branch),
+# posting it from the Evaluator's verdicts (PD-763, PD-767). On every OTHER PR — Steve's, and
+# hand-built session PRs — the gate means what branch protection means today: a standing authorized
+# approval. This workflow posts it.
+#
+# This job runs for EVERY PR, robot/* included (PD-825). An authorized approval posts `review-gate`
+# success on any head branch, so Steve approving a `robot/*` PR whose ticket is not `in-review`
+# (hand-finished on its own branch, reassigned, stuck) now opens the gate — previously it was
+# ignored. The one asymmetry: on an UNAPPROVED `robot/*` head this workflow posts NOTHING and exits,
+# because the agent-worker owns the `pending`/`failure` verdict there and this job must not stomp it.
 #
 # WHY pull_request_target: it runs this file from the BASE branch, and the checkout below is pinned
 # to the default branch, so a PR can never swap in its own version of the workflow or the approval
@@ -40,14 +47,16 @@ jobs:
   # requirement must be met only by the commit STATUS this job and the agent-worker post.
   post-status:
     name: post review-gate status
-    # Robot PRs are the agent-worker's to gate.
-    if: ${{ !startsWith(github.event.pull_request.head.ref, 'robot/') }}
+    # Runs for EVERY PR, robot/* included (PD-825). The robot/* asymmetry is handled in the step:
+    # an authorized approval opens the gate on any head; an unapproved robot/* head is left to the
+    # agent-worker.
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.pull_request.number }}
       SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
     steps:
       - name: Check out the approval script from the default branch (never the PR)
         uses: actions/checkout@v4
@@ -61,8 +70,15 @@ jobs:
           set -euo pipefail
           APPROVED="$(gh pr view "$PR" --repo "$REPO" --json reviews | .github/scripts/authorized-approval.sh)"
           if [ "$APPROVED" = "true" ]; then
+            # An authorized approval opens the gate on any head branch, robot/* included (PD-825).
             STATE=success; DESC="Approved by Steve"
           else
+            # Unapproved. On a robot/* head the agent-worker owns review-gate's pending/failure
+            # verdict (it posts from the Evaluator on an in-review hand-off), so this workflow must
+            # post NOTHING and exit — stomping it would undo the Evaluator's verdict (PD-825).
+            case "$HEAD_REF" in
+              robot/*) echo "PR #$PR @ $SHA: unapproved robot/* head — leaving review-gate to the agent-worker."; exit 0 ;;
+            esac
             # PD-712 (D-101): the Evaluator also sets success on this commit when every lens ships.
             # Without an approval, leave its success alone rather than reset it to pending; a review
             # event (a comment, a dismissal) must not undo the Evaluator's verdict on the same commit.
