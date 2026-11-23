@@ -123,8 +123,9 @@ export interface TicketLifecycle {
   createdAt: number;
   /** First completion (`robot_completed`, or `status_changed` → completed); null if never. */
   completedAt: number | null;
-  /** Resolution flips in time order: true = resolved (completed/closed), false = reopened. */
-  transitions: { at: number; resolved: boolean }[];
+  /** Resolution flips in time order: true = resolved (completed/closed), false = reopened.
+   *  `completed` tells a completion from a close (split, superseded, abandoned) on a resolve. */
+  transitions: { at: number; resolved: boolean; completed?: boolean }[];
 }
 
 /**
@@ -147,23 +148,35 @@ export function reconstructLifecycles(
     let createdAt = t.createdAt;
     let completedAt: number | null = null;
     let resolved = false;
-    const transitions: { at: number; resolved: boolean }[] = [];
+    let completedNow = false;
+    const transitions: { at: number; resolved: boolean; completed?: boolean }[] = [];
     for (const e of evs) {
       if (e.type === 'created') {
         createdAt = e.at;
         continue;
       }
       let nowResolved: boolean | null = null;
+      let nowCompleted = false;
       if (e.type === 'robot_completed') {
         nowResolved = true;
+        nowCompleted = true;
         completedAt ??= e.at;
       } else if (e.type === 'status_changed' && e.to) {
         nowResolved = RESOLVED_STATUSES.has(e.to);
+        nowCompleted = e.to === 'completed';
         if (e.to === 'completed') completedAt ??= e.at;
       }
-      if (nowResolved !== null && nowResolved !== resolved) {
+      if (nowResolved === null) continue;
+      if (nowResolved !== resolved) {
         resolved = nowResolved;
-        transitions.push({ at: e.at, resolved });
+        completedNow = nowResolved && nowCompleted;
+        transitions.push(
+          nowResolved ? { at: e.at, resolved, completed: completedNow } : { at: e.at, resolved },
+        );
+      } else if (nowResolved && nowCompleted && !completedNow) {
+        // closed → completed without reopening in between: the resolution becomes a completion.
+        completedNow = true;
+        transitions.push({ at: e.at, resolved: true, completed: true });
       }
     }
     return {
@@ -186,6 +199,20 @@ export function isOpenAt(l: TicketLifecycle, ts: number): boolean {
     resolved = tr.resolved;
   }
   return !resolved;
+}
+
+/** Where a ticket stands at instant `ts`: not yet created, open, done (completed), or dropped
+ *  (closed without completing — split, superseded, abandoned). */
+export type LifecycleState = 'absent' | 'open' | 'done' | 'dropped';
+
+export function stateAt(l: TicketLifecycle, ts: number): LifecycleState {
+  if (l.createdAt > ts) return 'absent';
+  let state: LifecycleState = 'open';
+  for (const tr of l.transitions) {
+    if (tr.at > ts) break;
+    state = !tr.resolved ? 'open' : tr.completed ? 'done' : 'dropped';
+  }
+  return state;
 }
 
 /* ── Completion / burndown / cycle-time report (PD-859) ──────────────────────────────────── */
@@ -405,4 +432,82 @@ export function buildRunReport(
     };
   });
   return { startDate, generatedAt: now, weeks, totals };
+}
+
+/* ── Epic burndown (PD-897) ──────────────────────────────────────────────────────────────── */
+
+/** One Epic, with the ids of its CURRENT members. Membership changes are not logged, so history
+ *  is replayed over today's member set — the page says so. */
+export interface EpicBurndownInput {
+  id: number;
+  displayId: string | null;
+  title: string;
+  status: string;
+  memberIds: number[];
+}
+
+export interface EpicBurndownWeek {
+  weekStart: number;
+  /** Members open at the end of the week (or now, for the current week). */
+  open: number;
+  /** Members completed by then. */
+  done: number;
+  /** Members closed without completing by then (split, superseded, abandoned) — out of scope. */
+  dropped: number;
+}
+
+export interface EpicBurndown {
+  id: number;
+  displayId: string | null;
+  title: string;
+  status: string;
+  memberCount: number;
+  /** Latest member event (creation or resolution) — the picker's "recent activity" order. */
+  lastActivity: number;
+  /** Today's split, for the summary line. */
+  now: { open: number; done: number; dropped: number };
+  /** From the week the first member was created through the current week. */
+  weeks: EpicBurndownWeek[];
+}
+
+export function buildEpicBurndowns(
+  epics: EpicBurndownInput[],
+  lifecycles: TicketLifecycle[],
+  now: number,
+): EpicBurndown[] {
+  const byId = new Map(lifecycles.map((l) => [l.id, l]));
+  const out: EpicBurndown[] = [];
+  for (const epic of epics) {
+    const members = epic.memberIds
+      .map((id) => byId.get(id))
+      .filter((l): l is TicketLifecycle => l !== undefined);
+    if (members.length === 0) continue;
+    const count = (ts: number) => {
+      const c = { open: 0, done: 0, dropped: 0 };
+      for (const m of members) {
+        const st = stateAt(m, ts);
+        if (st !== 'absent') c[st]++;
+      }
+      return c;
+    };
+    const start = Math.min(...members.map((m) => m.createdAt));
+    const weeks = weekRange(start, now).map((weekStart): EpicBurndownWeek => ({
+      weekStart,
+      ...count(Math.min(nextWeek(weekStart) - 1, now)),
+    }));
+    const lastActivity = Math.max(
+      ...members.map((m) => Math.max(m.createdAt, ...m.transitions.map((t) => t.at))),
+    );
+    out.push({
+      id: epic.id,
+      displayId: epic.displayId,
+      title: epic.title,
+      status: epic.status,
+      memberCount: members.length,
+      lastActivity,
+      now: count(now),
+      weeks,
+    });
+  }
+  return out.sort((a, b) => b.lastActivity - a.lastActivity);
 }

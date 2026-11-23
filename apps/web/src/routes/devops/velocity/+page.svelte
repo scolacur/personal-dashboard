@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { RunReport, VelocityReport } from '@dashboard/shared';
+  import type { EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import VelocityChart from './VelocityChart.svelte';
   import RobotLoopSection from './RobotLoopSection.svelte';
-  import { fetchRunReport, fetchVelocity } from './api';
+  import EpicBurndownSection from './EpicBurndownSection.svelte';
+  import { fetchEpicBurndowns, fetchRunReport, fetchVelocity } from './api';
   import {
     VELOCITY_RANGES,
     fmtNum,
@@ -22,15 +23,17 @@
 
   let report = $state<VelocityReport | null>(null);
   let runs = $state<RunReport | null>(null);
+  let epics = $state<EpicBurndown[]>([]);
   let error = $state<string | null>(null);
   let range = $state<VelocityRange>('26w');
   let throughputKind = $state<'tickets' | 'epics'>('tickets');
 
   $effect(() => {
-    Promise.all([fetchVelocity(), fetchRunReport()])
-      .then(([v, r]) => {
+    Promise.all([fetchVelocity(), fetchRunReport(), fetchEpicBurndowns()])
+      .then(([v, r, e]) => {
         report = v;
         runs = r;
+        epics = e;
       })
       .catch((e: unknown) => {
         error = e instanceof Error ? e.message : String(e);
@@ -236,6 +239,8 @@
         </p>
       </article>
     </div>
+
+    <EpicBurndownSection {epics} {range} />
 
     <RobotLoopSection report={runs} {range} />
   {/if}

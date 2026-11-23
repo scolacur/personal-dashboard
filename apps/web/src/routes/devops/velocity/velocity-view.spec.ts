@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { niceScale, robotShare, sliceRange, spreadLabels, tickIndices } from './velocity-view';
+import {
+  defaultEpicId,
+  groupEpics,
+  niceScale,
+  robotShare,
+  sliceRange,
+  spreadLabels,
+  tickIndices,
+} from './velocity-view';
 
 describe('niceScale', () => {
   it('rounds the ceiling up to a nice step', () => {
@@ -37,5 +45,28 @@ describe('spreadLabels', () => {
   it('pushes colliding labels apart and keeps them inside the plot', () => {
     expect(spreadLabels([50, 52, 100], 12, 0, 200)).toEqual([50, 62, 100]);
     expect(spreadLabels([195, 198], 12, 0, 200)).toEqual([188, 200]);
+  });
+});
+
+describe('defaultEpicId / groupEpics', () => {
+  const e = (id: number, status: string) => ({
+    id,
+    status,
+    displayId: `PD-${id}`,
+    title: '',
+    memberCount: 1,
+    lastActivity: 0,
+    now: { open: 0, done: 0, dropped: 0 },
+    weeks: [],
+  });
+  it('opens on the most recent open Epic, falling back to the most recent of any', () => {
+    expect(defaultEpicId([e(1, 'completed'), e(2, 'queue'), e(3, 'backlog')])).toBe(2);
+    expect(defaultEpicId([e(1, 'completed')])).toBe(1);
+    expect(defaultEpicId([])).toBeNull();
+  });
+  it('groups open vs finished in order', () => {
+    const g = groupEpics([e(1, 'closed'), e(2, 'queue'), e(3, 'completed'), e(4, 'backlog')]);
+    expect(g.open.map((x) => x.id)).toEqual([2, 4]);
+    expect(g.finished.map((x) => x.id)).toEqual([1, 3]);
   });
 });

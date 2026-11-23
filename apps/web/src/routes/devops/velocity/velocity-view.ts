@@ -1,4 +1,4 @@
-import type { AssigneeCounts, RunReport, VelocityReport } from '@dashboard/shared';
+import type { AssigneeCounts, EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
 
 /**
  * Pure view logic for the Velocity page (Epic PD-895). apps/web has no DOM test runner, so the
@@ -107,4 +107,19 @@ export function spreadLabels(ys: number[], gap: number, min: number, max: number
 /** True when the run report has any runs to show. */
 export function hasRuns(r: RunReport | null): boolean {
   return !!r && r.totals.runs > 0;
+}
+
+/** The Epic the picker opens on: the most recently active one still open, else the most recent. */
+export function defaultEpicId(epics: EpicBurndown[]): number | null {
+  const open = epics.find((e) => e.status !== 'completed' && e.status !== 'closed');
+  return (open ?? epics[0])?.id ?? null;
+}
+
+/** Split for the picker's two groups, keeping the recency order. */
+export function groupEpics(epics: EpicBurndown[]): {
+  open: EpicBurndown[];
+  finished: EpicBurndown[];
+} {
+  const finished = (e: EpicBurndown) => e.status === 'completed' || e.status === 'closed';
+  return { open: epics.filter((e) => !finished(e)), finished: epics.filter(finished) };
 }

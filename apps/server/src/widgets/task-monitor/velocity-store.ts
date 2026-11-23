@@ -1,8 +1,10 @@
 import type Database from 'better-sqlite3';
 import {
+  buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
   reconstructLifecycles,
+  type EpicBurndown,
   type ReportWindow,
   type RunReport,
   type TicketLifecycle,
@@ -124,4 +126,52 @@ export function getRunReport(
     finishedAt: r.finished_at,
   }));
   return buildRunReport(runs, now, filter);
+}
+
+/**
+ * Per-Epic burndown (PD-897): each Epic's CURRENT members replayed week by week as open / done /
+ * dropped. Membership changes are not logged (no event when `epic_id` moves), so this cannot know
+ * who belonged when — the page labels it. Epics with no live members are omitted.
+ */
+export function getEpicBurndowns(
+  db: Database.Database,
+  filter: Pick<VelocityFilter, 'projectId'> = {},
+  now = Date.now(),
+): EpicBurndown[] {
+  const scope = filter.projectId != null ? 'AND e.project_id = @projectId' : '';
+  const epics = db
+    .prepare(
+      `SELECT e.id, e.display_id, e.title, e.status
+         FROM agent_tickets e
+        WHERE e.is_epic = 1 AND e.archived_at IS NULL ${scope}`,
+    )
+    .all({ projectId: filter.projectId }) as {
+    id: number;
+    display_id: string | null;
+    title: string;
+    status: string;
+  }[];
+  const members = db
+    .prepare(
+      `SELECT id, epic_id FROM agent_tickets
+        WHERE epic_id IS NOT NULL AND is_epic = 0 AND archived_at IS NULL`,
+    )
+    .all() as { id: number; epic_id: number }[];
+  const byEpic = new Map<number, number[]>();
+  for (const m of members) {
+    const list = byEpic.get(m.epic_id);
+    if (list) list.push(m.id);
+    else byEpic.set(m.epic_id, [m.id]);
+  }
+  return buildEpicBurndowns(
+    epics.map((e) => ({
+      id: e.id,
+      displayId: e.display_id,
+      title: e.title,
+      status: e.status,
+      memberIds: byEpic.get(e.id) ?? [],
+    })),
+    loadLifecycles(db, filter.projectId),
+    now,
+  );
 }

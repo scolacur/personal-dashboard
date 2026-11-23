@@ -1,9 +1,5 @@
-// Section heading, two-up grid and chart card — shared by the Velocity page and its Robot loop section.
-
-.velocity-section {
-  margin: var(--space-lg) 0 var(--space-sm);
-  font-size: var(--font-size-lg);
-}
+// Section heading, two-up grid of titled chart cards — the Velocity page and its Robot loop section.
+@use './card';
 
 /* Single column on phones, two-up from 768px. */
 .velocity-grid {
@@ -16,23 +12,7 @@
   }
 }
 
-.card {
-  min-width: 0;
-  padding: var(--space-md);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-sm);
-
-  h3 {
-    margin: 0;
-    font-size: var(--font-size-base);
-  }
+.card-head h3 {
+  margin: 0;
+  font-size: var(--font-size-base);
 }

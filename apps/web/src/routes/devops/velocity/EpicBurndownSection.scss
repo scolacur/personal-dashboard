@@ -1,0 +1,62 @@
+// Velocity › Epics (PD-897).
+@use './card';
+
+.velocity-empty {
+  margin: var(--space-xs) 0 var(--space-md);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.epic-head {
+  flex-wrap: wrap;
+}
+
+.epic-picker {
+  flex: 1;
+  min-width: 0;
+
+  select {
+    width: 100%;
+    max-width: 36rem;
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+  }
+}
+
+.epic-link {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.epic-summary {
+  margin: 0 0 var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  strong {
+    color: var(--text);
+  }
+}
+
+.card-note {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

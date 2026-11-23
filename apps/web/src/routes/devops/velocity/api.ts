@@ -1,4 +1,4 @@
-import type { RunReport, VelocityReport } from '@dashboard/shared';
+import type { EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
 
 const BASE = '/api/widgets/task-monitor/velocity';
 
@@ -19,4 +19,9 @@ export function fetchVelocity(projectId?: number): Promise<VelocityReport> {
 /** Weekly Robot-loop health (PD-860). Empty report when the worker has never run. */
 export function fetchRunReport(projectId?: number): Promise<RunReport> {
   return getJson(projectId ? `${BASE}/runs?projectId=${projectId}` : `${BASE}/runs`);
+}
+
+/** Per-Epic burndown over current membership (PD-897). */
+export function fetchEpicBurndowns(projectId?: number): Promise<EpicBurndown[]> {
+  return getJson(projectId ? `${BASE}/epics?projectId=${projectId}` : `${BASE}/epics`);
 }
