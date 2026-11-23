@@ -116,10 +116,99 @@
       </div>
     {/if}
 
+    <!-- PD-818: the loop's aggregate state, as tiles. Order is Steve's: what needs a human first,
+         then whether the loop can run (worker, dispatch), then what it's doing, then the limits. -->
+    <section class="fleet-section">
+      <h3 class="section-label">Loop</h3>
+      <div class="tile-grid">
+        {#if status.needsHuman.length > 0}
+          <div class="tile needs wide">
+            <span class="tile-label">Needs you · {status.needsHuman.length}</span>
+            {#each status.needsHuman as t (t.id)}
+              <a class="tile-line" href="/devops/tickets/{t.displayId}">
+                <span class="mono">{t.displayId}</span> {t.title}
+              </a>
+            {/each}
+          </div>
+        {/if}
+        {#if status.workers.length === 0}
+          <div class="tile bad">
+            <span class="tile-label">Workers</span>
+            <span class="tile-value small">no heartbeat</span>
+          </div>
+        {/if}
+        {#each status.workers as w (w.worker)}
+          {@const version = workerVersionState(w)}
+          <div class="tile" class:bad={isStale(w)} class:warn={!isStale(w) && version === 'stale'}>
+            <span class="tile-label">Worker · {w.worker}</span>
+            <span class="tile-value small">{isStale(w) ? 'stale' : 'alive'}</span>
+            <span class="tile-line muted">seen {formatRelativeTime(w.lastSeen, now)}</span>
+            {#if version === 'stale'}
+              <span class="tile-line warn" title="Running {w.buildSha}; main is {w.checkoutSha}. Run robot-refresh to deploy.">
+                {w.buildSha} · behind main
+              </span>
+            {:else if version === 'current'}
+              <span class="tile-line muted mono">{w.buildSha}</span>
+            {:else}
+              <span class="tile-line muted">build unknown</span>
+            {/if}
+          </div>
+        {/each}
+
+        {#if dispatch}
+          <div class="tile" class:bad={dispatch.paused}>
+            <span class="tile-label">Dispatch</span>
+            <span class="tile-value small">{dispatch.paused ? 'paused' : 'running'}</span>
+            <button class="tile-action" type="button" onclick={toggleDispatch} disabled={toggling}>
+              {toggling ? '…' : dispatch.paused ? 'Resume' : 'Pause'}
+            </button>
+          </div>
+        {/if}
+
+        {#if activeStates.length === 0}
+          <div class="tile state-tile idle">
+            <span class="tile-label">Tickets</span>
+            <span class="tile-value">idle</span>
+          </div>
+        {/if}
+        {#each activeStates as s (s)}
+          <div class="tile state-tile agent-state-{s}" class:pulse={s === 'working'}>
+            <span class="tile-label">{AGENT_STATE_LABELS[s]}</span>
+            {#key status.sortie[s]}<span class="tile-value fresh">{status.sortie[s]}</span>{/key}
+          </div>
+        {/each}
+
+        {#if budget && budgetLimbs.length > 0}
+          <div class="tile" class:warn={budgetLimbs.some((l) => l.near)} class:bad={budgetLimbs.some((l) => l.over)}>
+            <span class="tile-label">Budget · per {Math.round(budget.windowMs / 3_600_000)}h</span>
+            {#each budgetLimbs as l (l.label)}
+              {#key l.label}<span class="tile-line fresh" class:warn={l.near} class:bad={l.over}>{l.label}</span>{/key}
+            {/each}
+          </div>
+        {/if}
+
+        {#if rateLimit}
+          <div class="tile" class:warn={rateHealth === 'low' || rateHealth === 'stale'} class:bad={rateHealth === 'exhausted'}>
+            <span class="tile-label">GitHub API</span>
+            {#if rateHealth === 'stale'}
+              <span class="tile-value small">unknown</span>
+              <span class="tile-line muted">probe last ran {formatRelativeTime(rateLimit.checkedAt, now)}</span>
+            {:else}
+              {#key rateLimit.core.remaining}
+                <span class="tile-value small fresh">{rateLimit.core.remaining.toLocaleString()}</span>
+              {/key}
+              <span class="tile-line muted">of {rateLimit.core.limit.toLocaleString()} · resets {formatClockTime(rateLimit.core.resetAt)}</span>
+            {/if}
+          </div>
+        {/if}
+
+      </div>
+    </section>
+
     <!-- PD-819: the agents, one column per kind. -->
     <section class="fleet-section">
       <div class="section-head-row">
-        <h3 class="section-label">Agents at work</h3>
+        <h3 class="section-label">Active Agents</h3>
         <div class="avatar-toggle" role="radiogroup" aria-label="Avatar style">
           {#each AVATAR_MODES as m (m)}
             <button
@@ -152,94 +241,6 @@
             {/each}
           </div>
         {/each}
-      </div>
-    </section>
-
-    <!-- PD-818: the loop's aggregate state, as tiles. -->
-    <section class="fleet-section">
-      <h3 class="section-label">Loop</h3>
-      <div class="tile-grid">
-        {#if activeStates.length === 0}
-          <div class="tile state-tile idle">
-            <span class="tile-label">Tickets</span>
-            <span class="tile-value">idle</span>
-          </div>
-        {/if}
-        {#each activeStates as s (s)}
-          <div class="tile state-tile agent-state-{s}" class:pulse={s === 'working'}>
-            <span class="tile-label">{AGENT_STATE_LABELS[s]}</span>
-            {#key status.sortie[s]}<span class="tile-value fresh">{status.sortie[s]}</span>{/key}
-          </div>
-        {/each}
-
-        {#if dispatch}
-          <div class="tile" class:bad={dispatch.paused}>
-            <span class="tile-label">Dispatch</span>
-            <span class="tile-value small">{dispatch.paused ? 'paused' : 'running'}</span>
-            <button class="tile-action" type="button" onclick={toggleDispatch} disabled={toggling}>
-              {toggling ? '…' : dispatch.paused ? 'Resume' : 'Pause'}
-            </button>
-          </div>
-        {/if}
-
-        {#if budget && budgetLimbs.length > 0}
-          <div class="tile" class:warn={budgetLimbs.some((l) => l.near)} class:bad={budgetLimbs.some((l) => l.over)}>
-            <span class="tile-label">Budget · per {Math.round(budget.windowMs / 3_600_000)}h</span>
-            {#each budgetLimbs as l (l.label)}
-              {#key l.label}<span class="tile-line fresh" class:warn={l.near} class:bad={l.over}>{l.label}</span>{/key}
-            {/each}
-          </div>
-        {/if}
-
-        {#if rateLimit}
-          <div class="tile" class:warn={rateHealth === 'low' || rateHealth === 'stale'} class:bad={rateHealth === 'exhausted'}>
-            <span class="tile-label">GitHub API</span>
-            {#if rateHealth === 'stale'}
-              <span class="tile-value small">unknown</span>
-              <span class="tile-line muted">probe last ran {formatRelativeTime(rateLimit.checkedAt, now)}</span>
-            {:else}
-              {#key rateLimit.core.remaining}
-                <span class="tile-value small fresh">{rateLimit.core.remaining.toLocaleString()}</span>
-              {/key}
-              <span class="tile-line muted">of {rateLimit.core.limit.toLocaleString()} · resets {formatClockTime(rateLimit.core.resetAt)}</span>
-            {/if}
-          </div>
-        {/if}
-
-        {#if status.workers.length === 0}
-          <div class="tile bad">
-            <span class="tile-label">Workers</span>
-            <span class="tile-value small">no heartbeat</span>
-          </div>
-        {/if}
-        {#each status.workers as w (w.worker)}
-          {@const version = workerVersionState(w)}
-          <div class="tile" class:bad={isStale(w)} class:warn={!isStale(w) && version === 'stale'}>
-            <span class="tile-label">Worker · {w.worker}</span>
-            <span class="tile-value small">{isStale(w) ? 'stale' : 'alive'}</span>
-            <span class="tile-line muted">seen {formatRelativeTime(w.lastSeen, now)}</span>
-            {#if version === 'stale'}
-              <span class="tile-line warn" title="Running {w.buildSha}; main is {w.checkoutSha}. Run robot-refresh to deploy.">
-                {w.buildSha} · behind main
-              </span>
-            {:else if version === 'current'}
-              <span class="tile-line muted mono">{w.buildSha}</span>
-            {:else}
-              <span class="tile-line muted">build unknown</span>
-            {/if}
-          </div>
-        {/each}
-
-        {#if status.needsHuman.length > 0}
-          <div class="tile needs wide">
-            <span class="tile-label">Needs you · {status.needsHuman.length}</span>
-            {#each status.needsHuman as t (t.id)}
-              <a class="tile-line" href="/devops/tickets/{t.displayId}">
-                <span class="mono">{t.displayId}</span> {t.title}
-              </a>
-            {/each}
-          </div>
-        {/if}
       </div>
     </section>
   {/if}
