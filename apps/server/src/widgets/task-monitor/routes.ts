@@ -78,6 +78,7 @@ import {
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import {
+  getBugReport,
   getEpicBurndowns,
   getRunReport,
   getVelocityReport,
@@ -1109,5 +1110,14 @@ export function registerRoutes(
       return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
     }
     return getEpicBurndowns(db, filter);
+  });
+
+  // PD-881: bugs (kind = 'bug', PD-896) filed vs fixed per week, by severity (= priority).
+  app.get(`${base}/velocity/bugs`, async (request, reply) => {
+    const filter = velocityFilter(request.query);
+    if (typeof filter === 'string') {
+      return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
+    }
+    return getBugReport(db, filter);
   });
 }

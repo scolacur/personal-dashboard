@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { getEpicBurndowns, getRunReport, getVelocityReport } from './velocity-store';
+import { getBugReport, getEpicBurndowns, getRunReport, getVelocityReport } from './velocity-store';
 
 /** Epic PD-895 — the cross-ticket SQL feeding the pure velocity reconstruction. */
 
@@ -128,5 +128,26 @@ describe('getEpicBurndowns', () => {
       now: { open: 1, done: 1, dropped: 0 },
     });
     expect(getEpicBurndowns(db, {}, MON + 2 * DAY)).toHaveLength(2);
+  });
+});
+
+describe('getBugReport', () => {
+  it("counts only kind = 'bug' tickets in scope, with severity from priority", () => {
+    const db = freshDb();
+    const [a, b] = projectIds(db);
+    const bug = ticket(db, { project: a });
+    const feature = ticket(db, { project: a });
+    const otherProject = ticket(db, { project: b });
+    const set = db.prepare('UPDATE agent_tickets SET kind = ?, priority = ? WHERE id = ?');
+    set.run('bug', 'P1', bug);
+    set.run('feature', 'P1', feature);
+    set.run('bug', 'P2', otherProject);
+    for (const t of [bug, feature, otherProject]) event(db, t, 'created', MON);
+    event(db, bug, 'status_changed', MON + 2 * DAY, { to: 'completed' });
+
+    const r = getBugReport(db, { projectId: a }, MON + 3 * DAY);
+    expect(r.totals).toEqual({ bugs: 1, fixed: 1, openNow: { high: 0, medium: 0, low: 0 } });
+    expect(r.weeks[0].fixed.high).toBe(1);
+    expect(getBugReport(db, {}, MON + 3 * DAY).totals.bugs).toBe(2);
   });
 });

@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   WEEK_MS,
+  buildBugReport,
   buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
   isOpenAt,
   percentile,
   reconstructLifecycles,
+  severityOf,
   stateAt,
   weekOf,
   weekRange,
@@ -260,5 +262,61 @@ describe('buildEpicBurndowns', () => {
     expect(a.now).toEqual({ open: 1, done: 1, dropped: 1 });
     expect(a.memberCount).toBe(3);
     expect(a.lastActivity).toBe(MON + 9 * DAY);
+  });
+});
+
+describe('severityOf', () => {
+  it('buckets priority; unset is low', () => {
+    expect(['P0', 'P1', 'P2', 'P3', 'P4', 'P5', null, 'none'].map(severityOf)).toEqual([
+      'high',
+      'high',
+      'medium',
+      'medium',
+      'low',
+      'low',
+      'low',
+      'low',
+    ]);
+  });
+});
+
+describe('buildBugReport', () => {
+  const lifecycles = reconstructLifecycles(
+    [
+      { id: 1, isEpic: false, assignee: 'robot', createdAt: MON },
+      { id: 2, isEpic: false, assignee: 'steve', createdAt: MON + DAY },
+      { id: 3, isEpic: false, assignee: null, createdAt: MON + 8 * DAY },
+    ],
+    [
+      ev(1, 'robot_completed', MON + 3 * DAY),
+      ev(2, 'status_changed', MON + 9 * DAY, 'closed'), // won't fix — not a fix
+    ],
+  );
+  const bugs = [
+    { lifecycle: lifecycles[0], priority: 'P1' },
+    { lifecycle: lifecycles[1], priority: 'P3' },
+    { lifecycle: lifecycles[2], priority: null },
+  ];
+  const r = buildBugReport(bugs, MON + 10 * DAY);
+
+  it('counts filed / fixed / open by severity per week; a close is not a fix', () => {
+    expect(r.weeks).toHaveLength(2);
+    expect(r.weeks[0]).toMatchObject({
+      filed: { high: 1, medium: 1, low: 0 },
+      fixed: { high: 1, medium: 0, low: 0 },
+      open: { high: 0, medium: 1, low: 0 },
+      medianDaysToFix: 3,
+    });
+    expect(r.weeks[1]).toMatchObject({
+      filed: { high: 0, medium: 0, low: 1 },
+      fixed: { high: 0, medium: 0, low: 0 },
+      open: { high: 0, medium: 0, low: 1 },
+      medianDaysToFix: null,
+    });
+    expect(r.totals).toEqual({ bugs: 3, fixed: 1, openNow: { high: 0, medium: 0, low: 1 } });
+  });
+
+  it('no bugs → empty report', () => {
+    expect(buildBugReport([], MON)).toMatchObject({ startDate: null, weeks: [] });
   });
 });

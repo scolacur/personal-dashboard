@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
+  import type { BugReport, EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import VelocityChart from './VelocityChart.svelte';
   import RobotLoopSection from './RobotLoopSection.svelte';
   import EpicBurndownSection from './EpicBurndownSection.svelte';
-  import { fetchEpicBurndowns, fetchRunReport, fetchVelocity } from './api';
+  import QualitySection from './QualitySection.svelte';
+  import { fetchBugReport, fetchEpicBurndowns, fetchRunReport, fetchVelocity } from './api';
   import {
     VELOCITY_RANGES,
     fmtNum,
@@ -24,16 +25,18 @@
   let report = $state<VelocityReport | null>(null);
   let runs = $state<RunReport | null>(null);
   let epics = $state<EpicBurndown[]>([]);
+  let bugs = $state<BugReport | null>(null);
   let error = $state<string | null>(null);
   let range = $state<VelocityRange>('26w');
   let throughputKind = $state<'tickets' | 'epics'>('tickets');
 
   $effect(() => {
-    Promise.all([fetchVelocity(), fetchRunReport(), fetchEpicBurndowns()])
-      .then(([v, r, e]) => {
+    Promise.all([fetchVelocity(), fetchRunReport(), fetchEpicBurndowns(), fetchBugReport()])
+      .then(([v, r, e, b]) => {
         report = v;
         runs = r;
         epics = e;
+        bugs = b;
       })
       .catch((e: unknown) => {
         error = e instanceof Error ? e.message : String(e);
@@ -239,6 +242,8 @@
         </p>
       </article>
     </div>
+
+    <QualitySection report={bugs} {range} />
 
     <EpicBurndownSection {epics} {range} />
 
