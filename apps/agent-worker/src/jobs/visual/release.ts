@@ -7,7 +7,8 @@ import { logMilestone } from '../robot/events';
 import { inReviewPrTargets } from '../robot/pr-state';
 import { readStateNumber, writeState } from '../robot/state';
 import { defaultHeadShaFetcher, defaultStatusPoster, type HeadShaFetcher, type StatusPoster } from '../evaluate/review-gate';
-import { latestVisualDecision, visualRequested } from './gate';
+import { latestVisualDecision, sessionReviewBoundary, visualRequested } from './gate';
+import { adoptedPrNumbers } from '../evaluate/adoption';
 import { defaultCommenter } from './pass';
 import { captureOffReleaseKey, recordCaptureOff, type Commenter } from './status';
 
@@ -91,7 +92,80 @@ export async function releaseVisualDecisions(
       acted++;
     }
   }
+  acted += await releaseSessionVisualDecisions(db, config, now, deps, lenses);
   return acted;
+}
+
+/**
+ * The same, for session PRs (PD-915). The boundary is the start of the PR's latest review
+ * (`sessionReviewBoundary`), since a session PR has no hand-off.
+ *  - **approved**: post success on the reviewed head, when every lens shipped it and it is still the
+ *    head (a newer head gets its own review and its own check).
+ *  - **rejected**: nothing to dispatch here. The adoption pass reads the rejection as a revise and
+ *    hands the PR to the Robot after the idle window (PD-913), with his note in the brief.
+ */
+async function releaseSessionVisualDecisions(
+  db: Database.Database,
+  config: AgentWorkerConfig,
+  now: number,
+  deps: ReleaseDeps,
+  lenses: string[],
+): Promise<number> {
+  const robotOwned = new Set([...inReviewPrTargets(db).map((t) => t.prNumber), ...adoptedPrNumbers(db)]);
+  const requests = db
+    .prepare(
+      `SELECT DISTINCT e.ticket_id AS ticketId, json_extract(e.detail, '$.prNumber') AS prNumber
+         FROM agent_ticket_events e
+         JOIN agent_tickets t ON t.id = e.ticket_id
+        WHERE e.type = ? AND t.archived_at IS NULL AND t.status NOT IN ('completed', 'closed')`,
+    )
+    .all(ROBOT_EVENT.visualReviewRequested) as { ticketId: number; prNumber: number | null }[];
+  let acted = 0;
+  for (const { ticketId, prNumber } of requests) {
+    if (prNumber === null || robotOwned.has(prNumber)) continue;
+    const since = sessionReviewBoundary(db, ticketId, prNumber);
+    if (since === 0) continue;
+    const decision = latestVisualDecision(db, ticketId, since);
+    if (!decision) continue;
+    const key = `visual_decision_applied:${ticketId}`;
+    if (readStateNumber(db, key) === decision.id) continue;
+    if (!decision.approved) {
+      writeState(db, key, String(decision.id), now);
+      acted++;
+      continue;
+    }
+    const reviewed = sessionHeadShipped(db, prNumber, since, lenses);
+    if (!reviewed || !config.evaluator.reviewGateToken) continue;
+    const sha = await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(config.githubRepo, prNumber);
+    if (sha !== reviewed) continue;
+    const ok = await (deps.postStatus ?? defaultStatusPoster(config))(
+      config.githubRepo,
+      sha,
+      { state: 'success', description: "Evaluator: ship; Steve's visual check: approved" },
+      null,
+    );
+    if (ok) {
+      writeState(db, key, String(decision.id), now);
+      logger.info({ ticketId, prNumber }, 'visual: approved on a session PR — review-gate released');
+      acted++;
+    }
+  }
+  return acted;
+}
+
+/** The head every lens of a session PR's review since `since` shipped, or null. */
+export function sessionHeadShipped(db: Database.Database, prNumber: number, since: number, lenses: string[]): string | null {
+  const rows = db
+    .prepare(
+      `SELECT lens, verdict, head_sha FROM evaluator_runs
+        WHERE pr_number = ? AND head_sha IS NOT NULL AND started_at >= ?
+        ORDER BY started_at DESC, id DESC`,
+    )
+    .all(prNumber, since) as { lens: string; verdict: string | null; head_sha: string }[];
+  const head = rows[0]?.head_sha;
+  if (!head) return null;
+  const ok = lenses.every((lens) => rows.find((r) => r.lens === lens && r.head_sha === head)?.verdict === 'ship');
+  return ok ? head : null;
 }
 
 /** Release a held ship whose visual check can't happen because capture is off (PD-793). */

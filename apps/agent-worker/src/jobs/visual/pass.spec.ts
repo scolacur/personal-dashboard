@@ -49,7 +49,7 @@ describe('runVisualPass (PD-773)', () => {
     const targets: { targets: CaptureTarget[] }[] = [];
     const comments: string[] = [];
     const deps = {
-      viewPr: view(['apps/web/src/routes/habits/+page.svelte']),
+      listPrs: async () => [], viewPr: view(['apps/web/src/routes/habits/+page.svelte']),
       capture: async (t: { targets: CaptureTarget[] }) => (targets.push(t), captured),
       comment: async (_r: string, _n: number, b: string) => void comments.push(b),
     };
@@ -70,7 +70,7 @@ describe('runVisualPass (PD-773)', () => {
     let built = false;
     const comments: string[] = [];
     const deps = {
-      viewPr: view(['apps/server/src/x.ts']),
+      listPrs: async () => [], viewPr: view(['apps/server/src/x.ts']),
       capture: async () => ((built = true), captured),
       comment: async (_r: string, _n: number, b: string) => void comments.push(b),
     };
@@ -84,7 +84,7 @@ describe('runVisualPass (PD-773)', () => {
   it('says on the PR when capture failed, with the reason (PD-793)', async () => {
     const comments: string[] = [];
     const out = await runVisualPass(db, cfg(), 1000, {
-      viewPr: view(['apps/web/src/a.ts']),
+      listPrs: async () => [], viewPr: view(['apps/web/src/a.ts']),
       capture: async () => ({ kind: 'failed', reason: 'vite build exited 1' }) as CaptureOutcome,
       comment: async (_r: string, _n: number, b: string) => void comments.push(b),
     });
@@ -96,7 +96,7 @@ describe('runVisualPass (PD-773)', () => {
   it('still photographs a head recorded while capture was off, once capture is on', async () => {
     recordCapture(db, { ticketId: 1, prNumber: 314, headSha: SHA, outcome: 'off', detail: 'unset' }, 500);
     const out = await runVisualPass(db, cfg(), 1000, {
-      viewPr: view(['apps/web/src/a.ts']),
+      listPrs: async () => [], viewPr: view(['apps/web/src/a.ts']),
       capture: async () => captured,
       comment: async () => {},
     });
@@ -111,7 +111,7 @@ describe('runVisualPass (PD-773)', () => {
   });
 
   it('is inert when disabled', async () => {
-    expect(await runVisualPass(db, cfg({ VISUAL_CAPTURE_ENABLED: '0' }), 1000, { viewPr: view(['apps/web/src/a.ts']) })).toBeNull();
+    expect(await runVisualPass(db, cfg({ VISUAL_CAPTURE_ENABLED: '0' }), 1000, { listPrs: async () => [], viewPr: view(['apps/web/src/a.ts']) })).toBeNull();
   });
 
   it('comments without links when no public URL is set', () => {
@@ -147,7 +147,7 @@ describe('runVisualPass (PD-773)', () => {
     };
     const comments: string[] = [];
     await runVisualPass(db, cfg(), 1000, {
-      viewPr: view(['apps/web/src/routes/widgets/habit-tracker/TodayList.svelte'], 'Visual: /widgets/habit-tracker > click "Habits" > click "Add metric"'),
+      listPrs: async () => [], viewPr: view(['apps/web/src/routes/widgets/habit-tracker/TodayList.svelte'], 'Visual: /widgets/habit-tracker > click "Habits" > click "Add metric"'),
       capture: async (t: { targets: CaptureTarget[] }) => (seen.push(t), withSteps),
       comment: async (_r: string, _n: number, b: string) => void comments.push(b),
     });
@@ -158,5 +158,49 @@ describe('runVisualPass (PD-773)', () => {
     expect(JSON.parse(ev.detail).failures).toHaveLength(1);
     expect(comments[0]).toContain('`/widgets/habit-tracker` › click "Habits"');
     expect(comments[0]).toContain('**1 step could not run:**');
+  });
+});
+
+describe('runVisualPass on session PRs (PD-915)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.exec(`
+      CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, updated_at INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
+    `);
+    ensureRunsTable(db);
+    ensureRobotStateTable(db);
+    ensureVisualCapturesTable(db);
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, assignee) VALUES (705, 'PD-705', 'Do the thing', 'queue', 'steve')").run();
+  });
+
+  const sessionPr = (over: Record<string, unknown> = {}) => ({
+    number: 500, title: 't', body: '', headRefName: 'pd-705-thing', headRefOid: SHA, baseRefName: 'main',
+    isCrossRepository: false, isDraft: false, labels: [], files: [{ path: 'apps/web/src/routes/habits/+page.svelte' }], ...over,
+  });
+
+  it('captures a session PR after the Robot targets, onto its branch ticket, once per head', async () => {
+    const comments: string[] = [];
+    const deps = {
+      listPrs: async () => [sessionPr()],
+      viewPr: async () => null,
+      capture: async () => captured,
+      comment: async (_r: string, _n: number, b: string) => void comments.push(b),
+    };
+    expect(await runVisualPass(db, cfg(), 1000, deps)).toBe('captured');
+    const ev = db.prepare("SELECT ticket_id AS t FROM agent_ticket_events WHERE type = 'robot_visual_captured'").get();
+    expect(ev).toEqual({ t: 705 });
+    expect(comments[0]).toContain('for PD-705 (Do the thing)');
+    expect(await runVisualPass(db, cfg(), 2000, deps)).toBeNull();
+  });
+
+  it('captures a session PR with no branch ticket on the PR only, and skips drafts', async () => {
+    const comments: string[] = [];
+    const base = { viewPr: async () => null, capture: async () => captured, comment: async (_r: string, _n: number, b: string) => void comments.push(b) };
+    expect(await runVisualPass(db, cfg(), 1000, { ...base, listPrs: async () => [sessionPr({ isDraft: true })] })).toBeNull();
+    expect(await runVisualPass(db, cfg(), 2000, { ...base, listPrs: async () => [sessionPr({ headRefName: 'misc' })] })).toBe('captured');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agent_ticket_events WHERE type = 'robot_visual_captured'").get()).toEqual({ n: 0 });
+    expect(comments[0]).toContain('PR #500 (no linked ticket)');
   });
 });
