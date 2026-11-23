@@ -514,6 +514,13 @@ export async function runEvaluatePass(
   if (config.evaluator.allPrs) {
     // PD-913 (D-111): first hand idle revised session PRs to the Robot, and give back any whose PR
     // moved before it started. Costs no agent turns, so it runs every pass.
+    // PD-915: complete the branch ticket of a session PR that merged. No agent turns either.
+    try {
+      const { completeMergedSessionTickets } = await import('./session-merges');
+      await completeMergedSessionTickets(db, config, now, deps as { listMerged?: import("./session-merges").MergedPrLister });
+    } catch (err) {
+      logger.error({ err }, 'evaluator: session-merge completion threw — continuing');
+    }
     try {
       const { runAdoptionPass } = await import('./adopt-pass');
       await runAdoptionPass(db, config, now, deps);
