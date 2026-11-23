@@ -128,7 +128,13 @@ function ticketFor(db: Database.Database, ticketId: number): TicketRow | null {
  * with a fresh pair of rounds, exactly as a fresh hand-off would be.
  */
 export function reviewBoundary(db: Database.Database, ticketId: number): number {
-  return Math.max(lastHandoffAt(db, ticketId), latestEventAt(db, ticketId, ROBOT_EVENT.conflictResolved));
+  // PD-924: a rework skipped because the PR's head moved also opens a fresh cycle — the new head has
+  // never been reviewed, and the stale review must not use up one of its rounds.
+  return Math.max(
+    lastHandoffAt(db, ticketId),
+    latestEventAt(db, ticketId, ROBOT_EVENT.conflictResolved),
+    latestEventAt(db, ticketId, ROBOT_EVENT.reworkSkipped),
+  );
 }
 
 function displayIdFor(db: Database.Database, ticketId: number): string | null {
