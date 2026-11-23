@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { AgentTicket, RefineProposal } from '@dashboard/shared';
-  import { approveRefine, markRefined, queueGateBlockers, rejectRefine } from '../routes/devops/api';
+  import { ApiError, approveRefine, markRefined, queueGateBlockers, rejectRefine } from '../routes/devops/api';
   import { predictQueueRefusals, refusalHint, refusalRows, type RefusalRow } from './refine-queue-gate';
   import {
     REJECTED_MESSAGE,
+    approveFailureMessage,
     approvedMessage,
     childBornRefined,
     proposalCanQueue,
@@ -77,7 +78,9 @@
     } catch (e) {
       const server = queueGateBlockers(e);
       if (server) gateRows = refusalRows(server, epic, epicMembers, ticketId);
-      else msg = e instanceof Error ? e.message : String(e);
+      // PD-929: a terminal refusal (409 TERMINAL) gets our own clear copy; anything else falls
+      // back to the raw server message.
+      else msg = approveFailureMessage(e instanceof ApiError ? e.code : null) ?? (e instanceof Error ? e.message : String(e));
     } finally {
       deciding = false;
     }

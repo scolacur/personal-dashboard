@@ -922,6 +922,13 @@ export function registerRoutes(
     switch (result.reason) {
       case 'not_found':
         return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
+      case 'terminal':
+        // PD-929: the ticket reached a terminal lane (completed/closed) after the proposal was
+        // stored, so it can no longer be approved.
+        return reply.status(409).send({
+          error: 'this ticket is closed/completed — its proposal can no longer be approved',
+          code: 'TERMINAL',
+        });
       case 'no_proposal':
         return reply.status(409).send({ error: 'no proposal to approve', code: 'NO_PROPOSAL' });
       case 'epic_not_queueable':
