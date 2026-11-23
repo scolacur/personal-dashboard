@@ -318,7 +318,7 @@ export type {
   MaintenanceJob,
 } from './maintenance';
 export type { MaintenanceHoldStatus } from './task-monitor';
-export type { NeedsHumanTicket } from './task-monitor';
+export type { NeedsHumanTicket, ActiveAgent, ActiveAgentKind } from './task-monitor';
 export { HOLD_WINDOW_MS, HOLD_CADENCE_MS, MAINTENANCE_JOBS, isHoldActive } from './maintenance';
 export type {
   TinnitusTag,

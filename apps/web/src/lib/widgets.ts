@@ -125,6 +125,14 @@ export const widgets: WidgetMeta[] = [
     },
   },
   {
+    // The E2E loop test's throwaway build target (PD-892). Library only, never
+    // placed on a page; no embed, so it has no card.
+    id: 'e2e-canary',
+    title: 'E2E Canary',
+    description: 'Test surface for the E2E loop test. Not a real widget.',
+    route: '/widgets/e2e-canary',
+  },
+  {
     id: 'concert-discovery',
     title: 'Concert Discovery',
     description: 'Upcoming concerts worth knowing about.',

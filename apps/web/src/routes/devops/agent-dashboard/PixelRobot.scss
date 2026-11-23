@@ -1,0 +1,130 @@
+/* ── 8-bit robot sprite (PD-819) ───────────────── */
+// Motion is stepped (step-end) so it moves a whole pixel at a time, like the sprites it imitates —
+// a smooth ease on pixel art reads as blurry, not retro.
+
+.pixel-robot {
+  display: block;
+  overflow: visible;
+  image-rendering: pixelated;
+
+  &.idle {
+    filter: grayscale(1);
+    opacity: 0.35;
+
+    .bob,
+    .part {
+      animation: none;
+    }
+  }
+}
+
+.c-outline { fill: color-mix(in srgb, var(--bot) 40%, #10131a); }
+.c-body { fill: var(--bot); }
+.c-screen { fill: #161a22; }
+.c-eye { fill: #7ef9ff; }
+.c-mouth { fill: #3fb7c4; }
+.c-antenna { fill: #ff5c5c; }
+.c-chest { fill: #ffd166; }
+.c-rim { fill: #3a3f4b; }
+.c-glass { fill: rgba(170, 225, 255, 0.55); }
+.c-glint { fill: #ffffff; }
+.c-handle { fill: #8b5a2b; }
+.c-visor { fill: #1f9d55; }
+.c-brim { fill: rgba(46, 204, 113, 0.6); }
+.c-tread { fill: #2b2f38; }
+.c-stud { fill: #8a909c; }
+
+.part {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.bob {
+  animation: bot-bob 1.2s step-end infinite;
+}
+
+.part-eyes {
+  animation: bot-blink 4.5s step-end infinite;
+}
+
+.part-antenna {
+  animation: bot-antenna 1.6s step-end infinite;
+}
+
+// Evaluator: the magnifying glass sweeps a pixel around, scanning the diff.
+.kind-evaluator .part-tool {
+  animation: bot-scan 2s step-end infinite;
+}
+
+// Auditor: eyes flick left/right along the ledger instead of a plain blink.
+.kind-auditor .part-eyes {
+  animation: bot-read 2.4s step-end infinite;
+}
+
+// Chunky: the single visor eye sweeps side to side, whatever the kind.
+.set-chunky .part-eyes {
+  animation: bot-sweep 2s step-end infinite;
+}
+
+// Tread: no bob (it's on wheels) — the studs roll instead.
+.set-tread {
+  .bob {
+    animation: bot-rumble 0.5s step-end infinite;
+  }
+  .part-tread {
+    animation: bot-roll 0.5s step-end infinite;
+  }
+}
+
+@keyframes bot-bob {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+
+@keyframes bot-rumble {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(0.25px); }
+}
+
+@keyframes bot-blink {
+  0% { transform: scaleY(1); }
+  92% { transform: scaleY(0.1); }
+  96% { transform: scaleY(1); }
+}
+
+@keyframes bot-antenna {
+  0% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes bot-scan {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(0, -1px); }
+  50% { transform: translate(-1px, -1px); }
+  75% { transform: translate(-1px, 0); }
+}
+
+@keyframes bot-read {
+  0% { transform: translateX(0); }
+  40% { transform: translateX(-1px); }
+  70% { transform: translateX(1px); }
+}
+
+@keyframes bot-sweep {
+  0% { transform: translateX(-1px); }
+  25% { transform: translateX(0); }
+  50% { transform: translateX(1px); }
+  75% { transform: translateX(0); }
+}
+
+@keyframes bot-roll {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bob,
+  .part {
+    animation: none !important;
+  }
+}

@@ -77,6 +77,7 @@ import {
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import { getRunReport, getVelocityReport, type VelocityFilter } from './velocity-store';
+import { getActiveAgents } from './active-agents';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 import { listAwaitingVisual, recordVisualReview } from './visual-review';
@@ -1055,6 +1056,8 @@ export function registerRoutes(
     // "Loop on" during a maintenance window, which is true of the killswitch and false of reality.
     maintenanceHold: getMaintenanceHoldStatus(db),
     needsHuman: getNeedsHumanTickets(db),
+    // PD-819: one entry per live agent run — the Agent Dashboard's robot tiles.
+    activeAgents: getActiveAgents(db),
     // PD-747: the Refine auto-start scheduler — open sessions against the cap, the queue, what holds it.
     refineAutostart: getRefineAutostartStatus(db),
   }));
