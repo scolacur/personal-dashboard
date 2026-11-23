@@ -9,6 +9,7 @@ The Evaluator reviewed only Robot hand-offs, but a large share of what merges is
 ## Decision (agreed with Steve on 2026-11-20)
 
 1. **Every open same-repo PR into `main` is reviewed**, discovered from the GitHub read API, one per Evaluator pass, after the Robot targets. Robot PRs keep their own path unchanged (rework through `ResumeContext`). A review is per head commit, so a new push is a new review, capped at the same two rounds per PR.
+   > **Amended by [[D-111]] (PD-913, Robot reworks an idle session PR), 2026-11-23:** a session PR the Evaluator revised and nobody pushed to for the idle window is adopted by the Robot and continues on the Robot path.
 2. **What it judges against:** the ticket whose display id is in the branch (`pd-705-…`), title or body. With none, the PR description, and the review says it had no acceptance criteria.
 3. **Skips:** drafts, forks, PRs whose files are all under `MEMORY/`, and the `skip-evaluator` label.
 4. **Verdict goes to a PR comment and the ticket timeline.** This amends D-076's "no GitHub write" for non-Robot PRs only: there is no Robot to send a rework to, and the person fixing a session PR reads the PR. The comment comes from the bot account, which the PR-state poll never trusts (a COLLABORATOR without `HUMAN_REPLY_MARKER`), and the marker is stripped from anything the comment quotes, so a review can never trigger Robot rework.

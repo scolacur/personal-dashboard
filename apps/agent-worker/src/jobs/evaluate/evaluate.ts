@@ -512,6 +512,14 @@ export async function runEvaluatePass(
   }
   // PD-712 (D-101): then one non-Robot PR per pass, on the same budget and ledger.
   if (config.evaluator.allPrs) {
+    // PD-913 (D-111): first hand idle revised session PRs to the Robot, and give back any whose PR
+    // moved before it started. Costs no agent turns, so it runs every pass.
+    try {
+      const { runAdoptionPass } = await import('./adopt-pass');
+      await runAdoptionPass(db, config, now, deps);
+    } catch (err) {
+      logger.error({ err }, 'evaluator: adoption pass threw — continuing');
+    }
     try {
       const { evaluateNextOtherPr } = await import('./all-prs');
       const verdict = await evaluateNextOtherPr(db, config, now, deps);

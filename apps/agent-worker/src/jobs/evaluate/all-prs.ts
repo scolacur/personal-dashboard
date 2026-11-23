@@ -31,6 +31,7 @@ import {
   updateEvaluatorRunProgress,
 } from './evaluator-runs';
 import { inReviewPrTargets } from '../robot/pr-state';
+import { adoptableTicket, adoptedPrNumbers } from './adoption';
 import {
   defaultHeadShaFetcher,
   defaultStatusPoster,
@@ -63,9 +64,9 @@ const run = promisify(execFile);
  *    escalate, a revise at the cap, or no verdict. {@link sessionGateFor} is the table. It never
  *    replaces the success Steve's approval posted (D-101 point 5): anything but a success is posted
  *    only after reading the head's current status, and a failed read posts nothing;
- *  - **needs-human** whenever nobody else will act: a failure, or a revise (nothing reworks a
- *    session PR yet; PD-913 will). Before PD-914 a session PR at the round cap silently stopped being
- *    reviewed and nobody was told.
+ *  - **needs-human** whenever nobody else will act: a failure, or a revise the Robot will not adopt
+ *    (PD-913: no adoptable branch ticket, or adoption off). Before PD-914 a session PR at the round
+ *    cap silently stopped being reviewed and nobody was told.
  */
 
 export interface OtherPr {
@@ -103,7 +104,8 @@ export const SKIP_LABEL = 'skip-evaluator';
  * needs-human, or no matching ticket) falls through to this path (PD-825, D-098/D-101).
  */
 export function skipReason(pr: OtherPr, inReviewPrNumbers: ReadonlySet<number>): string | null {
-  if (pr.headRefName.startsWith('robot/') && inReviewPrNumbers.has(pr.number)) return 'robot PR (its own path)';
+  // PD-913: an adopted session PR is the Robot's too, so the test is ownership, not the branch prefix.
+  if (inReviewPrNumbers.has(pr.number)) return 'robot PR (its own path)';
   if (pr.baseRefName !== 'main') return 'not into main';
   if (pr.isCrossRepository) return 'from a fork';
   if (pr.isDraft) return 'draft';
@@ -226,19 +228,29 @@ export function defaultPrCommenter(config: AgentWorkerConfig): PrCommenter {
  * (`gateForOutcome`), except a revise below the cap: there is no Robot rework queued for a session
  * PR, so it says what will actually move it.
  */
-export function sessionGateFor(report: EvaluatorReport | null, round: number, maxRounds: number): GateStatus {
+export function sessionGateFor(
+  report: EvaluatorReport | null,
+  round: number,
+  maxRounds: number,
+  /** PD-913: minutes until the Robot takes it over, when it would; null when nothing will. */
+  adoptAfterMin: number | null = null,
+): GateStatus {
   if (report?.verdict === 'revise' && round < maxRounds) {
-    return { state: 'pending', description: `Evaluator requested changes (round ${round}); push a fix` };
+    const next = adoptAfterMin !== null ? `Robot takes over after ${adoptAfterMin} min idle` : 'push a fix';
+    return { state: 'pending', description: `Evaluator requested changes (round ${round}); ${next}` };
   }
   return gateForOutcome(report, round, maxRounds);
 }
 
 /** What the PR comment's last line says will happen next, matching the status it gets. */
-function nextStepLine(status: GateStatus, round: number, maxRounds: number, retryPending = false): string {
+function nextStepLine(status: GateStatus, round: number, maxRounds: number, retryPending = false, adoptAfterMin: number | null = null): string {
   if (status.state === 'success') return 'review-gate is set to success for this commit.';
   if (retryPending) return 'review-gate is pending: the failed review is retried once on the next pass (PD-884).';
   const again = round < maxRounds ? ` A new push is reviewed again (up to ${maxRounds} rounds).` : ' No further automatic review.';
   if (status.state === 'failure') return `review-gate is set to failure: this needs Steve.${again}`;
+  if (adoptAfterMin !== null) {
+    return `review-gate is pending. If this branch gets no push for ${adoptAfterMin} minutes, the Robot takes over the rework.${again}`;
+  }
   return `review-gate is pending: push a fix.${again}`;
 }
 
@@ -248,7 +260,7 @@ export function verdictComment(
   round: number,
   tickets: readonly { displayId: string; title: string }[],
   maxRounds: number,
-  gate: { status: GateStatus; retryPending: boolean } = { status: sessionGateFor(report, round, maxRounds), retryPending: false },
+  gate: { status: GateStatus; retryPending: boolean; adoptAfterMin?: number | null } = { status: sessionGateFor(report, round, maxRounds), retryPending: false },
 ): string {
   const lines: string[] = ['<!-- evaluator:verdict -->'];
   const against = tickets.length > 0 ? ticketList(tickets) : 'the PR description (no linked ticket, so no acceptance criteria)';
@@ -269,7 +281,7 @@ export function verdictComment(
         lines.push(`| ${mark} | ${cell(f.where || '')} | ${cell(f.what || '')} |`);
       }
     }
-    lines.push('', nextStepLine(gate.status, round, maxRounds, gate.retryPending));
+    lines.push('', nextStepLine(gate.status, round, maxRounds, gate.retryPending, gate.adoptAfterMin ?? null));
   }
   return lines.join('\n').split(HUMAN_REPLY_MARKER).join('');
 }
@@ -291,7 +303,8 @@ export async function evaluateNextOtherPr(
   // reviewed by exactly one path and never both (PD-825). A `robot/*` PR is left to the Robot path
   // iff its number is in this set; anything else `robot/*` is reviewed here.
   const inReviewTargets = inReviewPrTargets(db);
-  const inReviewPrNumbers = new Set(inReviewTargets.map((t) => t.prNumber));
+  // PD-913: plus session PRs the Robot adopted and has not handed back yet (queued or working).
+  const inReviewPrNumbers = new Set([...inReviewTargets.map((t) => t.prNumber), ...adoptedPrNumbers(db)]);
   const inReviewTicketByPr = new Map(inReviewTargets.map((t) => [t.prNumber, t.ticketId]));
 
   const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
@@ -434,6 +447,9 @@ export async function evaluateNextOtherPr(
   // PD-884 x PD-914: a lens with no verdict on this head is either waiting on its one retry (the next
   // pass re-runs only that lens, so the gate stays pending and Steve is not paged yet) or has used it
   // (terminal: failure naming the lens, and the one needs-human notification).
+  // PD-913: a revise the Robot will pick up after the idle window needs no alert; say so instead.
+  const adoptAfterMin =
+    config.evaluator.adopt && adoptableTicket(db, pr.headRefName) ? Math.round(config.evaluator.adoptIdleMs / 60_000) : null;
   const finalStates = lensStates(db, select);
   const missing = lenses.filter((l) => (finalStates.get(l)?.verdictRuns ?? 0) === 0);
   const exhausted = missing.filter((l) => (finalStates.get(l)?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS);
@@ -445,15 +461,16 @@ export async function evaluateNextOtherPr(
     status = gateForOutcome(null, round, config.evaluator.maxRounds, { lens: exhausted[0], retryUsed: true });
     if (exhausted.length > 1) status = { ...status, description: status.description.replace(`${exhausted[0]} review`, `${exhausted.join(' and ')} reviews`) };
   } else {
-    status = sessionGateFor(combined, round, config.evaluator.maxRounds);
+    status = sessionGateFor(combined, round, config.evaluator.maxRounds, adoptAfterMin);
   }
   await (deps.comment ?? defaultPrCommenter(config))(
     repo,
     pr.number,
-    verdictComment(combined, round, tickets, config.evaluator.maxRounds, { status, retryPending }),
+    verdictComment(combined, round, tickets, config.evaluator.maxRounds, { status, retryPending, adoptAfterMin }),
   );
   await postGate(status);
-  if (status.state !== 'success' && !retryPending) {
+  const robotWillTakeIt = combined?.verdict === 'revise' && status.state === 'pending' && adoptAfterMin !== null;
+  if (status.state !== 'success' && !retryPending && !robotWillTakeIt) {
     notifySessionPrNeedsHuman(db, repo, pr.number, status, tickets[0] ?? null, now);
   }
   logger.info(

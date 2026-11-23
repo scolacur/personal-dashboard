@@ -71,6 +71,10 @@
         return '🔀';
       case ROBOT_EVENT.visualCaptured:
         return '📸';
+      case ROBOT_EVENT.adopted:
+        return '🤝';
+      case ROBOT_EVENT.released:
+        return '↩️';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -121,6 +125,10 @@
         return `Screenshots of PR #${d.prNumber ?? '?'}${d.shots?.length ? `: ${new Set(d.shots.map((s) => s.route)).size} page(s), desktop and phone, light and dark` : ''}`;
       case ROBOT_EVENT.conflictResolved:
         return `Merged main and auto-resolved conflicts${d.files?.length ? ` in ${d.files.join(', ')}` : ''}; the Evaluator reviews it again`;
+      case ROBOT_EVENT.adopted:
+        return `Robot took over PR #${d.prNumber ?? '?'}${d.branch ? ` on ${d.branch}` : ''} to rework it`;
+      case ROBOT_EVENT.released:
+        return `Handed PR #${d.prNumber ?? '?'} back to you${d.reason ? `: ${d.reason}` : ''}`;
       case 'created':
         return 'Ticket created';
       case 'status_changed':

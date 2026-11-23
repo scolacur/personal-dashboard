@@ -133,6 +133,11 @@ export interface ResumeContext {
    */
   evaluatorBrief?: string;
   /**
+   * PD-913: this PR was opened by Steve in a session and handed to the Robot for rework. It is his
+   * branch, so the prompt forbids rewriting it and says what to do when he pushes mid-run.
+   */
+  adoptedFrom?: { prNumber: number };
+  /**
    * D-094/PD-737: Steve pressed **Continue** on a checkpoint. The run starts from the previous run's
    * saved work; the session is a new one and remembers nothing, so the previous run's own status
    * report is handed to it here.
@@ -195,6 +200,22 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     ? ['## An automated Evaluator reviewed your PR', '', resume.evaluatorBrief, '', '---', '']
     : [];
 
+  // PD-913: an adopted session PR. Before the brief, because it changes the rules for the branch.
+  const adoptedBlock = resume?.adoptedFrom
+    ? [
+        `## This PR (#${resume.adoptedFrom.prNumber}) was opened by Steve, not by a Robot`,
+        'He built it in a session; the Evaluator asked for changes and nobody touched it, so it was handed',
+        'to you to rework. It is still his branch:',
+        '- **Never force-push, rebase or amend.** Add commits on top of what is there.',
+        `- If \`git push\` is rejected because \`${branch}\` moved, Steve has pushed. Do NOT merge or rebase`,
+        '  his work. Stop, and park with `.robot/ask-human` saying the branch moved under you.',
+        '- Step 0 will find the existing PR: update it, never open a second one.',
+        '',
+        '---',
+        '',
+      ]
+    : [];
+
   // D-094/PD-737: a Continue from a checkpoint. First, because it changes how to read everything
   // below: the work is already partly done, and the tree is not a clean main.
   const cp = resume?.checkpoint;
@@ -230,6 +251,7 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     ...checkpointBlock,
     ...answerBlock,
+    ...adoptedBlock,
     ...evaluatorBlock,
     '## Step 0 — Resuming an earlier attempt?',
     `Your branch (\`${branch}\`) may already have an open PR from a previous run — this happens when a`,
