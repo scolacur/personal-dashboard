@@ -11,6 +11,9 @@
 # it requires a conscious ack from a write+ collaborator (strangers cannot apply labels, which is
 # the same trust boundary the Robot loop already relies on).
 #
+# LABEL (PD-920): the job also keeps `sensitive-change-needs-approval` on exactly the PRs that are red
+# for want of the ack, so the PR list shows what is waiting on Steve. It never affects the verdict.
+#
 # WHO IT GATES (D-109, PD-912, 2026-11-22): EVERY author. No exemptions.
 #
 # From 2026-08-05 to 2026-11-22 (D-067, PD-474) Steve's own PRs were exempt. That was safe only
@@ -71,10 +74,13 @@ concurrency:
   group: path-guard-${{ github.event.number }}
   cancel-in-progress: true
 
-# Read-only. pull_request_target would otherwise grant write scope by default.
+# Read-only contents. pull_request_target would otherwise grant write scope by default.
+# `pull-requests: write` is only for the needs-approval label (PD-920). It is safe for the
+# same reason the rest of this job is: nothing from the PR is ever executed, so no PR code can
+# use the token.
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   # Job name is the status-check context used in branch protection — keep it `path-guard`.
@@ -94,6 +100,9 @@ jobs:
           PR: ${{ github.event.number }}
           BASE_REF: ${{ github.base_ref }}
           LABEL: sensitive-change-approved
+          # PD-920: kept in sync by this job so the PR list shows which PRs are waiting on the
+          # ack. A red check looks like any other failure; a label says "needs Steve".
+          NEEDS_LABEL: sensitive-change-needs-approval
           # Shown in the job summary only; it no longer decides anything (D-109).
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
@@ -127,8 +136,21 @@ jobs:
           echo "Comparing ${MERGE_BASE} .. pr-head against ${#SPECS[@]} sensitive globs."
           HITS=$(git diff --name-only "$MERGE_BASE" pr-head -- "${SPECS[@]}")
 
+          # PD-920: on when sensitive paths are touched and the ack is missing, off otherwise.
+          # Best-effort: a label API hiccup must never change the guard's verdict. Labels
+          # written by GITHUB_TOKEN do not trigger workflows, so this cannot re-run the guard.
+          needs_label() {
+            if [ "$1" = on ]; then
+              gh api -X POST "repos/${REPO}/issues/${PR}/labels" -f "labels[]=${NEEDS_LABEL}" >/dev/null \
+                || echo "::warning::could not add '${NEEDS_LABEL}'"
+            else
+              gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/${NEEDS_LABEL}" >/dev/null 2>&1 || true
+            fi
+          }
+
           if [ -z "$HITS" ]; then
             echo "✅ No sensitive paths touched."
+            needs_label off
             exit 0
           fi
 
@@ -139,6 +161,7 @@ jobs:
           LABELS=$(gh api "repos/${REPO}/pulls/${PR}" --jq '[.labels[].name] | join(" ")')
           if printf '%s\n' $LABELS | grep -qx "$LABEL"; then
             echo "✅ Acknowledged — '$LABEL' is applied by a collaborator."
+            needs_label off
             exit 0
           fi
 
@@ -157,5 +180,6 @@ jobs:
             echo "with no human having looked at it (D-109)._"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          needs_label on
           echo "::error::Sensitive paths touched without the '$LABEL' label. See the job summary."
           exit 1
