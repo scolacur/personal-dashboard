@@ -75,13 +75,17 @@ interface BugRow {
   display_id: string;
 }
 
-/** Every Robot run's PR, by ticket — `agent_runs` is worker-owned and may not exist yet. */
+/** Every Robot-opened PR, by ticket — `agent_runs` is worker-owned and may not exist yet. Only
+ *  `robot/*` branches: a session PR the Robot adopts (PD-913) keeps the session's branch, and
+ *  was written by Steve, so it must not count as Robot-made (PD-925). */
 function robotPrsByTicket(db: Database.Database): Map<number, Set<number>> {
   const out = new Map<number, Set<number>>();
   let rows: { ticket_id: number; pr_url: string | null }[] = [];
   try {
     rows = db
-      .prepare('SELECT ticket_id, pr_url FROM agent_runs WHERE pr_url IS NOT NULL')
+      .prepare(
+        "SELECT ticket_id, pr_url FROM agent_runs WHERE pr_url IS NOT NULL AND branch LIKE 'robot/%'",
+      )
       .all() as typeof rows;
   } catch {
     return out;

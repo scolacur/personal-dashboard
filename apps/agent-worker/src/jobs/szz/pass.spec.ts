@@ -65,7 +65,7 @@ function seed(): Database.Database {
     CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT);
     CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, kind TEXT, is_epic INTEGER,
       archived_at INTEGER, status TEXT, project_id INTEGER);
-    CREATE TABLE agent_runs (ticket_id INTEGER, pr_url TEXT);
+    CREATE TABLE agent_runs (ticket_id INTEGER, branch TEXT, pr_url TEXT);
     INSERT INTO agent_projects VALUES (1, 'scolacur/personal-dashboard'), (2, 'scolacur/core');
     INSERT INTO agent_tickets VALUES
       (784, 'PD-784', 'bug', 0, NULL, 'completed', 1),
@@ -74,7 +74,9 @@ function seed(): Database.Database {
       (902, 'PD-902', 'bug', 0, NULL, 'queue', 1),
       (903, 'C-3', 'bug', 0, NULL, 'completed', 2),
       (904, 'PD-904', 'feature', 0, NULL, 'completed', 1);
-    INSERT INTO agent_runs VALUES (55, 'https://github.com/o/r/pull/300');
+    INSERT INTO agent_runs VALUES (55, 'robot/t55', 'https://github.com/o/r/pull/300');
+    -- PD-925: a session PR the Robot adopted keeps the session's branch: Steve's PR, not Robot's.
+    INSERT INTO agent_runs VALUES (56, 'pd-56-session', 'https://github.com/o/r/pull/251');
   `);
   return db;
 }

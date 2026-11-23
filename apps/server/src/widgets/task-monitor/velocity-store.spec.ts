@@ -7,6 +7,7 @@ import {
   getIntroductionReport,
   getRunReport,
   getVelocityReport,
+  loadLifecycles,
 } from './velocity-store';
 
 /** Epic PD-895 — the cross-ticket SQL feeding the pure velocity reconstruction. */
@@ -68,6 +69,15 @@ describe('getVelocityReport', () => {
     event(db, t2, 'status_changed', MON + 3 * DAY, { from: 'queue', to: 'completed' });
     event(db, gone, 'status_changed', MON + 3 * DAY, { to: 'completed' });
     event(db, other, 'robot_completed', MON + DAY);
+    // PD-925: the Robot is credited for the PRs it opened (robot/* branch).
+    db.exec(`CREATE TABLE agent_runs (ticket_id INTEGER, branch TEXT, pr_url TEXT)`);
+    for (const t of [t1, other]) {
+      db.prepare('INSERT INTO agent_runs VALUES (?, ?, ?)').run(
+        t,
+        `robot/t${t}`,
+        'https://x/pull/1',
+      );
+    }
 
     const r = getVelocityReport(db, { projectId: a }, MON + 5 * DAY);
     expect(r.startDate).toBe(MON + 2 * DAY);
@@ -77,6 +87,32 @@ describe('getVelocityReport', () => {
     const all = getVelocityReport(db, {}, MON + 5 * DAY);
     expect(all.totals.ticketsCompleted.robot).toBe(2);
     expect(all.startDate).toBe(MON + DAY);
+  });
+});
+
+describe('loadLifecycles completion credit (PD-925)', () => {
+  it('credits the Robot only for a robot/* branch run with a PR', () => {
+    const db = freshDb();
+    const [a] = projectIds(db);
+    const robotMade = ticket(db, { project: a, assignee: 'robot' });
+    const adopted = ticket(db, { project: a, assignee: 'robot' });
+    const noPr = ticket(db, { project: a, assignee: 'robot' });
+    db.exec(`CREATE TABLE agent_runs (ticket_id INTEGER, branch TEXT, pr_url TEXT)`);
+    const run = db.prepare('INSERT INTO agent_runs VALUES (?, ?, ?)');
+    run.run(robotMade, `robot/t${robotMade}`, 'https://github.com/o/r/pull/1');
+    run.run(adopted, 'pd-925-session-branch', 'https://github.com/o/r/pull/2');
+    run.run(noPr, `robot/t${noPr}`, null);
+    const credit = new Map(loadLifecycles(db).map((l) => [l.id, l.credit]));
+    expect(credit.get(robotMade)).toBe('robot');
+    expect(credit.get(adopted)).toBe('steve');
+    expect(credit.get(noPr)).toBe('steve');
+  });
+
+  it('works when agent_runs does not exist', () => {
+    const db = freshDb();
+    const [a] = projectIds(db);
+    const id = ticket(db, { project: a, assignee: 'robot' });
+    expect(loadLifecycles(db).find((l) => l.id === id)?.credit).toBe('steve');
   });
 });
 
