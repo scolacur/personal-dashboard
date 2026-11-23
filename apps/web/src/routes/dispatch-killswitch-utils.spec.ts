@@ -22,6 +22,7 @@ function status(over: Partial<SystemStatus> = {}): SystemStatus {
     githubRateLimit: null,
     maintenanceHold: null,
     needsHuman: [],
+    activeAgents: [],
     ...over,
   };
 }

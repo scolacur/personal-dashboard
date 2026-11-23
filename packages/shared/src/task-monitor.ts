@@ -1924,6 +1924,32 @@ export interface SystemStatus {
    * the number exists to save. With one parked ticket the nav links straight to it.
    */
   needsHuman: NeedsHumanTicket[];
+  /**
+   * PD-819: one entry per agent run in flight right now, across the agent kinds that keep a run
+   * row (Robot `agent_runs`, Evaluator `evaluator_runs`, Auditor `audit_run`). Drives the Agent
+   * Dashboard's robot tiles. Refine joins once it has a run-row table (PD-899).
+   */
+  activeAgents: ActiveAgent[];
+}
+
+/** PD-819: the agent kinds the Agent Dashboard draws a robot for. */
+export type ActiveAgentKind = 'robot' | 'evaluator' | 'auditor';
+
+/** PD-819: a live agent run, as one robot tile needs it. Every metric is nullable — each kind
+ *  records a different subset, and a missing number renders as "—", never as 0. */
+export interface ActiveAgent {
+  kind: ActiveAgentKind;
+  runId: number;
+  startedAt: number;
+  /** The ticket it is working on; null for an Audit (it sweeps a whole scope). */
+  ticket: { id: number; displayId: string | null; title: string } | null;
+  project: { id: number; name: string; color: string | null } | null;
+  turns: number | null;
+  maxTurns: number | null;
+  tokens: number | null;
+  model: string | null;
+  /** A short kind-specific line: evaluator "round 2 · PR #481", audit its scope. */
+  detail: string | null;
 }
 
 /**
