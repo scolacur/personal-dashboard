@@ -1,18 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import type { ActiveAgent } from '@dashboard/shared';
 import {
-  AVATAR_FAMILIES,
-  AVATAR_LABELS,
   DEFAULT_BOT_COLOR,
   agentKey,
+  avatarStyleFor,
   botColor,
   formatElapsed,
   formatModel,
   formatTokens,
   formatTurns,
   groupByKind,
-  isLineStyle,
   nearTurnCap,
+  parseAvatarMode,
 } from './agent-fleet';
 
 function agent(over: Partial<ActiveAgent>): ActiveAgent {
@@ -99,15 +98,21 @@ describe('botColor / agentKey', () => {
   });
 });
 
-describe('avatar styles', () => {
-  it('every style has a label and belongs to exactly one family', () => {
-    const all = AVATAR_FAMILIES.flatMap((f) => f.styles);
-    expect(new Set(all).size).toBe(all.length);
-    for (const st of all) expect(AVATAR_LABELS[st]).toBeTruthy();
+describe('avatar modes', () => {
+  it('Robot mode draws Robots and Auditors as the Line face, Evaluators as the TV', () => {
+    expect(avatarStyleFor('robot', 'robot')).toBe('line');
+    expect(avatarStyleFor('robot', 'auditor')).toBe('line');
+    expect(avatarStyleFor('robot', 'evaluator')).toBe('tv');
   });
 
-  it('tells line faces from signal shapes', () => {
-    expect(isLineStyle('tv')).toBe(true);
-    expect(isLineStyle('sonar')).toBe(false);
+  it('Orbit mode draws every kind as an orbit', () => {
+    for (const k of ['robot', 'evaluator', 'auditor'] as const) expect(avatarStyleFor('orbit', k)).toBe('orbit');
+  });
+
+  it('parses a stored mode, falling back to Robot for anything else', () => {
+    expect(parseAvatarMode('orbit')).toBe('orbit');
+    expect(parseAvatarMode('robot')).toBe('robot');
+    expect(parseAvatarMode(null)).toBe('robot');
+    expect(parseAvatarMode('halo')).toBe('robot');
   });
 });

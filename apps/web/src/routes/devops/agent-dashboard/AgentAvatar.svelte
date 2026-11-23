@@ -1,20 +1,22 @@
 <script lang="ts">
-  // PD-819: an agent's avatar, tinted by `color` (its project), still + grey when `idle`. Two
-  // families under comparison: single-stroke faces (LineAvatar) and signal shapes (RippleAvatar).
+  // PD-819: an agent's avatar in the chosen mode (see `avatarStyleFor`), tinted by `color` (its
+  // project), still + grey when `idle`.
   import type { ActiveAgentKind } from '@dashboard/shared';
   import LineAvatar from './LineAvatar.svelte';
-  import RippleAvatar from './RippleAvatar.svelte';
-  import { isLineStyle, type AvatarStyle } from './agent-fleet';
+  import OrbitAvatar from './OrbitAvatar.svelte';
+  import { avatarStyleFor, type AvatarMode } from './agent-fleet';
 
   interface Props {
     kind: ActiveAgentKind;
-    style: AvatarStyle;
+    mode: AvatarMode;
     color: string;
     size?: number;
     idle?: boolean;
     label?: string;
   }
-  let { kind, style, color, size = 64, idle = false, label }: Props = $props();
+  let { kind, mode, color, size = 64, idle = false, label }: Props = $props();
+
+  let style = $derived(avatarStyleFor(mode, kind));
 </script>
 
 <svg
@@ -27,10 +29,10 @@
   role="img"
   aria-label={label ?? `${kind} agent`}
 >
-  {#if isLineStyle(style)}
-    <LineAvatar {kind} {style} />
+  {#if style === 'orbit'}
+    <OrbitAvatar {kind} />
   {:else}
-    <RippleAvatar {kind} {style} />
+    <LineAvatar {kind} face={style} />
   {/if}
 </svg>
 
