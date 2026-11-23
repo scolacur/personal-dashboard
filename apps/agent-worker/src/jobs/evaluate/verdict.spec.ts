@@ -51,6 +51,49 @@ describe('parseEvaluatorReport', () => {
     );
     expect(r?.findings[0].insteadUse).toBe('packages/shared/fmt');
   });
+
+  // PD-853 defect #1: the old slice ran indexOf('{')…lastIndexOf('}'), so any brace in the prose
+  // before the real report moved the start too early and JSON.parse threw, stranding the PR.
+  it('ignores a `{` (and `${...}`) in the prose before a bare JSON report', () => {
+    const text =
+      'The diff builds SQL with `${userId}` inside a template literal {which is unusual}.\n' +
+      '{"verdict":"revise","summary":"template-literal SQL","findings":[{"kind":"security-injection","what":"SQL injection via `${userId}`","blocking":true}]}';
+    const r = parseEvaluatorReport(text);
+    expect(r?.verdict).toBe('revise');
+    expect(r?.findings[0].what).toContain('${userId}');
+  });
+
+  it('picks the LAST valid object when a reply contains several', () => {
+    const text =
+      '{"verdict":"ship","summary":"first draft","findings":[]}\n' +
+      'On reflection:\n' +
+      '{"verdict":"escalate","summary":"final answer","findings":[]}';
+    const r = parseEvaluatorReport(text);
+    expect(r?.verdict).toBe('escalate');
+    expect(r?.summary).toBe('final answer');
+  });
+
+  it('uses the LAST fenced block when there are several', () => {
+    const text =
+      '```json\n{"verdict":"ship","summary":"first","findings":[]}\n```\n' +
+      'Actually:\n' +
+      '```json\n{"verdict":"revise","summary":"second","findings":[{"kind":"correctness","what":"bug","blocking":true}]}\n```';
+    expect(parseEvaluatorReport(text)?.summary).toBe('second');
+  });
+
+  it('does not let braces inside a JSON string value break balancing', () => {
+    const text =
+      '{"verdict":"revise","summary":"found code: if (x) { return `${y}`; } and a stray }","findings":[{"kind":"correctness","what":"nested { braces } in value","blocking":true}]}';
+    const r = parseEvaluatorReport(text);
+    expect(r?.verdict).toBe('revise');
+    expect(r?.summary).toContain('${y}');
+  });
+
+  it('returns null for prose with no usable report — never a default ship', () => {
+    // A security review full of braces but no report object must not resolve to approval.
+    const text = 'I reviewed the diff. It uses `${req.params.id}` and a config block {a: 1}. Inconclusive.';
+    expect(parseEvaluatorReport(text)).toBeNull();
+  });
 });
 
 describe('normalizeReport', () => {
