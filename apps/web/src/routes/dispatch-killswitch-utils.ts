@@ -1,4 +1,4 @@
-import type { AgentState, HoldKind, SystemStatus } from '@dashboard/shared';
+import type { AgentState, BreakerFailureView, HoldKind, SystemStatus } from '@dashboard/shared';
 import { AGENT_WORKER_HEARTBEAT_STALE_MS } from '@dashboard/shared';
 import { formatRelativeTime } from './deploy-status-utils';
 
@@ -68,6 +68,11 @@ export interface DispatchView {
   /** Unix ms of the agent-worker's last heartbeat, or null when no row exists at all. Drives the
    *  "last seen Nm ago" detail; a missing row has no age to name. */
   workerLastSeen: number | null;
+  /**
+   * PD-921: the tickets behind a circuit-breaker pause (D-107), or null for any other state. When
+   * set, the nav makes the pause label clickable and opens the explainer.
+   */
+  breaker: BreakerFailureView[] | null;
 }
 
 /** What each hold is called in the UI. Deliberately concrete — "holding" alone tells you nothing
@@ -98,9 +103,12 @@ export function formatClockTime(ms: number): string {
 export function pauseReasonLabel(reason: string | null): string {
   if (reason === null) return 'Manual pause';
   // t974 (D-107): the circuit breaker stores a long "circuit-breaker: N consecutive … (t1, t2)"
-  // reason so the Site Status readout can show the full detail; the nav only needs the gist. Both
-  // surfaces thus make the breaker pause visible — distinguished from a manual pause or an auth fault.
-  if (/circuit-breaker/i.test(reason)) return 'Circuit breaker tripped';
+  // reason so the Site Status readout can show the full detail; the nav only needs the gist.
+  // PD-921: and the gist has to say what happened. "Circuit breaker tripped" named the mechanism,
+  // not the event — the reader had to already know D-107 to learn that tickets were failing.
+  const breaker = /circuit-breaker:\s*(\d+)/i.exec(reason);
+  if (breaker) return `Auto-paused: ${breaker[1]} tickets failed in a row`;
+  if (/circuit-breaker/i.test(reason)) return 'Auto-paused: tickets failed in a row';
   return /paused by human/i.test(reason) ? 'Manual pause' : reason;
 }
 
@@ -164,6 +172,7 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       mode: 'paused',
       label: 'Dispatch paused',
       detail: pauseReasonLabel(status.dispatch.reason),
+      breaker: status.dispatch.breaker && status.dispatch.breaker.length > 0 ? status.dispatch.breaker : null,
       action: 'resume',
       // A maintenance hold blocks a resume every bit as much as a provider hold does: clearing the
       // pause is correct but will not re-arm dispatch until the window closes, and the UI must not
@@ -189,6 +198,7 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       endsBy: null,
       workerOffline: worker.offline,
       workerLastSeen: worker.lastSeen,
+      breaker: null,
     };
   }
 
@@ -210,6 +220,7 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       endsBy: hold.endsBy,
       workerOffline: worker.offline,
       workerLastSeen: worker.lastSeen,
+      breaker: null,
     };
   }
 
@@ -225,6 +236,7 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
     endsBy: null,
     workerOffline: worker.offline,
     workerLastSeen: worker.lastSeen,
+    breaker: null,
   };
 }
 

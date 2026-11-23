@@ -1928,6 +1928,46 @@ export interface DispatchPauseState {
   reason: string | null;
   /** Unix ms the pause was set, or null when running. */
   since: number | null;
+  /**
+   * PD-921: present only when the pause is a circuit-breaker trip (D-107) — the tickets whose
+   * consecutive failures tripped it, so the nav can say which ones and why without parsing the
+   * reason string. Absent for every other kind of pause.
+   */
+  breaker?: BreakerFailureView[];
+}
+
+/** PD-921: one ticket in a circuit-breaker streak, as the nav's explainer needs it. */
+export interface BreakerFailureView {
+  ticketId: number;
+  /** For the detail-page link; null if the ticket has since been deleted. */
+  displayId: string | null;
+  title: string;
+  /** The worker's fault signature (`faults.ts`) — render via `faultSignatureLabel`. */
+  signature: string;
+}
+
+/**
+ * PD-921: a fault signature in plain words. The stable signatures are written by the worker's
+ * `faults.ts`; anything else is a normalized error line, which is already the most specific thing
+ * there is to say, so it passes through.
+ */
+export function faultSignatureLabel(signature: string): string {
+  switch (signature) {
+    case 'max-turns':
+      return 'ran out of turns';
+    case 'no-verify':
+      return 'finished without a passing verify';
+    case 'session-limit':
+      return 'hit the provider usage limit';
+    case 'github-rate-limit':
+      return 'hit the GitHub rate limit';
+    case 'process-restart-orphan':
+      return 'killed by a worker restart';
+    case 'interrupted':
+      return 'interrupted';
+    default:
+      return signature;
+  }
 }
 
 /** A self-expiring hold on dispatch after the provider reported a session/usage limit (PD-470).

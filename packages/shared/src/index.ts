@@ -208,6 +208,7 @@ export {
   TURN_PROGRESS_STATES,
   CHECKPOINT_CONTINUE_TURNS_DEFAULT,
   checkpointExtraTurnsError,
+  faultSignatureLabel,
   turnProgress,
   showsTurnProgress,
   isReady,
@@ -324,7 +325,7 @@ export type {
   MaintenanceJob,
 } from './maintenance';
 export type { MaintenanceHoldStatus } from './task-monitor';
-export type { NeedsHumanTicket, ActiveAgent, ActiveAgentKind } from './task-monitor';
+export type { NeedsHumanTicket, ActiveAgent, ActiveAgentKind, BreakerFailureView } from './task-monitor';
 export { HOLD_WINDOW_MS, HOLD_CADENCE_MS, MAINTENANCE_JOBS, isHoldActive } from './maintenance';
 export type {
   TinnitusTag,

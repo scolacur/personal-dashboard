@@ -8,6 +8,7 @@
     loopStateLabel,
     workerOfflineDetail,
   } from './dispatch-killswitch-utils';
+  import BreakerModal from './BreakerModal.svelte';
 
   // PD-410 — the loop-wide killswitch, in the nav rather than inside the Site Status widget.
   // Same C4 pause the widget drives (`robot_state.dispatch_paused`); no new backend. The widget
@@ -27,6 +28,8 @@
   let status = $state<SystemStatus | null>(null);
   let now = $state(Date.now());
   let toggling = $state(false);
+  // PD-921: the circuit-breaker explainer, opened from the pause label.
+  let breakerOpen = $state(false);
 
   function load(): void {
     fetch('/api/widgets/task-monitor/system-status')
@@ -73,6 +76,7 @@
             // pause from the nav, not a fault the loop raised on itself.
             await pauseDispatch('paused by human (nav killswitch)');
       if (status) status = { ...status, dispatch: next };
+      if (!next.paused) breakerOpen = false;
     } catch {
       // Leave the current state; the next poll reconciles.
     } finally {
@@ -111,7 +115,13 @@
           {:else if view.mode === 'holding'}
             {view.label}
           {/if}
-          {#if view.detail}<span class="ks-detail">{view.detail}</span>{/if}
+          {#if view.detail && view.breaker}
+            <!-- PD-921: a breaker pause is the one pause whose reason needs explaining — which
+                 tickets, and what to do — so its label opens the explainer. -->
+            <button class="ks-reason-link ks-detail ks-detail--button" onclick={() => (breakerOpen = true)}>
+              {view.detail}
+            </button>
+          {:else if view.detail}<span class="ks-detail">{view.detail}</span>{/if}
           {#if countdown}<span class="ks-countdown" title="Dispatch resumes when the window closes">{countdown}</span>{/if}
         </span>
       {/if}
@@ -150,6 +160,16 @@
       {/each}
     </div>
   </div>
+  {#if view.breaker}
+    <BreakerModal
+      failures={view.breaker}
+      since={status?.dispatch.since ?? null}
+      open={breakerOpen}
+      resuming={toggling}
+      onClose={() => (breakerOpen = false)}
+      onResume={toggle}
+    />
+  {/if}
 {/if}
 
 <style lang="scss" src="./DispatchKillswitch.scss"></style>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SystemStatus, WorkerHeartbeat } from '@dashboard/shared';
-import { AGENT_WORKER_HEARTBEAT_STALE_MS } from '@dashboard/shared';
+import { AGENT_WORKER_HEARTBEAT_STALE_MS, faultSignatureLabel } from '@dashboard/shared';
 import {
   HOLD_LABELS,
   countdownLabel,
@@ -359,6 +359,27 @@ describe('countdownLabel', () => {
   });
 });
 
+describe('breaker explainer data (PD-921)', () => {
+  const streak = [{ ticketId: 7, displayId: 'PD-7', title: 'A ticket', signature: 'max-turns' }];
+
+  it('carries the streak on a breaker pause so the nav can open the explainer', () => {
+    const v = describeDispatch(
+      status({ dispatch: { paused: true, reason: 'circuit-breaker: 1 consecutive', since: 500, breaker: streak } }),
+      NOW,
+    );
+    expect(v?.breaker).toEqual(streak);
+  });
+
+  it('is null for any other pause, an empty streak, and every non-paused mode', () => {
+    expect(describeDispatch(status({ dispatch: { paused: true, reason: 'by human', since: 500 } }), NOW)?.breaker).toBeNull();
+    expect(
+      describeDispatch(status({ dispatch: { paused: true, reason: 'circuit-breaker', since: 500, breaker: [] } }), NOW)
+        ?.breaker,
+    ).toBeNull();
+    expect(describeDispatch(status(), NOW)?.breaker).toBeNull();
+  });
+});
+
 describe('pauseReasonLabel', () => {
   it('shortens the loop’s own provenance string', () => {
     // `robot_state` records WHICH surface paused it, which matters in the record and is noise in a
@@ -376,11 +397,13 @@ describe('pauseReasonLabel', () => {
     expect(pauseReasonLabel(null)).toBe('Manual pause');
   });
 
-  it('summarises a circuit-breaker pause for the nav (t974, D-107)', () => {
-    // The breaker stores a long reason so Site Status can show the detail; the nav just needs the gist.
+  it('says what a circuit-breaker pause means, not what the mechanism is called (t974, D-107, PD-921)', () => {
+    // The breaker stores a long reason so Site Status can show the detail; the nav needs the gist —
+    // and "Circuit breaker tripped" only meant something to a reader who already knew D-107.
     expect(
       pauseReasonLabel('circuit-breaker: 3 consecutive deterministic failures across distinct tickets (t1, t2, t3)'),
-    ).toBe('Circuit breaker tripped');
+    ).toBe('Auto-paused: 3 tickets failed in a row');
+    expect(pauseReasonLabel('circuit-breaker tripped')).toBe('Auto-paused: tickets failed in a row');
   });
 });
 
@@ -454,5 +477,17 @@ describe('fleetRows', () => {
 
   it('is all zeroes and no links before the first poll', () => {
     expect(fleetRows(null).every((r) => r.count === 0 && r.href === null)).toBe(true);
+  });
+});
+
+describe('faultSignatureLabel (PD-921)', () => {
+  it('names the stable worker signatures in plain words', () => {
+    expect(faultSignatureLabel('max-turns')).toBe('ran out of turns');
+    expect(faultSignatureLabel('no-verify')).toBe('finished without a passing verify');
+    expect(faultSignatureLabel('process-restart-orphan')).toBe('killed by a worker restart');
+  });
+
+  it('passes a normalized error line through — it is already the most specific thing to say', () => {
+    expect(faultSignatureLabel('npm ERR! missing script: verify')).toBe('npm ERR! missing script: verify');
   });
 });

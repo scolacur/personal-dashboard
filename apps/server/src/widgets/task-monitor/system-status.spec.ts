@@ -164,6 +164,45 @@ describe('getDispatchPauseState', () => {
       since: 1700,
     });
   });
+
+  describe('a circuit-breaker pause carries its streak (PD-921)', () => {
+    function trip(db: Database.Database, streak: unknown): void {
+      withRobotState(db);
+      const ins = db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)');
+      ins.run('dispatch_paused', 'circuit-breaker: 2 consecutive deterministic failures across distinct tickets (t1, t2)', 900);
+      ins.run('breaker_consecutive', typeof streak === 'string' ? streak : JSON.stringify(streak), 900);
+    }
+
+    it('joins each failing ticket to the board for its display id and current title', () => {
+      const db = freshDb();
+      const a = seedTicket(db, 'Current title A', 'stuck');
+      trip(db, [
+        { ticketId: a, title: 'stale title', signature: 'max-turns' },
+        { ticketId: 99999, title: 'deleted since', signature: 'boom: x' },
+      ]);
+      const displayA = (db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(a) as { display_id: string })
+        .display_id;
+      expect(getDispatchPauseState(db).breaker).toEqual([
+        { ticketId: a, displayId: displayA, title: 'Current title A', signature: 'max-turns' },
+        { ticketId: 99999, displayId: null, title: 'deleted since', signature: 'boom: x' },
+      ]);
+    });
+
+    it('omits the field when the streak is missing or corrupt — never a false explanation', () => {
+      const db = freshDb();
+      trip(db, '{oops');
+      expect(getDispatchPauseState(db)).not.toHaveProperty('breaker');
+    });
+
+    it('omits the field for a pause that is not a breaker trip, even if a streak exists', () => {
+      const db = freshDb();
+      withRobotState(db);
+      const ins = db.prepare('INSERT INTO robot_state (key, value, updated_at) VALUES (?, ?, ?)');
+      ins.run('dispatch_paused', 'paused by human (nav killswitch)', 900);
+      ins.run('breaker_consecutive', JSON.stringify([{ ticketId: 1, title: 't', signature: 'x' }]), 900);
+      expect(getDispatchPauseState(db)).not.toHaveProperty('breaker');
+    });
+  });
 });
 
 describe('setDispatchPaused resets the circuit breaker on resume (t974, D-107)', () => {
