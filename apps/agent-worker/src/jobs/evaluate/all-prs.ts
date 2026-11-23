@@ -14,12 +14,22 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { buildContextPack } from '../../shared/context-pack';
 import { logger } from '../../shared/logger';
 import { logMilestone } from '../robot/events';
-import { notifyLoop } from '../robot/notify';
+import { notify, notifyLoop } from '../robot/notify';
 import { runEvaluatorTurn } from './evaluate-agent';
 import { capDiff, combineReports, defaultDiffFetcher, type EvaluatePassDeps } from './evaluate';
 import { finishEvaluatorRun, headEvaluated, NO_TICKET, prRounds, startEvaluatorRun, updateEvaluatorRunProgress } from './evaluator-runs';
 import { inReviewPrTargets } from '../robot/pr-state';
-import { defaultHeadShaFetcher, defaultStatusPoster, gateTargetUrl } from './review-gate';
+import {
+  defaultHeadShaFetcher,
+  defaultStatusPoster,
+  defaultStatusReader,
+  gateForOutcome,
+  gateReviewing,
+  gateTargetUrl,
+  isSteveApproval,
+  type GateStatus,
+  type StatusReader,
+} from './review-gate';
 import { blockingFindings, parseEvaluatorReport } from './verdict';
 
 const run = promisify(execFile);
@@ -36,9 +46,14 @@ const run = promisify(execFile);
  *    trusts the bot (a COLLABORATOR without `HUMAN_REPLY_MARKER`), and the marker is stripped from
  *    anything quoted, so a review can never trigger Robot rework;
  *  - **a timeline event** on each linked ticket — every ticket the PR names (PD-804);
- *  - **`review-gate` success on a ship from every lens**, the same as Steve's approval (Steve's call,
- *    2026-11-20). Nothing else is posted: a revise or a failed review leaves the gate to Steve's
- *    approval, so the Evaluator can open the gate early but never close one he opened.
+ *  - **the same `review-gate` statuses as a Robot PR (PD-914)**: pending while reviewing, success on a
+ *    ship from every lens, pending on a revise below the round cap, failure ("Needs Steve") on an
+ *    escalate, a revise at the cap, or no verdict. {@link sessionGateFor} is the table. It never
+ *    replaces the success Steve's approval posted (D-101 point 5): anything but a success is posted
+ *    only after reading the head's current status, and a failed read posts nothing;
+ *  - **needs-human** whenever nobody else will act: a failure, or a revise (nothing reworks a
+ *    session PR yet; PD-913 will). Before PD-914 a session PR at the round cap silently stopped being
+ *    reviewed and nobody was told.
  */
 
 export interface OtherPr {
@@ -58,6 +73,8 @@ export type OtherPrLister = (repo: string) => Promise<OtherPr[] | null>;
 export type PrCommenter = (repo: string, prNumber: number, body: string) => Promise<void>;
 
 export interface AllPrsDeps extends EvaluatePassDeps {
+  /** PD-914: reads the head's current review-gate, so Steve's approval is never overwritten. */
+  readStatus?: StatusReader;
   listPrs?: OtherPrLister;
   comment?: PrCommenter;
 }
@@ -192,6 +209,26 @@ export function defaultPrCommenter(config: AgentWorkerConfig): PrCommenter {
   };
 }
 
+/**
+ * The review-gate status for a session PR's outcome (PD-914). The Robot path's table
+ * (`gateForOutcome`), except a revise below the cap: there is no Robot rework queued for a session
+ * PR, so it says what will actually move it.
+ */
+export function sessionGateFor(report: EvaluatorReport | null, round: number, maxRounds: number): GateStatus {
+  if (report?.verdict === 'revise' && round < maxRounds) {
+    return { state: 'pending', description: `Evaluator requested changes (round ${round}); push a fix` };
+  }
+  return gateForOutcome(report, round, maxRounds);
+}
+
+/** What the PR comment's last line says will happen next, matching the status it gets. */
+function nextStepLine(status: GateStatus, round: number, maxRounds: number): string {
+  if (status.state === 'success') return 'review-gate is set to success for this commit.';
+  const again = round < maxRounds ? ` A new push is reviewed again (up to ${maxRounds} rounds).` : ' No further automatic review.';
+  if (status.state === 'failure') return `review-gate is set to failure: this needs Steve.${again}`;
+  return `review-gate is pending: push a fix.${again}`;
+}
+
 /** The PR comment. Never carries HUMAN_REPLY_MARKER, whatever the agent quoted (see the header). */
 export function verdictComment(
   report: EvaluatorReport | null,
@@ -202,7 +239,11 @@ export function verdictComment(
   const lines: string[] = ['<!-- evaluator:verdict -->'];
   const against = tickets.length > 0 ? ticketList(tickets) : 'the PR description (no linked ticket, so no acceptance criteria)';
   if (!report) {
-    lines.push(`**Evaluator (round ${round}): no usable verdict.** The review failed, so it counts as neither ship nor revise. Steve's approval decides.`);
+    lines.push(
+      `**Evaluator (round ${round}): no usable verdict.** The review failed, so it counts as neither ship nor revise.`,
+      '',
+      nextStepLine(sessionGateFor(null, round, maxRounds), round, maxRounds),
+    );
   } else {
     const blocking = blockingFindings(report);
     lines.push(`**Evaluator (round ${round}): ${report.verdict}**, judged against ${against}.`, '', report.summary);
@@ -214,12 +255,7 @@ export function verdictComment(
         lines.push(`| ${mark} | ${cell(f.where || '')} | ${cell(f.what || '')} |`);
       }
     }
-    lines.push(
-      '',
-      report.verdict === 'ship'
-        ? 'review-gate is set to success for this commit.'
-        : `review-gate is left to Steve's approval. A new push is reviewed again (up to ${maxRounds} rounds).`,
-    );
+    lines.push('', nextStepLine(sessionGateFor(report, round, maxRounds), round, maxRounds));
   }
   return lines.join('\n').split(HUMAN_REPLY_MARKER).join('');
 }
@@ -280,6 +316,25 @@ export async function evaluateNextOtherPr(
     for (const id of runIds.values()) finishEvaluatorRun(db, id, { error: head === pr.headRefOid ? 'diff fetch failed' : 'head moved before review' }, now);
     return null;
   }
+  // PD-914: the gate, posted on the exact commit that was read. Anything but a success first checks
+  // the head's current status, so Steve's approval is never replaced, and a failed read posts nothing.
+  const gateUrl = gateTargetUrl(config, tickets[0]?.displayId ?? null);
+  const postGate = async (status: GateStatus): Promise<void> => {
+    if (!config.evaluator.reviewGateToken) return;
+    if (status.state !== 'success') {
+      const read = await (deps.readStatus ?? defaultStatusReader(config))(repo, pr.headRefOid);
+      if (!read.ok || isSteveApproval(read.current)) {
+        logger.info(
+          { prNumber: pr.number, state: status.state, reason: read.ok ? 'steve-approved' : 'read-failed' },
+          'evaluator: leaving review-gate as it is',
+        );
+        return;
+      }
+    }
+    await (deps.postStatus ?? defaultStatusPoster(config))(repo, pr.headRefOid, status, gateUrl);
+  };
+  await postGate(gateReviewing(round));
+
   const { diff, truncated } = capDiff(rawDiff);
   const brief = tickets.length > 0 ? acceptanceBrief(tickets) : null;
   const userPrompt = buildEvaluatorPrompt({
@@ -335,17 +390,33 @@ export async function evaluateNextOtherPr(
 
   const combined = combineReports(reports);
   await (deps.comment ?? defaultPrCommenter(config))(repo, pr.number, verdictComment(combined, round, tickets, config.evaluator.maxRounds));
-  if (combined?.verdict === 'ship' && config.evaluator.reviewGateToken) {
-    await (deps.postStatus ?? defaultStatusPoster(config))(
-      repo,
-      pr.headRefOid,
-      { state: 'success', description: `Evaluator: ship (round ${round})` },
-      gateTargetUrl(config, tickets[0]?.displayId ?? null),
-    );
-  }
+  const status = sessionGateFor(combined, round, config.evaluator.maxRounds);
+  await postGate(status);
+  if (status.state !== 'success') notifySessionPrNeedsHuman(db, repo, pr.number, status, tickets[0] ?? null, now);
   logger.info(
     { prNumber: pr.number, headRef: pr.headRefName, verdict: combined?.verdict ?? null, tickets: tickets.map((t) => t.displayId) },
     'evaluator: reviewed a PR via the all-PRs path',
   );
   return combined;
+}
+
+/**
+ * PD-914: tell Steve a session PR is waiting on him. On its primary ticket when it has one (the
+ * ticket-scoped dedup keeps it to one unread per ticket), else loop-wide, titled by PR and round so
+ * each distinct wait is its own notification.
+ */
+function notifySessionPrNeedsHuman(
+  db: Database.Database,
+  repo: string,
+  prNumber: number,
+  status: GateStatus,
+  ticket: { id: number; displayId: string; title: string } | null,
+  now: number,
+): void {
+  const url = `https://github.com/${repo}/pull/${prNumber}`;
+  const label = ticket ? ` (${ticket.displayId}: ${ticket.title})` : '';
+  const title = `PR #${prNumber}${label}: ${status.description}`;
+  const body = `The Evaluator reviewed this session PR and it is waiting on you: ${url}`;
+  if (ticket) notify(db, 'agent_needs_human', ticket.id, title, body, now);
+  else notifyLoop(db, 'agent_needs_human', title, body, now);
 }
