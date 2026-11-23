@@ -400,13 +400,14 @@ signatures auto-promote transient→deterministic at N=2.
 _Avoid_: conflating a per-ticket deterministic fault with a system-wide pause.
 
 **Checkpoint**:
-> ⚠️ **Designed, not built (D-094, 2026-11-16).** Today, reaching the ceiling is a deterministic fault.
-
 What a **run** becomes when it reaches its turn ceiling ([[D-066]]): not a fault, but a pause. The
 Robot loop asks the session for a **status report**, saves the work, and parks the ticket in the
 `checkpoint` state for Steve to choose **Continue** (a new run with more turns, default +50,
 starting from the saved work with the report in its prompt) or **Restart** (a new run from a clean
-`main`). Only the ceiling checkpoints; crashes and stalls remain faults.
+`main`). Only the ceiling checkpoints; crashes and stalls remain faults. Built in PD-737: the report
+step resumes the same session read-only (`runStatusReport`, ≤3 turns, output tail as fallback), the
+choice is a `robot_checkpoint_continue` / `robot_checkpoint_restart` event the loop reads at dispatch
+(`checkpoint.ts`), and Continue restores `robot-wip/t<id>` rebased onto `main` (`restoreWip`).
 _Avoid_: calling a checkpoint "stuck" or a fault, and calling Continue a "retry": it does not count
 against the retry cap.
 

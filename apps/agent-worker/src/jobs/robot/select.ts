@@ -146,6 +146,9 @@ export interface BlockedByAgentState {
  * unreachable from the board — this exists because "should be unreachable" is exactly the claim
  * that goes stale. A silently-skipped ticket is indistinguishable from an idle loop, which is the
  * failure mode that is hardest to notice when the loop is turned back on.
+ *
+ * `checkpoint` (D-094/PD-737) is excluded too: it is a deliberate park the loop set and surfaced, and
+ * it is resolved by Continue/Restart — not by the "Unstick to clear" this warning advises.
  */
 export function queuedBlockedByAgentState(db: Database.Database): BlockedByAgentState[] {
   return db
@@ -159,7 +162,7 @@ export function queuedBlockedByAgentState(db: Database.Database): BlockedByAgent
           AND (t.ready = 1 OR t.ready_bypassed = 1)
           AND t.refined = 1
           AND t.agent_state IS NOT NULL
-          AND t.agent_state NOT IN ('queued', 'working', 'in-review')
+          AND t.agent_state NOT IN ('queued', 'working', 'in-review', 'checkpoint')
           AND p.robot_enabled = 1
           AND p.github_repo IS NOT NULL
           AND NOT EXISTS (

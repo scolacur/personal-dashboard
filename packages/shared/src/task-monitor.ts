@@ -84,6 +84,9 @@ export type AgentState =
   | 'stuck'
   | 'needs-human'
   | 'awaiting-human'
+  // D-094/PD-737: the run reached its turn ceiling. Not a fault — the loop saved the work and a status
+  // report, and waits for Steve to choose Continue (resume from the saved work) or Restart.
+  | 'checkpoint'
   | 'wontfix'
   | 'done';
 
@@ -143,6 +146,7 @@ export const AGENT_STATE_LABELS: Record<AgentState, string> = {
   stuck: 'stuck',
   'needs-human': 'PR closed unmerged',
   'awaiting-human': 'awaiting human',
+  checkpoint: 'checkpoint',
   wontfix: 'wontfix',
   done: 'done',
 };
@@ -173,7 +177,23 @@ export const TURN_WARN_FRACTION = 0.8;
 /** Agent states for which turn progress is meaningful. `working` is the live case; `in-review`
  *  and `stuck` are post-mortem — `stuck` is where the ceiling actually bites, so it earns a slot
  *  (a card reading "50/50" explains itself at a glance). */
-export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-review', 'stuck'];
+export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-review', 'stuck', 'checkpoint'];
+
+/**
+ * D-094/PD-737: the default extra turns a checkpoint's **Continue** grants the next run. Editable per
+ * Continue, bounded by `ROBOT_MAX_TURNS_LIMIT` (rejected above it, never clamped — same rule as
+ * D-066's per-ticket override).
+ */
+export const CHECKPOINT_CONTINUE_TURNS_DEFAULT = 50;
+
+/** Validate a Continue's `extraTurns`: an integer in 1..ROBOT_MAX_TURNS_LIMIT. Returns an error
+ *  message, or null when valid. Shared so the server route and the modal agree on the bound. */
+export function checkpointExtraTurnsError(extraTurns: unknown): string | null {
+  if (typeof extraTurns !== 'number' || !Number.isInteger(extraTurns)) return 'extraTurns must be an integer';
+  if (extraTurns < 1) return 'extraTurns must be at least 1';
+  if (extraTurns > ROBOT_MAX_TURNS_LIMIT) return `extraTurns must be at most ${ROBOT_MAX_TURNS_LIMIT}`;
+  return null;
+}
 
 export interface TurnProgress {
   turns: number;
@@ -240,6 +260,8 @@ export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
     "A human closed the Robot's PR without merging it. The loop will not touch the ticket again on its own.",
   'awaiting-human':
     'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
+  checkpoint:
+    'The run reached its turn ceiling. Its work was saved with a status report; choose Continue (more turns, from the saved work) or Restart (fresh from main).',
   wontfix: "Terminal: the ticket was closed as won't-fix.",
   done: 'Terminal: the Robot loop finished the work and the PR merged (green pill; lives in the Completed lane).',
 };
@@ -2103,7 +2125,7 @@ export interface MaintenanceHoldStatus {
 
 /** How a Robot run ended. Mirrors the worker's `RunStatus` (agent-worker owns the
  *  write side; this is the read-side shape the server + web share). */
-export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'error';
+export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'checkpoint' | 'error';
 
 /**
  * Is the running worker current with the code it is grounding against? (PD-528)
@@ -2157,6 +2179,9 @@ export interface AgentRun {
    *  nothing, or the WIP push failed (and cleared once the ticket goes terminal). */
   wipRef: string | null;
   wipSha: string | null;
+  /** D-094/PD-737: on a `checkpoint` run, the status report the session gave when it reached its
+   *  turn ceiling (or its output tail, labelled as such, when the report step failed). */
+  statusReport: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -2211,6 +2236,13 @@ export const ROBOT_EVENT = {
   // PD-773 slice 2: the Robot or the Evaluator asked for Steve's visual check of a PR, and his answer.
   visualReviewRequested: 'robot_visual_review_requested',
   visualReviewed: 'robot_visual_reviewed',
+  // D-094/PD-737: the turn ceiling is a checkpoint, not a fault. `checkpoint` is loop-written when a
+  // run reaches its ceiling (carries the status report + WIP ref). `checkpointContinue` /
+  // `checkpointRestart` are server-written when Steve chooses; the loop reads the newest one that
+  // post-dates the last dispatch to decide how the next run starts.
+  checkpoint: 'robot_checkpoint',
+  checkpointContinue: 'robot_checkpoint_continue',
+  checkpointRestart: 'robot_checkpoint_restart',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -2303,4 +2335,12 @@ export interface RobotEventDetail {
    *  preserved its work — the WIP ref (`robot-wip/t<id>`) and the commit sha at its tip. */
   wipRef?: string;
   wipSha?: string;
+  /** D-094/PD-737: the status report on a `robot_checkpoint`, and whether it is the real report or
+   *  the output-tail fallback. */
+  report?: string;
+  reportFallback?: boolean;
+  /** D-094/PD-737: turns the checkpointed run used (`robot_checkpoint`). */
+  turns?: number;
+  /** D-094/PD-737: the turn ceiling a Continue grants the next run (`robot_checkpoint_continue`). */
+  extraTurns?: number;
 }

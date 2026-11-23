@@ -1,5 +1,10 @@
 <script lang="ts">
   import type { AgentTicket, AgentRun, TicketEvent } from '@dashboard/shared';
+  import {
+    CHECKPOINT_CONTINUE_TURNS_DEFAULT,
+    ROBOT_MAX_TURNS_LIMIT,
+    checkpointExtraTurnsError,
+  } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
   import * as api from '../api';
@@ -11,8 +16,7 @@
 
   /**
    * The "needs you" modal (T900). Opens on the board for a ticket whose Robot pill is in an
-   * input-needed state (`stuck` / `awaiting-human` / `needs-human`, plus `checkpoint` once PD-737
-   * adds its registry entry). Shows what happened, the agent's own words, the run count + cumulative
+   * input-needed state (`stuck` / `awaiting-human` / `needs-human` / `checkpoint`). Shows what happened, the agent's own words, the run count + cumulative
    * turns, and the state's actions — none of which leave the board. All per-state content comes from
    * `status-action.ts`; this file is the renderer + the action wiring.
    */
@@ -33,6 +37,9 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
   let replyText = $state('');
+  /** D-094: the turn ceiling a Continue grants the next run. */
+  let extraTurns = $state(CHECKPOINT_CONTINUE_TURNS_DEFAULT);
+  const extraTurnsError = $derived(checkpointExtraTurnsError(extraTurns));
 
   const entry = $derived(
     ticket?.agentState ? (STATUS_ACTION_REGISTRY[ticket.agentState] ?? null) : null,
@@ -46,6 +53,7 @@
     runs = [];
     events = [];
     replyText = '';
+    extraTurns = CHECKPOINT_CONTINUE_TURNS_DEFAULT;
     error = null;
     if (!t) return;
     void Promise.all([
@@ -67,6 +75,8 @@
     try {
       if (kind === 'unstick') await api.unstickTicket(ticket.id);
       else if (kind === 'reset') await api.resetTicketRuns(ticket.id);
+      else if (kind === 'continue') await api.continueTicket(ticket.id, extraTurns);
+      else if (kind === 'restart') await api.restartTicket(ticket.id);
       onUpdate();
       onClose();
     } catch (e) {
@@ -140,6 +150,23 @@
         </div>
       {/if}
 
+      {#if content.actions.some((a) => a.kind === 'continue')}
+        <label class="sa-turns">
+          Continue with
+          <input
+            type="number"
+            min="1"
+            max={ROBOT_MAX_TURNS_LIMIT}
+            bind:value={extraTurns}
+            disabled={busy}
+          />
+          more turns
+        </label>
+        {#if extraTurnsError}
+          <p class="sa-error" role="alert">{extraTurnsError}</p>
+        {/if}
+      {/if}
+
       {#if content.actions.length}
         <div class="sa-actions">
           {#each content.actions as action (action.kind)}
@@ -150,8 +177,11 @@
                 >
               {/if}
             {:else}
-              <button class="sa-btn" disabled={busy} onclick={() => runAction(action.kind)}
-                >{action.label}</button
+              <button
+                class="sa-btn"
+                disabled={busy || (action.kind === 'continue' && extraTurnsError !== null)}
+                onclick={() => runAction(action.kind)}
+                >{action.kind === 'continue' ? `${action.label} (+${extraTurns})` : action.label}</button
               >
             {/if}
           {/each}

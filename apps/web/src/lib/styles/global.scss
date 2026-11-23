@@ -19,6 +19,7 @@
   --status-stuck: #cf222e; /* red */
   --status-needs-human: #c2410c; /* dark orange */
   --status-awaiting-human: #f59e0b; /* light orange */
+  --status-checkpoint: #8b5cf6; /* violet — a deliberate pause awaiting a choice (D-094) */
   --status-done: #1a7f37; /* green */
   /* wontfix reuses the neutral --muted / --border tokens. */
   /* Generic "warning / needs attention but not broken" amber. Used by the not-Ready

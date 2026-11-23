@@ -11,8 +11,9 @@ import {
 } from './select';
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, pruneWorktrees, removeWorktree, worktreeDirFor, type Worktree } from './workspace';
-import { pushWip, deleteWipRef, type WipRef } from './wip';
-import { runRobotSession, type RobotSessionResult } from './session';
+import { pushWip, deleteWipRef, restoreWip, type WipRef, type WipRestore } from './wip';
+import { runRobotSession, runStatusReport, type RobotSessionResult, type StatusReportResult } from './session';
+import { checkpointDecision, reportFromTail } from './checkpoint';
 import type { ResumeContext } from '@dashboard/shared';
 import {
   ensureRunsTable,
@@ -24,7 +25,7 @@ import {
   ticketsWithTerminalWipRef,
   clearWipRef,
 } from './runs';
-import { classifyFault, decideFault, preflight, INTERRUPTED_SIGNATURE, type FaultClassification, type FaultPolicy } from './faults';
+import { classifyFault, decideFault, isTurnCeiling, preflight, INTERRUPTED_SIGNATURE, type FaultClassification, type FaultPolicy } from './faults';
 import { ABORT_HUNG, ABORT_SHUTDOWN, createRunOwnership, type RunOwnership } from './ownership';
 import { RobotShutdown, timeout } from './shutdown';
 import {
@@ -91,6 +92,12 @@ export interface RobotDeps {
   /** PD-737/T898: delete a ticket's WIP ref once it hands off / goes terminal. Injectable so tests
    *  don't shell out. `cwd` is a clone with `origin` configured. */
   deleteWip?: (config: AgentWorkerConfig, ticketId: number, cwd: string) => Promise<void>;
+  /** D-094/PD-737: resume a session that hit its turn ceiling for a short read-only status report.
+   *  Injectable so tests never spawn a session. Must not throw (the real one never does). */
+  statusReport?: (config: AgentWorkerConfig, c: RobotCandidate, wt: Worktree, sessionId: string) => Promise<StatusReportResult>;
+  /** D-094/PD-737: on a Continue, restore the ticket's WIP ref into the prepared clone (rebased onto
+   *  main where it applies). Injectable so tests don't shell out to git. */
+  restoreWip?: (config: AgentWorkerConfig, wt: Worktree, ticketId: number) => Promise<WipRestore>;
   /** Injectable so tests never spawn a real coding session. Receives the resume context (C5) the
    *  loop derived for this dispatch (ask_human answer to inject), or undefined for a fresh run. */
   runSession?: (
@@ -204,6 +211,8 @@ export async function processRobotQueue(
   const doPrune = deps.pruneWorktrees ?? ((c, keep) => pruneWorktrees(c, keep));
   const doPushWip = deps.pushWip ?? ((c, w, id) => pushWip(c, w, id));
   const doDeleteWip = deps.deleteWip ?? ((c, id, cwd) => deleteWipRef(c, id, cwd));
+  const doStatusReport = deps.statusReport ?? ((c, cand, w, sid) => runStatusReport(c, cand, w, sid));
+  const doRestoreWip = deps.restoreWip ?? ((c, w, id) => restoreWip(c, w, id));
   // NOTE the explicit wrapper: runRobotSession takes `runQuery` in the 5th slot, `onProgress` in
   // the 6th, the DB handle in the 7th and the abort controller in the 8th, so `deps.runSession`
   // (whose 5th arg IS onProgress) cannot be passed positionally. `db` is closed over from this cycle
@@ -328,7 +337,10 @@ export async function processRobotQueue(
     // off the branch. Both may be present — a human answered AND the Evaluator asked for changes —
     // so they compose rather than override.
     const brief = pendingEvaluatorBrief(db, candidate.id);
-    const resumeCtx: ResumeContext | undefined =
+    // D-094/PD-737: did Steve answer a checkpoint? Read BEFORE the dispatched event below, which is
+    // what consumes it. Continue → start from the saved work with more turns; Restart → clean main.
+    const checkpoint = checkpointDecision(db, candidate.id);
+    let resumeCtx: ResumeContext | undefined =
       resume || brief
         ? {
             ...(resume ? { askHumanQuestion: resume.question, askHumanAnswer: resume.answer } : {}),
@@ -343,7 +355,12 @@ export async function processRobotQueue(
     setAgentState(db, candidate.id, 'working', now());
     // PD-432: record the ceiling this run actually runs under, so the run is self-describing and
     // the board's N/M indicator reads the real denominator rather than the shared constant.
-    const effectiveMaxTurns = candidate.maxTurns ?? config.robot.maxTurns;
+    // D-094/PD-737: a Continue's `extraTurns` IS this run's ceiling (turns per run before the next
+    // checkpoint — D-094 amends D-066), overriding the ticket's own override for this one run.
+    const effectiveMaxTurns =
+      checkpoint?.kind === 'continue' ? checkpoint.extraTurns : (candidate.maxTurns ?? config.robot.maxTurns);
+    // The session reads its ceiling off the candidate, so hand it one carrying the effective value.
+    const runCandidate: RobotCandidate = { ...candidate, maxTurns: effectiveMaxTurns };
     const runId = startRun(
       db,
       { ticketId: candidate.id, issueNumber: candidate.issueNumber, branch, bodyHash, maxTurns: effectiveMaxTurns },
@@ -354,7 +371,13 @@ export async function processRobotQueue(
     // is how a graceful stop interrupts the session below.
     const abort = new AbortController();
     ownership.begin({ runId, ticketId: candidate.id, branch, abort }, now());
-    logMilestone(db, candidate.id, ROBOT_EVENT.dispatched, { branch, maxTurns: effectiveMaxTurns }, now());
+    logMilestone(
+      db,
+      candidate.id,
+      ROBOT_EVENT.dispatched,
+      { branch, maxTurns: effectiveMaxTurns, ...(checkpoint ? { reason: `checkpoint ${checkpoint.kind}` } : {}) },
+      now(),
+    );
 
     // Route a failed run (no-verify or errored) through the fault guardrail. Shared by the normal
     // path and the catch below so a thrown clone/spawn error is classified the same way.
@@ -505,15 +528,103 @@ export async function processRobotQueue(
       await preserveWip();
     };
 
+    /**
+     * D-094/PD-737: the run reached its turn ceiling. Not a fault: get a status report from the same
+     * session, save the work, park `checkpoint` for Steve's Continue / Restart. Burns no retry (a
+     * `checkpoint` run is not a `no-verify`/`error` row, so `failedRunsForTicket` never counts it) and
+     * never feeds the circuit breaker. The clone is kept, as for any non-hand-off exit (PD-719).
+     */
+    const handleCheckpoint = async (result: RobotSessionResult, metrics: { turns?: number; tokens?: number; outputTail?: string }): Promise<void> => {
+      let report: string;
+      let reportFallback = false;
+      if (shutdown.requested) {
+        // The stop-grace window is finite; spend it on the WIP push, not on a report.
+        report = reportFromTail(result.outputTail, 'the worker was stopping, so no report was requested');
+        reportFallback = true;
+      } else if (!result.sessionId || !worktree) {
+        report = reportFromTail(result.outputTail, 'the session id was not captured, so it could not be resumed');
+        reportFallback = true;
+      } else {
+        let r: StatusReportResult;
+        try {
+          r = await doStatusReport(config, runCandidate, worktree, result.sessionId);
+        } catch (err) {
+          r = { error: err instanceof Error ? err.message : String(err) };
+        }
+        if (r.report) {
+          report = r.report;
+        } else {
+          report = reportFromTail(result.outputTail, `the report step failed: ${r.error ?? 'no text'}`);
+          reportFallback = true;
+        }
+      }
+      const wip = await preserveWip();
+      const turnsLabel = `${metrics.turns ?? '?'}/${effectiveMaxTurns}`;
+      finishRun(
+        db,
+        runId,
+        {
+          status: 'checkpoint',
+          sessionId: result.sessionId,
+          error: result.error,
+          faultReason: `reached the turn ceiling (${turnsLabel})`,
+          statusReport: report,
+          wipRef: wip?.ref ?? null,
+          wipSha: wip?.sha ?? null,
+          ...metrics,
+        },
+        now(),
+      );
+      setAgentState(db, candidate.id, 'checkpoint', now());
+      logMilestone(
+        db,
+        candidate.id,
+        ROBOT_EVENT.checkpoint,
+        {
+          reason: `reached the turn ceiling (${turnsLabel})`,
+          report,
+          reportFallback,
+          ...(metrics.turns !== undefined ? { turns: metrics.turns } : {}),
+          maxTurns: effectiveMaxTurns,
+          ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}),
+        },
+        now(),
+      );
+      notifyAwaitingHuman(
+        db,
+        candidate.id,
+        'Robot reached its turn ceiling',
+        `Used ${turnsLabel} turns. Its work is saved — choose Continue or Restart.\n\n${report.slice(0, 400)}`,
+        now(),
+      );
+      logger.info({ ticketId: candidate.id, turns: metrics.turns, reportFallback, wip: wip?.ref }, 'robot: turn ceiling → checkpoint (no fault, no retry burned)');
+    };
+
     try {
+      // D-094/PD-737: Restart means a clean start, so the clone this ticket kept (PD-719) goes first —
+      // otherwise reuse would carry the checkpointed run's commits into the "fresh" run. The WIP ref
+      // is kept (D-094 §4).
+      if (checkpoint?.kind === 'restart') {
+        await doRemove(config, { dir: worktreeDirFor(config, branch), branch });
+      }
       worktree = await doEnsure(config, branch);
       ownership.attachWorktree(runId, worktree); // PD-784: so a graceful stop can reach it for WIP
+      if (checkpoint?.kind === 'continue') {
+        let restore: WipRestore;
+        try {
+          restore = await doRestoreWip(config, worktree, candidate.id);
+        } catch (err) {
+          logger.warn({ err, ticketId: candidate.id }, 'robot: Continue WIP restore raised — running from the tree as prepared');
+          restore = { restored: false, rebased: false };
+        }
+        resumeCtx = { ...(resumeCtx ?? {}), checkpoint: { report: checkpoint.report, ...restore } };
+      }
       // PD-230: persist live turn progress so the board shows a working run closing on the cap.
       // The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only reports.
       // PD-784/D-104: the same callback resets the run's hung-session clock in the ownership registry.
       const result = await doRun(
         config,
-        candidate,
+        runCandidate,
         worktree,
         resumeCtx,
         (turns, tokens) => {
@@ -564,6 +675,9 @@ export async function processRobotQueue(
           logMilestone(db, candidate.id, ROBOT_EVENT.visualReviewRequested, { prNumber: result.prNumber, by: 'robot', reason: result.visualReview }, now());
         }
         logger.info({ ticketId: candidate.id, branch, prUrl }, 'robot: handed off PR');
+      } else if (!result.ok && isTurnCeiling(result.error)) {
+        // D-094/PD-737: the turn ceiling is a checkpoint, not a failure — never `handleFailure`.
+        await handleCheckpoint(result, metrics);
       } else if (result.ok && !result.verifyOk) {
         // D-046 gate: the session ended without a green verify — withhold the red PR. The WIP is NOT
         // lost: preserve it to robot-wip/t<id> (PD-737/T898) before the clone could be reused/pruned,

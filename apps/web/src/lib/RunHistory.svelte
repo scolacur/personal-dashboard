@@ -30,6 +30,7 @@
     'handed-off': 'Handed off',
     'no-verify': 'No verify',
     'ask-human': 'Asked human',
+    checkpoint: 'Checkpoint',
     error: 'Error',
   };
 
@@ -70,6 +71,10 @@
     else openOutputs.add(runId);
   }
 
+  // D-094/PD-737: there is no total cap across Continues, so the running total is the number the
+  // human judging "give it more room" vs "it is going in circles" needs.
+  const totalTurns = $derived(runs.reduce((sum, r) => sum + (r.turns ?? 0), 0));
+
   /** Columns in the runs table — keeps the expanded row's colspan honest if a column is added. */
   const RUN_COLUMNS = 11;
 </script>
@@ -87,6 +92,7 @@
     {/if}
 
     <Collapsible title="Runs" count={runs.length} storeKey="runs">
+    <p class="runs-total">{totalTurns.toLocaleString()} cumulative turns across {runs.length} {runs.length === 1 ? 'run' : 'runs'}</p>
     <div class="runs-scroll">
       <table class="runs-table">
         <thead>
@@ -98,7 +104,7 @@
         </thead>
         <tbody>
           {#each runs as r, i (r.id)}
-            {@const hasOutput = !!r.outputTail}
+            {@const hasOutput = !!r.outputTail || !!r.statusReport}
             {@const isOpen = openOutputs.has(r.id)}
             <tr>
               <td class="expander">
@@ -130,7 +136,14 @@
             {#if hasOutput && isOpen}
               <tr class="output-row">
                 <td colspan={RUN_COLUMNS}>
-                  <pre class="output-tail">{r.outputTail}</pre>
+                  {#if r.statusReport}
+                    <!-- D-094/PD-737: the checkpoint's status report, ahead of the raw tail. -->
+                    <p class="report-label">Status report</p>
+                    <pre class="output-tail status-report">{r.statusReport}</pre>
+                  {/if}
+                  {#if r.outputTail}
+                    <pre class="output-tail">{r.outputTail}</pre>
+                  {/if}
                 </td>
               </tr>
             {/if}

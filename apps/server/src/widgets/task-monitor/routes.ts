@@ -14,7 +14,7 @@ import {
   type TicketStatus,
   type UpdateTicketInput,
 } from '@dashboard/shared';
-import { HUMAN_REPLY_MARKER, parseAutoQueueMode } from '@dashboard/shared';
+import { CHECKPOINT_CONTINUE_TURNS_DEFAULT, HUMAN_REPLY_MARKER, checkpointExtraTurnsError, parseAutoQueueMode } from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import { getTicketAutoQueueEligibility, listBacklogAutoQueueEligibility } from './auto-queue';
 import {
@@ -61,6 +61,8 @@ import {
   RelationCycleError,
   removeRelationById,
   resetRobotRuns,
+  decideCheckpoint,
+  type CheckpointDecisionResult,
   SelfRelationError,
   setDispatchPaused,
   startRefine,
@@ -682,6 +684,27 @@ export function registerRoutes(
     return ticket;
   });
 
+  // D-094/PD-737: answer a checkpoint. Continue resumes from the saved work with `extraTurns` more
+  // turns (default 50, 1..ROBOT_MAX_TURNS_LIMIT, rejected above — never clamped, per D-066); Restart
+  // starts a fresh run from main. Both refuse a ticket that isn't parked in `checkpoint` (409).
+  app.post(`${base}/tickets/:id/robot/continue`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const raw = (request.body as { extraTurns?: unknown } | null)?.extraTurns;
+    const extraTurns = raw === undefined ? CHECKPOINT_CONTINUE_TURNS_DEFAULT : raw;
+    const invalid = checkpointExtraTurnsError(extraTurns);
+    if (invalid) return reply.status(400).send({ error: invalid, code: 'INVALID_EXTRA_TURNS' });
+    const result = decideCheckpoint(db, id, { kind: 'continue', extraTurns: extraTurns as number });
+    return checkpointReply(reply, result);
+  });
+  app.post(`${base}/tickets/:id/robot/restart`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    return checkpointReply(reply, decideCheckpoint(db, id, { kind: 'restart' }));
+  });
+
   // Global pause/resume of Robot dispatch. Resume clears the flag a system-wide fault (C2) set.
   app.post(`${base}/robot/pause`, async (request) => {
     const reason = (request.body as { reason?: string } | null)?.reason;
@@ -1099,4 +1122,12 @@ export function registerRoutes(
     }
     return getRunReport(db, filter);
   });
+}
+
+/** Map a checkpoint decision to its HTTP reply (D-094/PD-737). */
+function checkpointReply(reply: FastifyReply, result: CheckpointDecisionResult) {
+  if (result.ok) return result.ticket;
+  return result.reason === 'not_found'
+    ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
+    : reply.status(409).send({ error: 'ticket is not at a checkpoint', code: 'NOT_CHECKPOINT' });
 }

@@ -1,6 +1,6 @@
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
-import { asOwnerOf, GitError, makeGitRunner, type GitRunner, type Worktree } from './workspace';
+import { asOwnerOf, defaultChown, GitError, makeGitRunner, type GitRunner, type Worktree } from './workspace';
 
 /**
  * Preserve a non-hand-off run's work before its clone is dropped (PD-737/T898).
@@ -144,4 +144,86 @@ export async function deleteWipRef(
   } catch (err) {
     logger.debug({ err, ticketId, ref }, 'robot: WIP ref delete was a no-op or failed (ignored)');
   }
+}
+
+/** What a Continue's WIP restore did (D-094/PD-737). */
+export interface WipRestore {
+  /** The saved work is now in the tree (uncommitted). False: the ref could not be fetched/applied. */
+  restored: boolean;
+  /** It was rebased onto current main. False when the rebase conflicted (left as saved) or skipped. */
+  rebased: boolean;
+}
+
+/** How deep to fetch main and the WIP ref so a rebase can find their merge base in a shallow clone.
+ *  The WIP was cut from main within a day or so; a miss just means "rebase failed → as-is". */
+const RESTORE_DEPTH = 200;
+
+/**
+ * D-094/PD-737 — **Continue** starts from the saved work. The ONE place the loop deliberately breaks
+ * PD-340's clean-tree rule, and only because a human pressed Continue (an automatic resume would let
+ * a broken tree poison every retry — D-094's rejected alternative, and why `pushWip` undoes its
+ * commit).
+ *
+ * In the clone `ensureWorktree` just prepared: fetch `robot-wip/t<id>` and current `main`, move the
+ * branch to the WIP commit, rebase it onto `main`. If the rebase conflicts, abort it and keep the
+ * WIP as-is (the prompt tells the agent to integrate main itself). Finally, if the tip is the loop's
+ * own WIP commit, soft-undo it so the work is uncommitted again — the agent then commits it with a
+ * real message in its hand-off, instead of a PR carrying `chore(robot): WIP`.
+ *
+ * Never throws: a failure to fetch or apply reads as `{ restored: false }`, and the run proceeds
+ * from the tree as prepared (the prompt says so).
+ */
+export async function restoreWip(
+  config: AgentWorkerConfig,
+  worktree: Worktree,
+  ticketId: number,
+  git: GitRunner = makeGitRunner(config, config.githubReadToken),
+  chown: (dir: string) => Promise<void> = defaultChown(config),
+): Promise<WipRestore> {
+  const dir = worktree.dir;
+  const ref = wipRefName(ticketId);
+  const owner = asOwnerOf(dir);
+  const wipLocal = `refs/remotes/origin/${ref}`;
+  try {
+    await git([...owner, 'fetch', '--depth', String(RESTORE_DEPTH), 'origin', `+refs/heads/${ref}:${wipLocal}`]);
+  } catch (err) {
+    logger.warn({ err, ticketId, ref }, 'robot: Continue could not fetch the WIP ref — running from the tree as prepared');
+    return { restored: false, rebased: false };
+  }
+  try {
+    await git([...owner, 'reset', '--hard', wipLocal]);
+  } catch (err) {
+    logger.warn({ err, ticketId, ref }, 'robot: Continue could not check out the WIP ref — running from the tree as prepared');
+    return { restored: false, rebased: false };
+  }
+
+  let rebased = false;
+  try {
+    await git([...owner, 'fetch', '--depth', String(RESTORE_DEPTH), 'origin', '+refs/heads/main:refs/remotes/origin/main']);
+    await git([...owner, 'rebase', 'origin/main']);
+    rebased = true;
+  } catch (err) {
+    logger.warn({ err, ticketId }, 'robot: Continue could not rebase the WIP onto main — continuing from it as-is');
+    try {
+      await git([...owner, 'rebase', '--abort']);
+    } catch {
+      // nothing to abort (the fetch failed, or the rebase never started)
+    }
+  }
+
+  try {
+    const subject = ((await git([...owner, 'log', '-1', '--format=%s'])) ?? '').toString().trim();
+    if (subject.startsWith(WIP_COMMIT_PREFIX)) await git([...owner, 'reset', '--mixed', 'HEAD~1']);
+  } catch (err) {
+    // Harmless: the WIP stays as a commit, and the hand-off commits on top of it.
+    logger.warn({ err, ticketId }, 'robot: Continue could not un-commit the WIP commit — leaving it committed');
+  }
+
+  try {
+    await chown(dir); // root just rewrote files; hand them back to the coding uid
+  } catch (err) {
+    logger.warn({ err, ticketId, dir }, 'robot: chown after WIP restore failed');
+  }
+  logger.info({ ticketId, ref, rebased }, 'robot: Continue restored the saved work into the clone');
+  return { restored: true, rebased };
 }

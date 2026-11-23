@@ -4,7 +4,15 @@
 // the primary consumer and `shared/decisions.spec.ts` already sets the precedent for a spec that
 // reaches outside its own directory.
 import { describe, it, expect } from 'vitest';
-import { buildTaskPrompt, robotSystemPrompt, VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER, MEMORY_RUNS_DIR } from '@dashboard/shared';
+import {
+  buildTaskPrompt,
+  checkpointExtraTurnsError,
+  robotSystemPrompt,
+  VERIFY_OK_MARKER,
+  SCM_JSON,
+  ASK_HUMAN_MARKER,
+  MEMORY_RUNS_DIR,
+} from '@dashboard/shared';
 
 const base = {
   title: 'Add a thing',
@@ -158,5 +166,47 @@ describe('buildTaskPrompt', () => {
 
     // No resume context ⇒ no answer block.
     expect(buildTaskPrompt(base)).not.toContain('A human answered your earlier question');
+  });
+});
+
+// D-094/PD-737: a Continue tells the new session it is continuing, hands it the report, and makes it
+// verify first; the wording tracks whether the saved work actually came back and was rebased.
+describe('buildTaskPrompt — checkpoint Continue (PD-737)', () => {
+  const withCp = (restored: boolean, rebased: boolean) =>
+    buildTaskPrompt({ ...base, resume: { checkpoint: { report: '**Done:** store.ts\n**Left:** tests', restored, rebased } } });
+
+  it('says it is a continuation, quotes the report, and makes verify the first step', () => {
+    const p = withCp(true, true);
+    expect(p).toMatch(/## You are continuing a previous run/);
+    expect(p).toContain('> **Done:** store.ts');
+    expect(p).toContain('> **Left:** tests');
+    expect(p).toMatch(/Run `npm ci && npm run verify` first/);
+    expect(p).toMatch(/rebased onto current main/);
+    // Ahead of Step 0, so it frames everything after it.
+    expect(p.indexOf('You are continuing')).toBeLessThan(p.indexOf('## Step 0'));
+  });
+
+  it('tells the agent to integrate main itself when the rebase conflicted', () => {
+    expect(withCp(true, false)).toMatch(/Rebasing it onto current main CONFLICTED/);
+  });
+
+  it('says plainly when the saved work could not be restored', () => {
+    expect(withCp(false, false)).toMatch(/could NOT be restored/);
+  });
+
+  it('is absent from an ordinary run', () => {
+    expect(buildTaskPrompt(base)).not.toMatch(/continuing a previous run/);
+  });
+});
+
+describe('checkpointExtraTurnsError (PD-737)', () => {
+  it('accepts 1..200 integers and rejects (never clamps) anything else', () => {
+    expect(checkpointExtraTurnsError(1)).toBeNull();
+    expect(checkpointExtraTurnsError(50)).toBeNull();
+    expect(checkpointExtraTurnsError(200)).toBeNull();
+    expect(checkpointExtraTurnsError(201)).toMatch(/at most 200/);
+    expect(checkpointExtraTurnsError(0)).toMatch(/at least 1/);
+    expect(checkpointExtraTurnsError(2.5)).toMatch(/integer/);
+    expect(checkpointExtraTurnsError('50')).toMatch(/integer/);
   });
 });

@@ -38,6 +38,7 @@
     'stuck',
     'needs-human',
     'awaiting-human',
+    'checkpoint',
     'wontfix',
     'done',
   ];
@@ -60,6 +61,12 @@
       'Fix the blocker or clarify the ticket, then Unstick it to re-queue and retry.',
       "If it's too big or ambiguous, re-scope / split it into smaller tickets and re-queue those.",
       "If it isn't worth continuing, close it as wontfix.",
+    ],
+    checkpoint: [
+      "Click the pill and read the Robot's status report: what is done, what is left, its turn estimate.",
+      'If it is nearly done, Continue: a new run starts from the saved work with more turns (default +50).',
+      'If it went in circles or the approach is wrong, Restart (fresh from main), or edit/split the ticket first.',
+      'The run history shows the cumulative turns across every run of the ticket.',
     ],
     'awaiting-human': [
       "Read the agent's ask_human question (shown inline on the ticket).",
