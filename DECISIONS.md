@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-109](DECISIONS/D-109-path-guard-gates-every-author-again-now-that-any-pr-can-auto-merge.md)** — The path-guard gates every author again, Steve included, now that any PR can auto-merge
 - **[D-108](DECISIONS/D-108-evaluator-per-lens-settlement-separates-error-retry-from-revise-rounds.md)** — Evaluator per-lens settlement separates the one-error retry cap from the revise round cap
 - **[D-107](DECISIONS/D-107-circuit-breaker-pauses-the-loop-after-n-consecutive-deterministic-failures.md)** — A circuit breaker pauses the whole loop after N consecutive deterministic failures across distinct tickets
 - **[D-105](DECISIONS/D-105-deploy-drain-hold-is-its-own-robot-state-slot.md)** — The deploy-drain hold is its own `robot_state` slot, not a reason on the maintenance hold (PD-802)

@@ -506,10 +506,9 @@ Definitions for the sensitive-path guardrail model (D-047).
 > you follow yourself and raise an **ask_human** rather than editing one unprompted. What you
 > must NOT do is what happened in the incident below: assume a control caught something.
 >
-> **The 2026-08-05 author-scoping (D-067) changes nothing for you.** Steve's own PRs no longer
-> need the ack; every Robot PR still does, and a `robot/*` branch is gated no matter whose
-> account opened it. If you read "the guard was relaxed" and conclude your PR will sail through,
-> you are repeating the #268 reasoning error below.
+> **Every PR is gated, whoever opened it (D-109).** Steve's PRs were briefly exempt (D-067); that
+> ended once any PR could auto-merge. There is no author or branch you can open a PR under that
+> skips the ack.
 >
 > This banner exists because of a real incident: on 2026-07-28 a Robot added a dependency to
 > `apps/server/package.json` in PR #268, wrote in its PR body that "the path-guard will flag
@@ -536,14 +535,11 @@ diff touches any **sensitive path**, unless the PR carries the **`sensitive-chan
 label. Runs against the **base branch** (not the PR head) so a PR can't weaken the guard or the
 list in the same change. Authoritative and **runtime-independent** — it inspects the diff, not
 the agent, so it survives an agent-runtime swap.
-**Author-scoped since D-067 (PD-474):** the ack is required on every PR *except* those from an
-author on the workflow's `AUTHORS_EXEMPT` allowlist (in practice Steve) — and never skipped on a
-`robot/*` / `sortie/*` head branch, whoever the author is. An exempt PR still *lists* the
-sensitive paths it touched in the job summary; it just reports green. The check always runs and
-always reports — exemption is a green exit, never a skipped job (a `skipped` conclusion is not
-what a required check expects).
-_Avoid_: describing it as gating "any PR" — it gates **unsupervised-agent** PRs, which is the
-population D-047 drew it against.
+**Gates every author (D-109, PD-912):** Steve's PRs were exempt from 2026-08-05 to 2026-11-22
+(D-067). The exemption was removed once the Evaluator plus `AUTO_MERGE_ALL` could merge any PR
+without him (D-101). The check always runs and always reports: a `skipped` conclusion is not what a
+required check expects.
+_Avoid_: "fixing" its false positives by exempting an author. Narrow the denylist instead (PD-474).
 
 **Guardrail tier**:
 Which enforcement layer a control lives in, split by whether it survives an agent-runtime swap.
@@ -570,8 +566,9 @@ cannot do. Same test for any proposed control: *can the caller decline to use it
 **`sensitive-change-approved`**:
 The GitHub label a write+ collaborator applies to consciously ack a PR that touches a
 **sensitive path**, turning the **path-guard** from red to green. Collaborator-gated (the same
-trust boundary the Robot loop relies on for issue labels); a stranger cannot apply it. Since
-D-067 it is only ever *needed* on a gated PR — Steve's own PRs go green without one.
+trust boundary the Robot loop relies on for issue labels); a stranger cannot apply it. Required on
+every PR that touches a sensitive path, Steve's included (D-109). It is the one manual step left
+on a sensitive change.
 
 ### Decisions
 
