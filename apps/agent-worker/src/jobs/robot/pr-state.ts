@@ -253,6 +253,42 @@ export function inReviewPrTargets(db: Database.Database): InReviewTarget[] {
   return targets;
 }
 
+/** PD-918: the parked agent states whose PR can still merge — by a human finishing it, or because
+ *  the run opened it and was parked anyway. Only MERGED is acted on for these. */
+const PARKED_PR_STATES = ['stuck', 'checkpoint', 'needs-human'] as const;
+
+export interface ParkedPrTarget extends InReviewTarget {
+  fromState: string;
+}
+
+/**
+ * PD-918: parked Robot tickets paired with the PR of their newest run that recorded one, whatever
+ * that run's status. The in-review poll reads only `handed-off` runs of `in-review` tickets, so a
+ * ticket parked with an open PR (PD-901: its PR #496 merged while it sat `stuck`) was invisible to
+ * completion. Merge-only: this set is never re-activated, parked or commented on from here.
+ */
+export function parkedPrTargets(db: Database.Database): ParkedPrTarget[] {
+  const rows = db
+    .prepare(
+      `SELECT t.id AS ticket_id, t.agent_state AS state, r.pr_url AS pr_url
+         FROM agent_tickets t
+         JOIN agent_runs r ON r.id = (
+           SELECT id FROM agent_runs
+            WHERE ticket_id = t.id AND pr_url IS NOT NULL
+            ORDER BY started_at DESC, id DESC LIMIT 1
+         )
+        WHERE t.archived_at IS NULL AND t.status = 'queue' AND t.assignee = 'robot'
+          AND t.agent_state IN (${PARKED_PR_STATES.map(() => '?').join(', ')})`,
+    )
+    .all(...PARKED_PR_STATES) as { ticket_id: number; state: string; pr_url: string | null }[];
+  const targets: ParkedPrTarget[] = [];
+  for (const row of rows) {
+    const parsed = parsePrUrl(row.pr_url);
+    if (parsed) targets.push({ ticketId: row.ticket_id, repo: parsed.repo, prNumber: parsed.prNumber, fromState: row.state });
+  }
+  return targets;
+}
+
 const PR_POLL_LAST = 'pr_poll_last';
 
 /**
@@ -317,6 +353,25 @@ export async function pollInReviewPrs(
     );
     logger.info({ ticketId: target.ticketId, reason: decision.reason, prNumber: target.prNumber }, 'robot: in-review PR needs rework — re-activated');
     reactivated++;
+  }
+
+  // PD-918: a parked ticket whose PR merged anyway is done. Merge-only, same throttle as above.
+  // Read after the in-review loop, so a ticket that loop just moved is not seen twice.
+  for (const target of parkedPrTargets(db)) {
+    const pr = await fetcher(target.repo, target.prNumber);
+    if (pr?.state !== 'MERGED') continue;
+    completeTicket(db, target.ticketId, now);
+    logMilestone(
+      db,
+      target.ticketId,
+      ROBOT_EVENT.completed,
+      { prNumber: target.prNumber, via: 'parked_pr_merged', fromState: target.fromState },
+      now,
+    );
+    logger.info(
+      { ticketId: target.ticketId, prNumber: target.prNumber, fromState: target.fromState },
+      'robot: a parked ticket’s PR merged — ticket completed',
+    );
   }
   return reactivated;
 }

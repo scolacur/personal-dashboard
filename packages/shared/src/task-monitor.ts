@@ -2343,4 +2343,11 @@ export interface RobotEventDetail {
   turns?: number;
   /** D-094/PD-737: the turn ceiling a Continue grants the next run (`robot_checkpoint_continue`). */
   extraTurns?: number;
+  /** PD-917: on a `robot_handoff`, the SDK error the session ended with AFTER handing off (e.g. it
+   *  hit the turn ceiling while writing its run memory). The hand-off stands. */
+  lateError?: string;
+  /** PD-918: on a `robot_completed`, how completion was noticed (`parked_pr_merged` = the parked-PR
+   *  merge sweep) and the agent state the ticket was parked in. Absent = the in-review path. */
+  via?: string;
+  fromState?: string;
 }

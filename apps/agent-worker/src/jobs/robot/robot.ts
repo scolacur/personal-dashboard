@@ -387,7 +387,9 @@ export async function processRobotQueue(
       error: string | undefined,
       // `outputTail` (PD-426) is the evidence a failed run leaves behind. The catch path below
       // has no session result and passes none, which stores null — correct: nothing was captured.
-      metrics: { turns?: number; tokens?: number; outputTail?: string } = {},
+      // PD-918: `prUrl` when the run opened a PR even though it did not hand off, so a parked ticket
+      // still points at its PR and the parked-PR merge sweep (pr-state.ts) can complete it.
+      metrics: { turns?: number; tokens?: number; outputTail?: string; prUrl?: string } = {},
       // PD-737/T898: the WIP ref this run preserved its work to (or null). Recorded on the run row
       // and surfaced in whichever milestone this failure writes, so a human can `git fetch` it.
       wip: WipRef | null = null,
@@ -411,6 +413,7 @@ export async function processRobotQueue(
           turns: metrics.turns,
           tokens: metrics.tokens,
           outputTail: metrics.outputTail,
+          prUrl: metrics.prUrl ?? null,
           wipRef: wip?.ref ?? null,
           wipSha: wip?.sha ?? null,
         },
@@ -635,8 +638,15 @@ export async function processRobotQueue(
       );
       // Spread into finishRun on every terminal path, so the captured tail (PD-426) lands on the
       // run row before the `finally` below removes the worktree.
-      const metrics = { turns: result.turns, tokens: result.tokens, outputTail: result.outputTail };
-      const handoffReady = result.ok && result.verifyOk && result.prNumber !== undefined;
+      // PD-918: the PR the run opened, if any, recorded on the run row whatever the outcome.
+      const prUrl = result.prNumber !== undefined ? `https://github.com/${candidate.repo}/pull/${result.prNumber}` : undefined;
+      const metrics = { turns: result.turns, tokens: result.tokens, outputTail: result.outputTail, ...(prUrl ? { prUrl } : {}) };
+      // PD-917: the hand-off on DISK is authoritative, not the session's exit status (D-046 — the loop
+      // never takes the session's word for success). A run that went green, pushed and opened its PR
+      // and THEN errored (the turn ceiling while writing its run memory, PD-901; a late crash) has
+      // handed off. Requiring `result.ok` here parked a finished PR as `stuck`. Both markers are wiped
+      // when a clone is reused (`ensureWorktree`), so they can only have come from this run.
+      const handoffReady = result.verifyOk && result.prNumber !== undefined;
 
       if (abortReason() === ABORT_HUNG) {
         await leaveReclaimed();
@@ -660,16 +670,18 @@ export async function processRobotQueue(
         logMilestone(db, candidate.id, ROBOT_EVENT.askHuman, { question: result.askHuman, ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}) }, now());
         notifyAwaitingHuman(db, candidate.id, 'Robot asked a question', result.askHuman, now());
         logger.info({ ticketId: candidate.id, question: result.askHuman.slice(0, 200) }, 'robot: ask_human — parked (awaiting-human)');
-      } else if (handoffReady && result.prNumber !== undefined) {
-        const prUrl = `https://github.com/${candidate.repo}/pull/${result.prNumber}`;
-        finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, prUrl, ...metrics }, now());
+      } else if (handoffReady && prUrl) {
+        // PD-917: keep a late SDK error on the row and the milestone — the run handed off, but it did
+        // not end cleanly, and that is worth seeing on the timeline.
+        const lateError = result.ok ? undefined : (result.error ?? 'session ended with an error after hand-off');
+        finishRun(db, runId, { status: 'handed-off', sessionId: result.sessionId, error: lateError, ...metrics }, now());
         handedOff = true;
         setAgentState(db, candidate.id, 'in-review', now());
         // Circuit breaker (t974, D-107): a successful hand-off breaks the "consecutive" chain, so the
         // deterministic-failure streak resets. Only a success does — a transient retry leaves it be.
         resetBreaker(db, now());
         dispatched++;
-        logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl }, now());
+        logMilestone(db, candidate.id, ROBOT_EVENT.handoff, { branch, prUrl, ...(lateError ? { lateError } : {}) }, now());
         // PD-773: the Robot asked for Steve's visual check; the PR waits for it (see visual/gate.ts).
         if (result.visualReview) {
           logMilestone(db, candidate.id, ROBOT_EVENT.visualReviewRequested, { prNumber: result.prNumber, by: 'robot', reason: result.visualReview }, now());
