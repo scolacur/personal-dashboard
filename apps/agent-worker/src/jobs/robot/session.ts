@@ -262,7 +262,7 @@ export async function runRobotSession(
   worktree: Worktree,
   resume: ResumeContext | undefined = undefined,
   runQuery: RunQuery = query,
-  onProgress?: (turns: number) => void,
+  onProgress?: (turns: number, tokens?: number) => void,
   // PD-564: the worker's DB handle, used only to build the decision-id tool. Optional and last so
   // the existing positional call sites are untouched; the loop always passes it, and
   // `robot.spec.ts` guards that it does — an absent handle silently costs the Robot its ability to
@@ -307,6 +307,11 @@ export async function runRobotSession(
    *  messages counted defensively below. */
   let liveTurns = 0;
   const seenTurnIds = new Set<string>();
+  /** PD-898: running input+output token total, summed once per distinct turn (same dedupe as
+   *  `liveTurns` — every content-block message of a turn repeats that turn's usage). Undefined until
+   *  a message carries usage, so a shape change reports "unknown", never a false 0. An approximation
+   *  like `liveTurns`: finishRun overwrites it with the result message's authoritative usage. */
+  let liveTokens: number | undefined;
   /** Rolling tail of what the session said and ran (PD-426). */
   let outputTail = '';
 
@@ -387,8 +392,16 @@ export async function runRobotSession(
         }
         if (advanced) {
           liveTurns += 1;
+          const usage = (message as { message?: { usage?: { input_tokens?: unknown; output_tokens?: unknown } } })
+            .message?.usage;
+          if (usage) {
+            const n =
+              (typeof usage.input_tokens === 'number' ? usage.input_tokens : 0) +
+              (typeof usage.output_tokens === 'number' ? usage.output_tokens : 0);
+            liveTokens = (liveTokens ?? 0) + n;
+          }
           try {
-            onProgress(liveTurns);
+            onProgress(liveTurns, liveTokens);
           } catch (err) {
             logger.warn({ err, ticketId: candidate.id }, 'robot: turn-progress report failed');
           }

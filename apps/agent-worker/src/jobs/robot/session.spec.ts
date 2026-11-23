@@ -324,6 +324,47 @@ describe('runRobotSession', () => {
     expect(res.turns).toBe(2);
   });
 
+  // PD-898: live token total, summed once per distinct turn — the content-block messages of one
+  // turn all repeat its usage, so summing per message would multiply it.
+  it('reports a live token total, counted once per turn', async () => {
+    const usage1 = { input_tokens: 1000, output_tokens: 200 };
+    const usage2 = { input_tokens: 300, output_tokens: 50 };
+    const fake: RunQuery = (async function* () {
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', usage: usage1 } } as never;
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', usage: usage1 } } as never;
+      // sub-agent usage is not the main loop's
+      yield { type: 'assistant', parent_tool_use_id: 'toolu_x', message: { id: 'msg_s', usage: usage1 } } as never;
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_2', usage: usage2 } } as never;
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        session_id: 's',
+        num_turns: 2,
+        usage: { input_tokens: 1400, output_tokens: 260 },
+      } as never;
+    }) as unknown as RunQuery;
+
+    const seen: Array<[number, number | undefined]> = [];
+    const res = await runRobotSession(config, candidate, worktree, undefined, fake, (t, k) => seen.push([t, k]));
+
+    expect(seen).toEqual([
+      [1, 1200],
+      [2, 1550],
+    ]);
+    expect(res.tokens).toBe(1660); // the result's authoritative usage still wins
+  });
+
+  it('reports tokens as unknown (undefined), not 0, when messages carry no usage', async () => {
+    const fake: RunQuery = (async function* () {
+      yield { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1' } } as never;
+      yield { type: 'result', subtype: 'success', is_error: false, session_id: 's', num_turns: 1 } as never;
+    }) as unknown as RunQuery;
+    const seen: Array<[number, number | undefined]> = [];
+    await runRobotSession(config, candidate, worktree, undefined, fake, (t, k) => seen.push([t, k]));
+    expect(seen).toEqual([[1, undefined]]);
+  });
+
   // T-902: defensive fallback — a message with no id can't be deduped, so it counts as before.
   // This keeps an SDK shape change degrading to the old per-message behaviour, never to zero.
   it('still counts top-level assistant messages that carry no id', async () => {

@@ -97,8 +97,9 @@ export interface RobotDeps {
     c: RobotCandidate,
     wt: Worktree,
     resume: ResumeContext | undefined,
-    /** PD-230: called as the session streams, with the live turn count. */
-    onProgress?: (turns: number) => void,
+    /** PD-230: called as the session streams, with the live turn count (and, PD-898, the live
+     *  token total when the stream carries usage). */
+    onProgress?: (turns: number, tokens?: number) => void,
     /** PD-784/D-104: aborts the session on a graceful stop. The default (real) session wires it to
      *  the SDK; an injected session may trigger `shutdown.request()` to simulate a SIGTERM. */
     abort?: AbortController,
@@ -510,8 +511,8 @@ export async function processRobotQueue(
         candidate,
         worktree,
         resumeCtx,
-        (turns) => {
-          updateRunProgress(db, runId, turns);
+        (turns, tokens) => {
+          updateRunProgress(db, runId, turns, tokens);
           ownership.progress(runId, now());
         },
         abort,

@@ -169,6 +169,20 @@ describe('updateRunProgress (PD-230)', () => {
   it('is a no-op for an unknown run id', () => {
     expect(() => updateRunProgress(db, 9999, 5)).not.toThrow();
   });
+
+  // PD-898: live tokens share the turns write.
+  it('records live tokens alongside turns, and keeps the last total when a call carries none', () => {
+    const runId = startRun(db, { ticketId: 1, issueNumber: null, branch: 'robot/t1' });
+    updateRunProgress(db, runId, 1, 1200);
+    expect(listRunsForTicket(db, 1)[0]).toMatchObject({ turns: 1, tokens: 1200 });
+
+    updateRunProgress(db, runId, 2);
+    expect(listRunsForTicket(db, 1)[0]).toMatchObject({ turns: 2, tokens: 1200 });
+
+    finishRun(db, runId, { status: 'handed-off', turns: 2, tokens: 5000 });
+    updateRunProgress(db, runId, 3, 9999); // late callback after finish — ignored
+    expect(listRunsForTicket(db, 1)[0]).toMatchObject({ turns: 2, tokens: 5000 });
+  });
 });
 
 // ── PD-426: output_tail column ───────────────────────────────────────────────
