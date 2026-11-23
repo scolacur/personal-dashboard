@@ -285,6 +285,8 @@ describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notif
         runAgent,
         comment: async (_r: string, _n: number, body: string) => void comments.push(body),
         postStatus: async (_r: string, sha: string, s: { state: string }) => (statuses.push({ sha, state: s.state }), true),
+        // Never the real reader: it shells out to `gh`, which is unauthenticated in CI (PD-914 x PD-884).
+        readStatus: async (): Promise<StatusRead> => ({ ok: true, current: null }),
       },
     };
   }
