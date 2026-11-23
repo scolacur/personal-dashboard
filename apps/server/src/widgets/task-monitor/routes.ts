@@ -76,6 +76,7 @@ import {
 } from './ticket-guards';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
+import { getRunReport, getVelocityReport, type VelocityFilter } from './velocity-store';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 import { listAwaitingVisual, recordVisualReview } from './visual-review';
@@ -414,7 +415,10 @@ export function registerRoutes(
       if (typeof body.autoQueueExcluded !== 'boolean') {
         return reply
           .status(400)
-          .send({ error: 'autoQueueExcluded must be a boolean', code: 'INVALID_AUTO_QUEUE_EXCLUDED' });
+          .send({
+            error: 'autoQueueExcluded must be a boolean',
+            code: 'INVALID_AUTO_QUEUE_EXCLUDED',
+          });
       }
       patch.autoQueueExcluded = body.autoQueueExcluded;
     }
@@ -707,10 +711,14 @@ export function registerRoutes(
     // text the agent reads, so the agent-worker consumes them exactly like a typed reply.
     if (body.answers !== undefined) {
       if (!Array.isArray(body.answers)) {
-        return reply.status(400).send({ error: 'answers must be an array', code: 'INVALID_ANSWERS' });
+        return reply
+          .status(400)
+          .send({ error: 'answers must be an array', code: 'INVALID_ANSWERS' });
       }
       if (body.overruled !== undefined && !Array.isArray(body.overruled)) {
-        return reply.status(400).send({ error: 'overruled must be an array', code: 'INVALID_ANSWERS' });
+        return reply
+          .status(400)
+          .send({ error: 'overruled must be an array', code: 'INVALID_ANSWERS' });
       }
       if (body.note !== undefined && typeof body.note !== 'string') {
         return reply.status(400).send({ error: 'note must be a string', code: 'INVALID_ANSWERS' });
@@ -725,9 +733,16 @@ export function registerRoutes(
           return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
         }
         if (result.reason === 'no_open_round') {
-          return reply.status(409).send({ error: 'there is no open question round to answer', code: 'NO_OPEN_ROUND' });
+          return reply
+            .status(409)
+            .send({ error: 'there is no open question round to answer', code: 'NO_OPEN_ROUND' });
         }
-        return reply.status(400).send({ error: 'message' in result ? result.message : 'invalid answers', code: 'INVALID_ANSWERS' });
+        return reply
+          .status(400)
+          .send({
+            error: 'message' in result ? result.message : 'invalid answers',
+            code: 'INVALID_ANSWERS',
+          });
       }
       return reply.status(201).send(result.event);
     }
@@ -758,7 +773,9 @@ export function registerRoutes(
     const id = Number((request.params as { id: string }).id);
     const body = (request.body ?? {}) as { approved?: unknown; note?: unknown };
     if (typeof body.approved !== 'boolean') {
-      return reply.status(400).send({ error: 'approved must be true or false', code: 'INVALID_BODY' });
+      return reply
+        .status(400)
+        .send({ error: 'approved must be true or false', code: 'INVALID_BODY' });
     }
     if (body.note !== undefined && typeof body.note !== 'string') {
       return reply.status(400).send({ error: 'note must be a string', code: 'INVALID_BODY' });
@@ -771,7 +788,9 @@ export function registerRoutes(
     if (!result.ok) {
       return result.reason === 'not_found'
         ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
-        : reply.status(409).send({ error: 'this ticket is not waiting for a visual check', code: 'NOT_WAITING' });
+        : reply
+            .status(409)
+            .send({ error: 'this ticket is not waiting for a visual check', code: 'NOT_WAITING' });
     }
     return reply.status(201).send({ eventId: result.eventId });
   });
@@ -779,7 +798,8 @@ export function registerRoutes(
   // PD-748: switch an Epic in or out of the Refine backfill; its members inherit it.
   app.post(`${base}/tickets/:id/backfill-exclude`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
-    if (!Number.isInteger(id)) return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     const body = (request.body ?? {}) as Record<string, unknown>;
     if (typeof body.excluded !== 'boolean') {
       return reply.status(400).send({ error: 'excluded must be a boolean', code: 'INVALID_BODY' });
@@ -788,7 +808,9 @@ export function registerRoutes(
     if (!result.ok) {
       return result.reason === 'not_found'
         ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
-        : reply.status(400).send({ error: 'only an Epic can be excluded from the backfill', code: 'NOT_EPIC' });
+        : reply
+            .status(400)
+            .send({ error: 'only an Epic can be excluded from the backfill', code: 'NOT_EPIC' });
     }
     return result.ticket;
   });
@@ -806,8 +828,12 @@ export function registerRoutes(
         return reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' });
       }
       return result.reason === 'no_session'
-        ? reply.status(409).send({ error: 'this ticket has no Refine session to park', code: 'NO_SESSION' })
-        : reply.status(409).send({ error: 'this Refine session has already ended', code: 'ALREADY_ENDED' });
+        ? reply
+            .status(409)
+            .send({ error: 'this ticket has no Refine session to park', code: 'NO_SESSION' })
+        : reply
+            .status(409)
+            .send({ error: 'this Refine session has already ended', code: 'ALREADY_ENDED' });
     }
     return reply.status(201).send(result.event);
   });
@@ -1032,4 +1058,35 @@ export function registerRoutes(
     // PD-747: the Refine auto-start scheduler — open sessions against the cap, the queue, what holds it.
     refineAutostart: getRefineAutostartStatus(db),
   }));
+
+  // ── Velocity (Epic PD-895) — cross-ticket aggregates for /devops/velocity ─────
+  // Optional query: ?projectId=<n>&from=<unix ms>&to=<unix ms>. Read-only.
+  function velocityFilter(query: unknown): VelocityFilter | string {
+    const q = (query ?? {}) as Record<string, string | undefined>;
+    const out: VelocityFilter = {};
+    for (const key of ['projectId', 'from', 'to'] as const) {
+      const raw = q[key];
+      if (raw === undefined || raw === '') continue;
+      const n = Number(raw);
+      if (!Number.isInteger(n)) return key;
+      out[key] = n;
+    }
+    return out;
+  }
+
+  app.get(`${base}/velocity`, async (request, reply) => {
+    const filter = velocityFilter(request.query);
+    if (typeof filter === 'string') {
+      return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
+    }
+    return getVelocityReport(db, filter);
+  });
+
+  app.get(`${base}/velocity/runs`, async (request, reply) => {
+    const filter = velocityFilter(request.query);
+    if (typeof filter === 'string') {
+      return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
+    }
+    return getRunReport(db, filter);
+  });
 }
