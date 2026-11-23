@@ -188,6 +188,20 @@ describe('evaluateNextOtherPr (PD-712)', () => {
     expect(h.runAgent).toHaveBeenCalledTimes(2);
   });
 
+  it('honours a configured round cap above the default (PD-761)', async () => {
+    // With EVALUATOR_MAX_ROUNDS=3, a third head is still reviewed where the default cap of 2 stops.
+    const h = deps(revise);
+    const c = cfg({ maxRounds: 3 });
+    await evaluateNextOtherPr(db, c, 1000, h.d);
+    const second = { ...h.d, listPrs: async () => [pr({ headRefOid: 'b'.repeat(40) })], fetchHeadSha: async () => 'b'.repeat(40) };
+    expect((await evaluateNextOtherPr(db, c, 2000, second))?.verdict).toBe('revise');
+    const third = { ...h.d, listPrs: async () => [pr({ headRefOid: 'c'.repeat(40) })], fetchHeadSha: async () => 'c'.repeat(40) };
+    expect((await evaluateNextOtherPr(db, c, 3000, third))?.verdict).toBe('revise'); // 3rd round allowed
+    const fourth = { ...h.d, listPrs: async () => [pr({ headRefOid: 'd'.repeat(40) })], fetchHeadSha: async () => 'd'.repeat(40) };
+    expect(await evaluateNextOtherPr(db, c, 4000, fourth)).toBeUndefined(); // 3 rounds used
+    expect(h.runAgent).toHaveBeenCalledTimes(3);
+  });
+
   it('drops a review whose head moved before the diff was read, with no verdict and no status', async () => {
     const h = deps(ship);
     const out = await evaluateNextOtherPr(db, cfg(), 1000, { ...h.d, fetchHeadSha: async () => 'f'.repeat(40) });
@@ -256,6 +270,12 @@ describe('acceptanceBrief (PD-804)', () => {
 
 describe('verdictComment', () => {
   it('says a failed review is neither ship nor revise', () => {
-    expect(verdictComment(null, 1, [])).toMatch(/no usable verdict/);
+    expect(verdictComment(null, 1, [], 2)).toMatch(/no usable verdict/);
+  });
+
+  it('states the configured round cap in the revise text (PD-761)', () => {
+    const report = { verdict: 'revise' as const, summary: 'Needs work.', findings: [] };
+    expect(verdictComment(report, 1, [], 2)).toContain('up to 2 rounds');
+    expect(verdictComment(report, 1, [], 5)).toContain('up to 5 rounds');
   });
 });

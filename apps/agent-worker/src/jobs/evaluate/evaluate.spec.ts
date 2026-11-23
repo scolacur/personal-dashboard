@@ -16,6 +16,7 @@ import {
   recentEvaluatorRuns,
   startEvaluatorRun,
   updateEvaluatorRunProgress,
+  lensNeedsRun,
 } from './evaluator-runs';
 import { pendingEvaluatorBrief } from './brief';
 import { MAX_EVALUATION_ROUNDS } from './verdict';
@@ -141,17 +142,51 @@ describe('evaluateOnePr — failures never approve and never advance', () => {
 });
 
 describe('the round cap', () => {
+  /** Drive `n` revise rounds, re-arming the PR to in-review before each so a round is reviewable. */
+  async function driveReviseRounds(cfg: AgentWorkerConfig, n: number) {
+    for (let i = 0; i < n; i++) {
+      db.prepare("UPDATE agent_tickets SET agent_state = 'in-review' WHERE id = 1").run();
+      await evaluateOnePr(db, cfg, TARGET, { runAgent: fakeAgent(reviseReply), fetchDiff: async () => 'd' }, 200 + i);
+    }
+  }
+
   it('stops re-queueing once the cap is reached, and leaves the finding for the human', async () => {
     // A revise → rework → hand-off → revise cycle is unbounded without this (PD-420 by a new road).
-    for (let i = 0; i < MAX_EVALUATION_ROUNDS; i++) {
-      db.prepare("UPDATE agent_tickets SET agent_state = 'in-review' WHERE id = 1").run();
-      await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(reviseReply), fetchDiff: async () => 'd' }, 200 + i);
-    }
+    await driveReviseRounds(config(), MAX_EVALUATION_ROUNDS);
     const reactivations = eventsOfType('robot_reactivated').length;
     expect(reactivations).toBe(MAX_EVALUATION_ROUNDS - 1);
     // The verdict is still recorded on the final round — the human sees it, it just isn't acted on.
     expect(eventsOfType('robot_evaluated')).toHaveLength(MAX_EVALUATION_ROUNDS);
     expect(agentState()).toBe('in-review');
+  });
+
+  it('defaults to 2 when EVALUATOR_MAX_ROUNDS is unset (behaviour unchanged, PD-761)', () => {
+    // The whole ticket: the production value does not move. An unset env yields the old cap.
+    expect(loadConfig({}).evaluator.maxRounds).toBe(2);
+  });
+
+  it('honours a higher configured cap, re-queueing where the default would stop (PD-761)', async () => {
+    // With EVALUATOR_MAX_ROUNDS=3, a third revise is still re-worked rather than left for the human.
+    await driveReviseRounds(config({ maxRounds: 3 }), 3);
+    expect(eventsOfType('robot_reactivated')).toHaveLength(2); // rounds 1 and 2 re-queued; round 3 at the cap
+    expect(eventsOfType('robot_evaluated')).toHaveLength(3);
+    expect(agentState()).toBe('in-review');
+  });
+
+  it('a configured cap of 3 is honoured end-to-end from the env var', async () => {
+    // Via loadConfig, not a hand-built object — proves EVALUATOR_MAX_ROUNDS reaches the review path.
+    const base = loadConfig({ EVALUATOR_MAX_ROUNDS: '3' });
+    const cfg = { ...base, evaluator: { ...base.evaluator, enabled: true, intervalMs: 0, securityEnabled: false, allPrs: false } };
+    expect(cfg.evaluator.maxRounds).toBe(3);
+    await driveReviseRounds(cfg, 2);
+    // At round 2 the default-2 cap would already have stopped; with cap 3 both rounds re-queue.
+    expect(eventsOfType('robot_reactivated')).toHaveLength(2);
+  });
+
+  it('falls back to 2 on an invalid EVALUATOR_MAX_ROUNDS (PD-761)', () => {
+    for (const bad of ['0', '-1', 'abc', '2.5', ' ']) {
+      expect(loadConfig({ EVALUATOR_MAX_ROUNDS: bad }).evaluator.maxRounds).toBe(2);
+    }
   });
 });
 
@@ -591,5 +626,18 @@ describe('one error retry per lens, per review cycle (PD-883)', () => {
     expect(err).toMatch(/unparseable/);
     expect(err.length).toBeGreaterThan(500); // not the old 500-char slice
     expect(err.length).toBeLessThanOrEqual(20_100); // bounded by the ~20k cap (+ short prefix)
+  });
+});
+
+describe('lensNeedsRun honours the configured round cap (PD-761)', () => {
+  const revisedTwice = { verdictRuns: 2, errorRuns: 0, hasTerminalVerdict: false };
+
+  it('settles at the default cap when none is given', () => {
+    expect(lensNeedsRun(revisedTwice)).toBe(false);
+  });
+
+  it('keeps a lens running past the default when EVALUATOR_MAX_ROUNDS raises the cap', () => {
+    expect(lensNeedsRun(revisedTwice, 4)).toBe(true);
+    expect(lensNeedsRun({ ...revisedTwice, verdictRuns: 4 }, 4)).toBe(false);
   });
 });
