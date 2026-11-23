@@ -206,6 +206,8 @@ export {
   ROBOT_MAX_TURNS_LIMIT,
   TURN_WARN_FRACTION,
   TURN_PROGRESS_STATES,
+  CHECKPOINT_CONTINUE_TURNS_DEFAULT,
+  checkpointExtraTurnsError,
   turnProgress,
   showsTurnProgress,
   isReady,

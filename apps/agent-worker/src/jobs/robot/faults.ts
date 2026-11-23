@@ -168,6 +168,15 @@ export function parseRateLimitReset(error: string, now: number): number | null {
 /** "Reached maximum number of turns (N)" — the Agent SDK's per-run turn-ceiling error. */
 const MAX_TURNS_PATTERN = /maximum number of turns|max_turns|reached the turn limit/i;
 
+/**
+ * D-094/PD-737: did this session end because it reached its turn ceiling? The loop routes that to a
+ * **checkpoint** instead of through `classifyFault`/`decideFault` — it is "not finished yet", not a
+ * failure, and burns no retry. Same pattern the classifier uses, so the two can never disagree.
+ */
+export function isTurnCeiling(error: string | undefined | null): boolean {
+  return !!error && MAX_TURNS_PATTERN.test(error);
+}
+
 /* ── Infrastructure faults (PD-784, D-104) ─────────────────────────────────────
  * Two events that are about the worker, not the ticket's code. They are set explicitly by the stall
  * reconciler and the loop's shutdown path (never via `normalizeSignature`), so each is a stable key.

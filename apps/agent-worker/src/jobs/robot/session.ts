@@ -428,3 +428,109 @@ export async function runRobotSession(
   // stays null rather than storing a meaningless empty string.
   return { ok, sessionId, error, turns, tokens, outputTail: outputTail || undefined, ...handoff };
 }
+
+/**
+ * D-094/PD-737: the checkpoint status report.
+ *
+ * When a run reaches its turn ceiling the loop resumes THE SAME session (`resume: sessionId`, so the
+ * agent still remembers everything it did) for a few turns with one instruction: stop and report.
+ * The loop drives this, not the agent's own self-tracking, because agents do not reliably count their
+ * turns and the ceiling is a hard stop (D-094's rejected alternative).
+ *
+ * **No code changes, by construction:** the session only has the read-only tools. Telling it "don't
+ * edit" is not enough on a step whose whole point is that the tree is about to be saved as-is.
+ */
+export const STATUS_REPORT_TOOLS: readonly string[] = ['Read', 'Glob', 'Grep'];
+/** Turns the report step may use. Enough to glance at a file it wants to cite; not enough to work. */
+export const STATUS_REPORT_MAX_TURNS = 3;
+/** Wall-clock bound on the report step, so a hung resume cannot hold the loop's cycle. */
+export const STATUS_REPORT_TIMEOUT_MS = 3 * 60_000;
+
+export const STATUS_REPORT_PROMPT = [
+  'STOP WORKING. You have reached the turn limit for this run. Do not change any files.',
+  '',
+  'Your work so far will be saved, and a human will decide whether a new run continues from it or',
+  'starts over. Write them a status report, in this shape:',
+  '',
+  '**Done:** what is implemented and working.',
+  '**Left:** what remains to finish the ticket, as concrete steps.',
+  '**Blocking:** anything that stopped or slowed you (or "nothing").',
+  "**Verify:** the last result of `npm run verify` you saw (or that you hadn't run it).",
+  '**Estimate:** how many more turns you think a continuation needs.',
+  '',
+  'Reply with the report only.',
+].join('\n');
+
+export interface StatusReportResult {
+  /** The report text, or undefined when the step produced none. */
+  report?: string;
+  /** Why the step failed, when it did (the loop then falls back to the output tail). */
+  error?: string;
+}
+
+/**
+ * Resume `sessionId` read-only for a short, bounded report. Never throws: any failure (resume not
+ * possible, timeout, empty reply) comes back as `{ error }` so the caller can fall back.
+ */
+export async function runStatusReport(
+  config: AgentWorkerConfig,
+  candidate: RobotCandidate,
+  worktree: Worktree,
+  sessionId: string,
+  runQuery: RunQuery = query,
+  timeoutMs: number = STATUS_REPORT_TIMEOUT_MS,
+): Promise<StatusReportResult> {
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort('status-report timeout'), timeoutMs);
+  let resultText: string | undefined;
+  let lastAssistantText = '';
+  let error: string | undefined;
+  try {
+    for await (const message of runQuery({
+      prompt: STATUS_REPORT_PROMPT,
+      options: {
+        model: config.model,
+        cwd: worktree.dir,
+        resume: sessionId,
+        abortController,
+        tools: [...STATUS_REPORT_TOOLS],
+        maxTurns: STATUS_REPORT_MAX_TURNS,
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        env: codingEnv(config),
+        spawnClaudeCodeProcess: makeCodingSpawn(config),
+      },
+    }) as AsyncIterable<SDKMessage>) {
+      if (message.type === 'assistant' && message.parent_tool_use_id == null) {
+        // Keep only text blocks: the report is what the agent SAYS, not the files it read.
+        const content = (message as { message?: { content?: unknown } }).message?.content;
+        if (Array.isArray(content)) {
+          const text = content
+            .filter((b): b is { type: 'text'; text: string } => (b as { type?: string }).type === 'text')
+            .map((b) => b.text)
+            .join('\n')
+            .trim();
+          if (text) lastAssistantText = text;
+        }
+      }
+      if (message.type === 'result') {
+        const r = message as { subtype?: string; is_error?: boolean; result?: unknown; errors?: string[] };
+        if (r.subtype === 'success' && !r.is_error && typeof r.result === 'string' && r.result.trim()) {
+          resultText = r.result.trim();
+        } else if (r.subtype !== 'success') {
+          error = (r.errors ?? []).join('; ') || r.subtype;
+        }
+      }
+    }
+  } catch (err) {
+    error = abortController.signal.aborted ? 'status report timed out' : err instanceof Error ? err.message : String(err);
+  } finally {
+    clearTimeout(timer);
+  }
+  // A report the agent wrote but whose 3-turn step then hit ITS ceiling is still a report: prefer the
+  // result text, else the last thing it said.
+  const report = resultText ?? (lastAssistantText || undefined);
+  if (report) return { report };
+  logger.warn({ ticketId: candidate.id, error }, 'robot: checkpoint status report step produced no report');
+  return { error: error ?? 'the report step produced no text' };
+}

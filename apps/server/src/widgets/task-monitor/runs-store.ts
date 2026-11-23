@@ -26,6 +26,7 @@ interface AgentRunRow {
   output_tail: string | null;
   wip_ref?: string | null;
   wip_sha?: string | null;
+  status_report?: string | null;
   started_at: number;
   finished_at: number | null;
 }
@@ -51,6 +52,8 @@ function rowToRun(r: AgentRunRow): AgentRun {
     // `?? null` rather than a bare read: a pre-T898 row selected by `SELECT *` has no wip_* keys.
     wipRef: r.wip_ref ?? null,
     wipSha: r.wip_sha ?? null,
+    // D-094/PD-737: absent on rows the worker wrote before the column existed.
+    statusReport: r.status_report ?? null,
     startedAt: r.started_at,
     finishedAt: r.finished_at,
   };

@@ -11,12 +11,13 @@ import { AGENT_STATE_DESCRIPTIONS, ROBOT_EVENT } from '@dashboard/shared';
  * only transforms `.ts` (no Svelte plugin — see apps/web/vitest.config.ts), so keeping the content
  * logic here is what makes it testable; `StatusActionModal.svelte` is a thin renderer over it.
  *
- * Adding a state is ONE registry entry: PD-737 (the turn ceiling is a checkpoint) slots `checkpoint`
- * in with a `status-report` words source and Continue / Restart actions — see the commented slot.
+ * Adding a state is ONE registry entry — `checkpoint` (PD-737, the turn ceiling is a checkpoint) was
+ * the first added this way, with a `status-report` words source and Continue / Restart actions.
  */
 
-/** The remediation a state's button triggers. `open-pr` is a link, not a server call. */
-export type StatusActionKind = 'unstick' | 'reset' | 'open-pr';
+/** The remediation a state's button triggers. `open-pr` is a link, not a server call. `continue` /
+ *  `restart` answer a checkpoint (D-094); `continue` carries an editable extra-turns count. */
+export type StatusActionKind = 'unstick' | 'reset' | 'open-pr' | 'continue' | 'restart';
 
 export interface StatusActionButton {
   kind: StatusActionKind;
@@ -98,15 +99,23 @@ export const STATUS_ACTION_REGISTRY: Partial<Record<AgentState, StatusActionEntr
     ],
     reply: false,
   },
-  // PD-737 (the turn ceiling is a checkpoint, D-094) adds one more entry here:
-  //   checkpoint: {
-  //     state: 'checkpoint',
-  //     title: 'Hit the turn ceiling',
-  //     description: AGENT_STATE_DESCRIPTIONS.checkpoint,
-  //     words: { source: 'status-report', label: 'The Robot reported:', collapsed: false, ... },
-  //     actions: [{ kind: 'continue', ... }, { kind: 'restart', ... }],
-  //     reply: false,
-  //   },
+  // PD-737 (the turn ceiling is a checkpoint, D-094).
+  checkpoint: {
+    state: 'checkpoint',
+    title: 'Hit the turn ceiling',
+    description: AGENT_STATE_DESCRIPTIONS.checkpoint,
+    words: {
+      source: 'status-report',
+      label: 'The Robot reported:',
+      collapsed: false,
+      emptyFallback: 'No status report was recorded for this checkpoint.',
+    },
+    actions: [
+      { kind: 'continue', label: 'Continue' },
+      { kind: 'restart', label: 'Restart' },
+    ],
+    reply: false,
+  },
 };
 
 /** Does clicking this state's pill open the modal (vs. its PD-619 destination)? */
@@ -140,6 +149,9 @@ export function parkReason(events: TicketEvent[], runs: AgentRun[]): string | nu
         : 'The PR was closed without merging.';
     }
     if (e.type === ROBOT_EVENT.parked) return d.reason ?? 'The run was parked.';
+    if (e.type === ROBOT_EVENT.checkpoint) {
+      return d.reason ? `Checkpoint: ${d.reason}.` : 'The run reached its turn ceiling.';
+    }
     if (e.type === ROBOT_EVENT.stalled) {
       return d.reason ? `Stalled run: ${d.reason}` : 'The run stalled and was parked.';
     }
@@ -153,6 +165,22 @@ export function askQuestion(events: TicketEvent[]): string | null {
     if (events[i].type === ROBOT_EVENT.askHuman) {
       const q = (events[i].detail as RobotEventDetail | null)?.question;
       return typeof q === 'string' && q.trim() ? q : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * The checkpoint's status report (D-094): the latest run's stored report when it is a checkpoint run,
+ * else the newest `robot_checkpoint` event's — the event outlives a run row read from an older worker.
+ */
+export function statusReport(runs: AgentRun[], events: TicketEvent[]): string | null {
+  const run = latestRun(runs);
+  if (run?.status === 'checkpoint' && run.statusReport?.trim()) return run.statusReport;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === ROBOT_EVENT.checkpoint) {
+      const r = (events[i].detail as RobotEventDetail | null)?.report;
+      return typeof r === 'string' && r.trim() ? r : null;
     }
   }
   return null;
@@ -194,8 +222,7 @@ export function buildStatusContent(
       words = run?.outputTail ?? null;
       break;
     case 'status-report':
-      // PD-737 populates this from the checkpoint's saved status report.
-      words = null;
+      words = statusReport(runs, events);
       break;
   }
   return {

@@ -2364,7 +2364,8 @@ export function getSortieFleet(db: Database.Database): Partial<Record<AgentState
 }
 
 /**
- * The tickets parked waiting on a human — stuck, needs-human, awaiting-human (PD-498).
+ * The tickets parked waiting on a human — stuck, needs-human, awaiting-human, checkpoint (PD-498,
+ * D-094).
  *
  * Identities, not a count, because the nav's "N needs you" is only useful if it goes somewhere. A
  * count alone forces the reader to the board and then to hunt for which ticket it meant, which is
@@ -2379,7 +2380,7 @@ export function getNeedsHumanTickets(db: Database.Database, limit = 10): NeedsHu
       `SELECT id, display_id AS displayId, title, agent_state AS agentState
          FROM agent_tickets
         WHERE archived_at IS NULL
-          AND agent_state IN ('stuck', 'needs-human', 'awaiting-human')
+          AND agent_state IN ('stuck', 'needs-human', 'awaiting-human', 'checkpoint')
         ORDER BY updated_at DESC
         LIMIT ?`,
     )
@@ -2623,6 +2624,42 @@ export function resetRobotRuns(
   const nextState = ticket.status === 'queue' ? 'queued' : null;
   db.prepare('UPDATE agent_tickets SET agent_state = ?, updated_at = ? WHERE id = ?').run(nextState, now, ticketId);
   return getTicket(db, ticketId);
+}
+
+export type CheckpointChoice = { kind: 'continue'; extraTurns: number } | { kind: 'restart' };
+
+export type CheckpointDecisionResult =
+  | { ok: true; ticket: AgentTicket }
+  | { ok: false; reason: 'not_found' | 'not_checkpoint' };
+
+/**
+ * D-094/PD-737 — Steve's answer to a checkpoint. Records `robot_checkpoint_continue` (with the
+ * validated `extraTurns`) or `robot_checkpoint_restart` and re-queues the ticket; the loop reads the
+ * event at its next dispatch (`checkpointDecision` in the agent-worker) to decide how the run starts.
+ *
+ * Only a ticket parked in `checkpoint` may be answered — anything else is refused, so a stale modal
+ * cannot turn a Continue into an arbitrary re-dispatch. Unlike Reset/Unstick this writes no
+ * retry-boundary event: a checkpoint never consumed retry budget in the first place.
+ */
+export function decideCheckpoint(
+  db: Database.Database,
+  ticketId: number,
+  choice: CheckpointChoice,
+  now: number = Date.now(),
+): CheckpointDecisionResult {
+  const ticket = getTicket(db, ticketId);
+  if (!ticket) return { ok: false, reason: 'not_found' };
+  if (ticket.agentState !== 'checkpoint' || ticket.status !== 'queue') return { ok: false, reason: 'not_checkpoint' };
+  const apply = db.transaction(() => {
+    if (choice.kind === 'continue') {
+      logEvent(db, ticketId, ROBOT_EVENT.checkpointContinue, { extraTurns: choice.extraTurns, reason: 'continued by human' });
+    } else {
+      logEvent(db, ticketId, ROBOT_EVENT.checkpointRestart, { reason: 'restarted by human' });
+    }
+    db.prepare("UPDATE agent_tickets SET agent_state = 'queued', updated_at = ? WHERE id = ?").run(now, ticketId);
+  });
+  apply();
+  return { ok: true, ticket: getTicket(db, ticketId)! };
 }
 
 /** Every known worker heartbeat, freshest first. The web server never talks to a

@@ -62,7 +62,9 @@ describe('showsTurnProgress', () => {
     expect(showsTurnProgress('in-review', 30)).toBe(true);
     // `stuck` is where the cap actually bites — a card reading 50/50 explains itself.
     expect(showsTurnProgress('stuck', 50)).toBe(true);
-    expect(TURN_PROGRESS_STATES).toEqual(['working', 'in-review', 'stuck']);
+    // D-094/PD-737: the ceiling now lands a run in `checkpoint` — the same "51/50" belongs there.
+    expect(showsTurnProgress('checkpoint', 51)).toBe(true);
+    expect(TURN_PROGRESS_STATES).toEqual(['working', 'in-review', 'stuck', 'checkpoint']);
   });
 
   it('hides for states where a turn count would be noise', () => {

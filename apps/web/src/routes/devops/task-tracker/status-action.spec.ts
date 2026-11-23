@@ -9,6 +9,7 @@ import {
   askQuestion,
   cumulativeTurns,
   latestRun,
+  statusReport,
 } from './status-action';
 
 function run(partial: Partial<AgentRun> = {}): AgentRun {
@@ -27,6 +28,7 @@ function run(partial: Partial<AgentRun> = {}): AgentRun {
     turns: null,
     tokens: null,
     outputTail: null,
+    statusReport: null,
     wipRef: null,
     wipSha: null,
     startedAt: 1000,
@@ -42,7 +44,7 @@ function event(type: string, detail: unknown, id = 1): TicketEvent {
 describe('STATUS_ACTION_REGISTRY', () => {
   it('covers exactly the input-needed states', () => {
     expect(Object.keys(STATUS_ACTION_REGISTRY).sort()).toEqual(
-      ['awaiting-human', 'needs-human', 'stuck'].sort(),
+      ['awaiting-human', 'needs-human', 'stuck', 'checkpoint'].sort(),
     );
   });
 
@@ -72,6 +74,7 @@ describe('isStatusActionState', () => {
     expect(isStatusActionState('stuck')).toBe(true);
     expect(isStatusActionState('awaiting-human')).toBe(true);
     expect(isStatusActionState('needs-human')).toBe(true);
+    expect(isStatusActionState('checkpoint')).toBe(true);
   });
 
   it('is false for other states and nullish', () => {
@@ -183,5 +186,35 @@ describe('buildStatusContent', () => {
     expect(c.totalTurns).toBe(0);
     // Actions are still present even with no data to show.
     expect(c.actions.map((a) => a.kind)).toEqual(['unstick', 'reset']);
+  });
+});
+
+// D-094/PD-737: the checkpoint entry PD-738 left a slot for.
+describe('checkpoint (PD-737)', () => {
+  const entry = STATUS_ACTION_REGISTRY.checkpoint!;
+
+  it('offers Continue and Restart, inline report, no reply box', () => {
+    expect(entry.actions.map((a) => a.kind)).toEqual(['continue', 'restart']);
+    expect(entry.words).toMatchObject({ source: 'status-report', collapsed: false });
+    expect(entry.reply).toBe(false);
+  });
+
+  it("shows the latest checkpoint run's stored report", () => {
+    const runs = [run({ status: 'checkpoint', statusReport: 'Left: tests', turns: 51 }), run({ id: 2, turns: 30 })];
+    const c = buildStatusContent(entry, runs, []);
+    expect(c.words).toBe('Left: tests');
+    expect(c.totalTurns).toBe(81);
+  });
+
+  it('falls back to the robot_checkpoint event report, and names the ceiling as the reason', () => {
+    const events = [event(ROBOT_EVENT.checkpoint, { report: 'from the event', reason: 'reached the turn ceiling (51/50)' })];
+    expect(statusReport([run({ status: 'error' })], events)).toBe('from the event');
+    expect(parkReason(events, [])).toBe('Checkpoint: reached the turn ceiling (51/50).');
+  });
+
+  it('is null (fallback copy) when nothing was recorded', () => {
+    const c = buildStatusContent(entry, [], []);
+    expect(c.words).toBeNull();
+    expect(c.wordsFallback).toMatch(/No status report/);
   });
 });

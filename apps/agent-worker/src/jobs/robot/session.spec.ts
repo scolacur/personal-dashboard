@@ -4,7 +4,19 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import Database from 'better-sqlite3';
-import { allowedCodingEnv, appendTail, codingEnv, extractMessageText, readHandoff, runRobotSession, ROBOT_TOOLS, type RunQuery } from './session';
+import {
+  allowedCodingEnv,
+  appendTail,
+  codingEnv,
+  extractMessageText,
+  readHandoff,
+  runRobotSession,
+  runStatusReport,
+  ROBOT_TOOLS,
+  STATUS_REPORT_MAX_TURNS,
+  STATUS_REPORT_TOOLS,
+  type RunQuery,
+} from './session';
 import { OUTPUT_TAIL_MAX } from './runs';
 import { VERIFY_OK_MARKER, SCM_JSON, ASK_HUMAN_MARKER } from '@dashboard/shared';
 import type { RobotCandidate } from './select';
@@ -532,5 +544,55 @@ describe('runRobotSession output tail', () => {
     const res = await runRobotSession(config, candidate, worktree, undefined, fake);
     expect(res.outputTail!.length).toBeLessThanOrEqual(OUTPUT_TAIL_MAX);
     expect(res.outputTail).toContain('THE-LAST-LINE'); // the tail survives, not the head
+  });
+});
+
+// D-094/PD-737: the checkpoint status report resumes the same session, read-only and bounded.
+describe('runStatusReport (PD-737)', () => {
+  const wt: Worktree = { dir: '/tmp/none', branch: 'robot/220' };
+  const cfg = loadConfig({});
+  const text = (t: string) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: t }] } });
+
+  it('resumes THE SAME session with only read-only tools and a tiny turn budget, returning the result text', async () => {
+    let opts: Record<string, unknown> = {};
+    const fake = ((args: { options: Record<string, unknown> }) => {
+      opts = args.options;
+      return (async function* () {
+        yield text('**Done:** x');
+        yield { type: 'result', subtype: 'success', is_error: false, result: '**Done:** x\n**Left:** y' };
+      })();
+    }) as unknown as RunQuery;
+    const out = await runStatusReport(cfg, candidate, wt, 'sess-9', fake);
+    expect(out).toEqual({ report: '**Done:** x\n**Left:** y' });
+    expect(opts.resume).toBe('sess-9');
+    expect(opts.tools).toEqual([...STATUS_REPORT_TOOLS]);
+    expect(opts.tools).not.toContain('Edit');
+    expect(opts.tools).not.toContain('Write');
+    expect(opts.tools).not.toContain('Bash');
+    expect(opts.maxTurns).toBe(STATUS_REPORT_MAX_TURNS);
+  });
+
+  it('keeps the last thing the agent said when the report step itself errors after writing it', async () => {
+    const fake = (async function* () {
+      yield text('Left: the tests');
+      yield { type: 'result', subtype: 'error_max_turns', errors: ['Reached maximum number of turns (3)'] };
+    }) as unknown as RunQuery;
+    expect(await runStatusReport(cfg, candidate, wt, 's', fake)).toEqual({ report: 'Left: the tests' });
+  });
+
+  it('returns an error (never throws) when the resume fails with no text', async () => {
+    const fake = (() => {
+      throw new Error('no conversation found');
+    }) as unknown as RunQuery;
+    expect(await runStatusReport(cfg, candidate, wt, 's', fake)).toEqual({ error: 'no conversation found' });
+  });
+
+  it('times out a hung resume', async () => {
+    const fake = ((args: { options: { abortController: AbortController } }) =>
+      (async function* () {
+        await new Promise((_r, reject) => args.options.abortController.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+        yield text('never');
+      })()) as unknown as RunQuery;
+    expect(await runStatusReport(cfg, candidate, wt, 's', fake, 20)).toEqual({ error: 'status report timed out' });
   });
 });

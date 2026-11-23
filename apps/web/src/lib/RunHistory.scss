@@ -193,3 +193,25 @@
   white-space: nowrap;
   border: 0;
 }
+
+// D-094/PD-737: cumulative turns, and a checkpoint run's status report.
+.runs-total {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-muted, inherit);
+}
+
+.report-label {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.status-report {
+  margin-bottom: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.status-badge.status-checkpoint {
+  color: var(--status-checkpoint);
+}

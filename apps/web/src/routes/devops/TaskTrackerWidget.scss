@@ -114,6 +114,10 @@
   &.agent-state-awaiting-human {
     color: var(--status-awaiting-human);
   }
+  // D-094/PD-737: a turn-ceiling checkpoint — waiting on Continue / Restart.
+  &.agent-state-checkpoint {
+    color: var(--status-checkpoint);
+  }
   &.agent-state-needs-human {
     color: var(--status-needs-human);
   }

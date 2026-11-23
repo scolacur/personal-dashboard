@@ -57,6 +57,7 @@ card to `completed`.
 | `stuck` | `robot_queue` | the **stall watchdog** (`stall.ts`) | Repeated stall/fault escalation; parked until a human acts. |
 | `needs-human` | `robot_queue` | a fault the loop can't retry | A PR exists but a human must drive it home. |
 | `awaiting-human` | `robot_queue` | the loop, via **`ask_human`** | Intentional, expected park — least urgent. |
+| `checkpoint` | `robot_queue` | the loop, when a run reaches its **turn ceiling** (D-094) | Not a fault: report + WIP saved, no retry burned. Steve chooses **Continue** (+N turns from the saved work) or **Restart** (fresh from `main`). |
 | `done` | `completed` | the loop, on PR merge (`completeTicket`) | Terminal. Green "done" pill in the Completed lane. |
 
 The dispatch filter is exactly: `agent_state IS NULL OR agent_state = 'queued'` (plus the
@@ -203,6 +204,11 @@ _Sortie human-state labels_):
   usable signal). Needs you to investigate and re-queue or drop it.
 - **`needs-human`** — a PR exists but a human must drive it home; a fault the loop can't retry on
   its own, kept deliberately separate from the watchdog's `stuck`.
+- **`checkpoint`** — the run reached its turn ceiling (D-094, PD-737). Nothing went wrong; it ran out of
+  room. Click the pill: the modal shows its status report (done / left / blocking / turn estimate) and
+  the cumulative turns. **Continue** starts a new run from the saved work (`robot-wip/t<id>`, rebased
+  onto `main`) with the report in its prompt; **Restart** starts clean. There is no total cap — each
+  Continue is your call.
 
 The Task Monitor's status legend modal lists recommended human actions for each of these three
 (`AGENT_STATE_ACTIONS` in the board page).

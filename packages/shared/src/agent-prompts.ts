@@ -132,6 +132,20 @@ export interface ResumeContext {
    * brief in the DB also means the Evaluator needs no GitHub write token at all.
    */
   evaluatorBrief?: string;
+  /**
+   * D-094/PD-737: Steve pressed **Continue** on a checkpoint. The run starts from the previous run's
+   * saved work; the session is a new one and remembers nothing, so the previous run's own status
+   * report is handed to it here.
+   */
+  checkpoint?: {
+    /** The status report the previous run gave at its turn ceiling. */
+    report: string;
+    /** Whether the saved work was restored into the tree (false: the WIP ref could not be fetched). */
+    restored: boolean;
+    /** Whether the restored work was rebased onto current main (false: it conflicted, so it is the
+     *  saved work as-is, on the main it was written against). */
+    rebased: boolean;
+  };
 }
 
 export interface TaskPromptInput {
@@ -181,6 +195,32 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     ? ['## An automated Evaluator reviewed your PR', '', resume.evaluatorBrief, '', '---', '']
     : [];
 
+  // D-094/PD-737: a Continue from a checkpoint. First, because it changes how to read everything
+  // below: the work is already partly done, and the tree is not a clean main.
+  const cp = resume?.checkpoint;
+  const checkpointBlock = cp
+    ? [
+        '## You are continuing a previous run',
+        'A previous run on this ticket reached its turn ceiling before finishing. A human chose to let',
+        'you continue from where it stopped instead of starting over.',
+        '',
+        cp.restored
+          ? cp.rebased
+            ? "- Its work is restored in your tree as UNCOMMITTED changes, rebased onto current main."
+            : "- Its work is restored in your tree as UNCOMMITTED changes. Rebasing it onto current main CONFLICTED, so it sits on the older main it was written against; integrate main yourself before you push (`git fetch origin main && git merge origin/main`)."
+          : '- Its saved work could NOT be restored, so your tree is NOT the previous run\'s work. Use the report to avoid repeating its investigation, and re-do what it had done.',
+        '- **Run `npm ci && npm run verify` first**, before changing anything, to see exactly where it stands.',
+        '- Do not redo work the report says is done unless verify shows it is broken.',
+        '',
+        "The previous run's status report:",
+        '',
+        ...cp.report.split('\n').map((l) => `> ${l}`),
+        '',
+        '---',
+        '',
+      ]
+    : [];
+
   return [
     `# Ticket: ${title}`,
     '',
@@ -188,6 +228,7 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
     '',
     '---',
     '',
+    ...checkpointBlock,
     ...answerBlock,
     ...evaluatorBlock,
     '## Step 0 — Resuming an earlier attempt?',

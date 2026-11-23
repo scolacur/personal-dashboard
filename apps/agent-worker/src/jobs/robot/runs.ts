@@ -20,9 +20,10 @@ export type RunStatus =
   | 'handed-off' // green verify → pushed branch + PR (the success path)
   | 'no-verify' // turn ended before a green verify → red PR withheld (D-046 gate); WIP pushed to robot-wip/t<id> (PD-737/T898)
   | 'ask-human' // the Robot posted a question and parked (awaiting-human) — not a failure (C2)
+  | 'checkpoint' // reached its turn ceiling: report + WIP saved, parked for Continue/Restart — not a failure (D-094)
   | 'error'; // the coding session itself failed (spawn/SDK/crash)
 
-export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'error'];
+export const RUN_STATUSES: readonly RunStatus[] = ['running', 'handed-off', 'no-verify', 'ask-human', 'checkpoint', 'error'];
 
 export interface RunRow {
   id: number;
@@ -53,6 +54,8 @@ export interface RunRow {
    *  nothing, or the WIP push failed. */
   wipRef: string | null;
   wipSha: string | null;
+  /** D-094/PD-737: the status report a `checkpoint` run gave at its ceiling (or its labelled tail). */
+  statusReport: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -107,6 +110,8 @@ export function ensureRunsTable(db: Database.Database): void {
   // PD-737/T898: where a non-hand-off run's WIP was preserved (`robot-wip/t<id>` + its tip sha).
   addColumnIfMissing(db, 'agent_runs', 'wip_ref', 'TEXT');
   addColumnIfMissing(db, 'agent_runs', 'wip_sha', 'TEXT');
+  // D-094/PD-737: a checkpoint run's status report — the information Continue vs Restart needs.
+  addColumnIfMissing(db, 'agent_runs', 'status_report', 'TEXT');
 }
 
 /** Stable hash of a ticket body, for the PD-406 unchanged-body check. `null`/empty bodies hash to a
@@ -175,7 +180,13 @@ export interface FinishRunInput {
   /** PD-737/T898: the WIP ref + sha a non-hand-off run preserved its work to. */
   wipRef?: string | null;
   wipSha?: string | null;
+  /** D-094/PD-737: a checkpoint run's status report. Clamped to `STATUS_REPORT_MAX` on write. */
+  statusReport?: string | null;
 }
+
+/** D-094/PD-737: cap on a stored status report. A report is a few paragraphs; the cap only stops a
+ *  runaway reply from bloating the row. */
+export const STATUS_REPORT_MAX = 8 * 1024;
 
 /** Close out a run with its terminal outcome. */
 export function finishRun(
@@ -193,7 +204,7 @@ export function finishRun(
     `UPDATE agent_runs
         SET status = ?, session_id = ?, pr_url = ?, error = ?,
             fault_tier = ?, fault_signature = ?, fault_reason = ?,
-            turns = ?, tokens = ?, output_tail = ?, wip_ref = ?, wip_sha = ?, finished_at = ?
+            turns = ?, tokens = ?, output_tail = ?, wip_ref = ?, wip_sha = ?, status_report = ?, finished_at = ?
       WHERE id = ?`,
   ).run(
     input.status,
@@ -208,6 +219,7 @@ export function finishRun(
     boundedTail,
     input.wipRef ?? null,
     input.wipSha ?? null,
+    input.statusReport != null ? input.statusReport.slice(0, STATUS_REPORT_MAX) : null,
     now,
     runId,
   );
@@ -335,6 +347,7 @@ function rowToRun(r: Record<string, unknown>): RunRow {
     outputTail: (r.output_tail as string | null) ?? null,
     wipRef: (r.wip_ref as string | null) ?? null,
     wipSha: (r.wip_sha as string | null) ?? null,
+    statusReport: (r.status_report as string | null) ?? null,
     startedAt: r.started_at as number,
     finishedAt: (r.finished_at as number | null) ?? null,
   };

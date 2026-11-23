@@ -1060,3 +1060,185 @@ describe('processRobotQueue', () => {
     });
   });
 });
+
+// D-094/PD-737: the turn ceiling is a checkpoint, not a failure.
+describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  /** The SDK's real ceiling error, as it surfaced on PD-850/883/901's runs. */
+  const CEILING = 'Claude Code returned an error result: Reached maximum number of turns (50)';
+  const ceilingRun: Partial<RobotSessionResult> = {
+    ok: false,
+    verifyOk: false,
+    prNumber: undefined,
+    sessionId: 'sess-cp',
+    turns: 51,
+    tokens: 9000,
+    error: CEILING,
+    outputTail: '[assistant] still reading tests',
+  };
+  const WIP = { ref: 'robot-wip/t1', sha: 'abc123' };
+
+  function events(id: number, type: string): Record<string, unknown>[] {
+    return (
+      db.prepare('SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = ? ORDER BY id').all(id, type) as {
+        detail: string;
+      }[]
+    ).map((r) => JSON.parse(r.detail) as Record<string, unknown>);
+  }
+  /** What the server's Continue / Restart route writes (decideCheckpoint): an event + re-queue. */
+  function answer(id: number, type: 'robot_checkpoint_continue' | 'robot_checkpoint_restart', detail: object, at: number): void {
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      type,
+      JSON.stringify(detail),
+      at,
+    );
+    db.prepare("UPDATE agent_tickets SET agent_state = 'queued' WHERE id = ?").run(id);
+  }
+
+  it('parks `checkpoint` with the stored report and WIP, burning no retry and not feeding the breaker', async () => {
+    addQueued(db, 1);
+    const reportCalls: string[] = [];
+    await processRobotQueue(db, cfg(), {
+      ...deps(ceilingRun),
+      pushWip: async () => WIP,
+      statusReport: async (_c, _cand, _wt, sid) => (reportCalls.push(sid), { report: '**Done:** store.ts\n**Left:** tests' }),
+    });
+
+    expect(reportCalls).toEqual(['sess-cp']); // resumed THE SAME session
+    expect(agentState(db, 1)).toBe('checkpoint');
+    const run = listRunsForTicket(db, 1)[0];
+    expect(run.status).toBe('checkpoint');
+    expect(run.statusReport).toContain('**Left:** tests');
+    expect(run.faultTier).toBeNull();
+    expect(run.wipRef).toBe('robot-wip/t1');
+    expect(failedRunsForTicket(db, 1)).toEqual([]); // no retry burned
+    expect(breakerFailures(db)).toEqual([]);
+    expect(eventTypes(db, 1)).not.toContain('robot_parked');
+    expect(eventTypes(db, 1)).not.toContain('robot_fault');
+    const [cp] = events(1, 'robot_checkpoint');
+    expect(cp).toMatchObject({ reportFallback: false, turns: 51, maxTurns: 50, wipRef: 'robot-wip/t1', wipSha: 'abc123' });
+    const n = db.prepare("SELECT kind, title FROM agent_notifications WHERE ticket_id = 1").all();
+    expect(n).toEqual([{ kind: 'agent_awaiting_human', title: 'Robot reached its turn ceiling' }]);
+  });
+
+  it.each([
+    ['returns an error', async () => ({ error: 'resume refused' })],
+    ['throws', async (): Promise<never> => { throw new Error('boom'); }],
+  ])('falls back to the labelled output tail when the report step %s', async (_label, statusReport) => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), { ...deps(ceilingRun), statusReport });
+    for (const id of [1]) {
+      expect(agentState(db, id)).toBe('checkpoint');
+      const run = listRunsForTicket(db, id)[0];
+      expect(run.statusReport).toMatch(/^\(No status report — the report step failed: /);
+      expect(run.statusReport).toContain('[assistant] still reading tests');
+      expect(events(id, 'robot_checkpoint')[0]).toMatchObject({ reportFallback: true });
+    }
+  });
+
+  it('a non-ceiling error still goes through the fault path exactly as before', async () => {
+    addQueued(db, 1);
+    let reported = false;
+    await processRobotQueue(db, cfg(), {
+      ...deps({ ...ceilingRun, error: 'spawn EACCES' }),
+      statusReport: async () => ((reported = true), { report: 'x' }),
+    });
+    expect(reported).toBe(false);
+    expect(agentState(db, 1)).not.toBe('checkpoint');
+    expect(listRunsForTicket(db, 1)[0].status).toBe('error');
+  });
+
+  it('Continue: starts from the WIP with the report in the prompt and the requested ceiling, once', async () => {
+    addQueued(db, 1);
+    let clock = 1000;
+    const restored: string[] = [];
+    const seen: { maxTurns: number | null; checkpoint: unknown }[] = [];
+    let nextResult: Partial<RobotSessionResult> = ceilingRun;
+    const d: RobotDeps = {
+      ...deps(),
+      now: () => clock,
+      pushWip: async () => WIP,
+      statusReport: async () => ({ report: 'Left: two tests' }),
+      restoreWip: async (_c, wt) => (restored.push(wt.dir), { restored: true, rebased: true }),
+      runSession: async (_c, cand, _wt, resume) => {
+        seen.push({ maxTurns: cand.maxTurns, checkpoint: resume?.checkpoint });
+        return { ok: true, sessionId: 's', verifyOk: true, prNumber: 314, ...nextResult };
+      },
+    };
+
+    await processRobotQueue(db, cfg(), d); // run 1 → checkpoint
+    clock = 2000;
+    answer(1, 'robot_checkpoint_continue', { extraTurns: 80 }, 1500);
+    nextResult = { ok: true, verifyOk: false, prNumber: undefined }; // run 2: no green verify (transient)
+    await processRobotQueue(db, cfg(), d);
+
+    expect(restored).toEqual(['/wt/robot-1']);
+    expect(seen[1]).toEqual({ maxTurns: 80, checkpoint: { report: 'Left: two tests', restored: true, rebased: true } });
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(80);
+
+    // Run 3 (the transient retry) is NOT a continuation — the Continue was consumed by run 2.
+    clock = 3000;
+    nextResult = {};
+    await processRobotQueue(db, cfgNoBackoff(), d);
+    expect(seen).toHaveLength(3);
+    expect(seen[2]).toEqual({ maxTurns: 50, checkpoint: undefined });
+    expect(restored).toHaveLength(1);
+  });
+
+  it('Continue that hits the ceiling again checkpoints again — there is no total cap', async () => {
+    addQueued(db, 1);
+    let clock = 1000;
+    const d: RobotDeps = {
+      ...deps(ceilingRun),
+      now: () => clock,
+      statusReport: async () => ({ report: 'r' }),
+      restoreWip: async () => ({ restored: true, rebased: false }),
+    };
+    await processRobotQueue(db, cfg(), d);
+    for (const t of [2000, 3000, 4000]) {
+      answer(1, 'robot_checkpoint_continue', { extraTurns: 50 }, t - 500);
+      clock = t;
+      await processRobotQueue(db, cfg(), d);
+      expect(agentState(db, 1)).toBe('checkpoint');
+    }
+    expect(listRunsForTicket(db, 1).map((r) => r.status)).toEqual(['checkpoint', 'checkpoint', 'checkpoint', 'checkpoint']);
+    expect(failedRunsForTicket(db, 1)).toEqual([]);
+  });
+
+  it('Restart: drops the kept clone, does not restore the WIP, and runs from main without the report', async () => {
+    addQueued(db, 1);
+    let clock = 1000;
+    const order: string[] = [];
+    const seen: unknown[] = [];
+    let nextResult: Partial<RobotSessionResult> = ceilingRun;
+    const d: RobotDeps = {
+      ...deps(),
+      now: () => clock,
+      statusReport: async () => ({ report: 'r' }),
+      removeWorktree: async (_c, wt) => void order.push(`remove ${wt.dir}`),
+      ensureWorktree: async (_c, branch) => (order.push('ensure'), { dir: `/wt/${branch.replace('/', '-')}`, branch }),
+      restoreWip: async () => (order.push('restore'), { restored: true, rebased: true }),
+      runSession: async (_c, cand, _wt, resume) => {
+        seen.push({ maxTurns: cand.maxTurns, checkpoint: resume?.checkpoint });
+        return { ok: true, sessionId: 's', verifyOk: true, prNumber: 314, ...nextResult };
+      },
+    };
+    await processRobotQueue(db, cfg(), d);
+    order.length = 0;
+    clock = 2000;
+    answer(1, 'robot_checkpoint_restart', {}, 1500);
+    nextResult = {};
+    await processRobotQueue(db, cfg(), d);
+
+    expect(order[0]).toMatch(/^remove .*robot-1$/); // the kept clone goes first…
+    expect(order[1]).toBe('ensure'); // …then a fresh one
+    expect(order).not.toContain('restore');
+    expect(seen[1]).toEqual({ maxTurns: 50, checkpoint: undefined });
+    expect(agentState(db, 1)).toBe('in-review');
+  });
+});

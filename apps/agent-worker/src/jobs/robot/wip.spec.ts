@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { loadConfig, type AgentWorkerConfig } from '../../shared/config';
 import { GitError, makeGitRunner, type GitRunner, type Worktree } from './workspace';
-import { deleteWipRef, pushWip, wipRefName } from './wip';
+import { deleteWipRef, pushWip, restoreWip, wipRefName } from './wip';
 
 const config: AgentWorkerConfig = loadConfig({});
 const worktree: Worktree = { dir: '/clone/robot-t42', branch: 'robot/t42' };
@@ -151,5 +151,85 @@ describe('pushWip against real git: the reused branch never keeps the WIP (PD-78
     const out = await pushWip(loadConfig({}), { dir: clone, branch: 'robot/t42' }, 42, makeGitRunner(loadConfig({}), ''));
     expect(out).toBeNull();
     expect(g(clone, 'rev-parse', 'HEAD')).toBe(robotCommit);
+  });
+});
+
+// D-094/PD-737: Continue restores the saved work — rebased onto current main where it applies.
+describe('restoreWip against real git (PD-737)', () => {
+  const g = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], { cwd, encoding: 'utf8' }).trim();
+  const noChown = async () => {};
+  const cfg = loadConfig({});
+  const runner = () => makeGitRunner(cfg, '');
+
+  let root: string;
+  let origin: string;
+  let author: string;
+  beforeEach(async () => {
+    root = mkdtempSync(path.join(tmpdir(), 'restore-'));
+    origin = path.join(root, 'origin.git');
+    author = path.join(root, 'author');
+    g(root, 'init', '--bare', origin);
+    g(root, 'clone', origin, author);
+    g(author, 'config', 'user.name', 't');
+    g(author, 'config', 'user.email', 't@t');
+    writeFileSync(path.join(author, 'a.ts'), 'base\n');
+    g(author, 'add', '.');
+    g(author, 'commit', '-m', 'base');
+    g(author, 'push', 'origin', 'HEAD:main');
+    // A checkpointed run: it left uncommitted work, which pushWip saved to robot-wip/t42.
+    g(author, 'checkout', '-b', 'robot/t42');
+    writeFileSync(path.join(author, 'a.ts'), 'half-finished\n');
+    writeFileSync(path.join(author, 'new.ts'), 'untracked\n');
+    await pushWip(cfg, { dir: author, branch: 'robot/t42' }, 42, runner());
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** Advance main with one file, as other PRs merging would. */
+  function advanceMain(file: string, content: string): void {
+    const other = path.join(root, `other-${file}`);
+    g(root, 'clone', origin, other);
+    writeFileSync(path.join(other, file), content);
+    g(other, 'add', '.');
+    g(other, 'commit', '-m', `main: ${file}`);
+    g(other, 'push', 'origin', 'HEAD:main');
+  }
+  /** The (shallow) clone ensureWorktree would prepare for the Continue run: fresh from main, on the branch. */
+  function freshClone(): string {
+    const dir = path.join(root, 'robot-t42');
+    // Shallow, like ensureWorktree's real clone — the rebase must find its base via restoreWip's deepen.
+    g(root, 'clone', '--depth', '1', `file://${origin}`, dir);
+    g(dir, 'config', 'user.name', 't');
+    g(dir, 'config', 'user.email', 't@t');
+    g(dir, 'checkout', '-B', 'robot/t42');
+    return dir;
+  }
+
+  it('restores the WIP as uncommitted changes, rebased onto a main that moved on', async () => {
+    advanceMain('b.ts', 'from main\n');
+    const dir = freshClone();
+    const out = await restoreWip(cfg, { dir, branch: 'robot/t42' }, 42, runner(), noChown);
+    expect(out).toEqual({ restored: true, rebased: true });
+    expect(readFileSync(path.join(dir, 'a.ts'), 'utf8')).toBe('half-finished\n');
+    expect(readFileSync(path.join(dir, 'new.ts'), 'utf8')).toBe('untracked\n');
+    expect(readFileSync(path.join(dir, 'b.ts'), 'utf8')).toBe('from main\n'); // on current main
+    expect(g(dir, 'log', '-1', '--format=%s')).toBe('main: b.ts'); // the WIP commit is undone…
+    expect(g(dir, 'status', '--porcelain')).toContain('a.ts'); // …so the work is uncommitted
+  });
+
+  it('keeps the WIP as-is when the rebase conflicts', async () => {
+    advanceMain('a.ts', 'main changed the same line\n');
+    const dir = freshClone();
+    const out = await restoreWip(cfg, { dir, branch: 'robot/t42' }, 42, runner(), noChown);
+    expect(out).toEqual({ restored: true, rebased: false });
+    expect(readFileSync(path.join(dir, 'a.ts'), 'utf8')).toBe('half-finished\n');
+    expect(g(dir, 'status', '--porcelain')).not.toMatch(/^(UU|AA) /m); // no rebase left half-done
+  });
+
+  it('reports not-restored when there is no WIP ref, leaving the tree as prepared', async () => {
+    const dir = freshClone();
+    const out = await restoreWip(cfg, { dir, branch: 'robot/t42' }, 99, runner(), noChown);
+    expect(out).toEqual({ restored: false, rebased: false });
+    expect(readFileSync(path.join(dir, 'a.ts'), 'utf8')).toBe('base\n');
   });
 });

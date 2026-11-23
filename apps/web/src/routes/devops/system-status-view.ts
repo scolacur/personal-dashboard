@@ -44,6 +44,7 @@ export const ACTIVE_STATES: AgentState[] = [
   'queued',
   'in-review',
   'awaiting-human',
+  'checkpoint',
   'needs-human',
   'stuck',
 ];

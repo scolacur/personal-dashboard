@@ -9,6 +9,7 @@ const ALL_STATES: AgentState[] = [
   'stuck',
   'needs-human',
   'awaiting-human',
+  'checkpoint',
   'wontfix',
   'done',
 ];
@@ -20,7 +21,7 @@ describe('AGENT_STATE_LABELS', () => {
     }
   });
 
-  it('covers all 8 states', () => {
+  it('covers all 9 states', () => {
     expect(Object.keys(AGENT_STATE_LABELS)).toHaveLength(ALL_STATES.length);
   });
 });
@@ -32,7 +33,7 @@ describe('AGENT_STATE_DESCRIPTIONS', () => {
     }
   });
 
-  it('covers all 8 states', () => {
+  it('covers all 9 states', () => {
     expect(Object.keys(AGENT_STATE_DESCRIPTIONS)).toHaveLength(ALL_STATES.length);
   });
 });

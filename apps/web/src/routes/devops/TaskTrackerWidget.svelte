@@ -19,6 +19,7 @@
     'stuck',
     'needs-human',
     'awaiting-human',
+    'checkpoint',
     'working',
     'in-review',
     'queued',
