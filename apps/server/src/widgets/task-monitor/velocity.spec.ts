@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   WEEK_MS,
   buildBugReport,
+  buildIntroductionReport,
   buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
@@ -12,6 +13,7 @@ import {
   stateAt,
   weekOf,
   weekRange,
+  type IntroducedBug,
   type VelocityEventInput,
   type VelocityRunInput,
 } from '@dashboard/shared';
@@ -318,5 +320,81 @@ describe('buildBugReport', () => {
 
   it('no bugs → empty report', () => {
     expect(buildBugReport([], MON)).toMatchObject({ startDate: null, weeks: [] });
+  });
+});
+
+describe('buildIntroductionReport', () => {
+  const cand = (robot: boolean, at: number) => ({
+    sha: `s${at}`,
+    prNumber: 1,
+    tickets: [],
+    robot,
+    committedAt: at,
+    lines: 3,
+  });
+  const bug = (
+    filedAt: number,
+    top: ReturnType<typeof cand> | null,
+    status: IntroducedBug['status'] = 'traced',
+  ): IntroducedBug => ({
+    ticketId: filedAt,
+    displayId: null,
+    title: '',
+    priority: null,
+    filedAt,
+    fixedAt: filedAt + DAY,
+    status,
+    top,
+    candidates: top ? [top] : [],
+  });
+  const now = MON + 70 * DAY;
+  const bugs = [
+    bug(MON + 30 * DAY, cand(false, MON)), // lag 30d
+    bug(MON + 40 * DAY, cand(true, MON + 20 * DAY)), // lag 20d
+    bug(MON + 50 * DAY, cand(false, MON + 10 * DAY)), // lag 40d
+    bug(MON + 5 * DAY, null, 'untraceable'),
+    bug(MON + 6 * DAY, null, 'unlinked'),
+  ];
+  const prs = [
+    { prNumber: 1, mergedAt: MON, robot: false },
+    { prNumber: 2, mergedAt: MON + 10 * DAY, robot: false },
+    { prNumber: 3, mergedAt: MON + 20 * DAY, robot: true },
+    { prNumber: 4, mergedAt: MON + 20 * DAY + 3600_000, robot: true }, // same week (MON+21d is a Monday)
+    { prNumber: 5, mergedAt: MON + 65 * DAY, robot: false }, // still accumulating — excluded from rates
+  ];
+  const r = buildIntroductionReport(bugs, prs, now, 123);
+
+  it('counts every status and takes the median introduced→filed lag', () => {
+    expect(r.counts).toEqual({ traced: 3, untraceable: 1, unlinked: 1 });
+    expect(r.medianLagDays).toBe(30);
+    expect(r.accumulatingFrom).toBe(weekOf(now - 30 * DAY));
+    expect(r.computedAt).toBe(123);
+  });
+
+  it('dates each bug by its top suspect, robot vs hand-built, alongside PRs merged', () => {
+    expect(r.weeks[0]).toMatchObject({
+      introduced: { robot: 0, human: 1 },
+      prsMerged: { robot: 0, human: 1 },
+    });
+    const robotWeek = r.weeks.find((w) => w.weekStart === weekOf(MON + 20 * DAY))!;
+    expect(robotWeek).toMatchObject({
+      introduced: { robot: 1, human: 0 },
+      prsMerged: { robot: 2, human: 0 },
+    });
+  });
+
+  it('rates bugs per 100 PRs over settled weeks only', () => {
+    expect(r.per100).toEqual({ robot: 50, human: 100 }); // 1 of 2 robot PRs; 2 of 2 settled hand-built PRs
+    expect(r.settled).toEqual({ robotPrs: 2, humanPrs: 2, robotBugs: 1, humanBugs: 2 });
+  });
+
+  it('is empty, not an error, before the worker has run', () => {
+    expect(buildIntroductionReport([], [], now, null)).toMatchObject({
+      computedAt: null,
+      weeks: [],
+      medianLagDays: null,
+      accumulatingFrom: null,
+      per100: { robot: null, human: null },
+    });
   });
 });

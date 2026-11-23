@@ -434,6 +434,13 @@ export type { RefineAutostartStatus } from './refine-questions';
 export { REFINE_AUTOSTART_STATUS_KEY, REFINE_BACKFILL_EXCLUDED_EVENT } from './refine-questions';
 export type {
   AssigneeCounts,
+  IntroCandidate,
+  IntroStatus,
+  IntroducedBug,
+  IntroductionReport,
+  IntroductionWeek,
+  MergedPr,
+  RobotHumanCounts,
   BugInput,
   BugReport,
   BugSeverity,
@@ -464,6 +471,7 @@ export {
   BUG_SEVERITIES,
   BUG_SEVERITY_LABELS,
   buildBugReport,
+  buildIntroductionReport,
   buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,

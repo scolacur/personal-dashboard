@@ -14,7 +14,12 @@ import {
   type TicketStatus,
   type UpdateTicketInput,
 } from '@dashboard/shared';
-import { CHECKPOINT_CONTINUE_TURNS_DEFAULT, HUMAN_REPLY_MARKER, checkpointExtraTurnsError, parseAutoQueueMode } from '@dashboard/shared';
+import {
+  CHECKPOINT_CONTINUE_TURNS_DEFAULT,
+  HUMAN_REPLY_MARKER,
+  checkpointExtraTurnsError,
+  parseAutoQueueMode,
+} from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import { getTicketAutoQueueEligibility, listBacklogAutoQueueEligibility } from './auto-queue';
 import {
@@ -81,6 +86,7 @@ import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audi
 import { listRunsForTicket } from './runs-store';
 import {
   getBugReport,
+  getIntroductionReport,
   getEpicBurndowns,
   getRunReport,
   getVelocityReport,
@@ -1142,6 +1148,15 @@ export function registerRoutes(
       return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
     }
     return getBugReport(db, filter);
+  });
+
+  // PD-916: when bugs were introduced — the worker's SZZ blame (szz_* tables), read-only.
+  app.get(`${base}/velocity/introductions`, async (request, reply) => {
+    const filter = velocityFilter(request.query);
+    if (typeof filter === 'string') {
+      return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
+    }
+    return getIntroductionReport(db, filter);
   });
 }
 

@@ -9,6 +9,7 @@ import { startRobotJob, type RobotLoopHandle } from './jobs/robot';
 import { startEvaluatorJob } from './jobs/evaluate';
 import { startConflictJob } from './jobs/conflicts';
 import { startVisualJob } from './jobs/visual';
+import { startSzzJob } from './jobs/szz';
 import { startMaintenanceCoordinator } from './jobs/maintenance';
 import { releaseDeployHoldOnStartup } from './deploy-hold';
 import { startHeartbeat } from './heartbeat';
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
   startEvaluatorJob(db, config);
   startConflictJob(db, config);
   startVisualJob(db, config);
+  startSzzJob(db, config);
   startMaintenanceCoordinator(db, config);
 
   // PD-784/D-104: graceful stop. A deploy recreates this container with SIGTERM → (grace) → SIGKILL.

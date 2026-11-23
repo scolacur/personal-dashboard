@@ -1,11 +1,17 @@
 import type Database from 'better-sqlite3';
 import {
   buildBugReport,
+  buildIntroductionReport,
   buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
   reconstructLifecycles,
   type BugReport,
+  type IntroCandidate,
+  type IntroducedBug,
+  type IntroductionReport,
+  type IntroStatus,
+  type MergedPr,
   type EpicBurndown,
   type ReportWindow,
   type RunReport,
@@ -199,4 +205,106 @@ export function getBugReport(
     .filter((l) => priorityById.has(l.id))
     .map((lifecycle) => ({ lifecycle, priority: priorityById.get(lifecycle.id) ?? null }));
   return buildBugReport(bugs, now, filter);
+}
+
+/**
+ * When bugs were introduced (PD-916). The agent-worker's SZZ job blames each fixed bug's fix back
+ * to the commits that wrote the changed lines and stores them in `szz_*` tables, which it owns —
+ * absent on a volume where it never ran, so every read is guarded and yields an empty report.
+ */
+export function getIntroductionReport(
+  db: Database.Database,
+  filter: VelocityFilter = {},
+  now = Date.now(),
+): IntroductionReport {
+  let bugRows: { ticket_id: number; status: string; computed_at: number }[] = [];
+  let candRows: {
+    ticket_id: number;
+    sha: string;
+    pr_number: number | null;
+    ticket_ids: string;
+    robot: number;
+    committed_at: number;
+    lines: number;
+    is_top: number;
+  }[] = [];
+  let prRows: { pr_number: number; merged_at: number; robot: number }[] = [];
+  try {
+    bugRows = db
+      .prepare('SELECT ticket_id, status, computed_at FROM szz_bug')
+      .all() as typeof bugRows;
+    candRows = db
+      .prepare('SELECT * FROM szz_candidate ORDER BY lines DESC, committed_at DESC')
+      .all() as typeof candRows;
+    prRows = db.prepare('SELECT pr_number, merged_at, robot FROM szz_pr').all() as typeof prRows;
+  } catch {
+    return buildIntroductionReport([], [], now, null, filter);
+  }
+
+  const scope = filter.projectId != null ? 'AND project_id = @projectId' : '';
+  const tickets = new Map(
+    (
+      db
+        .prepare(
+          `SELECT id, display_id, title, priority FROM agent_tickets WHERE archived_at IS NULL ${scope}`,
+        )
+        .all({ projectId: filter.projectId }) as {
+        id: number;
+        display_id: string | null;
+        title: string;
+        priority: string | null;
+      }[]
+    ).map((t) => [t.id, t]),
+  );
+  const lifecycles = new Map(loadLifecycles(db, filter.projectId).map((l) => [l.id, l]));
+  const byBug = new Map<number, (IntroCandidate & { isTop: boolean })[]>();
+  for (const c of candRows) {
+    let tickets: string[] = [];
+    try {
+      tickets = JSON.parse(c.ticket_ids) as string[];
+    } catch {
+      /* malformed row: keep it, without ticket ids */
+    }
+    const list = byBug.get(c.ticket_id) ?? [];
+    list.push({
+      sha: c.sha,
+      prNumber: c.pr_number,
+      tickets,
+      robot: c.robot === 1,
+      committedAt: c.committed_at,
+      lines: c.lines,
+      isTop: c.is_top === 1,
+    });
+    byBug.set(c.ticket_id, list);
+  }
+
+  const bugs: IntroducedBug[] = [];
+  for (const b of bugRows) {
+    const t = tickets.get(b.ticket_id);
+    const l = lifecycles.get(b.ticket_id);
+    if (!t || !l) continue; // out of the project filter, or archived since
+    const cands = byBug.get(b.ticket_id) ?? [];
+    const strip = ({ isTop: _isTop, ...c }: IntroCandidate & { isTop: boolean }): IntroCandidate =>
+      c;
+    const top = cands.find((c) => c.isTop);
+    bugs.push({
+      ticketId: b.ticket_id,
+      displayId: t.display_id,
+      title: t.title,
+      priority: t.priority === 'none' ? null : t.priority,
+      filedAt: l.createdAt,
+      fixedAt: l.completedAt,
+      status: b.status as IntroStatus,
+      top: top ? strip(top) : null,
+      candidates: cands.map(strip),
+    });
+  }
+  bugs.sort((a, b) => (b.fixedAt ?? 0) - (a.fixedAt ?? 0));
+  const prs: MergedPr[] = prRows.map((p) => ({
+    prNumber: p.pr_number,
+    mergedAt: p.merged_at,
+    robot: p.robot === 1,
+  }));
+  const computedAt = bugRows.length ? Math.max(...bugRows.map((b) => b.computed_at)) : null;
+  return buildIntroductionReport(bugs, prs, now, computedAt, filter);
 }

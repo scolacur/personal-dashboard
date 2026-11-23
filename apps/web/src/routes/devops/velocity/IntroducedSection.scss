@@ -1,0 +1,139 @@
+// Velocity › Quality › When bugs were introduced (PD-916).
+
+.card {
+  min-width: 0;
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.card-head {
+  margin-bottom: var(--space-sm);
+
+  h3 {
+    margin: 0;
+    font-size: var(--font-size-base);
+  }
+}
+
+.intro-title {
+  margin: var(--space-lg) 0 var(--space-xs);
+  font-size: var(--font-size-base);
+}
+
+.velocity-note,
+.velocity-empty {
+  margin: var(--space-xs) 0 var(--space-md);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.velocity-note code {
+  font-size: var(--font-size-xs);
+}
+
+.intro-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tile-label,
+.tile-meta {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.tile-value {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+
+  small {
+    color: var(--muted);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+  }
+}
+
+.card-note {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.intro-table-wrap {
+  margin-top: var(--space-md);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.intro-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+
+  th,
+  td {
+    padding: var(--space-xs) var(--space-sm);
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  thead th {
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+  }
+
+  td:nth-child(3),
+  td:nth-child(4) {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.bug-title {
+  display: block;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+summary {
+  cursor: pointer;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.cands {
+  margin: var(--space-xs) 0 0;
+  padding-left: var(--space-md);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+/* Phones: drop the Merged column (it is also in each row's candidate list). */
+@media (max-width: 600px) {
+  .intro-table th:nth-child(3),
+  .intro-table td:nth-child(3) {
+    display: none;
+  }
+}
