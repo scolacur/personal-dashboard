@@ -12,7 +12,8 @@
 #     protection requiring that status, so a mis-set protection rule cannot let an ungated PR through.
 # PD-712 (D-101): any OTHER PR merges the same way, without an approval, once the Evaluator has
 # shipped it (review-gate success) — behind its own switch, AUTO_MERGE_ALL, off unless exactly `on`.
-# A CHANGES_REQUESTED review decision also blocks it. Path-guard (D-047) is a required check, so a
+# A CHANGES_REQUESTED review decision also blocks it, and a `do-not-merge` label blocks every
+# path, an approval included (PD-892). Path-guard (D-047) is a required check, so a
 # sensitive-path PR waits for Steve's ack exactly as before.
 #
 # WHY THIS EXISTS: branch protection on `main` requires the `verify` check + 1 approving
@@ -204,11 +205,22 @@ jobs:
 
             # ── 2. Idempotency: skip if not OPEN ────────────────────────────────
             DATA="$(gh pr view "$PR" --repo "$REPO" \
-              --json state,headRefName,reviewDecision,reviews,statusCheckRollup)"
+              --json state,headRefName,labels,reviewDecision,reviews,statusCheckRollup)"
             STATE="$(echo "$DATA" | jq -r .state)"
 
             if [ "$STATE" != "OPEN" ]; then
               echo "PR #$PR state=$STATE (not OPEN) — already merged/closed, skip."
+              continue
+            fi
+
+            # ── 2b. The do-not-merge hold (PD-892) ──────────────────────────────
+            # Wins over everything below, an approval included. For a PR that must be reviewed like
+            # any other but never auto-merged (the E2E loop test's PRs, PD-892): under AUTO_MERGE_ALL
+            # an Evaluator ship alone would merge it. The Evaluator never sees labels, so the hold
+            # cannot bias the review. It only stops this bridge: Steve can still merge by hand, and
+            # removing the label lets the bridge proceed.
+            if echo "$DATA" | jq -e '[.labels[]?.name] | index("do-not-merge")' >/dev/null; then
+              echo "PR #$PR is labelled do-not-merge — skip."
               continue
             fi
 
