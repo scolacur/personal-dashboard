@@ -120,9 +120,18 @@ export function getActiveAgents(db: Database.Database, now: number = Date.now())
     });
   }
 
-  for (const r of safeAll<{ id: number; started_at: number; scope: string | null; model: string | null }>(
+  for (const r of safeAll<{
+    id: number;
+    started_at: number;
+    scope: string | null;
+    model: string | null;
+    turns: number | null;
+    tokens: number | null;
+  }>(
     db,
-    `SELECT id, started_at, scope, model FROM audit_run
+    // PD-910: turns/tokens are written live by the worker (columns from the
+    // audit_run_add_turns_tokens migration).
+    `SELECT id, started_at, scope, model, turns, tokens FROM audit_run
       WHERE status = 'running' AND started_at IS NOT NULL AND started_at >= ?
       ORDER BY started_at`,
     since,
@@ -133,9 +142,9 @@ export function getActiveAgents(db: Database.Database, now: number = Date.now())
       startedAt: r.started_at,
       ticket: null,
       project: null,
-      turns: null,
+      turns: r.turns,
       maxTurns: null,
-      tokens: null,
+      tokens: r.tokens,
       model: r.model,
       detail: r.scope ? `scope ${r.scope}` : 'all projects',
     });

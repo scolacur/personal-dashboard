@@ -5,7 +5,14 @@ import { ensureRunsTable, startRun, finishRun } from '../robot/runs';
 import { ensureRobotStateTable } from '../robot/state';
 import { budgetUsage } from '../robot/budget';
 import { evaluateOnePr, runEvaluatePass } from './evaluate';
-import { ensureEvaluatorRunsTable, evaluatorBudgetUsage, recentEvaluatorRuns } from './evaluator-runs';
+import {
+  ensureEvaluatorRunsTable,
+  evaluatorBudgetUsage,
+  finishEvaluatorRun,
+  recentEvaluatorRuns,
+  startEvaluatorRun,
+  updateEvaluatorRunProgress,
+} from './evaluator-runs';
 import { pendingEvaluatorBrief } from './brief';
 import { MAX_EVALUATION_ROUNDS } from './verdict';
 import type { EvaluatorTurnResult } from './evaluate-agent';
@@ -374,5 +381,39 @@ describe('two reviewers: code and security (PD-767)', () => {
     expect(eventsOfType('robot_reactivated')).toHaveLength(1); // round 1 of 2 for the code reviewer
     const rounds = (eventsOfType('robot_evaluated').map((e) => JSON.parse(e.detail) as { round: number; lens: string }));
     expect(rounds).toEqual([expect.objectContaining({ lens: 'code', round: 1 }), expect.objectContaining({ lens: 'security', round: 1 })]);
+  });
+});
+
+// ── PD-909: live turns / tokens per lens run ──────────────────────────────────
+
+describe('live evaluator progress (PD-909)', () => {
+  const row = () =>
+    db.prepare('SELECT turns, tokens, finished_at FROM evaluator_runs ORDER BY id DESC LIMIT 1').get() as {
+      turns: number | null;
+      tokens: number | null;
+      finished_at: number | null;
+    };
+
+  it('writes the lens run’s progress while the review runs, then the authoritative totals', async () => {
+    let midRun: ReturnType<typeof row> | undefined;
+    const runAgent = vi.fn(async (_c: unknown, _s: string, _p: string, onProgress?: (t: number, k?: number) => void) => {
+      onProgress?.(1, 800);
+      onProgress?.(2); // no usage this turn — keeps the known total
+      midRun = row();
+      return { text: shipReply, ok: true, turns: 4, tokens: 900 } satisfies EvaluatorTurnResult;
+    });
+
+    await evaluateOnePr(db, config(), TARGET, { runAgent, fetchDiff: async () => 'diff' }, 200);
+
+    expect(midRun).toEqual({ turns: 2, tokens: 800, finished_at: null });
+    expect(row()).toMatchObject({ turns: 4, tokens: 900 });
+  });
+
+  it('never touches a finished run — a late callback cannot overwrite the final totals', () => {
+    const id = startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm' }, 10);
+    updateEvaluatorRunProgress(db, id, 3, 500);
+    finishEvaluatorRun(db, id, { error: 'x', turns: 5, tokens: 700 }, 20);
+    updateEvaluatorRunProgress(db, id, 9, 9999);
+    expect(row()).toMatchObject({ turns: 5, tokens: 700 });
   });
 });

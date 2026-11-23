@@ -75,14 +75,22 @@ describe('getActiveAgents', () => {
       `INSERT INTO evaluator_runs (ticket_id, pr_number, round, model, started_at) VALUES (?, 481, 2, 'claude-opus-4-8', ?)`,
     ).run(ticket.id, NOW - 5000);
     db.prepare(
-      `INSERT INTO audit_run (status, scope, model, started_at, created_at) VALUES ('running', 'single:PD', 'claude-sonnet-5-5', ?, ?)`,
+      `INSERT INTO audit_run (status, scope, model, started_at, created_at, turns, tokens) VALUES ('running', 'single:PD', 'claude-sonnet-5-5', ?, ?, 7, 21000)`,
     ).run(NOW - 5000, NOW - 6000);
     db.prepare(`INSERT INTO audit_run (status, created_at) VALUES ('requested', ?)`).run(NOW);
 
     const agents = getActiveAgents(db, NOW);
     expect(agents.map((a) => a.kind)).toEqual(['evaluator', 'auditor']);
     expect(agents[0]).toMatchObject({ model: 'claude-opus-4-8', detail: 'round 2 · PR #481', tokens: null });
-    expect(agents[1]).toMatchObject({ ticket: null, project: null, model: 'claude-sonnet-5-5', detail: 'scope single:PD' });
+    // PD-910: the audit's live turns/tokens come through.
+    expect(agents[1]).toMatchObject({
+      ticket: null,
+      project: null,
+      model: 'claude-sonnet-5-5',
+      detail: 'scope single:PD',
+      turns: 7,
+      tokens: 21000,
+    });
   });
 
   it('drops a run left "running" past the stale window, so a dead worker cannot leave a ghost robot', () => {
