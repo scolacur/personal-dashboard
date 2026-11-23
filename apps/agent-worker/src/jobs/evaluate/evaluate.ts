@@ -25,9 +25,12 @@ import { readStateNumber, writeState } from '../robot/state';
 import {
   alreadyEvaluated,
   ensureEvaluatorRunsTable,
-  evaluationRounds,
   evaluatorBudgetVerdict,
   finishEvaluatorRun,
+  latestLensReport,
+  lensNeedsRun,
+  lensStates,
+  MAX_LENS_ERROR_RUNS,
   startEvaluatorRun,
   updateEvaluatorRunProgress,
 } from './evaluator-runs';
@@ -35,7 +38,7 @@ import { runEvaluatorTurn, type RunEvaluatorTurn } from './evaluate-agent';
 // `reworkBrief` is deliberately NOT called here — the brief is derived at dispatch time from the
 // recorded findings (`brief.ts`), so the wording the Robot receives always matches the stored
 // verdict rather than being a second copy that can drift.
-import { MAX_DIFF_CHARS, MAX_EVALUATION_ROUNDS, blockingFindings, parseEvaluatorReport } from './verdict';
+import { MAX_DIFF_CHARS, MAX_EVALUATION_ROUNDS, MAX_UNPARSEABLE_CHARS, blockingFindings, parseEvaluatorReport } from './verdict';
 import {
   defaultHeadShaFetcher,
   defaultStatusPoster,
@@ -170,8 +173,16 @@ export async function evaluateOnePr(
   // share the diff, the pinned SHA and the decision below.
   const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
   const since = reviewBoundary(db, target.ticketId);
-  const rounds = new Map(lenses.map((l) => [l, evaluationRounds(db, target.ticketId, since, l) + 1]));
-  const round = Math.max(...rounds.values());
+  const select = { ticketId: target.ticketId, prNumber: target.prNumber, since };
+  const priorStates = lensStates(db, select);
+
+  // PD-883: only the lenses that still need review this pass — a lens that already decided this cycle
+  // (shipped/escalated, revised to the round cap, or errored twice) is folded in from the DB below
+  // instead of re-run. The revise round for a lens counts its prior VERDICT runs only, so an error
+  // retry never consumes a legitimate revise round.
+  const needed = lenses.filter((l) => lensNeedsRun(priorStates.get(l)));
+  const roundFor = (l: EvaluatorLens) => (priorStates.get(l)?.verdictRuns ?? 0) + 1;
+  const round = Math.max(1, ...needed.map(roundFor));
 
   // PD-763: the review-gate status, only when its token is configured. A status failure is logged by
   // the poster and never affects the evaluation.
@@ -182,18 +193,32 @@ export async function evaluateOnePr(
     if (gateOn && gateSha) await postStatus(target.repo, gateSha, status, gateTargetUrl(config, displayIdFor(db, target.ticketId)));
   };
 
+  // PD-883: start every lens's decision from what the cycle already holds. A lens we are NOT re-running
+  // folds in its latest verdict (so a lens that already shipped is not read as a missing verdict); a
+  // lens that errored out its retry folds in as null and keeps the PR from passing.
+  const reports = new Map<EvaluatorLens, EvaluatorReport | null>();
+  for (const l of lenses) {
+    if (!needed.includes(l)) reports.set(l, latestLensReport(db, select, l));
+  }
+
+  // Nothing new to review — every enabled lens is already settled (runEvaluatePass's
+  // `alreadyEvaluated` already skips this; this is the defensive direct-call path). Decide from the
+  // folded verdicts alone, with no new runs, milestones or gate writes.
+  if (needed.length === 0) {
+    return combineReports(lenses.map((l) => reports.get(l) ?? null));
+  }
+
   // Written BEFORE the pass, so an evaluation that dies or hangs is legible on the timeline as
   // "reviewing…" with no verdict after it. A failure writes no verdict on purpose (it must never
   // read as approval), which without this marker would make it invisible rather than merely
   // inconclusive.
   const runIds = new Map<EvaluatorLens, number>();
-  for (const lens of lenses) {
-    const r = rounds.get(lens)!;
+  for (const lens of needed) {
     runIds.set(
       lens,
-      startEvaluatorRun(db, { ticketId: target.ticketId, prNumber: target.prNumber, round: r, model: config.evaluator.model, lens }, now),
+      startEvaluatorRun(db, { ticketId: target.ticketId, prNumber: target.prNumber, round: roundFor(lens), model: config.evaluator.model, lens }, now),
     );
-    logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round: r, prNumber: target.prNumber, lens }, now);
+    logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round: roundFor(lens), prNumber: target.prNumber, lens }, now);
   }
 
   // PD-763: pin the head SHA BEFORE reading the diff. If the Robot pushes mid-review, the verdict
@@ -215,11 +240,11 @@ export async function evaluateOnePr(
     logger.warn({ what, ticketId: target.ticketId }, 'evaluator: context source missing — the review is degraded'),
   );
 
-  // Each lens reviews independently. A lens with no usable verdict records its error and yields null.
-  const reports = new Map<EvaluatorLens, EvaluatorReport | null>();
-  for (const lens of lenses) {
+  // Each needed lens reviews independently. A lens with no usable verdict records its error and
+  // yields null.
+  for (const lens of needed) {
     const runId = runIds.get(lens)!;
-    const r = rounds.get(lens)!;
+    const r = roundFor(lens);
     const system = lens === 'security' ? securityEvaluatorSystemPrompt(contextPack) : evaluatorSystemPrompt(contextPack);
     const result = await runAgent(config, system, userPrompt, (t, k) => updateEvaluatorRunProgress(db, runId, t, k));
     if (!result.ok) {
@@ -230,10 +255,12 @@ export async function evaluateOnePr(
     }
     const report = parseEvaluatorReport(result.text);
     if (!report) {
+      // PD-883: keep the full reply (bounded), not a 500-char head — for an unparseable reply the
+      // tail is usually where the malformed JSON or truncation is.
       finishEvaluatorRun(
         db,
         runId,
-        { error: `unparseable report: ${result.text.slice(0, 500)}`, turns: result.turns, tokens: result.tokens },
+        { error: `unparseable report: ${result.text.slice(0, MAX_UNPARSEABLE_CHARS)}`, turns: result.turns, tokens: result.tokens },
         now,
       );
       logger.warn({ ticketId: target.ticketId, lens }, 'evaluator: reply had no usable verdict — leaving the PR alone');
@@ -269,9 +296,10 @@ export async function evaluateOnePr(
     reports.set(lens, report);
   }
 
-  // One decision for the PR, from every lens. Any missing verdict means the PR cannot pass (D-076:
-  // a failed evaluation is never approval); otherwise the worst verdict wins.
-  const combined = combineReports([...reports.values()]);
+  // One decision for the PR, from every lens (fresh this pass or folded from the cycle). Any missing
+  // verdict means the PR cannot pass (D-076: a failed evaluation is never approval); otherwise the
+  // worst verdict wins.
+  const combined = combineReports(lenses.map((l) => reports.get(l) ?? null));
 
   // PD-773: the Evaluator may ask for Steve's visual check. Recorded once per PR; it never changes
   // the verdict, only what a ship does to review-gate below.
@@ -279,10 +307,11 @@ export async function evaluateOnePr(
   if (visualAsk && !visualRequested(db, target.ticketId, target.prNumber)) {
     logMilestone(db, target.ticketId, ROBOT_EVENT.visualReviewRequested, { prNumber: target.prNumber, by: 'evaluator', reason: visualAsk }, now);
   }
-  // The round that matters is the highest among the lenses asking for changes.
-  const reviseRound = Math.max(0, ...lenses.filter((l) => reports.get(l)?.verdict === 'revise').map((l) => rounds.get(l)!));
+  // Only a lens that revised THIS pass drives rework — a folded revise was already acted on when it
+  // was first recorded. The round that matters is the highest among them.
+  const reviseRound = Math.max(0, ...needed.filter((l) => reports.get(l)?.verdict === 'revise').map(roundFor));
 
-  if (combined?.verdict === 'revise') {
+  if (combined?.verdict === 'revise' && reviseRound > 0) {
     if (reviseRound >= MAX_EVALUATION_ROUNDS) {
       // The cap is the loop-safety limit (see MAX_EVALUATION_ROUNDS). At the ceiling the finding is
       // recorded and the human decides — sending it back again is the unbounded cycle.
@@ -305,7 +334,19 @@ export async function evaluateOnePr(
     logger.info({ ticketId: target.ticketId, verdict: combined.verdict }, 'evaluator: verdict recorded');
   }
 
-  let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS);
+  // PD-883: when the combined decision is a no-verdict failure, name the lens behind it and whether
+  // its one error retry is still pending or has been used, for both the gate description and the
+  // terminal notification. Recompute states AFTER this pass's runs are recorded.
+  const finalStates = lensStates(db, select);
+  const erroredLenses = lenses.filter((l) => {
+    const s = finalStates.get(l);
+    return !!s && s.verdictRuns === 0 && s.errorRuns > 0;
+  });
+  const failureCtx = erroredLenses.length
+    ? { lens: erroredLenses[0], retryUsed: (finalStates.get(erroredLenses[0])?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS }
+    : undefined;
+
+  let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, MAX_EVALUATION_ROUNDS, failureCtx);
   // PD-773: a ship on a PR that waits for Steve's visual check holds the gate at pending. His approval
   // releases it (releaseVisualGates); until then he is told it is waiting.
   // PD-793: only while capture is on. With it off there is nothing to look at, so the gate skips
@@ -326,6 +367,27 @@ export async function evaluateOnePr(
     }
   }
   await gate(status);
+
+  // PD-883: when a lens has used its one retry (errored twice, no verdict) and the gate still fails,
+  // surface it to a human — a PR that would otherwise sit silently in-review forever. notify's
+  // (ticket, kind) unread dedup fires this once, not every poll.
+  if (status.state === 'failure') {
+    const exhausted = lenses.filter((l) => {
+      const s = finalStates.get(l);
+      return !!s && s.verdictRuns === 0 && s.errorRuns >= MAX_LENS_ERROR_RUNS;
+    });
+    if (exhausted.length > 0) {
+      const displayId = displayIdFor(db, target.ticketId);
+      notify(
+        db,
+        'agent_needs_human',
+        target.ticketId,
+        `Evaluator could not review PR #${target.prNumber}${displayId ? ` (${displayId})` : ''}`,
+        `The ${exhausted.join(' and ')} review produced no usable verdict after its one retry. review-gate is failing; this PR needs a human review.`,
+        now,
+      );
+    }
+  }
 
   // PD-793: with capture off, the PR still says what happened with screenshots, once per head.
   if (!config.visual.enabled) {
@@ -427,10 +489,13 @@ export async function runEvaluatePass(
     return 0;
   }
 
+  // PD-883: idempotence is now per enabled lens — a PR is skipped only when every lens has settled
+  // (a verdict or a used retry), so an errored lens is retried on a later poll.
+  const enabledLenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
   let evaluated = 0;
   for (const target of inReviewPrTargets(db)) {
     const since = reviewBoundary(db, target.ticketId);
-    if (alreadyEvaluated(db, target.ticketId, target.prNumber, since)) continue;
+    if (alreadyEvaluated(db, target.ticketId, target.prNumber, since, enabledLenses)) continue;
     try {
       const report = await evaluateOnePr(db, config, target, deps, now);
       if (report) evaluated++;

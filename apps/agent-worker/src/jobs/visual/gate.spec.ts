@@ -150,6 +150,9 @@ describe('visual gate with capture off (PD-793)', () => {
     expect(comments.at(-1)).not.toMatch(/asked for/);
 
     db.exec('DELETE FROM visual_captures');
+    // PD-883: a lens that already shipped is not re-reviewed in the same cycle; a new hand-off starts
+    // a fresh cycle so the server-only diff is evaluated afresh.
+    finishRun(db, startRun(db, { ticketId: 1, issueNumber: null, branch: 'robot/t1' }, 250), { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 260);
     await evaluateOnePr(db, config(false), TARGET, { ...deps(), fetchDiff: async () => serverDiff, comment, runAgent: agent(ship) }, 300);
     expect(comments.at(-1)).toMatch(/Visual: no UI change/);
     expect(rows()).toEqual([{ outcome: 'skipped', head_sha: SHA }]);

@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-108](DECISIONS/D-108-evaluator-per-lens-settlement-separates-error-retry-from-revise-rounds.md)** — Evaluator per-lens settlement separates the one-error retry cap from the revise round cap
 - **[D-107](DECISIONS/D-107-circuit-breaker-pauses-the-loop-after-n-consecutive-deterministic-failures.md)** — A circuit breaker pauses the whole loop after N consecutive deterministic failures across distinct tickets
 - **[D-105](DECISIONS/D-105-deploy-drain-hold-is-its-own-robot-state-slot.md)** — The deploy-drain hold is its own `robot_state` slot, not a reason on the maintenance hold (PD-802)
 - **[D-104](DECISIONS/D-104-worker-restart-orphans-reclaimed-by-ownership-not-age.md)** — Worker-restart orphans are reclaimed by ownership, not age; graceful interrupts never count, unclean restarts count against their own cap and a restart breaker

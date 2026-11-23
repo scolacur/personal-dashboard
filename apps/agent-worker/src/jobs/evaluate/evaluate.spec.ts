@@ -6,6 +6,7 @@ import { ensureRobotStateTable } from '../robot/state';
 import { budgetUsage } from '../robot/budget';
 import { evaluateOnePr, runEvaluatePass } from './evaluate';
 import {
+  alreadyEvaluated,
   ensureEvaluatorRunsTable,
   evaluatorBudgetUsage,
   finishEvaluatorRun,
@@ -15,6 +16,7 @@ import {
 } from './evaluator-runs';
 import { pendingEvaluatorBrief } from './brief';
 import { MAX_EVALUATION_ROUNDS } from './verdict';
+import type { EvaluatorLens } from '@dashboard/shared';
 import type { EvaluatorTurnResult } from './evaluate-agent';
 
 const TARGET = { ticketId: 1, repo: 'scolacur/personal-dashboard', prNumber: 314 };
@@ -372,6 +374,10 @@ describe('two reviewers: code and security (PD-767)', () => {
     await evaluateOnePr(db, cfg, TARGET, { ...deps, runAgent: byLens(shipReply, secReply('ship')), fetchDiff: async () => 'd' }, 200);
     expect(posts).toEqual(['pending', 'success']);
     posts.length = 0;
+    // PD-883: a lens that already shipped is not re-reviewed in the same cycle. A NEW hand-off starts
+    // a fresh cycle, so both lenses are evaluated again — this time the security lens cannot decide.
+    const r = startRun(db, { ticketId: 1, issueNumber: 220, branch: 'robot/220' }, 290);
+    finishRun(db, r, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 295);
     await evaluateOnePr(db, cfg, TARGET, { ...deps, runAgent: byLens(shipReply, 'nope'), fetchDiff: async () => 'd' }, 300);
     expect(posts.at(-1)).toBe('failure');
   });
@@ -415,5 +421,128 @@ describe('live evaluator progress (PD-909)', () => {
     finishEvaluatorRun(db, id, { error: 'x', turns: 5, tokens: 700 }, 20);
     updateEvaluatorRunProgress(db, id, 9, 9999);
     expect(row()).toMatchObject({ turns: 5, tokens: 700 });
+  });
+});
+
+describe('one error retry per lens, per review cycle (PD-883)', () => {
+  const secReply = (verdict: string, findings: unknown[] = []) => JSON.stringify({ verdict, summary: `security ${verdict}`, findings });
+  const both = () => config({ securityEnabled: true, reviewGateToken: 'tok' });
+  const lensOf = (e: { detail: string }) => (JSON.parse(e.detail) as { lens?: string }).lens;
+
+  const posts: string[] = [];
+  const gateDeps = {
+    fetchHeadSha: async () => 'c'.repeat(40),
+    postStatus: async (_r: string, _s: string, st: { state: string }) => (posts.push(st.state), true),
+  };
+
+  /** An agent that answers per lens (security prompt self-identifies) and records which lens it saw. */
+  function recordingAgent(answers: { code: string; security: string }) {
+    const calls: string[] = [];
+    const fn = vi.fn(async (_c: AgentWorkerConfig, system: string): Promise<EvaluatorTurnResult> => {
+      const lens = system.includes('the security reviewer') ? 'security' : 'code';
+      calls.push(lens);
+      return { text: lens === 'security' ? answers.security : answers.code, ok: true, turns: 2, tokens: 100 };
+    });
+    return { fn, calls };
+  }
+
+  beforeEach(() => {
+    posts.length = 0;
+    db.exec(`CREATE TABLE IF NOT EXISTS agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER,
+      title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL)`);
+    db.exec('ALTER TABLE agent_tickets ADD COLUMN display_id TEXT');
+    db.prepare("UPDATE agent_tickets SET display_id = 'PD-1' WHERE id = 1").run();
+  });
+
+  it('retries ONLY the errored lens next poll; its later ship folds the prior code ship into success', async () => {
+    // Pass 1: code ships, the security reviewer returns garbage. The PR fails for now; retry pending.
+    const a1 = recordingAgent({ code: shipReply, security: 'not json' });
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a1.fn, fetchDiff: async () => 'd' }, 200);
+    expect(a1.calls).toEqual(['code', 'security']);
+    expect(posts.at(-1)).toBe('failure');
+    expect(eventsOfType('robot_evaluated').map(lensOf)).toEqual(['code']); // only code produced a verdict
+
+    // Pass 2: ONLY the security lens is re-run — code already shipped this cycle — and its ship
+    // combines with the folded code ship to open the gate.
+    posts.length = 0;
+    const a2 = recordingAgent({ code: shipReply, security: secReply('ship') });
+    const report = await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a2.fn, fetchDiff: async () => 'd' }, 300);
+    expect(a2.calls).toEqual(['security']);
+    expect(report?.verdict).toBe('ship');
+    expect(posts.at(-1)).toBe('success');
+    expect(agentState()).toBe('in-review');
+  });
+
+  it('a second error leaves the gate failing, does not run a third time, and notifies once naming the lens', async () => {
+    const garbage = () => recordingAgent({ code: shipReply, security: 'still not json' });
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: garbage().fn, fetchDiff: async () => 'd' }, 200); // security error #1
+    // No notification yet — the retry is still pending.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agent_notifications WHERE kind = 'agent_needs_human'").get()).toMatchObject({ n: 0 });
+
+    posts.length = 0;
+    const a2 = garbage();
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a2.fn, fetchDiff: async () => 'd' }, 300); // security error #2 (retry used)
+    expect(a2.calls).toEqual(['security']);
+    expect(posts.at(-1)).toBe('failure');
+
+    const notifs = db
+      .prepare("SELECT title, body FROM agent_notifications WHERE kind = 'agent_needs_human'")
+      .all() as { title: string; body: string }[];
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].title).toContain('PR #314');
+    expect(notifs[0].body).toContain('security');
+
+    // A third poll must NOT run the security lens again — its one retry is used.
+    posts.length = 0;
+    const a3 = recordingAgent({ code: shipReply, security: secReply('ship') });
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a3.fn, fetchDiff: async () => 'd' }, 400);
+    expect(a3.calls).toEqual([]);
+    // Still exactly one notification (notify's unread (ticket, kind) dedup).
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agent_notifications WHERE kind = 'agent_needs_human'").get()).toMatchObject({ n: 1 });
+  });
+
+  it('alreadyEvaluated: one errored lens is NOT done, two errors IS done', async () => {
+    const lenses: EvaluatorLens[] = ['code', 'security'];
+    expect(alreadyEvaluated(db, 1, 314, 100, lenses)).toBe(false);
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: recordingAgent({ code: shipReply, security: 'x' }).fn, fetchDiff: async () => 'd' }, 200);
+    expect(alreadyEvaluated(db, 1, 314, 100, lenses)).toBe(false); // security retry pending
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: recordingAgent({ code: shipReply, security: 'x' }).fn, fetchDiff: async () => 'd' }, 300);
+    expect(alreadyEvaluated(db, 1, 314, 100, lenses)).toBe(true); // security retry used
+  });
+
+  it('a new hand-off boundary resets the retry', async () => {
+    // Exhaust the security retry in the first cycle.
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: recordingAgent({ code: shipReply, security: 'x' }).fn, fetchDiff: async () => 'd' }, 200);
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: recordingAgent({ code: shipReply, security: 'x' }).fn, fetchDiff: async () => 'd' }, 300);
+    // A new hand-off advances `since` → a fresh cycle → both lenses evaluated again.
+    const r = startRun(db, { ticketId: 1, issueNumber: 220, branch: 'robot/220' }, 390);
+    finishRun(db, r, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 395);
+    posts.length = 0;
+    const a = recordingAgent({ code: shipReply, security: secReply('ship') });
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a.fn, fetchDiff: async () => 'd' }, 400);
+    expect(a.calls).toEqual(['code', 'security']);
+    expect(posts.at(-1)).toBe('success');
+  });
+
+  // PR #487 (PD-761): a worker restart killed both lens runs mid-review, leaving rows that were never
+  // finished. Under the old "any code row exists" rule the PR was skipped forever and never got a
+  // review-gate status. An unfinished row now counts as one errored run, so the lens is retried.
+  it('retries lenses whose runs a worker restart left unfinished (the PR #487 strand)', async () => {
+    startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm', lens: 'code' }, 150);
+    startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm', lens: 'security' }, 150);
+    expect(alreadyEvaluated(db, 1, 314, 100, ['code', 'security'])).toBe(false);
+    const a = recordingAgent({ code: shipReply, security: secReply('ship') });
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a.fn, fetchDiff: async () => 'd' }, 300);
+    expect(a.calls.sort()).toEqual(['code', 'security']);
+    expect(posts.at(-1)).toBe('success');
+  });
+
+  it('keeps the full unparseable reply up to the 20k cap, not a 500-char head', async () => {
+    const long = `${'x'.repeat(30_000)} no-json-here`; // no JSON object at all → unparseable
+    await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(long), fetchDiff: async () => 'd' }, 200);
+    const err = recentEvaluatorRuns(db, 1)[0].error ?? '';
+    expect(err).toMatch(/unparseable/);
+    expect(err.length).toBeGreaterThan(500); // not the old 500-char slice
+    expect(err.length).toBeLessThanOrEqual(20_100); // bounded by the ~20k cap (+ short prefix)
   });
 });
