@@ -479,6 +479,24 @@ export async function runEvaluatePass(
     logger.error({ err }, 'evaluator: applying visual decisions threw — continuing');
   }
 
+  // PD-913 / PD-915: the session-PR passes that spend no agent turns run BEFORE the budget gate, for
+  // the same reason as the visual decisions above: a spent review budget must not stop an idle revised
+  // PR being handed to the Robot, an adoption being given back, or a merged PR completing its ticket.
+  if (config.evaluator.allPrs) {
+    try {
+      const { completeMergedSessionTickets } = await import('./session-merges');
+      await completeMergedSessionTickets(db, config, now, deps as { listMerged?: import("./session-merges").MergedPrLister });
+    } catch (err) {
+      logger.error({ err }, 'evaluator: session-merge completion threw — continuing');
+    }
+    try {
+      const { runAdoptionPass } = await import('./adopt-pass');
+      await runAdoptionPass(db, config, now, deps);
+    } catch (err) {
+      logger.error({ err }, 'evaluator: adoption pass threw — continuing');
+    }
+  }
+
   const budget = evaluatorBudgetVerdict(
     db,
     {
@@ -512,21 +530,6 @@ export async function runEvaluatePass(
   }
   // PD-712 (D-101): then one non-Robot PR per pass, on the same budget and ledger.
   if (config.evaluator.allPrs) {
-    // PD-913 (D-111): first hand idle revised session PRs to the Robot, and give back any whose PR
-    // moved before it started. Costs no agent turns, so it runs every pass.
-    // PD-915: complete the branch ticket of a session PR that merged. No agent turns either.
-    try {
-      const { completeMergedSessionTickets } = await import('./session-merges');
-      await completeMergedSessionTickets(db, config, now, deps as { listMerged?: import("./session-merges").MergedPrLister });
-    } catch (err) {
-      logger.error({ err }, 'evaluator: session-merge completion threw — continuing');
-    }
-    try {
-      const { runAdoptionPass } = await import('./adopt-pass');
-      await runAdoptionPass(db, config, now, deps);
-    } catch (err) {
-      logger.error({ err }, 'evaluator: adoption pass threw — continuing');
-    }
     try {
       const { evaluateNextOtherPr } = await import('./all-prs');
       const verdict = await evaluateNextOtherPr(db, config, now, deps);

@@ -214,6 +214,18 @@ describe('budget separation — the premise of the ticket', () => {
     const paused = db.prepare("SELECT value FROM robot_state WHERE key = 'dispatch_paused'").get();
     expect(paused).toBeUndefined();
   });
+  it('a breached budget still runs the turn-free session-PR passes: adoption and merge completion (PD-913, PD-915)', async () => {
+    await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 200);
+    const listPrs = vi.fn(async () => []);
+    const listMerged = vi.fn(async () => []);
+    const agent = fakeAgent(shipReply);
+    // First pass sets the merge watermark; the second must still list merges and PRs.
+    await runEvaluatePass(db, config({ budgetTurns: 1, intervalMs: 0, allPrs: true }), 300, { runAgent: agent, listPrs, listMerged } as never);
+    await runEvaluatePass(db, config({ budgetTurns: 1, intervalMs: 0, allPrs: true }), 400, { runAgent: agent, listPrs, listMerged } as never);
+    expect(listPrs).toHaveBeenCalled();
+    expect(listMerged).toHaveBeenCalled();
+    expect(agent).not.toHaveBeenCalled();
+  });
 });
 
 describe('runEvaluatePass — gating', () => {
