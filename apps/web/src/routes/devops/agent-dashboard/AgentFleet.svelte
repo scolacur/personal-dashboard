@@ -7,12 +7,12 @@
   import { formatRelativeTime } from '../../deploy-status-utils';
   import { pauseDispatch, resumeDispatch } from '../api';
   import {
-    REFRESH_MS,
     STALE_MS,
     SYSTEM_STATUS_URL,
     activeStatesOf,
     budgetLimbsOf,
     formatClockTime,
+    nextPollDelay,
   } from '../system-status-view';
   import AgentAvatar from './AgentAvatar.svelte';
   import AgentTile from './AgentTile.svelte';
@@ -45,22 +45,46 @@
   let status = $state<SystemStatus | null>(null);
   let now = $state(Date.now());
 
+  // PD-908: a self-scheduling poll rather than a fixed interval — after each response the next
+  // delay is chosen from what came back (5s while agents are active, 30s idle), and a hidden tab
+  // stops polling until it is shown again.
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight = false;
+
+  function schedule(): void {
+    clearTimeout(pollTimer);
+    const delay = nextPollDelay(status, document.hidden);
+    if (delay !== null) pollTimer = setTimeout(load, delay);
+  }
+
   function load(): void {
+    if (inFlight) return;
+    inFlight = true;
     fetch(SYSTEM_STATUS_URL)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: SystemStatus | null) => {
         status = data;
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        inFlight = false;
+        schedule();
+      });
+  }
+
+  function onVisibility(): void {
+    if (document.hidden) clearTimeout(pollTimer);
+    else load(); // catch up immediately on return
   }
 
   $effect(() => {
     load();
-    const poll = setInterval(load, REFRESH_MS);
+    document.addEventListener('visibilitychange', onVisibility);
     // The elapsed clocks on the robot tiles tick between polls.
     const tick = setInterval(() => (now = Date.now()), 1000);
     return () => {
-      clearInterval(poll);
+      clearTimeout(pollTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
       clearInterval(tick);
     };
   });

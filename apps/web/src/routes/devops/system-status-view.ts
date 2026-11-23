@@ -10,8 +10,26 @@ import type { AgentState, SystemStatus } from '@dashboard/shared';
 /** The `/system-status` route. */
 export const SYSTEM_STATUS_URL = '/api/widgets/task-monitor/system-status';
 
-/** Poll interval for both renderings. */
+/** Poll interval for both renderings (the Agent Dashboard's idle rate). */
 export const REFRESH_MS = 30_000;
+
+/** PD-908: the Agent Dashboard's poll interval while any agent is running, so its turn / token
+ *  readouts track the per-turn DB writes. Cheap: the route is synchronous SQLite reads only, and
+ *  WAL means a read never blocks the worker's writes. */
+export const ACTIVE_REFRESH_MS = 5_000;
+
+/**
+ * PD-908: how long until the Agent Dashboard polls again — fast while agents are active, the idle
+ * rate otherwise, and `null` (don't poll) while the tab is hidden so a forgotten tab costs nothing.
+ * `activeAgents` is read defensively: a server older than PD-819 doesn't send it.
+ */
+export function nextPollDelay(
+  status: Partial<Pick<SystemStatus, 'activeAgents'>> | null,
+  hidden: boolean,
+): number | null {
+  if (hidden) return null;
+  return (status?.activeAgents?.length ?? 0) > 0 ? ACTIVE_REFRESH_MS : REFRESH_MS;
+}
 
 /** A worker with no heartbeat for >3× its write interval (30s) is treated as down. */
 export const STALE_MS = 90_000;
