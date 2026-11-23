@@ -1,5 +1,8 @@
 # D-067: The path-guard gates unsupervised agents, not Steve — author-scoped, with a Robot-branch backstop (PD-474; amends D-047)
 
+> **Superseded by [[D-109]]:** once the Evaluator plus `AUTO_MERGE_ALL` could merge any PR (D-101),
+> the exemption meant nobody acked a sensitive change. Every author is gated again.
+
 **Decision:** the Tier 1 **path-guard** requires the `sensitive-change-approved` ack from every PR
 author *except* an allowlist in the workflow (`AUTHORS_EXEMPT`, currently just `scolacur`), and
 never skips the ack on a `robot/*` / `sortie/*` head branch regardless of author. An exempt PR still
