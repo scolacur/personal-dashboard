@@ -75,6 +75,21 @@ export function adoptableTicket(db: Database.Database, headRefName: string): Ado
   }
 }
 
+/** Any live ticket a session branch names (PD-915), adoptable or not. Null when there is none. */
+export function branchTicket(db: Database.Database, headRefName: string): AdoptableTicket | null {
+  if (headRefName.startsWith('robot/')) return null;
+  const displayId = branchDisplayId(headRefName);
+  if (!displayId) return null;
+  try {
+    const row = db
+      .prepare('SELECT id, display_id AS displayId, title FROM agent_tickets WHERE display_id = ? AND archived_at IS NULL')
+      .get(displayId) as AdoptableTicket | undefined;
+    return row ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface HeadVerdict {
   verdict: 'ship' | 'revise' | 'escalate' | 'none';
   round: number;

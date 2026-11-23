@@ -73,8 +73,10 @@ the array and filter on `displayId`. (The older `/api/widgets/agent-dashboard/�
 and 404s** — it was renamed.) The old `TODO.md`/`META-TODOS.md` files were seeded into the board
 and archived to `/Users/steve/Documents/Dev/archive/` (see D-020).
 
-**A merged PR does not complete its ticket.** The Robot loop only completes tickets *it*
-dispatched, so anything built by hand must be `PATCH`ed to `completed` yourself.
+**A merged PR completes only the ticket its branch names.** Since PD-915 the worker completes the
+branch ticket of a merged session PR (`pd-915-…` → PD-915), as the Robot loop does for its own. A
+ticket named only in the PR title or body is **not** completed: `PATCH` those to `completed`
+yourself, and any ticket whose PR branch doesn't follow the `pd-NNN-…` convention.
 
 **Decisions (D-070, D-088).** Each decision is its own file; `DECISIONS.md` is a **generated** index
 over them and must never be hand-edited — that edit is lost on the next regeneration.

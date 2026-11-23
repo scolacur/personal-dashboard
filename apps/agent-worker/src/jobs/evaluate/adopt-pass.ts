@@ -10,6 +10,7 @@ import {
   pendingAdoptions,
   releaseAdoption,
 } from './adoption';
+import { latestVisualDecision, sessionReviewBoundary } from '../visual/gate';
 import { defaultOtherPrLister, defaultPrCommenter, skipReason, type OtherPrLister, type PrCommenter } from './all-prs';
 
 export interface AdoptionPassDeps {
@@ -58,8 +59,15 @@ export async function runAdoptionPass(
     const ticket = adoptableTicket(db, pr.headRefName);
     if (!ticket) continue;
     const v = headVerdict(db, pr.number, pr.headRefOid);
-    if (!v || v.verdict !== 'revise' || v.round >= config.evaluator.maxRounds) continue;
-    if (now - v.finishedAt < config.evaluator.adoptIdleMs) continue;
+    if (!v) continue;
+    // PD-915: Steve rejecting the visual check of a shipped head counts as a revise, and the idle
+    // clock runs from his decision. His note reaches the Robot through `pendingEvaluatorBrief`.
+    const decision = latestVisualDecision(db, ticket.id, sessionReviewBoundary(db, ticket.id, pr.number));
+    const visualRejected = v.verdict === 'ship' && decision !== null && !decision.approved;
+    const revised = v.verdict === 'revise' && v.round < config.evaluator.maxRounds;
+    if (!revised && !visualRejected) continue;
+    const since = visualRejected ? Math.max(v.finishedAt, decision!.createdAt) : v.finishedAt;
+    if (now - since < config.evaluator.adoptIdleMs) continue;
 
     adoptTicket(db, ticket.id, pr, now);
     result.adopted++;
@@ -72,7 +80,9 @@ export async function runAdoptionPass(
         '<!-- robot:adopted -->',
         `**The Robot is taking over the rework** for ${ticket.displayId} (${ticket.title}).`,
         '',
-        `The Evaluator asked for changes (round ${v.round}) and this branch has had no push for ${idleMin} minutes.`,
+        visualRejected
+          ? `Steve's visual check asked for changes and this branch has had no push for ${idleMin} minutes.`
+          : `The Evaluator asked for changes (round ${v.round}) and this branch has had no push for ${idleMin} minutes.`,
         'It will push fixes on top of your commits, never force-push, and the Evaluator reviews the result.',
         'Push to this branch before it starts and it comes straight back to you.',
       ].join('\n'),
