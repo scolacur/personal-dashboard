@@ -1,4 +1,4 @@
-import type { EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
+import type { BugReport, EpicBurndown, RunReport, VelocityReport } from '@dashboard/shared';
 
 const BASE = '/api/widgets/task-monitor/velocity';
 
@@ -24,4 +24,9 @@ export function fetchRunReport(projectId?: number): Promise<RunReport> {
 /** Per-Epic burndown over current membership (PD-897). */
 export function fetchEpicBurndowns(projectId?: number): Promise<EpicBurndown[]> {
   return getJson(projectId ? `${BASE}/epics?projectId=${projectId}` : `${BASE}/epics`);
+}
+
+/** Bugs (kind = bug) filed vs fixed per week, by severity (PD-881). */
+export function fetchBugReport(projectId?: number): Promise<BugReport> {
+  return getJson(projectId ? `${BASE}/bugs?projectId=${projectId}` : `${BASE}/bugs`);
 }

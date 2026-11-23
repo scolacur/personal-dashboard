@@ -511,3 +511,92 @@ export function buildEpicBurndowns(
   }
   return out.sort((a, b) => b.lastActivity - a.lastActivity);
 }
+
+/* ── Bugs filed vs fixed (PD-881) ────────────────────────────────────────────────────────── */
+
+/** Severity = the ticket's priority, bucketed. Unset priority counts as low: nobody priced it. */
+export type BugSeverity = 'high' | 'medium' | 'low';
+export const BUG_SEVERITIES: readonly BugSeverity[] = ['high', 'medium', 'low'];
+export const BUG_SEVERITY_LABELS: Record<BugSeverity, string> = {
+  high: 'P0–P1',
+  medium: 'P2–P3',
+  low: 'P4–P5 / unset',
+};
+
+export function severityOf(priority: string | null): BugSeverity {
+  if (priority === 'P0' || priority === 'P1') return 'high';
+  if (priority === 'P2' || priority === 'P3') return 'medium';
+  return 'low';
+}
+
+export type SeverityCounts = Record<BugSeverity, number>;
+
+function emptySeverityCounts(): SeverityCounts {
+  return { high: 0, medium: 0, low: 0 };
+}
+
+/** A `kind = 'bug'` ticket: its replayed lifecycle plus its priority. */
+export interface BugInput {
+  lifecycle: TicketLifecycle;
+  priority: string | null;
+}
+
+export interface BugWeek {
+  weekStart: number;
+  /** Bugs created this week ("introduced" isn't observable; filing is). */
+  filed: SeverityCounts;
+  /** Bugs first completed this week. A close (won't fix, duplicate, split) is not a fix. */
+  fixed: SeverityCounts;
+  /** Bugs open at the end of the week (or now, for the current week). */
+  open: SeverityCounts;
+  /** Median days from filing to first completion, for bugs fixed this week. */
+  medianDaysToFix: number | null;
+}
+
+export interface BugReport {
+  /** First bug filed — where the series starts; null when there are no bugs. */
+  startDate: number | null;
+  generatedAt: number;
+  weeks: BugWeek[];
+  totals: { bugs: number; fixed: number; openNow: SeverityCounts };
+}
+
+export function buildBugReport(bugs: BugInput[], now: number, win: ReportWindow = {}): BugReport {
+  const openNow = emptySeverityCounts();
+  let fixed = 0;
+  for (const b of bugs) {
+    if (b.lifecycle.completedAt !== null) fixed++;
+    if (stateAt(b.lifecycle, now) === 'open') openNow[severityOf(b.priority)]++;
+  }
+  const totals = { bugs: bugs.length, fixed, openNow };
+  if (bugs.length === 0) return { startDate: null, generatedAt: now, weeks: [], totals };
+  const startDate = Math.min(...bugs.map((b) => b.lifecycle.createdAt));
+
+  const weeks = windowWeeks(startDate, now, win).map((weekStart): BugWeek => {
+    const weekEnd = nextWeek(weekStart);
+    const inWeek = (ts: number) => ts >= weekStart && ts < weekEnd;
+    const asOf = Math.min(weekEnd - 1, now);
+    const filedC = emptySeverityCounts();
+    const fixedC = emptySeverityCounts();
+    const open = emptySeverityCounts();
+    const daysToFix: number[] = [];
+    for (const b of bugs) {
+      const sev = severityOf(b.priority);
+      const l = b.lifecycle;
+      if (inWeek(l.createdAt)) filedC[sev]++;
+      if (l.completedAt !== null && inWeek(l.completedAt)) {
+        fixedC[sev]++;
+        daysToFix.push((l.completedAt - l.createdAt) / DAY_MS);
+      }
+      if (stateAt(l, asOf) === 'open') open[sev]++;
+    }
+    return {
+      weekStart,
+      filed: filedC,
+      fixed: fixedC,
+      open,
+      medianDaysToFix: percentile(daysToFix, 0.5),
+    };
+  });
+  return { startDate, generatedAt: now, weeks, totals };
+}

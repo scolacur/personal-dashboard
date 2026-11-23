@@ -1,9 +1,11 @@
 import type Database from 'better-sqlite3';
 import {
+  buildBugReport,
   buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
   reconstructLifecycles,
+  type BugReport,
   type EpicBurndown,
   type ReportWindow,
   type RunReport,
@@ -174,4 +176,27 @@ export function getEpicBurndowns(
     loadLifecycles(db, filter.projectId),
     now,
   );
+}
+
+/**
+ * Bugs filed vs fixed per week, by severity (PD-881). A bug is a non-Epic ticket with
+ * `kind = 'bug'` (PD-896) — so the series covers what has been classified, which the page notes.
+ */
+export function getBugReport(
+  db: Database.Database,
+  filter: VelocityFilter = {},
+  now = Date.now(),
+): BugReport {
+  const scope = filter.projectId != null ? 'AND project_id = @projectId' : '';
+  const rows = db
+    .prepare(
+      `SELECT id, priority FROM agent_tickets
+        WHERE kind = 'bug' AND is_epic = 0 AND archived_at IS NULL ${scope}`,
+    )
+    .all({ projectId: filter.projectId }) as { id: number; priority: string | null }[];
+  const priorityById = new Map(rows.map((r) => [r.id, r.priority]));
+  const bugs = loadLifecycles(db, filter.projectId)
+    .filter((l) => priorityById.has(l.id))
+    .map((lifecycle) => ({ lifecycle, priority: priorityById.get(lifecycle.id) ?? null }));
+  return buildBugReport(bugs, now, filter);
 }
