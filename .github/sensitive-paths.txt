@@ -57,3 +57,4 @@ package-lock.json
 **/session/**
 **/*cors*
 **/*csp*
+# path-guard D-109 test — throwaway, do not merge
