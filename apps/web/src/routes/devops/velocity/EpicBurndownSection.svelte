@@ -17,7 +17,10 @@
   let { epics, range }: Props = $props();
 
   let picked = $state<number | null>(null);
-  const selectedId = $derived(picked ?? defaultEpicId(epics));
+  // A pick from before the project filter changed may not be in the new list; fall back then.
+  const selectedId = $derived(
+    picked !== null && epics.some((e) => e.id === picked) ? picked : defaultEpicId(epics),
+  );
   const epic = $derived(epics.find((e) => e.id === selectedId) ?? null);
   const groups = $derived(groupEpics(epics));
   const weeks = $derived(epic ? sliceRange(epic.weeks, range) : []);

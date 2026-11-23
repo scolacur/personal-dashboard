@@ -241,6 +241,31 @@ export function getIntroductionReport(
     return buildIntroductionReport([], [], now, null, filter);
   }
 
+  // The blame covers one repo, the worker's own; its PR denominators (`szz_pr`) belong to it. A
+  // project on another repo (or none) would divide its zero bugs by this repo's PRs, so it gets an
+  // empty report flagged out of scope (PD-922). The repo is inferred from the analysed bugs'
+  // project; with no analysed bugs there is nothing to mislead with, so the report stands.
+  if (filter.projectId != null && bugRows.length) {
+    const repos = new Set(
+      (
+        db
+          .prepare(
+            `SELECT DISTINCT p.github_repo AS repo FROM szz_bug s
+               JOIN agent_tickets t ON t.id = s.ticket_id
+               JOIN agent_projects p ON p.id = t.project_id`,
+          )
+          .all() as { repo: string | null }[]
+      ).map((r) => r.repo),
+    );
+    const mine = db
+      .prepare('SELECT github_repo AS repo FROM agent_projects WHERE id = ?')
+      .get(filter.projectId) as { repo: string | null } | undefined;
+    if (!mine || !repos.has(mine.repo)) {
+      const computedAt = Math.max(...bugRows.map((b) => b.computed_at));
+      return { ...buildIntroductionReport([], [], now, computedAt, filter), outOfScope: true };
+    }
+  }
+
   const scope = filter.projectId != null ? 'AND project_id = @projectId' : '';
   const tickets = new Map(
     (

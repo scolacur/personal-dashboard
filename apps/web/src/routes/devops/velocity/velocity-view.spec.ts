@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  parseProjectParam,
+  projectSearch,
   defaultEpicId,
   groupEpics,
   niceScale,
@@ -68,5 +70,21 @@ describe('defaultEpicId / groupEpics', () => {
     const g = groupEpics([e(1, 'closed'), e(2, 'queue'), e(3, 'completed'), e(4, 'backlog')]);
     expect(g.open.map((x) => x.id)).toEqual([2, 4]);
     expect(g.finished.map((x) => x.id)).toEqual([1, 3]);
+  });
+});
+
+describe('project filter param (PD-922)', () => {
+  it('parses a positive integer id and rejects anything else', () => {
+    expect(parseProjectParam('4')).toBe(4);
+    for (const raw of [null, '', '0', '-1', '1.5', 'abc', '2x']) {
+      expect(parseProjectParam(raw)).toBeUndefined();
+    }
+  });
+
+  it('sets, replaces and clears the project, keeping other params', () => {
+    expect(projectSearch(new URLSearchParams(''), 3)).toBe('?project=3');
+    expect(projectSearch(new URLSearchParams('project=1&x=y'), 2)).toBe('?project=2&x=y');
+    expect(projectSearch(new URLSearchParams('project=1&x=y'), undefined)).toBe('?x=y');
+    expect(projectSearch(new URLSearchParams('project=1'), undefined)).toBe('');
   });
 });

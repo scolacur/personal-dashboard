@@ -198,4 +198,67 @@ describe('getIntroductionReport', () => {
     expect(r.medianLagDays).toBe(10);
     expect(r.computedAt).toBe(99);
   });
+
+  describe('project filter (PD-922)', () => {
+    function seeded() {
+      const db = freshDb();
+      const [a, b] = projectIds(db);
+      const now = Date.now();
+      const c = Number(
+        db
+          .prepare(
+            'INSERT INTO agent_projects (slug, name, key, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+          )
+          .run('velo-c', 'C', 'VC', now, now).lastInsertRowid,
+      );
+      const repo = db.prepare('UPDATE agent_projects SET github_repo = ? WHERE id = ?');
+      repo.run('me/worker', a);
+      repo.run('me/other', b); // c has no repo at all
+      const bug = ticket(db, { project: a });
+      event(db, bug, 'created', MON + 10 * DAY);
+      event(db, bug, 'status_changed', MON + 12 * DAY, { to: 'completed' });
+      db.exec(`
+        CREATE TABLE szz_bug (ticket_id INTEGER PRIMARY KEY, status TEXT, fix_shas TEXT, computed_at INTEGER);
+        CREATE TABLE szz_candidate (ticket_id INTEGER, sha TEXT, pr_number INTEGER, ticket_ids TEXT, robot INTEGER,
+          committed_at INTEGER, lines INTEGER, is_top INTEGER);
+        CREATE TABLE szz_pr (pr_number INTEGER PRIMARY KEY, sha TEXT, merged_at INTEGER, robot INTEGER);
+      `);
+      db.prepare('INSERT INTO szz_bug VALUES (?, ?, ?, ?)').run(bug, 'traced', '[]', 99);
+      db.prepare('INSERT INTO szz_candidate VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+        bug,
+        'top',
+        251,
+        '[]',
+        0,
+        MON,
+        20,
+        1,
+      );
+      db.prepare('INSERT INTO szz_pr VALUES (?, ?, ?, ?)').run(251, 'top', MON, 0);
+      return { db, a, b, c };
+    }
+
+    it('keeps the data for the project on the analysed repo', () => {
+      const { db, a } = seeded();
+      const r = getIntroductionReport(db, { projectId: a }, MON + 20 * DAY);
+      expect(r.outOfScope).toBe(false);
+      expect(r.bugs).toHaveLength(1);
+    });
+
+    it('is empty and out of scope for a project on another repo, or on none', () => {
+      const { db, b, c } = seeded();
+      for (const projectId of [b, c]) {
+        const r = getIntroductionReport(db, { projectId }, MON + 20 * DAY);
+        expect(r).toMatchObject({ outOfScope: true, bugs: [], computedAt: 99 });
+        expect(r.weeks.every((w) => w.prsMerged.robot + w.prsMerged.human === 0)).toBe(true);
+      }
+    });
+
+    it('is unchanged without a filter', () => {
+      const { db } = seeded();
+      const r = getIntroductionReport(db, {}, MON + 20 * DAY);
+      expect(r.outOfScope).toBe(false);
+      expect(r.bugs).toHaveLength(1);
+    });
+  });
 });
