@@ -1,0 +1,96 @@
+// Dev Ops › Velocity (PD-895).
+@use './cards';
+
+.velocity-page {
+  padding: var(--space-lg) var(--space-md);
+}
+
+.velocity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.velocity-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.velocity-back {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.velocity-sub,
+.velocity-note,
+.velocity-loading {
+  margin: var(--space-xs) 0 var(--space-md);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.velocity-note strong {
+  color: var(--text);
+}
+
+.velocity-error {
+  color: var(--status-stuck);
+}
+
+.velocity-filters {
+  display: flex;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.velocity-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tile-label,
+.tile-meta {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.tile-value {
+  font-family: var(--font-display);
+  font-size: 1.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-note {
+  margin: var(--space-xs) 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+@media (max-width: 600px) {
+  .velocity-page {
+    padding: var(--space-md) var(--space-sm);
+  }
+
+  .velocity-title {
+    font-size: 1.25rem;
+  }
+}
