@@ -141,6 +141,12 @@ export interface EvaluatorConfig {
   reviewGateTicketUrlBase: string;
   /** PD-712 (D-101): also review every non-Robot PR to the repo. On by default; EVALUATOR_ALL_PRS=0 turns it off. */
   allPrs: boolean;
+  /** PD-913: the Robot takes over an idle session PR the Evaluator sent back. On by default;
+   *  EVALUATOR_ADOPT=0 turns it off (the PR then only gets PD-914's needs-human). */
+  adopt: boolean;
+  /** PD-913: how long a revised session PR must go without a push before the Robot takes it over
+   *  (`EVALUATOR_ADOPT_IDLE_MS`, default 30 minutes). Measured from the end of the review. */
+  adoptIdleMs: number;
 }
 
 /**
@@ -328,6 +334,8 @@ export function loadEvaluatorConfig(env: NodeJS.ProcessEnv): EvaluatorConfig {
     ),
     reviewGateToken: env.REVIEW_GATE_TOKEN ?? '',
     allPrs: !(env.EVALUATOR_ALL_PRS === '0' || env.EVALUATOR_ALL_PRS === 'false'),
+    adopt: !(env.EVALUATOR_ADOPT === '0' || env.EVALUATOR_ADOPT === 'false'),
+    adoptIdleMs: Number(env.EVALUATOR_ADOPT_IDLE_MS ?? 30 * 60_000),
     reviewGateTicketUrlBase: env.REVIEW_GATE_TICKET_URL_BASE ?? '',
   };
 }

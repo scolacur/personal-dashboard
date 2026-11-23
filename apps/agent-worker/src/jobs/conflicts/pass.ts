@@ -8,6 +8,7 @@ import { setAgentState } from '../robot/board';
 import { logMilestone } from '../robot/events';
 import { notifyLoop } from '../robot/notify';
 import { inReviewPrTargets } from '../robot/pr-state';
+import { adoptedPrNumbers } from '../evaluate/adoption';
 import { readStateNumber, writeState } from '../robot/state';
 import { commentResolved, resolveConflicts, type ResolveOutcome, type ResolveTarget } from './resolve';
 
@@ -112,9 +113,13 @@ export function nextConflictedPr(
   prs: readonly OpenPr[],
 ): { pr: OpenPr; ticketId: number | null } | null {
   const robotTickets = new Map(inReviewPrTargets(db).map((t) => [t.prNumber, t.ticketId]));
+  // PD-913: an adopted session PR the Robot is about to rework or is reworking is its branch until
+  // hand-off, the same as a `robot/*` PR that has left review.
+  const adopted = adoptedPrNumbers(db);
   for (const pr of [...prs].sort((a, b) => a.number - b.number)) {
     if (pr.mergeable !== 'CONFLICTING' || pr.baseRefName !== 'main' || pr.isCrossRepository) continue;
     if (headSettled(db, pr.number, pr.headRefOid)) continue;
+    if (adopted.has(pr.number)) continue;
     const isRobot = pr.headRefName.startsWith('robot/');
     const ticketId = robotTickets.get(pr.number) ?? null;
     if (isRobot && ticketId === null) continue; // the Robot is on it (or it left review)

@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-111](DECISIONS/D-111-the-robot-adopts-an-idle-session-pr-the-evaluator-sent-back.md)** — The Robot adopts an idle session PR the Evaluator sent back, and reworks it on Steve's branch
 - **[D-110](DECISIONS/D-110-refine-estimates-maxturns-in-both-directions-against-a-fixed-scale-with-a-floor.md)** — Refine estimates `maxTurns` in both directions, against a fixed scale with a floor
 - **[D-109](DECISIONS/D-109-path-guard-gates-every-author-again-now-that-any-pr-can-auto-merge.md)** — The path-guard gates every author again, Steve included, now that any PR can auto-merge
 - **[D-108](DECISIONS/D-108-evaluator-per-lens-settlement-separates-error-retry-from-revise-rounds.md)** — Evaluator per-lens settlement separates the one-error retry cap from the revise round cap

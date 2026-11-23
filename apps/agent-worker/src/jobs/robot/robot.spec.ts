@@ -1465,6 +1465,26 @@ describe('in-flight rework supersession (PD-926)', () => {
     expect(eventTypes(db, 1)).toContain('robot_rework_skipped');
   });
 
+  it('hands an adopted session PR back to Steve, not to review, when he pushes mid-rework (PD-913)', async () => {
+    queueRework();
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, 'robot_adopted', ?, 515)").run(
+      JSON.stringify({ prNumber: 487, branch: 'pd-1-thing', headSha: 'aaa' }),
+    );
+    const branches: string[] = [];
+    await processRobotQueue(db, fast(), {
+      ...deps(),
+      fetchPr: prSequence({ state: 'OPEN', head: 'bbb' }),
+      hasCommit: async () => false,
+      runSession: (c, cand, wt, r, p, abort) => (branches.push(wt.branch), longSession(c, cand, wt, r, p, abort)),
+      handoffStarted: () => false,
+    });
+    expect(branches).toEqual(['pd-1-thing']); // reworked on Steve's branch
+    expect(listRunsForTicket(db, 1)[0].status).toBe('superseded');
+    const t = db.prepare('SELECT assignee, agent_state AS s FROM agent_tickets WHERE id = 1').get();
+    expect(t).toEqual({ assignee: 'steve', s: null });
+    expect(eventTypes(db, 1)).toContain('robot_released');
+  });
+
   it('parks for a human when the PR is closed mid-rework', async () => {
     queueRework();
     await processRobotQueue(db, fast(), { ...deps(), fetchPr: prSequence({ state: 'CLOSED' }), runSession: longSession, handoffStarted: () => false });

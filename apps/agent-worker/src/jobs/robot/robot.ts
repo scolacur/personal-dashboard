@@ -40,6 +40,7 @@ import {
 import { breakerPauseReason, breakerNotificationBody, recordDeterministicFailure, resetBreaker } from './breaker';
 import { logMilestone, ROBOT_EVENT } from './events';
 import { setAgentState, branchFor, completeTicket } from './board';
+import { adoptedFrom, releaseAdoption } from '../evaluate/adoption';
 import { notifyNeedsHuman, notifyAwaitingHuman, notifyLoop } from './notify';
 import { checkBudget, publishBudgetPolicy, publishCapacityPolicy, type BudgetPolicy } from './budget';
 import { reconcileStalledRuns } from './stall';
@@ -374,15 +375,19 @@ export async function processRobotQueue(
     // D-094/PD-737: did Steve answer a checkpoint? Read BEFORE the dispatched event below, which is
     // what consumes it. Continue → start from the saved work with more turns; Restart → clean main.
     const checkpoint = checkpointDecision(db, candidate.id);
+    // PD-913 (D-111): a session PR the Robot adopted is reworked on Steve's branch, not robot/t<id>,
+    // and the prompt is told whose branch it is.
+    const adopted = adoptedFrom(db, candidate.id);
     let resumeCtx: ResumeContext | undefined =
-      resume || brief
+      resume || brief || adopted
         ? {
             ...(resume ? { askHumanQuestion: resume.question, askHumanAnswer: resume.answer } : {}),
             ...(brief ? { evaluatorBrief: brief } : {}),
+            ...(adopted ? { adoptedFrom: { prNumber: adopted.prNumber } } : {}),
           }
         : undefined;
 
-    const branch = branchFor(candidate);
+    const branch = adopted?.branch ?? branchFor(candidate);
     // PD-406: snapshot the body this run runs against so a later max-turns fault can tell a futile
     // unchanged-body retry from a re-scoped one.
     const bodyHash = hashBody(candidate.body);
@@ -582,6 +587,10 @@ export async function processRobotQueue(
         setAgentState(db, candidate.id, 'needs-human', now());
         logMilestone(db, candidate.id, ROBOT_EVENT.reworkSkipped, { prNumber: s.prNumber, reason: s.reason }, now());
         notifyNeedsHuman(db, candidate.id, 'Robot rework stopped', s.reason, now());
+      } else if (adopted) {
+        // PD-913 (D-111): an adopted session PR has no Robot hand-off to be in review on. Someone else
+        // pushing to it mid-rework is Steve taking it back, so it goes back to him.
+        releaseAdoption(db, candidate.id, s.prNumber, 'you pushed to the PR while the Robot was reworking it, so it stopped', now());
       } else {
         // reworkSkipped also opens a fresh review cycle (reviewBoundary), so the new head is reviewed
         // without the stale review using up a round.
@@ -815,8 +824,8 @@ export async function processRobotQueue(
 
 /**
  * Branches of every ticket the Robot still has (`queue ∧ robot`, not archived), whatever its agent
- * state. Their clones are kept; every other clone is pruned (PD-719). Uses `branchFor`, so the
- * naming can never drift from the dispatch path.
+ * state. Their clones are kept; every other clone is pruned (PD-719). Uses the same
+ * `adoptedFrom ?? branchFor` as the dispatch path (PD-913), so the naming can never drift from it.
  */
 export function robotClaimedBranches(db: Database.Database): string[] {
   const rows = db
@@ -825,6 +834,8 @@ export function robotClaimedBranches(db: Database.Database): string[] {
         WHERE archived_at IS NULL AND status = 'queue' AND assignee = 'robot'`,
     )
     .all() as { id: number; issueNumber: number | null }[];
-  return rows.map((r) => branchFor({ id: r.id, issueNumber: r.issueNumber } as Parameters<typeof branchFor>[0]));
+  return rows.map(
+    (r) => adoptedFrom(db, r.id)?.branch ?? branchFor({ id: r.id, issueNumber: r.issueNumber } as Parameters<typeof branchFor>[0]),
+  );
 }
 

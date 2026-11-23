@@ -2299,6 +2299,11 @@ export const ROBOT_EVENT = {
   checkpoint: 'robot_checkpoint',
   checkpointContinue: 'robot_checkpoint_continue',
   checkpointRestart: 'robot_checkpoint_restart',
+  // PD-913: the Robot took over a session PR the Evaluator sent back and nobody touched for the idle
+  // window (`adopted`, detail: prNumber, branch, headSha), or handed it back to Steve before it started
+  // because the PR moved or closed under it (`released`, detail: prNumber, reason).
+  adopted: 'robot_adopted',
+  released: 'robot_released',
 } as const;
 
 /** The two remediation events that reset a ticket's retry-budget boundary — the loop counts
@@ -2348,6 +2353,9 @@ export interface RobotEventDetail {
   state?: string;
   /** The human's answer text (`robot_human_reply`). */
   text?: string;
+  /** PD-913: the PR head an adoption was taken at (`robot_adopted`). A different head before the first
+   *  dispatch means Steve pushed, and the adoption is released. */
+  headSha?: string;
   /** PR number a rework was triggered from (`robot_reactivated`), or resolved (`robot_conflict_resolved`). */
   prNumber?: number;
   /** PD-774: the files the conflict resolver resolved (`robot_conflict_resolved`). */
