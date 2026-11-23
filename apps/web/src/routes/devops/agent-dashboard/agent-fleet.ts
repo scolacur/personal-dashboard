@@ -1,5 +1,4 @@
 import type { ActiveAgent, ActiveAgentKind } from '@dashboard/shared';
-import { SPRITE_SETS, type SpriteSet } from './pixel-robots';
 
 /**
  * Pure view logic for the Agent Dashboard's fleet view (PD-818 / PD-819). Kept out of the Svelte
@@ -7,27 +6,36 @@ import { SPRITE_SETS, type SpriteSet } from './pixel-robots';
  */
 
 /**
- * PD-819: avatar styles. TEMPORARY comparison set — Steve picks one (or a few) in-page, then the
- * picker and the losing styles are deleted. Three 8-bit sprite sets and three minimalist vectors.
- * Ephemeral: not persisted, a reload returns to DEFAULT_AVATAR.
+ * PD-819: avatar styles. TEMPORARY comparison set — Steve narrowed it to two families (single-stroke
+ * "line" faces and "signal" shapes) and is choosing a variant; the picker and the losing variants
+ * are deleted once he does. Ephemeral: not persisted, a reload returns to DEFAULT_AVATAR.
  */
-export const PIXEL_STYLES = SPRITE_SETS;
-export const MINIMAL_STYLES = ['orb', 'line', 'ripple'] as const;
-export type MinimalStyle = (typeof MINIMAL_STYLES)[number];
-export type AvatarStyle = SpriteSet | MinimalStyle;
-export const DEFAULT_AVATAR: AvatarStyle = 'classic';
+export const LINE_STYLES = ['line', 'bubble', 'tv', 'bust'] as const;
+export const RIPPLE_STYLES = ['ripple', 'sonar', 'halo', 'heartbeat', 'orbit'] as const;
+export type LineStyle = (typeof LINE_STYLES)[number];
+export type RippleStyle = (typeof RIPPLE_STYLES)[number];
+export type AvatarStyle = LineStyle | RippleStyle;
+export const DEFAULT_AVATAR: AvatarStyle = 'line';
+
+export const AVATAR_FAMILIES: { name: string; styles: readonly AvatarStyle[] }[] = [
+  { name: 'Line', styles: LINE_STYLES },
+  { name: 'Ripple', styles: RIPPLE_STYLES },
+];
 
 export const AVATAR_LABELS: Record<AvatarStyle, string> = {
-  classic: 'Classic',
-  chunky: 'Chunky',
-  tread: 'Tread',
-  orb: 'Orb',
   line: 'Line',
+  bubble: 'Bubble',
+  tv: 'TV',
+  bust: 'Bust',
   ripple: 'Ripple',
+  sonar: 'Sonar',
+  halo: 'Halo',
+  heartbeat: 'Heartbeat',
+  orbit: 'Orbit',
 };
 
-export function isPixelStyle(style: AvatarStyle): style is SpriteSet {
-  return (PIXEL_STYLES as readonly string[]).includes(style);
+export function isLineStyle(style: AvatarStyle): style is LineStyle {
+  return (LINE_STYLES as readonly string[]).includes(style);
 }
 
 /** Column order on the page. Fixed so columns don't reshuffle between polls. */
