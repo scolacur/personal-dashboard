@@ -62,17 +62,78 @@ function toFinding(raw: unknown): EvaluatorFinding | null {
   };
 }
 
-/** Extract the last JSON object from the reply — tolerant of a ```json fence or surrounding prose,
- *  matching `parseAuditFindings`'s approach for the same reason (models add preamble). */
-function extractJson(text: string): unknown {
-  const fenced = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/i);
-  const candidate = fenced ? fenced[1] : text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
-  if (!candidate) return null;
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    return null;
+/**
+ * Collect every top-level balanced `{…}` substring in `text`, in order.
+ *
+ * The scan is **string-aware**: braces that fall inside a double-quoted JSON string (honouring
+ * backslash escapes) do not change nesting depth. This is what lets a security summary that quotes
+ * `${...}` template literals or arbitrary code sit in a `summary` value without corrupting the walk —
+ * the naïve `indexOf('{')…lastIndexOf('}')` slice this replaced was defeated by exactly that
+ * (PD-853 defect #1).
+ */
+function topLevelObjects(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === '}') {
+      if (depth > 0) {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          out.push(text.slice(start, i + 1));
+          start = -1;
+        }
+      }
+    }
   }
+  return out;
+}
+
+/**
+ * Extract the Evaluator's report object from its reply — the **last** top-level `{…}` that both
+ * `JSON.parse`s and carries a valid `verdict`, scanning candidates from the end (PD-853 defect #1).
+ *
+ * The doc-comment on the old implementation claimed it extracted "the last JSON object"; it did not —
+ * it sliced from the *first* `{` to the *last* `}`, so any `{` in the prose before the real report
+ * (e.g. a security review discussing `${...}` SQL) moved the slice start too early and `JSON.parse`
+ * threw, stranding the PR. This selects by validity instead of position: of all balanced candidates,
+ * the last one that is a parseable object with a known verdict wins.
+ *
+ * A ```json (or bare ```) fence is preferred when present — but when there are several fenced blocks,
+ * or several objects, the same "last that parses with a valid verdict" rule applies rather than
+ * assuming the first.
+ */
+function extractJson(text: string): unknown {
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1]);
+  // Prefer fenced content when any fence exists; otherwise scan the whole reply.
+  const scanTargets = fences.length > 0 ? fences : [text];
+  const candidates = scanTargets.flatMap(topLevelObjects);
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(candidates[i]);
+    } catch {
+      continue;
+    }
+    if (parsed && typeof parsed === 'object' && isVerdict((parsed as Record<string, unknown>).verdict)) {
+      return parsed;
+    }
+  }
+  return null;
 }
 
 /**
