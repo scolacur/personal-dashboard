@@ -1,5 +1,5 @@
 /* ── Agent avatars (PD-819) ────────────────────── */
-// The family components (LineAvatar / RippleAvatar) render bare SVG with no styles of their own;
+// The drawing components (LineAvatar / OrbitAvatar) render bare SVG with no styles of their own;
 // everything is styled here through :global, scoped under `.agent-avatar`. Smooth easing
 // throughout — these are meant to read as calm.
 
@@ -35,7 +35,7 @@
   :global(.antenna) { fill: var(--bot); animation: avatar-soft-blink 1.8s ease-in-out infinite; }
   :global(.antenna.late) { animation-delay: 0.9s; }
 
-  /* line family */
+  /* robot faces */
   :global(.bob) { animation: avatar-float 2.4s ease-in-out infinite; }
   :global(.eyes) { animation: avatar-blink 4.5s ease-in-out infinite; }
   :global(.tool) { animation: avatar-tilt 2s ease-in-out infinite; }
@@ -45,41 +45,14 @@
     opacity: 0.45;
     animation: avatar-scan 2.2s linear infinite;
   }
-  :global(.arm) { transform-origin: 0 0; animation: avatar-type 0.6s ease-in-out infinite alternate; }
-  :global(.arm.late) { animation-delay: 0.3s; }
 
   &.kind-auditor :global(.eyes) { animation: avatar-read 2.8s ease-in-out infinite; }
   // TV eyes are vertical bars — a scaleY blink would just shorten them; flick instead.
   &.style-tv :global(.eyes) { animation: avatar-blink-x 4.5s ease-in-out infinite; }
-  &.style-tv.kind-auditor :global(.eyes) { animation: avatar-read 2.8s ease-in-out infinite; }
 
-  /* signal family */
+  /* orbit */
   :global(.core) { fill: var(--bot); }
   :global(.diamond) { transform: rotate(45deg); }
-  :global(.ring) {
-    fill: none;
-    stroke: var(--bot);
-    stroke-width: 2;
-    animation: avatar-ripple 2.4s ease-out infinite;
-  }
-  :global(.ring.late) { animation-delay: 1.2s; }
-  :global(.track) { fill: none; stroke: var(--bot); stroke-width: 1.5; opacity: 0.2; }
-  :global(.sweep) {
-    transform-box: view-box;
-    transform-origin: 32px 26px;
-    animation: avatar-spin 2s linear infinite;
-  }
-  :global(.arc) { fill: none; stroke: var(--bot); stroke-width: 3; stroke-linecap: round; }
-  :global(.halo) {
-    fill: none;
-    stroke: var(--bot);
-    stroke-width: 2.5;
-    stroke-dasharray: 3 6;
-    stroke-linecap: round;
-    animation: avatar-spin 9s linear infinite;
-  }
-  :global(.beat) { animation: avatar-heartbeat 1.6s ease-in-out infinite; }
-  :global(.beat-glow) { fill: var(--bot); opacity: 0; animation: avatar-beat-glow 1.6s ease-out infinite; }
   :global(.orbit) {
     transform-box: view-box;
     transform-origin: 32px 26px;
@@ -116,26 +89,8 @@
   from { transform: translateY(0); }
   to { transform: translateY(14px); }
 }
-@keyframes -global-avatar-type {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(-12deg); }
-}
-@keyframes -global-avatar-ripple {
-  from { transform: scale(0.9); opacity: 0.7; }
-  to { transform: scale(2); opacity: 0; }
-}
 @keyframes -global-avatar-spin {
   to { transform: rotate(360deg); }
-}
-@keyframes -global-avatar-heartbeat {
-  0%, 40%, 100% { transform: scale(1); }
-  10% { transform: scale(1.14); }
-  20% { transform: scale(0.98); }
-  30% { transform: scale(1.1); }
-}
-@keyframes -global-avatar-beat-glow {
-  0% { transform: scale(0.9); opacity: 0.35; }
-  45%, 100% { transform: scale(1.5); opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -6,36 +6,30 @@ import type { ActiveAgent, ActiveAgentKind } from '@dashboard/shared';
  */
 
 /**
- * PD-819: avatar styles. TEMPORARY comparison set — Steve narrowed it to two families (single-stroke
- * "line" faces and "signal" shapes) and is choosing a variant; the picker and the losing variants
- * are deleted once he does. Ephemeral: not persisted, a reload returns to DEFAULT_AVATAR.
+ * PD-819: the avatar toggle. Two modes, chosen by Steve from the Line / Ripple comparison:
+ *   robot — single-stroke robot faces: the Line face for Robots and Auditors, the TV set for
+ *           Evaluators (each still carrying its kind accessory: magnifier / green visor)
+ *   orbit — a solid kind shape (square / circle / diamond) with three dots circling it
+ * Remembered per browser (localStorage), defaulting to Robot.
  */
-export const LINE_STYLES = ['line', 'bubble', 'tv', 'bust'] as const;
-export const RIPPLE_STYLES = ['ripple', 'sonar', 'halo', 'heartbeat', 'orbit'] as const;
-export type LineStyle = (typeof LINE_STYLES)[number];
-export type RippleStyle = (typeof RIPPLE_STYLES)[number];
-export type AvatarStyle = LineStyle | RippleStyle;
-export const DEFAULT_AVATAR: AvatarStyle = 'line';
+export const AVATAR_MODES = ['robot', 'orbit'] as const;
+export type AvatarMode = (typeof AVATAR_MODES)[number];
+export const DEFAULT_AVATAR_MODE: AvatarMode = 'robot';
+export const AVATAR_MODE_LABELS: Record<AvatarMode, string> = { robot: 'Robot', orbit: 'Orbit' };
+export const AVATAR_MODE_STORAGE_KEY = 'agent-dashboard.avatar-mode';
 
-export const AVATAR_FAMILIES: { name: string; styles: readonly AvatarStyle[] }[] = [
-  { name: 'Line', styles: LINE_STYLES },
-  { name: 'Ripple', styles: RIPPLE_STYLES },
-];
+/** The drawings behind the modes. `line` and `tv` are LineAvatar faces; `orbit` is OrbitAvatar. */
+export type AvatarStyle = 'line' | 'tv' | 'orbit';
 
-export const AVATAR_LABELS: Record<AvatarStyle, string> = {
-  line: 'Line',
-  bubble: 'Bubble',
-  tv: 'TV',
-  bust: 'Bust',
-  ripple: 'Ripple',
-  sonar: 'Sonar',
-  halo: 'Halo',
-  heartbeat: 'Heartbeat',
-  orbit: 'Orbit',
-};
+/** Which drawing a kind gets in a mode. */
+export function avatarStyleFor(mode: AvatarMode, kind: ActiveAgentKind): AvatarStyle {
+  if (mode === 'orbit') return 'orbit';
+  return kind === 'evaluator' ? 'tv' : 'line';
+}
 
-export function isLineStyle(style: AvatarStyle): style is LineStyle {
-  return (LINE_STYLES as readonly string[]).includes(style);
+/** A stored mode, or the default for anything missing or unrecognised (an old/hand-edited value). */
+export function parseAvatarMode(stored: string | null): AvatarMode {
+  return (AVATAR_MODES as readonly string[]).includes(stored ?? '') ? (stored as AvatarMode) : DEFAULT_AVATAR_MODE;
 }
 
 /** Column order on the page. Fixed so columns don't reshuffle between polls. */

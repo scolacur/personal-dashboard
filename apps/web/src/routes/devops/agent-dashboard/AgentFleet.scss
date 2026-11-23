@@ -7,53 +7,42 @@
   font-size: var(--font-size-sm);
 }
 
-// PD-819: TEMPORARY avatar comparison control — deleted once a style is picked.
-.avatar-picker {
+// PD-819: the Robot / Orbit avatar toggle, at the right of the "Agents at work" heading.
+.section-head-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-sm) var(--space-lg);
-  padding: var(--space-sm) var(--space-md);
-  border: 1px dashed var(--border);
+  gap: var(--space-md);
+}
+
+.avatar-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-}
-
-.picker-label {
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.picker-family {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
+  overflow: hidden;
 
   button {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
+    gap: 0.35rem;
+    border: none;
+    background: transparent;
     color: var(--muted);
     font: inherit;
-    padding: 0.2rem 0.6rem 0.2rem 0.35rem;
+    font-size: var(--font-size-xs);
+    padding: 0.2rem 0.65rem 0.2rem 0.4rem;
     cursor: pointer;
 
+    & + button {
+      border-left: 1px solid var(--border);
+    }
+
     &.active {
-      border-color: var(--accent);
+      background: var(--surface);
       color: var(--text);
-      box-shadow: 0 0 0 1px var(--accent);
+      font-weight: 600;
     }
   }
-}
-
-.family-name {
-  font-size: var(--font-size-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  margin-right: var(--space-xs);
 }
 
 .loading,

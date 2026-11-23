@@ -12,12 +12,12 @@
     formatTokens,
     formatTurns,
     nearTurnCap,
-    type AvatarStyle,
+    type AvatarMode,
   } from './agent-fleet';
 
   interface Props {
     agent: ActiveAgent;
-    avatar: AvatarStyle;
+    avatar: AvatarMode;
     now: number;
   }
   let { agent, avatar, now }: Props = $props();
@@ -32,7 +32,7 @@
 
 <article class="agent-tile kind-{agent.kind}" style="--tint: {color}">
   <div class="bot-col">
-    <AgentAvatar kind={agent.kind} style={avatar} {color} size={60} label="{label.one} robot" />
+    <AgentAvatar kind={agent.kind} mode={avatar} {color} size={60} label="{label.one} robot" />
   </div>
 
   <div class="speech" role="group" aria-label="{label.one} status">

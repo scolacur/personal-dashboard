@@ -17,19 +17,30 @@
   import AgentAvatar from './AgentAvatar.svelte';
   import AgentTile from './AgentTile.svelte';
   import {
-    AVATAR_FAMILIES,
-    AVATAR_LABELS,
-    DEFAULT_AVATAR,
+    AVATAR_MODES,
+    AVATAR_MODE_LABELS,
+    AVATAR_MODE_STORAGE_KEY,
     DEFAULT_BOT_COLOR,
     KIND_LABELS,
     agentKey,
     groupByKind,
-    type AvatarStyle,
+    parseAvatarMode,
+    type AvatarMode,
   } from './agent-fleet';
 
-  // PD-819: TEMPORARY avatar comparison — ephemeral, a reload returns to Line. Removed once a
-  // style is chosen.
-  let avatar = $state<AvatarStyle>(DEFAULT_AVATAR);
+  // PD-819: Robot / Orbit avatar toggle, remembered per browser. Read on mount (SSR is off, but
+  // guard anyway); a blocked storage just means the choice isn't remembered.
+  let avatar = $state<AvatarMode>(
+    parseAvatarMode(typeof localStorage === 'undefined' ? null : localStorage.getItem(AVATAR_MODE_STORAGE_KEY)),
+  );
+  function setAvatar(mode: AvatarMode): void {
+    avatar = mode;
+    try {
+      localStorage.setItem(AVATAR_MODE_STORAGE_KEY, mode);
+    } catch {
+      // private mode / storage disabled — the toggle still works for this visit
+    }
+  }
 
   let status = $state<SystemStatus | null>(null);
   let now = $state(Date.now());
@@ -85,27 +96,6 @@
 </script>
 
 <div class="fleet">
-  <div class="avatar-picker" role="radiogroup" aria-label="Avatar style (preview)">
-    <span class="picker-label">Avatar preview</span>
-    {#each AVATAR_FAMILIES as fam (fam.name)}
-      <div class="picker-family">
-        <span class="family-name">{fam.name}</span>
-        {#each fam.styles as st (st)}
-          <button
-            type="button"
-            role="radio"
-            aria-checked={avatar === st}
-            class:active={avatar === st}
-            onclick={() => (avatar = st)}
-          >
-            <AgentAvatar kind="robot" style={st} color={DEFAULT_BOT_COLOR} size={26} idle={avatar !== st} />
-            {AVATAR_LABELS[st]}
-          </button>
-        {/each}
-      </div>
-    {/each}
-  </div>
-
   {#if !status}
     <p class="loading">Loading…</p>
   {:else}
@@ -128,7 +118,23 @@
 
     <!-- PD-819: the agents, one column per kind. -->
     <section class="fleet-section">
-      <h3 class="section-label">Agents at work</h3>
+      <div class="section-head-row">
+        <h3 class="section-label">Agents at work</h3>
+        <div class="avatar-toggle" role="radiogroup" aria-label="Avatar style">
+          {#each AVATAR_MODES as m (m)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={avatar === m}
+              class:active={avatar === m}
+              onclick={() => setAvatar(m)}
+            >
+              <AgentAvatar kind="robot" mode={m} color={DEFAULT_BOT_COLOR} size={22} idle={avatar !== m} />
+              {AVATAR_MODE_LABELS[m]}
+            </button>
+          {/each}
+        </div>
+      </div>
       <div class="kind-columns">
         {#each groups as g (g.kind)}
           <div class="kind-column">
@@ -140,7 +146,7 @@
               <AgentTile agent={a} {avatar} {now} />
             {:else}
               <div class="column-idle">
-                <AgentAvatar kind={g.kind} style={avatar} color={DEFAULT_BOT_COLOR} size={44} idle />
+                <AgentAvatar kind={g.kind} mode={avatar} color={DEFAULT_BOT_COLOR} size={44} idle />
                 <span>No {KIND_LABELS[g.kind].group.toLowerCase()} running</span>
               </div>
             {/each}
