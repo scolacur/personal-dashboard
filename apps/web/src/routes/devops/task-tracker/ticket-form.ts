@@ -1,4 +1,4 @@
-import type { AgentTicket, TicketAssignee, TicketPriority, TicketStatus } from '@dashboard/shared';
+import type { AgentTicket, TicketAssignee, TicketKind, TicketPriority, TicketStatus } from '@dashboard/shared';
 import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 
 /**
@@ -35,6 +35,8 @@ export interface TicketFormState {
   /** PD-432: the per-ticket run ceiling as typed text, so an empty field is unambiguously
    *  "default" rather than 0. Parsed on submit. */
   maxTurns: string;
+  /** PD-896: bug / feature / chore; null = unclassified. Not offered on an Epic. */
+  kind: TicketKind | null;
   projectId: number | null;
 }
 
@@ -50,6 +52,7 @@ export function emptyTicketForm(status: TicketStatus, projectId: number | null):
     epicId: null,
     newEpic: null,
     maxTurns: '',
+    kind: null,
     projectId,
   };
 }
@@ -66,6 +69,7 @@ export function ticketToForm(ticket: AgentTicket, fallbackProjectId: number | nu
     epicId: ticket.epicId,
     newEpic: null,
     maxTurns: ticket.maxTurns === null ? '' : String(ticket.maxTurns),
+    kind: ticket.kind,
     projectId: ticket.projectId ?? fallbackProjectId,
   };
 }

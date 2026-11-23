@@ -9,7 +9,7 @@
     turnProgress,
   } from '@dashboard/shared';
   import GithubMark from '$lib/icons/GithubMark.svelte';
-  import { Pencil, Copy, Trash2, ClipboardCopy, MoreVertical } from 'lucide-svelte';
+  import { Pencil, Copy, Trash2, ClipboardCopy, MoreVertical, Bug } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
   import * as api from './api';
   import { projectIdColor } from './api';
@@ -166,6 +166,10 @@
           title={project ? `${project.name} · open ${ticket.displayId}` : `Open ${ticket.displayId}`}
           draggable="false">{ticket.displayId}</a
         >
+      {/if}
+      {#if ticket.kind === 'bug'}
+        <!-- PD-896: icon + word, so a bug never rests on colour alone. -->
+        <span class="kind-bug" title="Bug"><Bug size={12} aria-hidden="true" />Bug</span>
       {/if}
     </div>
     <span class="card-top-right">

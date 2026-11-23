@@ -11,6 +11,26 @@ export type TicketAssignee = 'steve' | 'robot';
 
 export const TICKET_ASSIGNEES: readonly TicketAssignee[] = ['steve', 'robot'] as const;
 
+/**
+ * What kind of work a ticket is (PD-896). `null` = not classified. The Velocity page's bug-rate
+ * metrics (PD-881) read `bug`; a title-match backfill seeded the existing bugs, and new tickets get
+ * it from the form or from Refine. Unclassified is kept distinct from `feature` on purpose: a guess
+ * would make the bug rate look better than it is.
+ */
+export type TicketKind = 'bug' | 'feature' | 'chore';
+
+export const TICKET_KINDS: readonly TicketKind[] = ['bug', 'feature', 'chore'] as const;
+
+export const TICKET_KIND_LABELS: Record<TicketKind, string> = {
+  bug: 'Bug',
+  feature: 'Feature',
+  chore: 'Chore',
+};
+
+export function isTicketKind(v: unknown): v is TicketKind {
+  return typeof v === 'string' && (TICKET_KINDS as readonly string[]).includes(v);
+}
+
 /** Short label for each assignee value (shown in the create/edit modal). */
 export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
   steve: 'Steve',
@@ -348,6 +368,8 @@ export interface AgentTicket {
    *  genuinely cannot be decomposed to fit — raising the cap is the escape hatch, not the default.
    *  Bounded by `ROBOT_MAX_TURNS_LIMIT` so a bad estimate cannot authorise an unbounded burn. */
   maxTurns: number | null;
+  /** Bug / feature / chore (PD-896); null = unclassified. */
+  kind: TicketKind | null;
   /** True when this Ticket is an Epic umbrella (D-054, PD-336). An Epic groups member Tickets,
    *  is never dispatched (cannot enter `queue`), and its board status is derived. */
   isEpic: boolean;
@@ -393,6 +415,8 @@ export interface CreateTicketInput {
   /** Per-ticket run ceiling (PD-432); omit or null to inherit the loop's default. Rejected above
    *  `ROBOT_MAX_TURNS_LIMIT`. */
   maxTurns?: number | null;
+  /** Bug / feature / chore (PD-896); omit or null for unclassified. */
+  kind?: TicketKind | null;
 }
 
 /**
@@ -455,6 +479,8 @@ export interface UpdateTicketInput {
   epicId?: number | null;
   /** Set (a number) or clear (null) the per-ticket run ceiling (PD-432). Omit to leave unchanged. */
   maxTurns?: number | null;
+  /** Set or clear (null) the ticket kind (PD-896). Omit to leave unchanged. */
+  kind?: TicketKind | null;
   /** D-103 (PD-808): exclude/include this Epic from auto-queue. Meaningful on Epics. Omit to leave
    *  unchanged. */
   autoQueueExcluded?: boolean;
@@ -794,17 +820,53 @@ export const AUTO_QUEUE_CRITERIA: readonly {
   label: string;
   description: string;
 }[] = [
-  { id: 'refined', label: 'Refined', description: 'The ticket is refined — a human has read and attested the work.' },
+  {
+    id: 'refined',
+    label: 'Refined',
+    description: 'The ticket is refined — a human has read and attested the work.',
+  },
   { id: 'epic-refined', label: 'Epic refined', description: "The ticket's Epic is refined." },
-  { id: 'epic-not-stale', label: 'Epic current', description: "The Epic's refinement is current — its membership has not changed since." },
-  { id: 'members-refined', label: 'Members refined', description: 'Every open member of the Epic is refined.' },
-  { id: 'epic-active', label: 'Epic active', description: 'The Epic is in the Queue lane — Steve has activated it.' },
-  { id: 'assigned-robot', label: 'Assigned to Robot', description: 'The ticket is assigned to the Robot.' },
-  { id: 'ready', label: 'Ready', description: 'The body has the four Ready sections, or Steve set a bypass.' },
+  {
+    id: 'epic-not-stale',
+    label: 'Epic current',
+    description: "The Epic's refinement is current — its membership has not changed since.",
+  },
+  {
+    id: 'members-refined',
+    label: 'Members refined',
+    description: 'Every open member of the Epic is refined.',
+  },
+  {
+    id: 'epic-active',
+    label: 'Epic active',
+    description: 'The Epic is in the Queue lane — Steve has activated it.',
+  },
+  {
+    id: 'assigned-robot',
+    label: 'Assigned to Robot',
+    description: 'The ticket is assigned to the Robot.',
+  },
+  {
+    id: 'ready',
+    label: 'Ready',
+    description: 'The body has the four Ready sections, or Steve set a bypass.',
+  },
   { id: 'unblocked', label: 'Unblocked', description: 'No open ticket blocks it.' },
-  { id: 'refine-settled', label: 'Refine settled', description: 'No Refine session is waiting on Steve.' },
-  { id: 'epic-not-excluded', label: 'Epic not excluded', description: 'The Epic is not excluded from auto-queue.' },
-  { id: 'robot-project', label: 'Robot project', description: 'The project is robot-enabled and has a GitHub repo.' },
+  {
+    id: 'refine-settled',
+    label: 'Refine settled',
+    description: 'No Refine session is waiting on Steve.',
+  },
+  {
+    id: 'epic-not-excluded',
+    label: 'Epic not excluded',
+    description: 'The Epic is not excluded from auto-queue.',
+  },
+  {
+    id: 'robot-project',
+    label: 'Robot project',
+    description: 'The project is robot-enabled and has a GitHub repo.',
+  },
 ] as const;
 
 const AUTO_QUEUE_CRITERION_BY_ID = new Map(AUTO_QUEUE_CRITERIA.map((d) => [d.id, d] as const));
@@ -857,7 +919,12 @@ export function autoQueueEligibility(input: {
   const { ticket, epic, members, openBlockerIds, project } = input;
 
   const gate = queueBlockers({
-    ticket: { id: ticket.id, refined: ticket.refined, ready: ticket.ready, readyBypassed: ticket.readyBypassed },
+    ticket: {
+      id: ticket.id,
+      refined: ticket.refined,
+      ready: ticket.ready,
+      readyBypassed: ticket.readyBypassed,
+    },
     epic: epic ? { id: epic.id, refined: epic.refined, refineStale: epic.refineStale } : null,
     members,
     openBlockerIds,
@@ -923,11 +990,7 @@ export function autoQueueEligibility(input: {
 
 /** The Epic-level criteria the Epic detail page shows (D-103 §3), a subset of the per-ticket ids. */
 export type AutoQueueEpicCriterionId =
-  | 'epic-refined'
-  | 'epic-not-stale'
-  | 'members-refined'
-  | 'epic-active'
-  | 'epic-not-excluded';
+  'epic-refined' | 'epic-not-stale' | 'members-refined' | 'epic-active' | 'epic-not-excluded';
 
 /** Roll-up of one member's verdict, for the Epic detail page. */
 export interface AutoQueueMemberVerdict {
@@ -957,7 +1020,11 @@ export function autoQueueEpicEligibility(input: {
 
   // `members-refined` is the one Epic-level criterion derived from the whole set (D-089). Reuse the
   // gate's derivation so it cannot drift; terminal members are excluded there.
-  const gateMembers: GateMember[] = members.map((m) => ({ id: m.id, refined: m.refined, status: m.status }));
+  const gateMembers: GateMember[] = members.map((m) => ({
+    id: m.id,
+    refined: m.refined,
+    status: m.status,
+  }));
   const [, , membersRefined] = epicQueueCriteria(
     { id: epic.id, refined: epic.refined, refineStale: epic.refineStale },
     gateMembers,
@@ -968,10 +1035,25 @@ export function autoQueueEpicEligibility(input: {
   const self = { kind: 'open-epic' as const, ticketId: epic.id };
   const criteria: AutoQueueCriterion[] = [
     autoQueueCriterion('epic-refined', epic.refined, 'This Epic is not refined.', self),
-    autoQueueCriterion('epic-not-stale', !epic.refineStale, "This Epic's membership changed since it was refined — re-refine it.", self),
+    autoQueueCriterion(
+      'epic-not-stale',
+      !epic.refineStale,
+      "This Epic's membership changed since it was refined — re-refine it.",
+      self,
+    ),
     autoQueueCriterion('members-refined', membersRefined.met, membersRefined.label, self),
-    autoQueueCriterion('epic-active', epic.status === 'queue', 'This Epic is not active — queue it to activate its members.', self),
-    autoQueueCriterion('epic-not-excluded', !epic.autoQueueExcluded, 'This Epic is excluded from auto-queue.', self),
+    autoQueueCriterion(
+      'epic-active',
+      epic.status === 'queue',
+      'This Epic is not active — queue it to activate its members.',
+      self,
+    ),
+    autoQueueCriterion(
+      'epic-not-excluded',
+      !epic.autoQueueExcluded,
+      'This Epic is excluded from auto-queue.',
+      self,
+    ),
   ];
 
   const memberVerdicts: AutoQueueMemberVerdict[] = members.map((m) => ({
@@ -994,7 +1076,8 @@ export function autoQueueEpicEligibility(input: {
 // read from `robot_state`, the same channel the budget policy uses (D-103 §4) — the web process
 // cannot see the worker's env.
 
-export type AutoQueueCapacityId = 'queue-depth' | 'review-wip' | 'epic-in-flight' | 'worker-healthy';
+export type AutoQueueCapacityId =
+  'queue-depth' | 'review-wip' | 'epic-in-flight' | 'worker-healthy';
 
 /** One capacity limb: `current` against `limit`. `met` is `current < limit` for the count limbs;
  *  `worker-healthy` is a composite whose `reason` names the failing condition. */
@@ -1060,7 +1143,8 @@ export const AUTO_QUEUE_CAPACITY_DEFS: readonly {
   {
     id: 'worker-healthy',
     label: 'Worker healthy',
-    description: 'Dispatch is not paused or held, the budget has headroom, and the worker is alive.',
+    description:
+      'Dispatch is not paused or held, the budget has headroom, and the worker is alive.',
   },
 ] as const;
 
@@ -1129,7 +1213,10 @@ export function autoQueueMemberRollup(members: readonly AutoQueueMemberVerdict[]
   eligible: number;
   total: number;
 } {
-  return { eligible: members.filter((m) => m.verdict === 'eligible').length, total: members.length };
+  return {
+    eligible: members.filter((m) => m.verdict === 'eligible').length,
+    total: members.length,
+  };
 }
 
 /**
@@ -1239,7 +1326,13 @@ export const AUTO_QUEUE_LAST_TICK_KEY = 'auto_queue_last_tick';
 /** `agent_auto_queued` (D-103, PD-811): the auto-queue promoter moved one or more Backlog tickets
  *  into the Queue this tick. A non-ticket-scoped digest — ONE per tick that promoted anything, not
  *  one per ticket. */
-export type NotificationKind = 'agent_awaiting_human' | 'agent_needs_human' | 'agent_refine' | 'agent_auto_merged' | 'agent_visual_review' | 'agent_auto_queued';
+export type NotificationKind =
+  | 'agent_awaiting_human'
+  | 'agent_needs_human'
+  | 'agent_refine'
+  | 'agent_auto_merged'
+  | 'agent_visual_review'
+  | 'agent_auto_queued';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
 /** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
@@ -1416,7 +1509,10 @@ export const REFINE_PARKED_EVENT = 'refine_parked';
  */
 // 'refine_committed' is REFINE_PROPOSAL_EVENT.committed, spelled out because that constant is
 // declared further down this module and would not be initialized yet here.
-export const REFINE_SESSION_END_TYPES: readonly string[] = ['refine_committed', REFINE_PARKED_EVENT];
+export const REFINE_SESSION_END_TYPES: readonly string[] = [
+  'refine_committed',
+  REFINE_PARKED_EVENT,
+];
 
 /** Every event type that decides a ticket's Refine state: the two turn types plus the ends. */
 export const REFINE_STATE_EVENT_TYPES: readonly string[] = [
@@ -1445,7 +1541,11 @@ export function refineSessionEnd(
   let newest: { type: string; createdAt: number; id: number } | null = null;
   for (const e of events) {
     if (!REFINE_STATE_EVENT_TYPES.includes(e.type)) continue;
-    if (newest === null || e.createdAt > newest.createdAt || (e.createdAt === newest.createdAt && e.id > newest.id)) {
+    if (
+      newest === null ||
+      e.createdAt > newest.createdAt ||
+      (e.createdAt === newest.createdAt && e.id > newest.id)
+    ) {
       newest = e;
     }
   }
@@ -1566,6 +1666,8 @@ export interface RefineChildProposal {
    *  decompose further. Omitted/null = the loop default, which is the expected case — decomposing
    *  stays the preferred move, and raising the cap is the escape hatch. */
   maxTurns?: number | null;
+  /** PD-896: bug / feature / chore. Omitted = inherit the parent's kind. */
+  kind?: TicketKind | null;
   /** PD-634: whether the child is born refined. Omitted = true — the Refine session IS the read-through.
    *  The agent sets false only for a placeholder that needs its own session. The server downgrades a
    *  robot-assigned child whose body fails `isReady`, so the flag never claims more than that check. */
@@ -1625,7 +1727,8 @@ export function refineRelationsError(
   };
   for (const n of adj.keys()) {
     const cyc = visit(n, []);
-    if (cyc) return `the blocks relations form a cycle (${cyc.join(' → ')}), which would leave those children permanently blocked.`;
+    if (cyc)
+      return `the blocks relations form a cycle (${cyc.join(' → ')}), which would leave those children permanently blocked.`;
   }
   return null;
 }
@@ -1649,6 +1752,8 @@ export interface RefineProposal {
   assignee?: TicketAssignee | null;
   /** refine_in_place: an estimated turn ceiling for THIS ticket (PD-432); null clears it. */
   maxTurns?: number | null;
+  /** refine_in_place (PD-896): classify THIS ticket. Omitted = leave unchanged. */
+  kind?: TicketKind | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
   /** decompose (PD-842): relations between the proposed children, by index into `children`.

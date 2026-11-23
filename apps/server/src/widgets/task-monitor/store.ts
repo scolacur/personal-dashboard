@@ -25,6 +25,7 @@ import type {
   TicketEvent,
   TicketLineage,
   TicketPriority,
+  TicketKind,
   TicketStatus,
   UpdateTicketInput,
   WorkerHeartbeat,
@@ -37,6 +38,8 @@ import {
   coerceTicketStatus,
   epicQueueCriteria,
   isReady,
+  isTicketKind,
+  TICKET_KINDS,
   queueEntryRefusals,
   latestActionableProposal,
   refineRelationsError,
@@ -81,6 +84,7 @@ interface TicketRow {
   ready: number;
   ready_bypassed: number;
   max_turns: number | null;
+  kind: string | null;
   is_epic: number;
   epic_id: number | null;
   auto_queue_excluded: number;
@@ -152,6 +156,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     ready: row.ready === 1,
     readyBypassed: row.ready_bypassed === 1,
     maxTurns: row.max_turns,
+    kind: isTicketKind(row.kind) ? row.kind : null,
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
     autoQueueExcluded: row.auto_queue_excluded === 1,
@@ -351,7 +356,7 @@ function nextDisplayId(db: Database.Database, projectId: number): string {
  *  that isn't a coercible legacy alias. Surfaced by the routes as a 400. */
 export class ValidationError extends Error {
   constructor(
-    public readonly code: 'INVALID_STATUS' | 'INVALID_MAX_TURNS',
+    public readonly code: 'INVALID_STATUS' | 'INVALID_MAX_TURNS' | 'INVALID_KIND',
     message: string,
   ) {
     super(message);
@@ -377,6 +382,15 @@ function coerceStatusOrThrow(status: string): TicketStatus {
  * The override is the escape hatch for an irreducible ticket, not a way to authorise an unbounded
  * burn (a Refine estimate writes this field too, so it must hold against a bad guess).
  */
+/** PD-896: a kind is one of TICKET_KINDS, or null (unclassified). */
+function validKind(value: unknown): TicketKind | null {
+  if (value === null) return null;
+  if (!isTicketKind(value)) {
+    throw new ValidationError('INVALID_KIND', `kind must be one of ${TICKET_KINDS.join(', ')}, or null`);
+  }
+  return value;
+}
+
 function validMaxTurns(value: number | null): number | null {
   if (value === null) return null;
   if (!Number.isInteger(value) || value < 1) {
@@ -446,12 +460,13 @@ export function createTicket(
     }
     // PD-432: per-ticket run ceiling, validated at the write boundary (see `validMaxTurns`).
     const maxTurns = validMaxTurns(input.maxTurns ?? null);
+    const kind = validKind(input.kind ?? null);
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, max_turns, is_epic, epic_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, max_turns, kind, is_epic, epic_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, maxTurns, isEpic ? 1 : 0, epicId, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, maxTurns, kind, isEpic ? 1 : 0, epicId, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     // PD-610: a new member changes the Epic's set, so the Epic's claim that its members are the
@@ -511,6 +526,8 @@ export function updateTicket(
     isEpic: patch.isEpic === undefined ? existing.isEpic : patch.isEpic,
     // PD-432: `null` is meaningful (clear the override, back to the loop default).
     maxTurns: patch.maxTurns === undefined ? existing.maxTurns : validMaxTurns(patch.maxTurns),
+    // PD-896: `null` is meaningful (unclassify).
+    kind: patch.kind === undefined ? existing.kind : validKind(patch.kind),
     // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
     epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
     // D-103: auto-queue exclusion, meaningful on Epics. Defaults to the existing value.
@@ -658,7 +675,7 @@ export function updateTicket(
     }
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -674,6 +691,7 @@ export function updateTicket(
       next.ready ? 1 : 0,
       next.readyBypassed ? 1 : 0,
       next.maxTurns,
+      next.kind,
       next.isEpic ? 1 : 0,
       next.epicId,
       next.autoQueueExcluded ? 1 : 0,
@@ -1949,6 +1967,8 @@ export function approveRefine(
         assignee: p.assignee === undefined ? parent.assignee : p.assignee,
         // PD-432: an estimated ceiling from the proposal, else leave the ticket's own as it is.
         maxTurns: p.maxTurns === undefined ? parent.maxTurns : p.maxTurns,
+        // PD-896: Refine may classify the ticket; omitted leaves it as it is.
+        kind: p.kind === undefined ? parent.kind : p.kind,
         refined: true,
       });
       // PD-610: "Approve & resume" — the Epic counterpart of "Approve & queue", and human dispatch
@@ -2016,6 +2036,9 @@ export function approveRefine(
         priority: null,
         // PD-432: the child's estimated ceiling, when the agent argued the work is irreducible.
         maxTurns: c.maxTurns ?? null,
+        // PD-896: a child the proposal doesn't classify inherits its parent's kind (a split bug's
+        // slices are still bug work).
+        kind: c.kind === undefined ? parent.kind : c.kind,
         projectId,
         // Populate: members belong to the Epic itself. Split: children inherit the parent's Epic
         // (if any), staying under the same umbrella (D-054 split-inheritance).

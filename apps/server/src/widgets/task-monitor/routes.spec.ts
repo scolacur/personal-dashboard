@@ -1198,6 +1198,24 @@ describe('maxTurns over HTTP (PD-432)', () => {
     expect(cleared.json().maxTurns).toBeNull();
   });
 
+  it('PD-896: kind is accepted on create and PATCH, and an invalid kind is a 400 INVALID_KIND', async () => {
+    const { app, db } = freshSetup();
+    const pid = getProjectBySlug(db, 'personal-dashboard')!.id;
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 't', projectId: pid, epicId: anEpic(db, pid), kind: 'bug' },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().kind).toBe('bug');
+    const id = created.json().id;
+    const patched = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { kind: 'feature' } });
+    expect(patched.json().kind).toBe('feature');
+    const bad = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { kind: 'spike' } });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('INVALID_KIND');
+  });
+
   it('rejects an invalid budget with 400', async () => {
     const { app, db } = freshSetup();
     const pid = getProjectBySlug(db, 'personal-dashboard')!.id;

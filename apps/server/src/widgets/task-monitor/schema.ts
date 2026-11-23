@@ -8,6 +8,11 @@ import { migrate, addColumn, columnExists } from '../../migrate';
 //
 // CREATE statements reflect the full current schema (fresh DBs are complete in one shot);
 // the addColumn migrations bring pre-existing tables up to date (no-ops on a fresh DB).
+/** PD-896 backfill: a title that reads as a bug report — the whole word "bug", "bugfix" or
+ *  "bugfixes". Not "bugs" ("bugs filed vs fixed" is metrics work about bugs, not a bug) and not
+ *  "debug". A heuristic: the few it gets wrong are corrected by hand. Exported for its test. */
+export const BUG_TITLE = /\bbug(?:fix(?:es)?)?\b/i;
+
 export function bootstrapSchema(db: Database.Database): void {
   // Ticket Audit engine (D-045, PD-283). Advisory only — findings never mutate a ticket;
   // the human applies decisions later (PD-287). CREATE IF NOT EXISTS is no-op-safe on both
@@ -79,6 +84,7 @@ export function bootstrapSchema(db: Database.Database): void {
       ready               INTEGER NOT NULL DEFAULT 0, -- 1 iff body is 4-section Ready (D-058); recomputed on body write
       ready_bypassed      INTEGER NOT NULL DEFAULT 0, -- 1 when a human queued a not-Ready robot ticket via confirm modal (D-058)
       max_turns           INTEGER,                  -- per-ticket run ceiling (PD-432); NULL = the loop's env default
+      kind                TEXT,                     -- bug | feature | chore (PD-896); NULL = unclassified
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       auto_queue_excluded INTEGER NOT NULL DEFAULT 0, -- 1 = Epic excluded from auto-queue (D-103, PD-808)
@@ -336,6 +342,24 @@ export function bootstrapSchema(db: Database.Database): void {
   // existing row back-fills to "not excluded"; the member-level read checks its own Epic's column.
   migrate(db, 'agent_tickets_add_auto_queue_excluded', (d) => {
     addColumn(d, 'agent_tickets', 'auto_queue_excluded', 'INTEGER NOT NULL DEFAULT 0');
+  });
+
+  // PD-896: ticket kind (bug | feature | chore). Nullable — NULL is "unclassified", deliberately not
+  // defaulted to `feature`, because the bug-rate metrics (PD-881) would read a guess as a fact.
+  migrate(db, 'agent_tickets_add_kind', (d) => {
+    addColumn(d, 'agent_tickets', 'kind', 'TEXT');
+  });
+
+  // PD-896: one-time seed of the existing bugs. Before the field existed a bug was only recognisable
+  // by its title ("[bugfix]", "[Bug]", "bug -", "Bugfix regarding…"). See BUG_TITLE for what
+  // counts; Epics are skipped (an umbrella is not itself a bug). Everything else is
+  // left NULL rather than guessed. Runs once, so a later manual re-classification is never undone.
+  migrate(db, 'agent_tickets_backfill_kind_bug', (d) => {
+    const rows = d
+      .prepare(`SELECT id, title FROM agent_tickets WHERE kind IS NULL AND is_epic = 0`)
+      .all() as { id: number; title: string }[];
+    const set = d.prepare(`UPDATE agent_tickets SET kind = 'bug' WHERE id = ?`);
+    for (const r of rows) if (BUG_TITLE.test(r.title)) set.run(r.id);
   });
 
   // PD-610: the third refinement state. `refined = 0` otherwise means two different things — "never

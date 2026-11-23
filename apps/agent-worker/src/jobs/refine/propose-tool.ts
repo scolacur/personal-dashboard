@@ -37,6 +37,9 @@ const ASSIGNEE = z.enum(['steve', 'robot']).nullable();
 // is rejected while the agent can still see the error and re-propose, rather than at approval time.
 const MAX_TURNS = z.number().int().min(1).max(ROBOT_MAX_TURNS_LIMIT).nullable();
 
+// PD-896: what kind of work the ticket is. Feeds the Velocity bug-rate metrics (PD-881).
+const KIND = z.enum(['bug', 'feature', 'chore']).nullable();
+
 // D-080: no `priority` field, on a child or on the parent. Priority is an Epic property that
 // cascades to members, so a Ticket-level priority has nowhere to land — the write path overrides it
 // from the Epic. Offering the field would have the agent spend turns on a value that is discarded
@@ -47,6 +50,7 @@ const CHILD = z.object({
   status: STATUS,
   assignee: ASSIGNEE.optional(),
   maxTurns: MAX_TURNS.optional(),
+  kind: KIND.optional(),
   // PD-634: born refined unless the agent says otherwise. The server still downgrades a robot child
   // whose body is not Ready-shaped, so this can only ever claim less than the mechanical check.
   refined: z.boolean().optional(),
@@ -67,6 +71,7 @@ const PROPOSE_COMMIT_SHAPE = {
   status: STATUS.optional(),
   assignee: ASSIGNEE.optional(),
   maxTurns: MAX_TURNS.optional(),
+  kind: KIND.optional(),
   children: z.array(CHILD).optional(),
   relations: z.array(RELATION).optional(),
   rationale: z.string().optional(),
@@ -102,6 +107,11 @@ const DESCRIPTION = [
   'that ticket\'s ceiling above the default. DECOMPOSING REMAINS THE PREFERRED MOVE — only set it',
   'when you have argued in `rationale` that the work genuinely cannot be split further, and estimate',
   'conservatively. Omit it for ~every ticket.',
+  'SET `kind` (PD-896) — "bug" (something that worked, or should have, is broken), "feature" (new',
+  'capability or a change to how something works) or "chore" (maintenance, docs, infra, cleanup with no',
+  'user-visible change) — on THIS ticket (refine_in_place) and on each child. A child without `kind`',
+  "inherits the parent's. The bug-rate metrics count `kind: \"bug\"`, so classify by what the work IS,",
+  'not by how the ticket was titled; null only when it genuinely fits none.',
 ].join(' ');
 
 /** The queue lane the agent must not route into (D-057/D-058): entering the queue is Steve's
@@ -185,6 +195,7 @@ export function buildProposeToolServer(
           : {}),
         ...(args.assignee !== undefined ? { assignee: args.assignee } : {}),
         ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
+        ...(args.kind !== undefined ? { kind: args.kind } : {}),
         ...(args.children !== undefined
           ? {
               children: args.children.map((c) => ({
