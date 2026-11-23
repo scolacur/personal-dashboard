@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
+  fmtSigned,
+  netFlow,
+  niceRange,
   parseProjectParam,
   projectSearch,
   defaultEpicId,
@@ -86,5 +89,39 @@ describe('project filter param (PD-922)', () => {
     expect(projectSearch(new URLSearchParams('project=1&x=y'), 2)).toBe('?project=2&x=y');
     expect(projectSearch(new URLSearchParams('project=1&x=y'), undefined)).toBe('?x=y');
     expect(projectSearch(new URLSearchParams('project=1'), undefined)).toBe('');
+  });
+});
+
+describe('net backlog change (PD-923)', () => {
+  it('is resolved minus created per week', () => {
+    expect(
+      netFlow([
+        { created: 39, resolved: 10 },
+        { created: 3, resolved: 9 },
+        { created: 0, resolved: 0 },
+      ]),
+    ).toEqual([-29, 6, 0]);
+  });
+
+  it('formats signed counts with a true minus sign', () => {
+    expect(fmtSigned(6)).toBe('+6');
+    expect(fmtSigned(-49)).toBe('\u221249');
+    expect(fmtSigned(0)).toBe('0');
+    expect(fmtSigned(-0.04)).toBe('0');
+  });
+
+  it('builds a range that crosses zero with 0 as a tick', () => {
+    const r = niceRange(-111, 6);
+    expect(r.min).toBeLessThanOrEqual(-111);
+    expect(r.max).toBeGreaterThanOrEqual(6);
+    expect(r.ticks).toContain(0);
+    expect(r.ticks[0]).toBe(r.min);
+    expect(r.ticks[r.ticks.length - 1]).toBe(r.max);
+  });
+
+  it('starts at zero for an all-positive range, ends at zero for all-negative', () => {
+    expect(niceRange(3, 40)).toMatchObject({ min: 0 });
+    expect(niceRange(-40, -3)).toMatchObject({ max: 0 });
+    expect(niceRange(0, 0)).toEqual({ min: 0, max: 1, ticks: [0, 1] });
   });
 });

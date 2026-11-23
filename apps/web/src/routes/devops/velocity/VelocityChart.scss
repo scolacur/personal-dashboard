@@ -32,6 +32,13 @@
 .tone-park {
   --tone: var(--status-awaiting-human);
 }
+// PD-923 diverging pair (blue ↔ red), validated with validate_palette.js against both surfaces.
+.tone-gain {
+  --tone: var(--chart-gain);
+}
+.tone-loss {
+  --tone: var(--chart-loss);
+}
 
 svg {
   display: block;
@@ -262,4 +269,10 @@ table {
   color: var(--muted);
   font-size: var(--font-size-sm);
   text-align: center;
+}
+
+// PD-923: the diverging chart's zero baseline — a reference line, a step above the gridlines.
+.zero {
+  stroke: var(--muted);
+  stroke-width: 1;
 }
