@@ -42,7 +42,7 @@ export function latestVisualDecision(
   db: Database.Database,
   ticketId: number,
   boundary: number,
-): { id: number; approved: boolean; note: string } | null {
+): { id: number; approved: boolean; note: string; createdAt: number } | null {
   const row = db
     .prepare(
       `SELECT id, detail, created_at FROM agent_ticket_events
@@ -52,7 +52,7 @@ export function latestVisualDecision(
     .get(ticketId, ROBOT_EVENT.visualReviewed, boundary) as EventRow | undefined;
   if (!row) return null;
   const d = detail(row);
-  return { id: row.id, approved: d.approved === true, note: d.note ?? '' };
+  return { id: row.id, approved: d.approved === true, note: d.note ?? '', createdAt: row.created_at };
 }
 
 export function visualGate(db: Database.Database, ticketId: number, prNumber: number, boundary: number): VisualGate {
@@ -60,6 +60,20 @@ export function visualGate(db: Database.Database, ticketId: number, prNumber: nu
   const decision = latestVisualDecision(db, ticketId, boundary);
   if (!decision) return 'pending';
   return decision.approved ? 'approved' : 'rejected';
+}
+
+/**
+ * The review boundary for a **session** PR's visual check (PD-915): when the Evaluator last started
+ * reviewing that PR, i.e. its current head. A session PR has no hand-off to anchor on, and every new
+ * head gets a new review, so "an approval of an older head does not carry" holds the same way.
+ * 0 when it was never reviewed. The server mirrors this in `visual-review.ts`.
+ */
+export function sessionReviewBoundary(db: Database.Database, ticketId: number, prNumber: number): number {
+  const rows = db
+    .prepare('SELECT detail, created_at FROM agent_ticket_events WHERE ticket_id = ? AND type = ? ORDER BY created_at DESC, id DESC')
+    .all(ticketId, ROBOT_EVENT.evaluating) as { detail: string | null; created_at: number }[];
+  const hit = rows.find((r) => detail({ id: 0, ...r }).prNumber === prNumber);
+  return hit?.created_at ?? 0;
 }
 
 /** The pending status description, kept under GitHub's 140-character cap. */

@@ -345,9 +345,7 @@ describe('evaluateNextOtherPr: per-head one-retry + diagnostics + terminal notif
         runAgent,
         comment: async (_r: string, _n: number, body: string) => void comments.push(body),
         postStatus: async (_r: string, sha: string, s: { state: string }) => (statuses.push({ sha, state: s.state }), true),
-        // Stub the status read like the sibling `deps` helper (line 84) so the gate's "is this already
-        // Steve-approved?" check never shells out to a real `gh` — otherwise it fails where `gh` is
-        // unauthenticated and the gate is silently left unposted.
+        // Never the real reader: it shells out to `gh`, which is unauthenticated in CI (PD-914 x PD-884).
         readStatus: async (): Promise<StatusRead> => ({ ok: true, current: null }),
       },
     };

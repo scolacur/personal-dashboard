@@ -6,6 +6,9 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { logMilestone } from '../robot/events';
 import { inReviewPrTargets } from '../robot/pr-state';
+import { defaultOtherPrLister, skipReason, type OtherPrLister } from '../evaluate/all-prs';
+import { adoptedPrNumbers, branchTicket } from '../evaluate/adoption';
+import { NO_TICKET } from '../evaluate/evaluator-runs';
 import { readStateNumber, writeState } from '../robot/state';
 import { captureVisuals, type CaptureDeps, type CaptureOutcome } from './capture';
 import { captureTargets, touchesWeb, type CaptureTarget } from './routes';
@@ -32,6 +35,8 @@ export type PrViewer = (repo: string, prNumber: number) => Promise<PrView | null
 export type { Commenter };
 
 export interface VisualPassDeps extends CaptureDeps {
+  /** PD-915: the open-PR listing for session targets. */
+  listPrs?: OtherPrLister;
   viewPr?: PrViewer;
   capture?: (target: { repo: string; prNumber: number; headSha: string; targets: CaptureTarget[] }) => Promise<CaptureOutcome>;
   comment?: Commenter;
@@ -147,15 +152,18 @@ export async function runVisualPass(
 
   const view = deps.viewPr ?? defaultPrViewer(config);
   const comment = deps.comment ?? defaultCommenter(config);
-  for (const target of inReviewPrTargets(db)) {
-    if (target.repo !== config.githubRepo) continue;
-    const pr = await view(target.repo, target.prNumber);
-    if (!pr || headSettled(db, target.prNumber, pr.headRefOid)) continue;
+
+  /** Capture one PR's head. Null when it needed no capture (no web change), else the outcome. */
+  const captureOne = async (
+    target: { repo: string; prNumber: number; ticketId: number | null },
+    pr: PrView,
+  ): Promise<CaptureOutcome['kind'] | null> => {
+    const ticketId = target.ticketId ?? NO_TICKET;
     const files = pr.files.map((f) => f.path);
     if (!touchesWeb(files)) {
-      recordCapture(db, { ticketId: target.ticketId, prNumber: target.prNumber, headSha: pr.headRefOid, outcome: 'skipped', detail: 'no web changes' }, now);
+      recordCapture(db, { ticketId, prNumber: target.prNumber, headSha: pr.headRefOid, outcome: 'skipped', detail: 'no web changes' }, now);
       await comment(target.repo, target.prNumber, noUiChangeComment(pr.headRefOid));
-      continue;
+      return null;
     }
     const targets = captureTargets(files, pr.body);
     if (targets.length === 0) targets.push({ route: '/', steps: [] });
@@ -164,25 +172,46 @@ export async function runVisualPass(
       repo: target.repo, prNumber: target.prNumber, headSha: pr.headRefOid, targets,
     });
     recordCapture(db, {
-      ticketId: target.ticketId, prNumber: target.prNumber, headSha: pr.headRefOid,
+      ticketId, prNumber: target.prNumber, headSha: pr.headRefOid,
       outcome: outcome.kind, detail: outcome.kind === 'failed' ? outcome.reason.slice(0, 2000) : outcome.dir,
     }, now);
     if (outcome.kind === 'captured') {
-      logMilestone(db, target.ticketId, ROBOT_EVENT.visualCaptured, {
-        prNumber: target.prNumber,
-        shots: outcome.manifest.shots.map((s) => ({ ...s, url: captureUrl(target.prNumber, pr.headRefOid, s.file) })),
-        failures: outcome.manifest.failures ?? [],
-      }, now);
-      await comment(
-        target.repo,
-        target.prNumber,
-        captureComment(config.visual.publicUrl, target.prNumber, pr.headRefOid, outcome, ticketLabel(db, target.ticketId)),
-      );
+      // PD-915: a session PR with no branch ticket has no timeline to put them on; the PR comment has them.
+      if (target.ticketId !== null) {
+        logMilestone(db, target.ticketId, ROBOT_EVENT.visualCaptured, {
+          prNumber: target.prNumber,
+          shots: outcome.manifest.shots.map((s) => ({ ...s, url: captureUrl(target.prNumber, pr.headRefOid, s.file) })),
+          failures: outcome.manifest.failures ?? [],
+        }, now);
+      }
+      const label = target.ticketId !== null ? ticketLabel(db, target.ticketId) : `PR #${target.prNumber} (no linked ticket)`;
+      await comment(target.repo, target.prNumber, captureComment(config.visual.publicUrl, target.prNumber, pr.headRefOid, outcome, label));
     } else {
       logger.warn({ prNumber: target.prNumber, reason: outcome.reason }, 'visual: capture failed');
       await comment(target.repo, target.prNumber, captureFailedComment(pr.headRefOid, outcome.reason));
     }
     return outcome.kind;
+  };
+
+  for (const target of inReviewPrTargets(db)) {
+    if (target.repo !== config.githubRepo) continue;
+    const pr = await view(target.repo, target.prNumber);
+    if (!pr || headSettled(db, target.prNumber, pr.headRefOid)) continue;
+    const kind = await captureOne(target, pr);
+    if (kind) return kind;
+  }
+
+  // PD-915: then session PRs, same rules as the Evaluator's session path (no drafts, forks,
+  // `skip-evaluator`, or PRs the Robot holds). Still one capture per pass.
+  if (config.evaluator.allPrs) {
+    const prs = await (deps.listPrs ?? defaultOtherPrLister(config))(config.githubRepo);
+    const owned = new Set([...inReviewPrTargets(db).map((t) => t.prNumber), ...adoptedPrNumbers(db)]);
+    for (const p of [...(prs ?? [])].sort((a, b) => a.number - b.number)) {
+      if (skipReason(p, owned) !== null || headSettled(db, p.number, p.headRefOid)) continue;
+      const ticketId = branchTicket(db, p.headRefName)?.id ?? null;
+      const kind = await captureOne({ repo: config.githubRepo, prNumber: p.number, ticketId }, { headRefOid: p.headRefOid, body: p.body, files: p.files });
+      if (kind) return kind;
+    }
   }
   return null;
 }

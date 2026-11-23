@@ -650,7 +650,7 @@
   let gateRequest = $state<{
     server: QueueCriterion[] | null;
     compute: () => TicketGate | EpicGate | null;
-    run: (bypass: boolean) => Promise<void>;
+    run: (bypass: boolean) => Promise<unknown>;
     fallback?: { label: string; run: () => void } | null;
     subjectId?: number;
   } | null>(null);
@@ -709,7 +709,7 @@
     e: unknown,
     subjectId: number,
     write: TicketWrite,
-    rerun: (bypass: boolean) => Promise<void>,
+    rerun: (bypass: boolean) => Promise<unknown>,
   ): Promise<boolean> {
     const server = api.queueGateBlockers(e);
     if (!server) return false;
@@ -729,8 +729,11 @@
 
   // Shared write path for a drag/drop move. A blocked ticket may now sit in the queue (D-051 amended
   // by PD-408 — the loop skips it at selection), so a drop into the queue is no longer refused; any
-  // remaining error (epic guard, etc.) surfaces in the banner.
-  async function applyTicketMove(id: number, patch: UpdateTicketInput) {
+  // remaining error (epic guard, etc.) surfaces in the banner. Also the write path for a card's
+  // assignee dropdown (PD-934), which used to swallow the gate's 409 into the console. Resolves true
+  // only when the write landed on this attempt — a gate refusal resolves false even though the modal
+  // may re-run it, because the caller's UI has to reflect the server's state until then.
+  async function applyTicketMove(id: number, patch: UpdateTicketInput): Promise<boolean> {
     error = null;
     try {
       await api.updateTicket(id, patch);
@@ -740,10 +743,12 @@
         const notice = await holdNotice(ticket?.displayId ?? ticket?.title);
         if (notice) showToast(notice, HOLD_TOAST_MS);
       }
+      return true;
     } catch (err) {
       const rerun = (bypass: boolean) => applyTicketMove(id, bypass ? { ...patch, readyBypassed: true } : patch);
-      if (await openServerGate(err, id, patch, rerun)) return;
+      if (await openServerGate(err, id, patch, rerun)) return false;
       error = err instanceof Error ? err.message : String(err);
+      return false;
     }
   }
 
@@ -1303,7 +1308,7 @@
         glossaryOpen = true;
       }
     }}
-    onUpdate={() => load(true)}
+    onAssignee={(assignee) => applyTicketMove(ticket.id, { assignee })}
   />
 {/snippet}
 
@@ -1333,6 +1338,7 @@
               onDragEnd={onEpicDragEnd}
               onEdit={() => openEdit(epic)}
               onDelete={() => remove(epic)}
+              onAssignee={(assignee) => applyTicketMove(epic.id, { assignee })}
               onUpdate={() => load(true)}
             />
           {/each}

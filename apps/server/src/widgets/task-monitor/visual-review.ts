@@ -9,8 +9,8 @@ import {
 } from '@dashboard/shared';
 
 /**
- * Steve's side of the visual-review gate (PD-773 slice 2): which Robot PRs are waiting for his
- * visual check, and recording his answer.
+ * Steve's side of the visual-review gate (PD-773 slice 2): which PRs are waiting for his visual
+ * check, and recording his answer. Robot PRs, and since PD-915 session PRs too (`pendingForSession`).
  *
  * The rule mirrors the worker's (`apps/agent-worker/src/jobs/visual/gate.ts`): a request sticks to
  * its PR, and only a decision AFTER the current review boundary (the last hand-off or conflict
@@ -42,6 +42,10 @@ interface TicketRow {
   id: number;
   display_id: string | null;
   title: string;
+  assignee?: string | null;
+  agent_state?: string | null;
+  status?: string;
+  repo?: string | null;
 }
 
 const tableExists = (db: Database.Database, name: string): boolean =>
@@ -122,15 +126,65 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
   };
 }
 
+/**
+ * The pending visual check on a **session** PR (PD-915): one Steve opened, not handed off by a Robot.
+ * Same rule with a different boundary: the start of the Evaluator's latest review of the PR (its
+ * newest `robot_evaluating`), since there is no hand-off. Mirrors the worker's `sessionReviewBoundary`.
+ */
+function pendingForSession(db: Database.Database, t: TicketRow, now: number): AwaitingVisualItem | null {
+  const events = db
+    .prepare(
+      `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
+        WHERE ticket_id = ? AND type IN (?, ?, ?, ?) ORDER BY created_at, id`,
+    )
+    .all(t.id, ROBOT_EVENT.evaluating, ROBOT_EVENT.visualReviewRequested, ROBOT_EVENT.visualReviewed, ROBOT_EVENT.visualCaptured) as Ev[];
+  const allRequests = events.filter((e) => e.type === ROBOT_EVENT.visualReviewRequested);
+  const prNumber = allRequests.length > 0 ? (parse(allRequests[allRequests.length - 1]).prNumber ?? null) : null;
+  if (prNumber === null) return null;
+  const requests = allRequests.filter((e) => parse(e).prNumber === prNumber);
+  const reviews = events.filter((e) => e.type === ROBOT_EVENT.evaluating && parse(e).prNumber === prNumber);
+  if (reviews.length === 0) return null;
+  const boundary = reviews[reviews.length - 1].created_at;
+  if (events.some((e) => e.type === ROBOT_EVENT.visualReviewed && e.created_at > boundary)) return null;
+  const captures = events.filter((e) => e.type === ROBOT_EVENT.visualCaptured && parse(e).prNumber === prNumber);
+  const latestCapture = captures[captures.length - 1];
+  return {
+    ticketId: t.id,
+    displayId: t.display_id,
+    title: t.title,
+    prNumber,
+    prUrl: t.repo ? `https://github.com/${t.repo}/pull/${prNumber}` : null,
+    reasons: requests.map((r) => ({ by: parse(r).by ?? 'robot', reason: parse(r).reason ?? '' })),
+    shots: latestCapture ? (parse(latestCapture).shots ?? []) : [],
+    stepFailures: latestCapture ? (parse(latestCapture).failures ?? []) : [],
+    capturedAt: latestCapture ? latestCapture.created_at : null,
+    requestedAt: requests[requests.length - 1].created_at,
+    capture: captureStateFor(db, prNumber, boundary, now),
+  };
+}
+
+/** A Robot ticket in review uses the hand-off rule; a ticket the Robot does not hold, the session rule. */
+function pendingAny(db: Database.Database, t: TicketRow, now: number): AwaitingVisualItem | null {
+  if (t.assignee === 'robot' && t.agent_state === 'in-review') return pendingFor(db, t, now);
+  if (t.assignee === 'robot' && t.agent_state) return null;
+  if (t.status === 'completed' || t.status === 'closed') return null;
+  return pendingForSession(db, t, now);
+}
+
+const TICKET_COLUMNS = `t.id, t.display_id, t.title, t.assignee, t.agent_state, t.status, p.github_repo AS repo
+   FROM agent_tickets t LEFT JOIN agent_projects p ON p.id = t.project_id`;
+
 export function listAwaitingVisual(db: Database.Database, now: number = Date.now()): AwaitingVisualItem[] {
   const tickets = db
     .prepare(
-      `SELECT id, display_id, title FROM agent_tickets
-        WHERE archived_at IS NULL AND assignee = 'robot' AND agent_state = 'in-review'`,
+      `SELECT ${TICKET_COLUMNS}
+        WHERE t.archived_at IS NULL
+          AND ((t.assignee = 'robot' AND t.agent_state = 'in-review')
+               OR EXISTS (SELECT 1 FROM agent_ticket_events e WHERE e.ticket_id = t.id AND e.type = ?))`,
     )
-    .all() as TicketRow[];
+    .all(ROBOT_EVENT.visualReviewRequested) as TicketRow[];
   return tickets
-    .map((t) => pendingFor(db, t, now))
+    .map((t) => pendingAny(db, t, now))
     .filter((x): x is AwaitingVisualItem => x !== null)
     .sort((a, b) => a.requestedAt - b.requestedAt);
 }
@@ -147,11 +201,9 @@ export function recordVisualReview(
   note: string,
   now: number = Date.now(),
 ): VisualReviewResult {
-  const t = db.prepare('SELECT id, display_id, title FROM agent_tickets WHERE id = ? AND archived_at IS NULL').get(ticketId) as
-    | TicketRow
-    | undefined;
+  const t = db.prepare(`SELECT ${TICKET_COLUMNS} WHERE t.id = ? AND t.archived_at IS NULL`).get(ticketId) as TicketRow | undefined;
   if (!t) return { ok: false, reason: 'not_found' };
-  const pending = pendingFor(db, t, now);
+  const pending = pendingAny(db, t, now);
   if (!pending) return { ok: false, reason: 'not_waiting' };
   const detail: RobotEventDetail = { prNumber: pending.prNumber, approved, ...(note.trim() ? { note: note.trim().slice(0, 2000) } : {}) };
   const res = db

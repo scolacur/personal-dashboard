@@ -9,11 +9,13 @@ const event = (type: string, detail: object, at: number, ticket = 1) =>
 beforeEach(() => {
   db = new Database(':memory:');
   db.exec(`
-    CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER);
+    CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, assignee TEXT, agent_state TEXT, archived_at INTEGER, status TEXT NOT NULL DEFAULT 'queue', project_id INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE agent_projects (id INTEGER PRIMARY KEY, github_repo TEXT);
+    INSERT INTO agent_projects (id, github_repo) VALUES (1, 'x/y');
     CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL);
     CREATE TABLE agent_notifications (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER, title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL);
   `);
-  db.prepare("INSERT INTO agent_tickets VALUES (1, 'PD-1', 'Calendar', 'robot', 'in-review', NULL)").run();
+  db.prepare("INSERT INTO agent_tickets (id, display_id, title, assignee, agent_state, archived_at) VALUES (1, 'PD-1', 'Calendar', 'robot', 'in-review', NULL)").run();
   event('robot_handoff', { prUrl: 'https://github.com/x/y/pull/314' }, 100);
 });
 
@@ -107,5 +109,37 @@ describe('capture state on the awaiting list (PD-794)', () => {
     // Another PR's row never counts.
     capture('failed', 'x', 180, 999);
     expect(captureStateFor(db, 314, 100, NOW)).toEqual({ kind: 'captured' });
+  });
+});
+
+describe('visual review on session PRs (PD-915)', () => {
+  beforeEach(() => {
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, assignee) VALUES (2, 'PD-2', 'Session work', 'steve')").run();
+  });
+
+  it('lists a session PR from its latest review, and an approval after that review clears it', () => {
+    event('robot_evaluating', { prNumber: 500, round: 1, lens: 'code' }, 100, 2);
+    event('robot_visual_review_requested', { prNumber: 500, by: 'evaluator', reason: 'new layout' }, 110, 2);
+    const [item] = listAwaitingVisual(db).filter((i) => i.ticketId === 2);
+    expect(item).toMatchObject({ displayId: 'PD-2', prNumber: 500, prUrl: 'https://github.com/x/y/pull/500', reasons: [{ by: 'evaluator', reason: 'new layout' }] });
+    expect(recordVisualReview(db, 2, true, '', 200)).toMatchObject({ ok: true });
+    expect(listAwaitingVisual(db).filter((i) => i.ticketId === 2)).toEqual([]);
+  });
+
+  it('asks again after a new push is reviewed', () => {
+    event('robot_evaluating', { prNumber: 500, round: 1, lens: 'code' }, 100, 2);
+    event('robot_visual_review_requested', { prNumber: 500, by: 'evaluator', reason: 'x' }, 110, 2);
+    recordVisualReview(db, 2, true, '', 120);
+    event('robot_evaluating', { prNumber: 500, round: 2, lens: 'code' }, 130, 2);
+    expect(listAwaitingVisual(db).filter((i) => i.ticketId === 2)).toHaveLength(1);
+  });
+
+  it('drops it once the ticket is completed, or while the Robot holds the ticket', () => {
+    event('robot_evaluating', { prNumber: 500, round: 1, lens: 'code' }, 100, 2);
+    event('robot_visual_review_requested', { prNumber: 500, by: 'evaluator', reason: 'x' }, 110, 2);
+    db.exec("UPDATE agent_tickets SET status = 'completed' WHERE id = 2");
+    expect(listAwaitingVisual(db).filter((i) => i.ticketId === 2)).toEqual([]);
+    db.exec("UPDATE agent_tickets SET status = 'queue', assignee = 'robot', agent_state = 'working' WHERE id = 2");
+    expect(listAwaitingVisual(db).filter((i) => i.ticketId === 2)).toEqual([]);
   });
 });

@@ -6,6 +6,7 @@ import {
   evaluatorSystemPrompt,
   HUMAN_REPLY_MARKER,
   ROBOT_EVENT,
+  VISUAL_REVIEW_NOTIFICATION_PREFIX,
   securityEvaluatorSystemPrompt,
   type EvaluatorLens,
   type EvaluatorReport,
@@ -31,7 +32,8 @@ import {
   updateEvaluatorRunProgress,
 } from './evaluator-runs';
 import { inReviewPrTargets } from '../robot/pr-state';
-import { adoptableTicket, adoptedPrNumbers } from './adoption';
+import { adoptableTicket, adoptedPrNumbers, branchTicket } from './adoption';
+import { VISUAL_PENDING_DESCRIPTION, visualGate, visualRequested } from '../visual/gate';
 import {
   defaultHeadShaFetcher,
   defaultStatusPoster,
@@ -309,7 +311,10 @@ export function verdictComment(
   round: number,
   tickets: readonly { displayId: string; title: string }[],
   maxRounds: number,
-  gate: { status: GateStatus; retryPending: boolean; adoptAfterMin?: number | null } = { status: sessionGateFor(report, round, maxRounds), retryPending: false },
+  gate: { status: GateStatus; retryPending: boolean; adoptAfterMin?: number | null; visualHold?: boolean } = {
+    status: sessionGateFor(report, round, maxRounds),
+    retryPending: false,
+  },
 ): string {
   const lines: string[] = ['<!-- evaluator:verdict -->'];
   const against = tickets.length > 0 ? ticketList(tickets) : 'the PR description (no linked ticket, so no acceptance criteria)';
@@ -330,7 +335,12 @@ export function verdictComment(
         lines.push(`| ${mark} | ${cell(f.where || '')} | ${cell(f.what || '')} |`);
       }
     }
-    lines.push('', nextStepLine(gate.status, round, maxRounds, gate.retryPending, gate.adoptAfterMin ?? null));
+    lines.push(
+      '',
+      gate.visualHold
+        ? "review-gate is pending: the Evaluator shipped it, and it waits for Steve's visual check in Decisions."
+        : nextStepLine(gate.status, round, maxRounds, gate.retryPending, gate.adoptAfterMin ?? null),
+    );
   }
   return lines.join('\n').split(HUMAN_REPLY_MARKER).join('');
 }
@@ -512,14 +522,41 @@ export async function evaluateNextOtherPr(
   } else {
     status = sessionGateFor(combined, round, config.evaluator.maxRounds, adoptAfterMin);
   }
+
+  // PD-915: the visual-review gate, as on Robot PRs. It lives on the branch ticket; with no branch
+  // ticket there is nowhere to record the request or Steve's answer, so there is no gate. A ship
+  // waits at pending until he approves a decision made after this review started (`now`).
+  const visualTicket = branchTicket(db, pr.headRefName);
+  const visualAsk = [...reports.values()].find((r) => r?.visualReview)?.visualReview;
+  if (visualAsk && visualTicket && !visualRequested(db, visualTicket.id, pr.number)) {
+    logMilestone(db, visualTicket.id, ROBOT_EVENT.visualReviewRequested, { prNumber: pr.number, by: 'evaluator', reason: visualAsk }, now);
+  }
+  let visualHold = false;
+  if (status.state === 'success' && config.visual.enabled && visualTicket) {
+    const vg = visualGate(db, visualTicket.id, pr.number, now);
+    if (vg === 'pending' || vg === 'rejected') {
+      visualHold = true;
+      status = { state: 'pending', description: VISUAL_PENDING_DESCRIPTION };
+      notify(
+        db,
+        'agent_visual_review',
+        visualTicket.id,
+        `${VISUAL_REVIEW_NOTIFICATION_PREFIX} PR #${pr.number} (${visualTicket.displayId})`,
+        'The Evaluator shipped it, and it was flagged for your visual check. Approve or request changes in Decisions.',
+        now,
+      );
+    }
+  }
+
   await (deps.comment ?? defaultPrCommenter(config))(
     repo,
     pr.number,
-    verdictComment(combined, round, tickets, config.evaluator.maxRounds, { status, retryPending, adoptAfterMin }),
+    verdictComment(combined, round, tickets, config.evaluator.maxRounds, { status, retryPending, adoptAfterMin, visualHold }),
   );
   await postGate(status);
   const robotWillTakeIt = combined?.verdict === 'revise' && status.state === 'pending' && adoptAfterMin !== null;
-  if (status.state !== 'success' && !retryPending && !robotWillTakeIt) {
+  // A visual hold already notified (agent_visual_review); a second, generic alert would be noise.
+  if (status.state !== 'success' && !retryPending && !robotWillTakeIt && !visualHold) {
     notifySessionPrNeedsHuman(db, repo, pr.number, status, tickets[0] ?? null, now);
   }
   logger.info(
