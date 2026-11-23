@@ -11,7 +11,6 @@
   import GithubMark from '$lib/icons/GithubMark.svelte';
   import { Pencil, Copy, Trash2, ClipboardCopy, MoreVertical, Bug } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
-  import * as api from './api';
   import { projectIdColor } from './api';
   import { RELATION_ACTIONS, type RelationAction, type RelationBadges } from './relation-logic';
 
@@ -36,7 +35,7 @@
     onAddToEpic,
     onSpinOff,
     onOpenStatusLegend,
-    onUpdate,
+    onAssignee,
   }: {
     ticket: AgentTicket;
     project: AgentProject | undefined;
@@ -59,11 +58,15 @@
     onDelete: () => void;
     onRefine: () => void;
     onRelationAction: (action: RelationAction) => void;
+  /** Hands an assignee change to the board, which owns the write and its failure paths: a Queue-gate
+   *  refusal (409 QUEUE_GATE, D-091) opens the gate modal; anything else goes to the banner (PD-934).
+   *  Resolves `false` when the change did not land, so the dropdown can drop the rejected choice —
+   *  the prop it is bound to never changed, so Svelte would otherwise leave it showing. */
+    onAssignee: (assignee: TicketAssignee | null) => Promise<boolean>;
     onAddToEpic: () => void;
     /** D-080 slice C: give this ticket its own Epic, inheriting priority + lane. */
     onSpinOff: () => void;
     onOpenStatusLegend: (state: AgentState) => void;
-    onUpdate: () => void;
   } = $props();
 
   // Formatting badges (D-058, PD-399). A robot-assigned ticket that isn't formatted (missing the four
@@ -132,14 +135,10 @@
     return `${p} — inherited from ${epic.displayId ?? epic.title}. Re-prioritise the Epic to change it.`;
   });
 
-  async function setAssignee(assignee: TicketAssignee | null) {
+  async function setAssignee(select: HTMLSelectElement) {
+    const assignee = (select.value || null) as TicketAssignee | null;
     if (ticket.assignee === assignee) return;
-    try {
-      await api.updateTicket(ticket.id, { assignee });
-      onUpdate();
-    } catch (e) {
-      console.error('[TicketCard] setAssignee failed', e);
-    }
+    if (!(await onAssignee(assignee))) select.value = ticket.assignee ?? '';
   }
 </script>
 
@@ -291,7 +290,7 @@
         : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
       value={ticket.assignee ?? ''}
       disabled={isLocked || isFrozen}
-      onchange={(e) => setAssignee((e.currentTarget.value || null) as TicketAssignee | null)}
+      onchange={(e) => setAssignee(e.currentTarget)}
     >
       <option value="">—</option>
       {#each TICKET_ASSIGNEES as a (a)}

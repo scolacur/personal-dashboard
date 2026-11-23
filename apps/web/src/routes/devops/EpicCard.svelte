@@ -17,6 +17,7 @@
     onDragEnd,
     onEdit,
     onDelete,
+    onAssignee,
     onUpdate,
   }: {
     epic: AgentTicket;
@@ -28,6 +29,11 @@
     onDragEnd: () => void;
     onEdit: () => void;
     onDelete: () => void;
+  /** Hands an assignee change to the board, which owns the write and its failure paths: a Queue-gate
+   *  refusal (409 QUEUE_GATE, D-091) opens the gate modal; anything else goes to the banner (PD-934).
+   *  Resolves `false` when the change did not land, so the dropdown can drop the rejected choice —
+   *  the prop it is bound to never changed, so Svelte would otherwise leave it showing. */
+    onAssignee: (assignee: TicketAssignee | null) => Promise<boolean>;
     onUpdate: () => void;
   } = $props();
 
@@ -65,14 +71,10 @@
     }
   }
 
-  async function setAssignee(assignee: TicketAssignee | null) {
+  async function setAssignee(select: HTMLSelectElement) {
+    const assignee = (select.value || null) as TicketAssignee | null;
     if (epic.assignee === assignee) return;
-    try {
-      await api.updateTicket(epic.id, { assignee });
-      onUpdate();
-    } catch (e) {
-      console.error('[EpicCard] setAssignee failed', e);
-    }
+    if (!(await onAssignee(assignee))) select.value = epic.assignee ?? '';
   }
 </script>
 
@@ -141,7 +143,7 @@
       class="assignee-pill assignee-{epic.assignee ?? 'none'}"
       title="Epic signal — robot: whole epic is robot-doable · S: at least one member needs you"
       value={epic.assignee ?? ''}
-      onchange={(e) => setAssignee((e.currentTarget.value || null) as TicketAssignee | null)}
+      onchange={(e) => setAssignee(e.currentTarget)}
     >
       <option value="">—</option>
       {#each TICKET_ASSIGNEES as a (a)}
