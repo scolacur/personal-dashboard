@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { RefineProposal } from '@dashboard/shared';
 import {
+  TERMINAL_MESSAGE,
+  approveFailureMessage,
   approvedMessage,
   childBornRefined,
   proposalCanQueue,
@@ -57,5 +59,13 @@ describe('refine proposal card helpers (PD-843)', () => {
     expect(approvedMessage({ queued: false, populated: true })).toMatch(/members created/);
     expect(approvedMessage({ queued: true, populated: false })).toMatch(/queued/);
     expect(approvedMessage({ queued: false, populated: false })).toMatch(/^Approved\. Drag/);
+  });
+
+  it('maps a TERMINAL refusal to its own copy, and falls back for anything else (PD-929)', () => {
+    expect(approveFailureMessage('TERMINAL')).toBe(TERMINAL_MESSAGE);
+    expect(TERMINAL_MESSAGE).toMatch(/closed\/completed/);
+    expect(approveFailureMessage('NO_PROPOSAL')).toBeNull();
+    expect(approveFailureMessage(null)).toBeNull();
+    expect(approveFailureMessage(undefined)).toBeNull();
   });
 });

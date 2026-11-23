@@ -43,3 +43,16 @@ export function approvedMessage(result: { queued: boolean; populated: boolean })
 }
 
 export const REJECTED_MESSAGE = 'Proposal rejected — the agent can propose again.';
+
+/** PD-929: the copy for a terminal-ticket refusal — the ticket reached `completed`/`closed` after
+ *  its proposal was stored (D-036), so `approveRefine` refuses it server-side (`409 TERMINAL`). */
+export const TERMINAL_MESSAGE =
+  'This ticket is closed/completed — its proposal can no longer be approved.';
+
+/** Map a failed approval to the message to show, keyed on the server's error `code`. Returns our
+ *  own copy for the codes we phrase ourselves (PD-929: `TERMINAL`), else `null` so the caller falls
+ *  back to the raw server error. Pure so the copy is unit-testable (apps/web vitest can't import
+ *  `.svelte`). */
+export function approveFailureMessage(code: string | null | undefined): string | null {
+  return code === 'TERMINAL' ? TERMINAL_MESSAGE : null;
+}

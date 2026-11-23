@@ -2012,6 +2012,7 @@ export type ApproveRefineResult =
       ok: false;
       reason:
         | 'not_found'
+        | 'terminal'
         | 'no_proposal'
         | 'invalid_proposal'
         | 'epic_not_queueable'
@@ -2044,6 +2045,15 @@ export function approveRefine(
 ): ApproveRefineResult {
   const parent = getTicket(db, ticketId);
   if (!parent) return { ok: false, reason: 'not_found' };
+
+  // PD-929: a terminal ticket (completed/closed, D-036) can no longer be acted on, so a proposal
+  // stored before it reached that state must not still mint children or rewrite it (root cause #3
+  // of PD-876). Refused BEFORE any proposal lookup or write, applying to every mode, so a
+  // superseded-and-closed member's own stale proposal can never approve (the backstop the
+  // structured-supersede slices rely on). No throw, no writes — the no-throw contract holds.
+  if (parent.status === 'completed' || parent.status === 'closed') {
+    return { ok: false, reason: 'terminal', detail: parent.displayId ?? String(ticketId) };
+  }
 
   const found = latestActionableProposal(listTicketEvents(db, ticketId));
   if (!found) return { ok: false, reason: 'no_proposal' };
