@@ -7,6 +7,9 @@ import { budgetUsage } from '../robot/budget';
 import { evaluateOnePr, runEvaluatePass } from './evaluate';
 import {
   alreadyEvaluated,
+  headEvaluated,
+  INTERRUPTED_RUN_ERROR,
+  reclaimInterruptedEvaluatorRuns,
   ensureEvaluatorRunsTable,
   evaluatorBudgetUsage,
   finishEvaluatorRun,
@@ -535,6 +538,50 @@ describe('one error retry per lens, per review cycle (PD-883)', () => {
     await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a.fn, fetchDiff: async () => 'd' }, 300);
     expect(a.calls.sort()).toEqual(['code', 'security']);
     expect(posts.at(-1)).toBe('success');
+  });
+
+  // PD-919: a restart-killed review is reclaimed at boot and then counts as nothing at all.
+  it('reclaim closes only the open rows, as interrupted', () => {
+    const open = startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm', lens: 'code' }, 150);
+    const done = startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm', lens: 'security' }, 150);
+    finishEvaluatorRun(db, done, { error: 'unparseable report: x' }, 160);
+    expect(reclaimInterruptedEvaluatorRuns(db, 999)).toBe(1);
+    const rows = db.prepare('SELECT id, error, finished_at FROM evaluator_runs ORDER BY id').all();
+    expect(rows).toEqual([
+      { id: open, error: INTERRUPTED_RUN_ERROR, finished_at: 999 },
+      { id: done, error: 'unparseable report: x', finished_at: 160 },
+    ]);
+    expect(reclaimInterruptedEvaluatorRuns(db, 1000)).toBe(0); // idempotent
+  });
+
+  it('an interrupted run uses neither the error retry nor a round', async () => {
+    startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm', lens: 'code' }, 150);
+    startEvaluatorRun(db, { ticketId: 1, prNumber: 314, round: 1, model: 'm', lens: 'security' }, 150);
+    reclaimInterruptedEvaluatorRuns(db, 160);
+
+    // A real error now is the security lens's FIRST failure: its retry is still pending.
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: recordingAgent({ code: shipReply, security: 'nope' }).fn, fetchDiff: async () => 'd' }, 200);
+    expect(alreadyEvaluated(db, 1, 314, 100, ['code', 'security'])).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agent_notifications WHERE kind = 'agent_needs_human'").get()).toMatchObject({ n: 0 });
+    // …and the review it ran was round 1, not round 2.
+    const rounds = eventsOfType('robot_evaluating').map((e) => (JSON.parse(e.detail) as { round: number }).round);
+    expect(rounds).toEqual([1, 1]);
+
+    // The retry then ships it.
+    const a = recordingAgent({ code: shipReply, security: secReply('ship') });
+    await evaluateOnePr(db, both(), TARGET, { ...gateDeps, runAgent: a.fn, fetchDiff: async () => 'd' }, 300);
+    expect(a.calls).toEqual(['security']);
+    expect(posts.at(-1)).toBe('success');
+  });
+
+  it('a non-Robot head whose only review was interrupted is not "evaluated" (all-PRs path)', () => {
+    const id = startEvaluatorRun(db, { ticketId: 0, prNumber: 600, round: 1, model: 'm', lens: 'code', headSha: 'abc' }, 150);
+    expect(headEvaluated(db, 600, 'abc')).toBe(true); // open row: in flight
+    reclaimInterruptedEvaluatorRuns(db, 160);
+    expect(headEvaluated(db, 600, 'abc')).toBe(false);
+    finishEvaluatorRun(db, startEvaluatorRun(db, { ticketId: 0, prNumber: 600, round: 1, model: 'm', lens: 'code', headSha: 'abc' }, 170), { error: 'x' }, 180);
+    expect(headEvaluated(db, 600, 'abc')).toBe(true);
+    expect(id).toBeGreaterThan(0);
   });
 
   it('keeps the full unparseable reply up to the 20k cap, not a 500-char head', async () => {

@@ -75,11 +75,33 @@ export function ensureEvaluatorRunsTable(db: Database.Database): void {
  *  is NOT NULL; no ticket has id 0. */
 export const NO_TICKET = 0;
 
+/**
+ * PD-919: the error a review run gets when a worker restart killed it mid-review. Such a run says
+ * nothing about the PR, so every counter below ignores it: it is neither a verdict, nor a failed
+ * attempt, nor a round. Otherwise one restart strands a PR (PR #487 sat with no `review-gate` for
+ * hours) or uses up a lens's one error retry (PD-883).
+ */
+export const INTERRUPTED_RUN_ERROR = 'interrupted: worker restart';
+/** SQL guard: rows that count. Unqualified column, for single-table queries. */
+const COUNTED = "(error IS NULL OR error NOT LIKE 'interrupted:%')";
+
+/**
+ * PD-919: close every review run that was left open (`finished_at IS NULL`) as interrupted. Called
+ * once at Evaluator job start, before the first pass: at that moment this process has no pass in
+ * flight, so every open row belongs to a process that died (a deploy, a crash, a SIGTERM). The
+ * same idea as D-104's reclaim for Robot runs, simpler because only one process runs passes.
+ */
+export function reclaimInterruptedEvaluatorRuns(db: Database.Database, now: number = Date.now()): number {
+  return db
+    .prepare('UPDATE evaluator_runs SET error = ?, finished_at = ? WHERE finished_at IS NULL')
+    .run(INTERRUPTED_RUN_ERROR, now).changes;
+}
+
 /** Whether this exact head of a non-Robot PR has been reviewed (PD-712). */
 export function headEvaluated(db: Database.Database, prNumber: number, headSha: string): boolean {
   return (
     (db
-      .prepare("SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha = ? AND lens = 'code'")
+      .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha = ? AND lens = 'code' AND ${COUNTED}`)
       .get(prNumber, headSha) as { n: number }).n > 0
   );
 }
@@ -87,7 +109,7 @@ export function headEvaluated(db: Database.Database, prNumber: number, headSha: 
 /** How many heads of a non-Robot PR have been reviewed by this lens: its round count (PD-712). */
 export function prRounds(db: Database.Database, prNumber: number, lens: EvaluatorLens = 'code'): number {
   return (db
-    .prepare('SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha IS NOT NULL AND lens = ?')
+    .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE pr_number = ? AND head_sha IS NOT NULL AND lens = ? AND ${COUNTED}`)
     .get(prNumber, lens) as { n: number }).n;
 }
 
@@ -151,7 +173,7 @@ export function finishEvaluatorRun(
 export function evaluationRounds(db: Database.Database, ticketId: number, since = 0, lens: EvaluatorLens = 'code'): number {
   // PD-767: counted per lens, so two reviewers on one PR do not reach the round cap twice as fast.
   const row = db
-    .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE ticket_id = ? AND started_at >= ? AND lens = ?`)
+    .prepare(`SELECT COUNT(*) AS n FROM evaluator_runs WHERE ticket_id = ? AND started_at >= ? AND lens = ? AND ${COUNTED}`)
     .get(ticketId, since, lens) as { n: number };
   return row.n;
 }
@@ -188,10 +210,10 @@ function lensRunRows(db: Database.Database, select: LensRunSelect): { lens: stri
   return (
     'headSha' in select
       ? db
-          .prepare('SELECT lens, verdict FROM evaluator_runs WHERE pr_number = ? AND head_sha = ?')
+          .prepare(`SELECT lens, verdict FROM evaluator_runs WHERE pr_number = ? AND head_sha = ? AND ${COUNTED}`)
           .all(select.prNumber, select.headSha)
       : db
-          .prepare('SELECT lens, verdict FROM evaluator_runs WHERE ticket_id = ? AND pr_number = ? AND started_at >= ?')
+          .prepare(`SELECT lens, verdict FROM evaluator_runs WHERE ticket_id = ? AND pr_number = ? AND started_at >= ? AND ${COUNTED}`)
           .all(select.ticketId, select.prNumber, select.since)
   ) as { lens: string | null; verdict: string | null }[];
 }
