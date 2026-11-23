@@ -31,6 +31,7 @@
     'no-verify': 'No verify',
     'ask-human': 'Asked human',
     checkpoint: 'Checkpoint',
+    superseded: 'Superseded',
     error: 'Error',
   };
 

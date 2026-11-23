@@ -87,6 +87,7 @@ function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
     deleteWip: async () => {},
     // PD-924: never shell out to gh; the rework-guard tests override this.
     fetchPr: async () => null,
+    hasCommit: async () => false, // PD-926: never shell out to git
     runSession: async () => ({ ok: true, sessionId: 'sess-1', verifyOk: true, prNumber: 314, ...sessionResult }),
     now: () => 1000,
   };
@@ -1390,5 +1391,127 @@ describe('pre-dispatch rework guard (PD-924)', () => {
     await processRobotQueue(db, cfg(), withPr('MERGED'));
     expect(fetched).toEqual([]);
     expect(listRunsForTicket(db, 1)).toHaveLength(1);
+  });
+});
+
+describe('in-flight rework supersession (PD-926)', () => {
+  let db: Database.Database;
+  let fetches: number;
+  beforeEach(() => {
+    db = boardDb();
+    fetches = 0;
+    db.exec(`CREATE TABLE evaluator_runs (
+      id INTEGER PRIMARY KEY, ticket_id INTEGER, pr_number INTEGER, lens TEXT, verdict TEXT, findings TEXT,
+      summary TEXT, head_sha TEXT, error TEXT, started_at INTEGER, finished_at INTEGER)`);
+  });
+  const fast = () => cfg({ ROBOT_SUPERSEDE_CHECK_MS: '5' });
+
+  /** An Evaluator rework of PR #487 reviewed at head `aaa`. */
+  function queueRework(id = 1): void {
+    addQueued(db, id);
+    db.prepare(
+      `INSERT INTO evaluator_runs (ticket_id, pr_number, lens, verdict, findings, summary, head_sha, started_at, finished_at)
+       VALUES (?, 487, 'code', 'revise', ?, 's', 'aaa', 500, 510)`,
+    ).run(id, JSON.stringify([{ kind: 'correctness', blocking: true, where: 'a.ts:1', what: 'fix it' }]));
+    db.prepare("INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, 'robot_reactivated', ?, 520)").run(
+      id,
+      JSON.stringify({ reason: 'evaluator requested changes (round 1)', prNumber: 487 }),
+    );
+  }
+
+  /** The dispatch-time read is OPEN at `aaa`; every later read is `later`. */
+  function prSequence(later: { state: string; head?: string }): RobotDeps['fetchPr'] {
+    return async () => {
+      fetches++;
+      const r = fetches === 1 ? { state: 'OPEN', head: 'aaa' } : later;
+      return { state: r.state, mergeable: 'MERGEABLE', reviewDecision: null, reviews: [], comments: [], inlineComments: [], headRefOid: r.head };
+    };
+  }
+
+  /** A session that keeps working until aborted (or gives up after 2s and hands off). */
+  const longSession: RobotDeps['runSession'] = (_c, _cand, _wt, _resume, _p, abort) =>
+    new Promise((resolve) => {
+      const done = setTimeout(() => resolve({ ok: true, sessionId: 's', verifyOk: true, prNumber: 487, turns: 30 }), 2000);
+      abort?.signal.addEventListener('abort', () => {
+        clearTimeout(done);
+        resolve({ ok: false, sessionId: 's', error: 'aborted', verifyOk: false, turns: 12 });
+      });
+    });
+
+  it('stops the run and completes the ticket when the PR merges mid-rework', async () => {
+    queueRework();
+    await processRobotQueue(db, fast(), { ...deps(), fetchPr: prSequence({ state: 'MERGED' }), runSession: longSession, handoffStarted: () => false });
+    const run = listRunsForTicket(db, 1)[0];
+    expect(run.status).toBe('superseded');
+    expect(run.turns).toBe(12);
+    expect((db.prepare('SELECT status FROM agent_tickets WHERE id = 1').get() as { status: string }).status).toBe('completed');
+    const ev = db.prepare("SELECT detail FROM agent_ticket_events WHERE type = 'robot_completed'").get() as { detail: string };
+    expect(JSON.parse(ev.detail)).toMatchObject({ via: 'merged_during_rework', prNumber: 487 });
+    expect(failedRunsForTicket(db, 1)).toEqual([]); // not a failure: no retry used
+    expect(breakerFailures(db)).toEqual([]);
+  });
+
+  it('stops the run and sends it back to review when someone else pushes', async () => {
+    queueRework();
+    await processRobotQueue(db, fast(), {
+      ...deps(),
+      fetchPr: prSequence({ state: 'OPEN', head: 'bbb' }),
+      hasCommit: async () => false,
+      runSession: longSession,
+      handoffStarted: () => false,
+    });
+    expect(listRunsForTicket(db, 1)[0].status).toBe('superseded');
+    expect(agentState(db, 1)).toBe('in-review');
+    expect(eventTypes(db, 1)).toContain('robot_rework_skipped');
+  });
+
+  it('parks for a human when the PR is closed mid-rework', async () => {
+    queueRework();
+    await processRobotQueue(db, fast(), { ...deps(), fetchPr: prSequence({ state: 'CLOSED' }), runSession: longSession, handoffStarted: () => false });
+    expect(listRunsForTicket(db, 1)[0].status).toBe('superseded');
+    expect(agentState(db, 1)).toBe('needs-human');
+  });
+
+  it("does not stop for the Robot's own push (the commit is in its clone)", async () => {
+    queueRework();
+    const session: RobotDeps['runSession'] = (_c, _cand, _wt, _r, _p, abort) =>
+      new Promise((resolve) => setTimeout(() => resolve({ ok: true, sessionId: 's', verifyOk: !abort?.signal.aborted, prNumber: 487 }), 60));
+    await processRobotQueue(db, fast(), {
+      ...deps(),
+      fetchPr: prSequence({ state: 'OPEN', head: 'robot-sha' }),
+      hasCommit: async (_wt, sha) => sha === 'robot-sha',
+      runSession: session,
+      handoffStarted: () => false,
+    });
+    expect(fetches).toBeGreaterThan(1); // it did check
+    expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
+  });
+
+  it('never stops a session that has reached a green verify (D-046)', async () => {
+    queueRework();
+    const session: RobotDeps['runSession'] = (_c, _cand, _wt, _r, _p, abort) =>
+      new Promise((resolve) => setTimeout(() => resolve({ ok: true, sessionId: 's', verifyOk: !abort?.signal.aborted, prNumber: 487 }), 60));
+    await processRobotQueue(db, fast(), { ...deps(), fetchPr: prSequence({ state: 'MERGED' }), runSession: session, handoffStarted: () => true });
+    expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
+  });
+
+  it('does not watch a fresh (non-rework) dispatch', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, fast(), { ...deps(), fetchPr: prSequence({ state: 'MERGED' }), runSession: longSession, handoffStarted: () => false });
+    expect(fetches).toBe(0);
+    expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
+  });
+
+  it('is off when ROBOT_SUPERSEDE_CHECK_MS is 0', async () => {
+    queueRework();
+    const session: RobotDeps['runSession'] = () =>
+      new Promise((resolve) => setTimeout(() => resolve({ ok: true, sessionId: 's', verifyOk: true, prNumber: 487 }), 40));
+    await processRobotQueue(db, cfg({ ROBOT_SUPERSEDE_CHECK_MS: '0' }), {
+      ...deps(),
+      fetchPr: prSequence({ state: 'MERGED' }),
+      runSession: session,
+    });
+    expect(fetches).toBe(1); // the dispatch-time guard only
+    expect(listRunsForTicket(db, 1)[0].status).toBe('handed-off');
   });
 });

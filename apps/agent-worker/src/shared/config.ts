@@ -229,6 +229,9 @@ export interface RobotConfig {
   restartBreakerCount: number;
   /** PD-784/D-104: the restart breaker's window. Default 6h. */
   restartBreakerWindowMs: number;
+  /** PD-926: how often a running rework checks whether its PR merged, closed, or was pushed to by
+   *  someone else (and is stopped if so). Default 2 min; 0 disables. */
+  supersedeCheckMs: number;
 }
 
 /** Parse an env value as an integer, or undefined when unset/blank/invalid. */
@@ -289,6 +292,7 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     orphanCap: Number(env.ROBOT_ORPHAN_CAP ?? 3),
     restartBreakerCount: Number(env.ROBOT_RESTART_BREAKER_COUNT ?? 4),
     restartBreakerWindowMs: Number(env.ROBOT_RESTART_BREAKER_WINDOW_MS ?? 6 * 60 * 60_000),
+    supersedeCheckMs: Number(env.ROBOT_SUPERSEDE_CHECK_MS ?? 2 * 60_000),
   };
 }
 

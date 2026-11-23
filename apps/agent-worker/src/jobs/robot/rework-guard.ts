@@ -28,7 +28,9 @@ import type { PrFetcher } from './pr-state';
  * was reopened by hand also has an old merged PR, and must not be auto-completed off it.
  */
 export type ReworkGuardDecision =
-  | { action: 'dispatch' }
+  /** `rework` is set when this dispatch IS a rework of an open PR (PD-926 watches it while it runs):
+   *  the PR, and its head at dispatch (null when the fetch failed). */
+  | { action: 'dispatch'; rework?: { prNumber: number; head: string | null } }
   | { action: 'complete'; prNumber: number }
   | { action: 'park'; prNumber: number; reason: string }
   | { action: 'back-to-review'; prNumber: number; reason: string };
@@ -96,7 +98,8 @@ export async function checkRework(
   if (prNumber === undefined) return { action: 'dispatch' };
 
   const pr = await fetchPr(repo, prNumber);
-  if (!pr) return { action: 'dispatch' };
+  if (!pr) return { action: 'dispatch', rework: { prNumber, head: null } };
+  const rework = { prNumber, head: pr.headRefOid ?? null };
 
   if (pr.state === 'MERGED') return { action: 'complete', prNumber };
   if (pr.state === 'CLOSED') {
@@ -104,12 +107,12 @@ export async function checkRework(
   }
 
   const evaluatorOnly = reactivations.every((r) => EVALUATOR_REASON.test(r.reason ?? ''));
-  if (!evaluatorOnly || humanAnswered || !pr.headRefOid) return { action: 'dispatch' };
+  if (!evaluatorOnly || humanAnswered || !pr.headRefOid) return { action: 'dispatch', rework };
   const heads = reviseHeads(db, ticketId, since);
   // Only when every revise names its commit and none is the current head. An unrecorded head proves
   // nothing, so it dispatches.
   if (heads.length === 0 || heads.some((h) => h === null || pr.headRefOid!.startsWith(h) || h.startsWith(pr.headRefOid!))) {
-    return { action: 'dispatch' };
+    return { action: 'dispatch', rework };
   }
   return {
     action: 'back-to-review',

@@ -2165,7 +2165,7 @@ export interface MaintenanceHoldStatus {
 
 /** How a Robot run ended. Mirrors the worker's `RunStatus` (agent-worker owns the
  *  write side; this is the read-side shape the server + web share). */
-export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'checkpoint' | 'error';
+export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human' | 'checkpoint' | 'superseded' | 'error';
 
 /**
  * Is the running worker current with the code it is grounding against? (PD-528)

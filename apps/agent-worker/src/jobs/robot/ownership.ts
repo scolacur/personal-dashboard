@@ -34,6 +34,8 @@ import type { Worktree } from './workspace';
 export const ABORT_SHUTDOWN = 'shutdown';
 /** The stall reconciler's hung-session backstop: it has ALREADY closed the run, so the loop must not. */
 export const ABORT_HUNG = 'hung';
+/** PD-926: the rework's PR merged, closed, or was pushed to by someone else mid-run (supersede.ts). */
+export const ABORT_SUPERSEDED = 'superseded';
 
 /** Bookkeeping the live worker keeps for one run it is executing. */
 export interface OwnedRun {
