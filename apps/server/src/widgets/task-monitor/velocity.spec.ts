@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   WEEK_MS,
+  buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
   isOpenAt,
   percentile,
   reconstructLifecycles,
+  stateAt,
   weekOf,
   weekRange,
   type VelocityEventInput,
@@ -79,7 +81,7 @@ describe('reconstructLifecycles', () => {
       ],
     );
     expect(l.completedAt).toBe(MON + 2 * DAY);
-    expect(l.transitions).toEqual([{ at: MON + 2 * DAY, resolved: true }]);
+    expect(l.transitions).toEqual([{ at: MON + 2 * DAY, resolved: true, completed: true }]);
   });
 
   it('keeps the FIRST completion across a reopen, and the ticket is open again after it', () => {
@@ -197,5 +199,66 @@ describe('buildRunReport', () => {
 
   it('empty input → empty report', () => {
     expect(buildRunReport([], MON)).toMatchObject({ startDate: null, weeks: [] });
+  });
+});
+
+describe('stateAt', () => {
+  it('tells done from dropped, follows reopens, and upgrades a close that later completes', () => {
+    const [l] = reconstructLifecycles(
+      [{ id: 1, isEpic: false, assignee: null, createdAt: MON }],
+      [
+        ev(1, 'status_changed', MON + 1 * DAY, 'closed'),
+        ev(1, 'status_changed', MON + 2 * DAY, 'queue'),
+        ev(1, 'status_changed', MON + 3 * DAY, 'closed'),
+        ev(1, 'status_changed', MON + 4 * DAY, 'completed'),
+      ],
+    );
+    expect(stateAt(l, MON - 1)).toBe('absent');
+    expect(stateAt(l, MON + 0.5 * DAY)).toBe('open');
+    expect(stateAt(l, MON + 1.5 * DAY)).toBe('dropped');
+    expect(stateAt(l, MON + 2.5 * DAY)).toBe('open');
+    expect(stateAt(l, MON + 3.5 * DAY)).toBe('dropped');
+    expect(stateAt(l, MON + 4.5 * DAY)).toBe('done');
+  });
+});
+
+describe('buildEpicBurndowns', () => {
+  const lifecycles = reconstructLifecycles(
+    [
+      { id: 10, isEpic: false, assignee: 'robot', createdAt: MON },
+      { id: 11, isEpic: false, assignee: 'robot', createdAt: MON },
+      { id: 12, isEpic: false, assignee: 'steve', createdAt: MON + 8 * DAY },
+      { id: 20, isEpic: false, assignee: null, createdAt: MON },
+    ],
+    [
+      ev(10, 'robot_completed', MON + 2 * DAY),
+      ev(11, 'status_changed', MON + 9 * DAY, 'closed'),
+      ev(20, 'status_changed', MON + 1 * DAY, 'completed'),
+    ],
+  );
+  const now = MON + 10 * DAY;
+  const out = buildEpicBurndowns(
+    [
+      { id: 1, displayId: 'PD-1', title: 'A', status: 'queue', memberIds: [10, 11, 12] },
+      { id: 2, displayId: 'PD-2', title: 'B', status: 'backlog', memberIds: [20] },
+      { id: 3, displayId: 'PD-3', title: 'empty', status: 'backlog', memberIds: [] },
+    ],
+    lifecycles,
+    now,
+  );
+
+  it('skips memberless Epics and orders by most recent member activity', () => {
+    expect(out.map((e) => e.displayId)).toEqual(['PD-1', 'PD-2']);
+  });
+
+  it('counts open / done / dropped members at each week end', () => {
+    const a = out[0];
+    expect(a.weeks.map((w) => [w.open, w.done, w.dropped])).toEqual([
+      [1, 1, 0], // week 1: 10 done, 11 open, 12 not created yet
+      [1, 1, 1], // week 2: 11 closed (dropped), 12 created and open
+    ]);
+    expect(a.now).toEqual({ open: 1, done: 1, dropped: 1 });
+    expect(a.memberCount).toBe(3);
+    expect(a.lastActivity).toBe(MON + 9 * DAY);
   });
 });

@@ -428,6 +428,10 @@ export type { RefineAutostartStatus } from './refine-questions';
 export { REFINE_AUTOSTART_STATUS_KEY, REFINE_BACKFILL_EXCLUDED_EVENT } from './refine-questions';
 export type {
   AssigneeCounts,
+  EpicBurndown,
+  EpicBurndownInput,
+  EpicBurndownWeek,
+  LifecycleState,
   ReportWindow,
   RunFaultCounts,
   RunReport,
@@ -446,12 +450,14 @@ export {
   WEEK_MS,
   nextWeek,
   assigneeBucket,
+  buildEpicBurndowns,
   buildRunReport,
   buildVelocityReport,
   emptyAssigneeCounts,
   isOpenAt,
   percentile,
   reconstructLifecycles,
+  stateAt,
   weekOf,
   weekRange,
 } from './velocity';

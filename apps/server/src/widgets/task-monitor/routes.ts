@@ -76,7 +76,12 @@ import {
 } from './ticket-guards';
 import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
 import { listRunsForTicket } from './runs-store';
-import { getRunReport, getVelocityReport, type VelocityFilter } from './velocity-store';
+import {
+  getEpicBurndowns,
+  getRunReport,
+  getVelocityReport,
+  type VelocityFilter,
+} from './velocity-store';
 import { getActiveAgents } from './active-agents';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
@@ -414,12 +419,10 @@ export function registerRoutes(
     // promoter reads it from a member's Epic — so it is stored on any row without an isEpic check.
     if (body.autoQueueExcluded !== undefined) {
       if (typeof body.autoQueueExcluded !== 'boolean') {
-        return reply
-          .status(400)
-          .send({
-            error: 'autoQueueExcluded must be a boolean',
-            code: 'INVALID_AUTO_QUEUE_EXCLUDED',
-          });
+        return reply.status(400).send({
+          error: 'autoQueueExcluded must be a boolean',
+          code: 'INVALID_AUTO_QUEUE_EXCLUDED',
+        });
       }
       patch.autoQueueExcluded = body.autoQueueExcluded;
     }
@@ -738,12 +741,10 @@ export function registerRoutes(
             .status(409)
             .send({ error: 'there is no open question round to answer', code: 'NO_OPEN_ROUND' });
         }
-        return reply
-          .status(400)
-          .send({
-            error: 'message' in result ? result.message : 'invalid answers',
-            code: 'INVALID_ANSWERS',
-          });
+        return reply.status(400).send({
+          error: 'message' in result ? result.message : 'invalid answers',
+          code: 'INVALID_ANSWERS',
+        });
       }
       return reply.status(201).send(result.event);
     }
@@ -1091,5 +1092,15 @@ export function registerRoutes(
       return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
     }
     return getRunReport(db, filter);
+  });
+
+  // PD-897: per-Epic burndown over CURRENT membership. Optional ?projectId; from/to don't apply
+  // (each Epic's series runs from its first member to now).
+  app.get(`${base}/velocity/epics`, async (request, reply) => {
+    const filter = velocityFilter(request.query);
+    if (typeof filter === 'string') {
+      return reply.status(400).send({ error: `invalid ${filter}`, code: 'INVALID_QUERY' });
+    }
+    return getEpicBurndowns(db, filter);
   });
 }

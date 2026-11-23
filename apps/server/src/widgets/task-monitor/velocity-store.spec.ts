@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { getRunReport, getVelocityReport } from './velocity-store';
+import { getEpicBurndowns, getRunReport, getVelocityReport } from './velocity-store';
 
 /** Epic PD-895 — the cross-ticket SQL feeding the pure velocity reconstruction. */
 
@@ -101,5 +101,32 @@ describe('getRunReport', () => {
     expect(r.weeks[0]).toMatchObject({ ticketsRetried: 1, successRate: 0.5 });
     expect(r.weeks[0].faults.deterministic).toBe(1);
     expect(getRunReport(db, {}, MON + 2 * DAY).totals.runs).toBe(3);
+  });
+});
+
+describe('getEpicBurndowns', () => {
+  it("replays an Epic's live members and ignores archived ones and other projects' Epics", () => {
+    const db = freshDb();
+    const [a, b] = projectIds(db);
+    const epic = ticket(db, { project: a, epic: true });
+    const otherEpic = ticket(db, { project: b, epic: true });
+    const m1 = ticket(db, { project: a });
+    const m2 = ticket(db, { project: a });
+    const gone = ticket(db, { project: a, archived: true });
+    const mb = ticket(db, { project: b });
+    const setEpic = db.prepare('UPDATE agent_tickets SET epic_id = ? WHERE id = ?');
+    for (const m of [m1, m2, gone]) setEpic.run(epic, m);
+    setEpic.run(otherEpic, mb);
+    for (const t of [m1, m2, gone, mb]) event(db, t, 'created', MON);
+    event(db, m1, 'status_changed', MON + DAY, { to: 'completed' });
+
+    const out = getEpicBurndowns(db, { projectId: a }, MON + 2 * DAY);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      id: epic,
+      memberCount: 2,
+      now: { open: 1, done: 1, dropped: 0 },
+    });
+    expect(getEpicBurndowns(db, {}, MON + 2 * DAY)).toHaveLength(2);
   });
 });
