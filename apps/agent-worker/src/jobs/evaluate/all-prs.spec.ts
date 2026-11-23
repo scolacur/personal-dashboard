@@ -141,6 +141,66 @@ describe('skipReason / linkedTicket (PD-712)', () => {
     });
     expect(ids(p)).toEqual(['PD-705']);
   });
+
+  describe('range expansion in branch and title (PD-903)', () => {
+    const titled = (title: string) => pr({ headRefName: 'fix-x', title });
+
+    it('expands an en-dash range to every id in it', () => {
+      seed(706, 707, 708);
+      expect(ids(titled('Velocity page (PD-705–PD-708)'))).toEqual(['PD-705', 'PD-706', 'PD-707', 'PD-708']);
+    });
+
+    it('expands an em-dash range', () => {
+      seed(706);
+      expect(ids(titled('Thing (PD-705—PD-706)'))).toEqual(['PD-705', 'PD-706']);
+    });
+
+    it('expands a hyphen range', () => {
+      seed(706, 707);
+      expect(ids(titled('Thing (PD-705-PD-707)'))).toEqual(['PD-705', 'PD-706', 'PD-707']);
+    });
+
+    it('expands a `..` range', () => {
+      seed(706, 707);
+      expect(ids(titled('Thing PD-705..PD-707'))).toEqual(['PD-705', 'PD-706', 'PD-707']);
+    });
+
+    it('expands a "to" range', () => {
+      seed(706, 707);
+      expect(ids(titled('Thing PD-705 to PD-707'))).toEqual(['PD-705', 'PD-706', 'PD-707']);
+    });
+
+    it('skips a middle id that does not exist', () => {
+      seed(706, 708); // PD-707 deliberately not seeded
+      expect(ids(titled('Thing (PD-705–PD-708)'))).toEqual(['PD-705', 'PD-706', 'PD-708']);
+    });
+
+    it('falls back to the endpoints when the span exceeds the cap', () => {
+      seed(730);
+      // PD-705..PD-730 is 26 ids (> MAX_RANGE_IDS=20): keep the two endpoints only.
+      expect(ids(titled('Thing (PD-705–PD-730)'))).toEqual(['PD-705', 'PD-730']);
+    });
+
+    it('treats a mixed-prefix pair as two ids, not a range', () => {
+      db.prepare("INSERT INTO agent_tickets (id, display_id, title) VALUES (9, 'C-9', 'T')").run();
+      expect(ids(titled('Thing (PD-705–C-9)'))).toEqual(['PD-705', 'C-9']);
+    });
+
+    it('does not read a comma list or an ordinary id as a range', () => {
+      seed(706, 707);
+      expect(ids(titled('Thing (PD-705, PD-706, PD-707)'))).toEqual(['PD-705', 'PD-706', 'PD-707']);
+      expect(ids(titled('Thing (PD-705)'))).toEqual(['PD-705']);
+    });
+
+    it('expands a range written in the branch name', () => {
+      seed(706, 707);
+      expect(ids(pr({ headRefName: 'pd-705-pd-707', title: 'nothing' }))).toEqual(['PD-705', 'PD-706', 'PD-707']);
+    });
+
+    it('is not fooled by an ordinary slug after the leading branch id', () => {
+      expect(ids(pr({ headRefName: 'pd-705-thing', title: 'nothing' }))).toEqual(['PD-705']);
+    });
+  });
 });
 
 describe('evaluateNextOtherPr (PD-712)', () => {

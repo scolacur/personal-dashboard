@@ -120,6 +120,44 @@ type LinkedTicket = { id: number; displayId: string; title: string; body: string
 
 const DISPLAY_ID = /\b([A-Z]{1,4})-(\d+)\b/g;
 
+/**
+ * A same-prefix ticket range: two display ids joined by an en/em dash, a hyphen, `..` or " to "
+ * (PD-903) — e.g. `PD-859–PD-862`, `PD-859-PD-862`, `PD-859..PD-862`, `PD-859 to PD-862`. Case
+ * insensitive so a lower-case branch (`pd-859..pd-862`) matches too. A mixed-prefix pair
+ * (`PD-5–C-9`) matches here but is rejected in {@link expandRanges} and left as two ids.
+ */
+const RANGE = /([A-Za-z]{1,4})-(\d+)(?:\s*(?:[–—-]|\.\.)\s*|\s+to\s+)([A-Za-z]{1,4})-(\d+)/gi;
+
+/** Beyond this many ids a range is treated as a typo, not a span: keep the endpoints, warn (PD-903). */
+export const MAX_RANGE_IDS = 20;
+
+/**
+ * Rewrite every same-prefix {@link RANGE} in `text` to its full, space-separated id list, so the
+ * expanded ids then flow through the ordinary {@link DISPLAY_ID} match, Set de-dup and `lookupTicket`
+ * (PD-903). Expanded ids are upper-cased to match `DISPLAY_ID`. A mixed-prefix pair, a descending or
+ * single-id "range", or one spanning more than {@link MAX_RANGE_IDS} ids is left as its two endpoints
+ * (the over-cap case logs a warning). Ids that do not exist are dropped later by `lookupTicket`.
+ */
+export function expandRanges(text: string): string {
+  return text.replace(RANGE, (match: string, p1: string, n1: string, p2: string, n2: string) => {
+    if (p1.toUpperCase() !== p2.toUpperCase()) return match; // mixed prefix — two ids, not a range
+    const start = Number(n1);
+    const end = Number(n2);
+    if (end <= start) return match; // only an ascending, multi-id range expands
+    const prefix = p1.toUpperCase();
+    if (end - start + 1 > MAX_RANGE_IDS) {
+      logger.warn(
+        { range: match.trim(), span: end - start + 1, cap: MAX_RANGE_IDS },
+        `evaluator: ticket range spans more than ${MAX_RANGE_IDS} ids; judging against its endpoints only`,
+      );
+      return `${prefix}-${n1} ${prefix}-${n2}`;
+    }
+    const ids: string[] = [];
+    for (let n = start; n <= end; n++) ids.push(`${prefix}-${n}`);
+    return ids.join(' ');
+  });
+}
+
 function lookupTicket(db: Database.Database, displayId: string): LinkedTicket | null {
   if (/^D-\d+$/.test(displayId)) return null; // a decision, not a ticket
   const row = db
@@ -132,6 +170,8 @@ function lookupTicket(db: Database.Database, displayId: string): LinkedTicket | 
  * The tickets a PR implements (PD-804): every existing display id in its branch (`pd-705-x`) and
  * title, in that order, de-duplicated. A PR often builds several tickets at once, and judging it
  * against only the first one reads the others' work as scope creep (PR #457 was escalated that way).
+ * A **range** in the branch or title (`PD-859–PD-862`) is expanded to every id in it (PD-903) — the
+ * same failure, since otherwise only its two endpoints are linked and the middle tickets read as creep.
  *
  * The **body** is deliberately not a source when the branch or title names a ticket: descriptions
  * cite related tickets for context ("partly covers PD-613", "the Epic PD-605"), and treating those
@@ -140,9 +180,18 @@ function lookupTicket(db: Database.Database, displayId: string): LinkedTicket | 
  */
 export function linkedTickets(db: Database.Database, pr: Pick<OtherPr, 'headRefName' | 'title' | 'body'>): LinkedTicket[] {
   const named: string[] = [];
-  const branch = /^([a-z]{1,4})-(\d+)(?:-|$)/i.exec(pr.headRefName);
-  if (branch) named.push(`${branch[1]}-${branch[2]}`.toUpperCase());
-  for (const m of (pr.title ?? '').matchAll(DISPLAY_ID)) named.push(`${m[1]}-${m[2]}`);
+  // A branch that opens with a same-prefix range (`pd-859-pd-862`) names every ticket in it (PD-903);
+  // otherwise it names the single leading id, anchored so a slug like `fix-123` is not read as a ref.
+  const branchRange = /^([a-z]{1,4})-(\d+)(?:[–—-]|\.\.)([a-z]{1,4})-(\d+)(?=-|$)/i.exec(pr.headRefName);
+  if (branchRange && branchRange[1].toLowerCase() === branchRange[3].toLowerCase()) {
+    for (const m of expandRanges(branchRange[0].toUpperCase()).matchAll(DISPLAY_ID)) named.push(`${m[1]}-${m[2]}`);
+  } else {
+    const branch = /^([a-z]{1,4})-(\d+)(?:-|$)/i.exec(pr.headRefName);
+    if (branch) named.push(`${branch[1]}-${branch[2]}`.toUpperCase());
+  }
+  // Expand same-prefix ranges in the title before the per-id match, so expanded ids flow through the
+  // same Set and lookup (PD-903). The body fallback below is left as a single id, as before.
+  for (const m of expandRanges(pr.title ?? '').matchAll(DISPLAY_ID)) named.push(`${m[1]}-${m[2]}`);
 
   const out: LinkedTicket[] = [];
   for (const displayId of new Set(named)) {
