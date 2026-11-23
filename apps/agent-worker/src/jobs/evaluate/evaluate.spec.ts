@@ -609,14 +609,19 @@ describe('one error retry per lens, per review cycle (PD-883)', () => {
     expect(posts.at(-1)).toBe('success');
   });
 
-  it('a non-Robot head whose only review was interrupted is not "evaluated" (all-PRs path)', () => {
-    const id = startEvaluatorRun(db, { ticketId: 0, prNumber: 600, round: 1, model: 'm', lens: 'code', headSha: 'abc' }, 150);
-    expect(headEvaluated(db, 600, 'abc')).toBe(true); // open row: in flight
+  it('a non-Robot head is settled only by a verdict or a used retry; interrupted runs never count (all-PRs path)', () => {
+    const codeRun = (startedAt: number) =>
+      startEvaluatorRun(db, { ticketId: 0, prNumber: 600, round: 1, model: 'm', lens: 'code', headSha: 'abc' }, startedAt);
+    // An interrupted-only review does not settle the head — a fresh review is owed (PD-919).
+    startEvaluatorRun(db, { ticketId: 0, prNumber: 600, round: 1, model: 'm', lens: 'code', headSha: 'abc' }, 150);
     reclaimInterruptedEvaluatorRuns(db, 160);
-    expect(headEvaluated(db, 600, 'abc')).toBe(false);
-    finishEvaluatorRun(db, startEvaluatorRun(db, { ticketId: 0, prNumber: 600, round: 1, model: 'm', lens: 'code', headSha: 'abc' }, 170), { error: 'x' }, 180);
-    expect(headEvaluated(db, 600, 'abc')).toBe(true);
-    expect(id).toBeGreaterThan(0);
+    expect(headEvaluated(db, 600, 'abc', ['code'])).toBe(false);
+    // One real (non-interrupted) error: the code lens's one retry is still pending, so still not done.
+    finishEvaluatorRun(db, codeRun(170), { error: 'x' }, 180);
+    expect(headEvaluated(db, 600, 'abc', ['code'])).toBe(false);
+    // The second error uses the retry → the head is settled (left to Steve) (PD-884).
+    finishEvaluatorRun(db, codeRun(190), { error: 'y' }, 200);
+    expect(headEvaluated(db, 600, 'abc', ['code'])).toBe(true);
   });
 
   it('keeps the full unparseable reply up to the 20k cap, not a 500-char head', async () => {
