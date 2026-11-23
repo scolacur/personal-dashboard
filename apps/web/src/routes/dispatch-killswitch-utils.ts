@@ -1,4 +1,6 @@
 import type { AgentState, HoldKind, SystemStatus } from '@dashboard/shared';
+import { AGENT_WORKER_HEARTBEAT_STALE_MS } from '@dashboard/shared';
+import { formatRelativeTime } from './deploy-status-utils';
 
 /**
  * Nav killswitch state (PD-410) — pure so it can be unit-tested without the Svelte plugin
@@ -54,6 +56,18 @@ export interface DispatchView {
    * rather than imply the click was enough.
    */
   resumeBlockedByHold: boolean;
+  /**
+   * True when the `agent-worker` heartbeat is stale or missing (t1010). Intent (the halts above) is
+   * not liveness: the loop said "On" through a 20-minute crash-loop because `dispatch_paused` was
+   * clear while no worker was alive to act on it. Shown ALONGSIDE the on/off state, never instead of
+   * it — the toggle still records intent so a human can pause before the worker returns. Judged by
+   * the shared `AGENT_WORKER_HEARTBEAT_STALE_MS`, the same threshold SystemStatus and the auto-queue
+   * capacity check use.
+   */
+  workerOffline: boolean;
+  /** Unix ms of the agent-worker's last heartbeat, or null when no row exists at all. Drives the
+   *  "last seen Nm ago" detail; a missing row has no age to name. */
+  workerLastSeen: number | null;
 }
 
 /** What each hold is called in the UI. Deliberately concrete — "holding" alone tells you nothing
@@ -90,8 +104,50 @@ export function pauseReasonLabel(reason: string | null): string {
   return /paused by human/i.test(reason) ? 'Manual pause' : reason;
 }
 
+/** The agent-worker's heartbeat identity in `status.workers` — the one process whose liveness
+ *  decides whether the loop can act on its intent (t1010). */
+const AGENT_WORKER = 'agent-worker';
+
+/**
+ * Whether the agent-worker is alive, by the SAME staleness threshold SystemStatus and the
+ * auto-queue capacity check already use (`AGENT_WORKER_HEARTBEAT_STALE_MS`). A MISSING row counts as
+ * offline: no beacon at all is not a healthy worker. `now` is passed in so this is evaluated against
+ * the tick the caller renders with, exactly like the hold checks.
+ */
+export function agentWorkerLiveness(
+  status: SystemStatus | null,
+  now: number,
+): { offline: boolean; lastSeen: number | null } {
+  const beat = status?.workers.find((w) => w.worker === AGENT_WORKER) ?? null;
+  if (!beat) return { offline: true, lastSeen: null };
+  return { offline: now - beat.lastSeen > AGENT_WORKER_HEARTBEAT_STALE_MS, lastSeen: beat.lastSeen };
+}
+
+/**
+ * The nav's On/Off text, with worker-offline shown ALONGSIDE it, never instead of it (t1010). The
+ * toggle still records intent while the worker is down, so only the label changes: "On" becomes
+ * "On · worker offline", "Off" becomes "Off · worker offline".
+ */
+export function loopStateLabel(view: DispatchView): string {
+  const base = view.mode === 'paused' ? 'Off' : 'On';
+  return view.workerOffline ? `${base} · worker offline` : base;
+}
+
+/**
+ * The detail line shown when the agent-worker is offline — the warning Steve lacked when the worker
+ * crash-looped for 20 minutes under a green "On" (t1010). Names how long ago the worker last beat so
+ * "stale" is legible; a missing row has no age to name. Null when the worker is alive.
+ */
+export function workerOfflineDetail(view: DispatchView, now: number): string | null {
+  if (!view.workerOffline) return null;
+  if (view.workerLastSeen === null) return 'No worker heartbeat — nothing is running';
+  return `Worker last seen ${formatRelativeTime(view.workerLastSeen, now)} — nothing is running`;
+}
+
 export function describeDispatch(status: SystemStatus | null, now: number): DispatchView | null {
   if (!status) return null;
+
+  const worker = agentWorkerLiveness(status, now);
 
   // Re-checked against the caller's clock as well as the server's: an expired hold must read as
   // gone even if a poll is still in flight, exactly as SystemStatus does.
@@ -115,6 +171,8 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       resumeBlockedByHold: holding || maintenance,
       holdKind: holding ? status.sessionLimit!.kind : null,
       endsBy: maintenance ? status.maintenanceHold!.endsBy : null,
+      workerOffline: worker.offline,
+      workerLastSeen: worker.lastSeen,
     };
   }
 
@@ -129,6 +187,8 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       resumeBlockedByHold: false,
       holdKind: kind,
       endsBy: null,
+      workerOffline: worker.offline,
+      workerLastSeen: worker.lastSeen,
     };
   }
 
@@ -148,6 +208,8 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
       resumeBlockedByHold: false,
       holdKind: null,
       endsBy: hold.endsBy,
+      workerOffline: worker.offline,
+      workerLastSeen: worker.lastSeen,
     };
   }
 
@@ -161,6 +223,8 @@ export function describeDispatch(status: SystemStatus | null, now: number): Disp
     resumeBlockedByHold: false,
     holdKind: null,
     endsBy: null,
+    workerOffline: worker.offline,
+    workerLastSeen: worker.lastSeen,
   };
 }
 
