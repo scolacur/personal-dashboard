@@ -44,6 +44,7 @@ import {
   queueEntryRefusals,
   latestActionableProposal,
   refineRelationsError,
+  refineSupersedesError,
   refineStateFromLatestType,
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
@@ -2002,6 +2003,69 @@ function logProposalEvent(db: Database.Database, ticketId: number, type: string,
   ).run(ticketId, type, JSON.stringify(detail), Date.now());
 }
 
+/** A member a decompose/Populate's `supersedes` resolves to, once re-validated against the live
+ *  board (PD-931). `alreadyClosed` members are skipped on apply (idempotent re-supersede). */
+interface SupersededMember {
+  id: number;
+  displayId: string;
+  alreadyClosed: boolean;
+}
+
+/**
+ * PD-931: the board half of `supersedes` re-validation, run on approval — the mirror of the Refine
+ * tool's propose-time `supersedesBoardError`, re-checked here so a STORED proposal can never
+ * half-apply. Each display id must resolve to an existing (non-archived) member of `epicId`:
+ *
+ * - missing / archived            → refuse the whole approval (`{ ok: false }`)
+ * - not a member of the Epic      → refuse
+ * - `completed`                   → refuse (terminal work needs no replacing)
+ * - `closed`                      → accepted, marked `alreadyClosed` so apply is a no-op (idempotent)
+ * - open                          → accepted, to be closed + logged on apply
+ *
+ * With no Epic there is nothing a member could be superseded from, so any `supersedes` refuses.
+ * Pure reads; the caller runs the returned closes inside the approval transaction.
+ */
+function resolveSupersedes(
+  db: Database.Database,
+  supersedes: readonly string[],
+  epicId: number | null,
+): { ok: true; members: SupersededMember[] } | { ok: false; detail: string } {
+  if (epicId === null) {
+    return {
+      ok: false,
+      detail:
+        '`supersedes` may only name members of the Epic being populated, but this decompose is not under an Epic.',
+    };
+  }
+  const members: SupersededMember[] = [];
+  for (const raw of supersedes) {
+    const row = db
+      .prepare(
+        'SELECT id, display_id, status, epic_id FROM agent_tickets WHERE display_id = ? AND archived_at IS NULL',
+      )
+      .get(raw.toUpperCase()) as
+      | { id: number; display_id: string | null; status: string; epic_id: number | null }
+      | undefined;
+    if (!row) {
+      return { ok: false, detail: `\`supersedes\` names "${raw}", but no such open ticket is on the board.` };
+    }
+    if (row.status === 'completed') {
+      return {
+        ok: false,
+        detail: `\`supersedes\` names "${raw}", but it is already completed — only an open member can be superseded.`,
+      };
+    }
+    if (row.epic_id !== epicId) {
+      return {
+        ok: false,
+        detail: `\`supersedes\` names "${raw}", but it is not a member of the Epic being populated.`,
+      };
+    }
+    members.push({ id: row.id, displayId: row.display_id ?? raw.toUpperCase(), alreadyClosed: row.status === 'closed' });
+  }
+  return { ok: true, members };
+}
+
 export type ApproveRefineResult =
   | {
       ok: true;
@@ -2161,6 +2225,22 @@ export function approveRefine(
       detail: "a Populate must carry the Epic's rewritten body — ask the Refine agent to re-propose with it",
     };
   }
+  // PD-931: the proposal may name EXISTING members this decompose/Populate replaces. Re-validate
+  // the list before any write — the shared shape rule (the propose-time board-free half) then the
+  // board half (resolveSupersedes) — so a stored proposal can't half-apply. A single bad id refuses
+  // the whole approval with NO writes (one transaction). Resolved here (synchronous reads) and acted
+  // on inside the transaction below.
+  const supersedes = p.supersedes ?? [];
+  const supShapeErr = refineSupersedesError(supersedes, p.mode);
+  if (supShapeErr) return { ok: false, reason: 'invalid_proposal', detail: supShapeErr };
+  let supersededMembers: SupersededMember[] = [];
+  if (supersedes.length > 0) {
+    // The Epic whose members may be superseded is the target itself when it is an Epic (Populate);
+    // a plain decompose keeps its children under the target's own Epic, so that is the Epic.
+    const resolved = resolveSupersedes(db, supersedes, populate ? parent.id : parent.epicId);
+    if (!resolved.ok) return { ok: false, reason: 'invalid_proposal', detail: resolved.detail };
+    supersededMembers = resolved.members;
+  }
   const projectId = parent.projectId;
   const childIds: number[] = [];
   const run = db.transaction(() => {
@@ -2209,6 +2289,16 @@ export function approveRefine(
     for (const r of p.relations ?? []) {
       addRelation(db, childIds[r.from], childIds[r.to], r.type, 'agent');
     }
+    // PD-931: retire each superseded member inside the same transaction — close it (so it leaves the
+    // Queue and stops dispatching) and log `refine_superseded` on it, which both records WHY on its
+    // Refine panel and terminates its own proposal thread (`latestActionableProposal` returns null
+    // for it, so approving that member now refuses). Idempotent: an already-closed member is skipped,
+    // so re-superseding is a no-op rather than a double-close or duplicate event.
+    for (const m of supersededMembers) {
+      if (m.alreadyClosed) continue;
+      updateTicket(db, m.id, { status: 'closed' });
+      logEvent(db, m.id, REFINE_PROPOSAL_EVENT.superseded, { by: parent.displayId ?? String(parent.id) });
+    }
     // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
     if (!populate) updateTicket(db, ticketId, { status: 'closed' });
     // PD-634: a Populate rewrites the Epic's description and marks it refined — both halves of D-089's
@@ -2220,6 +2310,9 @@ export function approveRefine(
       mode: p.mode,
       childIds,
       ...(populate ? { populated: true } : {}),
+      ...(supersededMembers.length > 0
+        ? { superseded: supersededMembers.map((m) => m.displayId) }
+        : {}),
     });
   });
   run();
