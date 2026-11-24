@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { TicketPriority } from '@dashboard/shared';
+import type { CoderArea, TicketPriority } from '@dashboard/shared';
+import { effectiveCoderArea, isCoderArea } from '@dashboard/shared';
 import type { RobotConfig } from '../../shared/config';
 
 /**
@@ -28,6 +29,9 @@ export interface RobotCandidate {
   priority: TicketPriority | null;
   /** Per-ticket run ceiling (PD-432); null ⇒ use the loop's env default. */
   maxTurns: number | null;
+  /** The code area a Coder would run this ticket under (PD-880/PD-951): the ticket's own override,
+   *  then its Epic's default, then `general`. The per-area concurrency cap keys off this. */
+  coderArea: CoderArea;
 }
 
 interface CandidateRow {
@@ -40,6 +44,10 @@ interface CandidateRow {
   /** RAW column value — 'P0'…'P5' or the `'none'` sentinel, not the domain `null`. */
   priority: string | null;
   max_turns: number | null;
+  /** RAW `coder_area` column — a CoderArea id or NULL (unset). Resolved via `effectiveCoderArea`. */
+  coder_area: string | null;
+  /** RAW `coder_area` of the ticket's Epic (via the LEFT JOIN), or NULL. */
+  epic_coder_area: string | null;
 }
 
 /** How `agent_tickets.priority` stores "unset": the column is `TEXT NOT NULL DEFAULT 'none'`
@@ -89,7 +97,8 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
   const rows = db
     .prepare(
       `SELECT t.id AS id, t.github_issue_number AS n, t.display_id AS display_id, t.title AS title, t.body AS body,
-              t.priority AS priority, t.max_turns AS max_turns, p.github_repo AS repo
+              t.priority AS priority, t.max_turns AS max_turns, t.coder_area AS coder_area, e.coder_area AS epic_coder_area,
+              p.github_repo AS repo
          FROM agent_tickets t
          JOIN agent_projects p ON p.id = t.project_id
          LEFT JOIN agent_tickets e ON e.id = t.epic_id
@@ -126,6 +135,10 @@ export function robotQueueCandidates(db: Database.Database): RobotCandidate[] {
     body: r.body,
     priority: r.priority === null || r.priority === PRIORITY_UNSET ? null : (r.priority as TicketPriority),
     maxTurns: r.max_turns,
+    coderArea: effectiveCoderArea(
+      { coderArea: isCoderArea(r.coder_area) ? r.coder_area : null },
+      { coderArea: isCoderArea(r.epic_coder_area) ? r.epic_coder_area : null },
+    ),
   }));
 }
 
@@ -206,28 +219,136 @@ export function queuedButUnrefined(db: Database.Database): { id: number }[] {
 }
 
 /**
- * Decide which candidates the Robot loop may dispatch THIS cycle, given the current in-flight
- * count. Pure so it is unit-tested directly. Applies, in order:
+ * PD-951: the per-code-area concurrency cap — at most one Coder per {@link CoderArea} at a time.
+ * A named constant, NOT a config knob: the whole point is that overall parallelism comes only from
+ * *different* areas running at once, and `general` is capped like any other area. The global
+ * `ROBOT_CONCURRENCY` still applies on top (it bounds the total across all areas). Together with
+ * PD-880 this is what lets PD-512 raise the global cap without two Coders fighting over one area.
+ */
+export const PER_AREA_CONCURRENCY = 1;
+
+/**
+ * How many Coders are currently RUNNING in each code area (PD-951) — the areas already occupied
+ * when selection runs. Keyed on the SAME `effectiveCoderArea` resolution the candidates use, so a
+ * running run and a queued candidate agree on what area they belong to. A rework is an ordinary
+ * `running` run row, so it counts toward its ticket's area like any other (per the ticket).
+ *
+ * Tolerates a pre-run table (worker booted before `agent_runs` exists) → an empty map, so a cold
+ * boot never throws here; it just sees no area as busy yet.
+ */
+export function runningCoderAreas(db: Database.Database): Map<CoderArea, number> {
+  const counts = new Map<CoderArea, number>();
+  try {
+    const rows = db
+      .prepare(
+        `SELECT t.coder_area AS coder_area, e.coder_area AS epic_coder_area
+           FROM agent_runs r
+           JOIN agent_tickets t ON t.id = r.ticket_id
+           LEFT JOIN agent_tickets e ON e.id = t.epic_id
+          WHERE r.status = 'running'`,
+      )
+      .all() as { coder_area: string | null; epic_coder_area: string | null }[];
+    for (const r of rows) {
+      const area = effectiveCoderArea(
+        { coderArea: isCoderArea(r.coder_area) ? r.coder_area : null },
+        { coderArea: isCoderArea(r.epic_coder_area) ? r.epic_coder_area : null },
+      );
+      counts.set(area, (counts.get(area) ?? 0) + 1);
+    }
+  } catch {
+    return counts;
+  }
+  return counts;
+}
+
+/** A candidate held out of this cycle specifically because its code area is already busy (PD-951) —
+ *  distinct from one merely over the global concurrency cap. Reported so the skip is never silent. */
+export interface AreaBusySkip {
+  id: number;
+  area: CoderArea;
+  /** The human-facing reason, matching the other "why a ready ticket isn't dispatching" surfaces. */
+  reason: string;
+}
+
+interface DispatchPlan {
+  dispatch: RobotCandidate[];
+  areaBusy: AreaBusySkip[];
+}
+
+/**
+ * The single pass that decides, for one cycle, which eligible candidates dispatch and which are held
+ * back for their area (PD-951). Applies, in order:
  *  1. dispatch must be enabled;
  *  2. dispatch scope (C6/PD-347): `'none'` ⇒ nothing (killswitch); an id list ⇒ only those
  *     (prove-on-N); `'all'` ⇒ no id restriction (go-live default);
- *  3. concurrency cap (leave room for `concurrency - inFlight` new Robots).
+ *  3. per-area cap: skip a candidate whose {@link CoderArea} already has `PER_AREA_CONCURRENCY`
+ *     Coders running (from `runningAreas`) or claimed earlier in THIS cycle;
+ *  4. global concurrency cap (leave room for `concurrency - inFlight` new Robots).
+ *
+ * Candidates are examined in the priority order `robotQueueCandidates` returns, so the highest-
+ * priority ticket in each area wins the area's one slot. A candidate only reaches the area check
+ * while a global slot is still free; once the global cap binds, the rest are waiting on capacity,
+ * not on their area, so they are not reported as area-busy.
  *
  * D-058: the ready check is no longer re-parsed here — `ready`/`ready_bypassed` are persisted
  * columns already filtered in `robotQueueCandidates`'s SQL (a flag read, not a body parse).
  */
-export function selectDispatchable(
+function planDispatch(
   candidates: RobotCandidate[],
   config: RobotConfig,
   inFlight: number,
-): RobotCandidate[] {
-  if (!config.dispatchEnabled) return [];
-  if (config.allowlist === 'none') return [];
+  runningAreas: ReadonlyMap<CoderArea, number>,
+): DispatchPlan {
+  if (!config.dispatchEnabled) return { dispatch: [], areaBusy: [] };
+  if (config.allowlist === 'none') return { dispatch: [], areaBusy: [] };
 
   const { allowlist } = config;
   const inScope = (id: number): boolean => allowlist === 'all' || allowlist.includes(id);
   const eligible = candidates.filter((c) => inScope(c.id));
 
-  const slots = Math.max(0, config.concurrency - inFlight);
-  return eligible.slice(0, slots);
+  let slots = Math.max(0, config.concurrency - inFlight);
+  const areaCount = new Map<CoderArea, number>(runningAreas);
+  const dispatch: RobotCandidate[] = [];
+  const areaBusy: AreaBusySkip[] = [];
+
+  for (const c of eligible) {
+    const used = areaCount.get(c.coderArea) ?? 0;
+    if (used >= PER_AREA_CONCURRENCY) {
+      areaBusy.push({ id: c.id, area: c.coderArea, reason: `waiting: area ${c.coderArea} busy` });
+      continue;
+    }
+    if (slots <= 0) break; // global concurrency cap reached — the rest wait on capacity, not area
+    dispatch.push(c);
+    areaCount.set(c.coderArea, used + 1);
+    slots -= 1;
+  }
+  return { dispatch, areaBusy };
+}
+
+/**
+ * Which candidates the Robot loop may dispatch THIS cycle, given the current in-flight count and the
+ * areas already running. Pure so it is unit-tested directly. See {@link planDispatch} for the rules.
+ */
+export function selectDispatchable(
+  candidates: RobotCandidate[],
+  config: RobotConfig,
+  inFlight: number,
+  runningAreas: ReadonlyMap<CoderArea, number> = new Map(),
+): RobotCandidate[] {
+  return planDispatch(candidates, config, inFlight, runningAreas).dispatch;
+}
+
+/**
+ * The candidates {@link selectDispatchable} held back purely because their code area was already
+ * busy (PD-951) — so the loop can name them, exactly as it names `queuedBlockedByAgentState` and
+ * `queuedButUnrefined`. A ticket merely over the global concurrency cap is NOT here; the reason it
+ * waits is capacity, not its area.
+ */
+export function areaBusySkips(
+  candidates: RobotCandidate[],
+  config: RobotConfig,
+  inFlight: number,
+  runningAreas: ReadonlyMap<CoderArea, number> = new Map(),
+): AreaBusySkip[] {
+  return planDispatch(candidates, config, inFlight, runningAreas).areaBusy;
 }

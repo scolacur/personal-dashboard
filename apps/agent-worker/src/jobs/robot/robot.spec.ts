@@ -15,6 +15,7 @@ import { breakerFailures } from './breaker';
 import { ABORT_HUNG, createRunOwnership } from './ownership';
 import { RobotShutdown } from './shutdown';
 import type { RobotSessionResult } from './session';
+import { CODER_AREA_IDS, type CoderArea } from '@dashboard/shared';
 
 const READY = ['## Context', 'c', '## Task', 't', '## Done When', 'd', '## Out of scope', 'o'].join('\n');
 
@@ -29,6 +30,8 @@ function boardDb(): Database.Database {
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
       -- D-080: the dispatch order joins the Epic and reads both drag orders.
       epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0,
+      -- PD-880/PD-951: the Coder code-area subtype; NULL = unset (reads as 'general').
+      coder_area TEXT,
       updated_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE agent_ticket_relations (id INTEGER PRIMARY KEY, from_ticket_id INTEGER, to_ticket_id INTEGER, type TEXT);
@@ -49,11 +52,15 @@ function eventTypes(db: Database.Database, ticketId: number): string[] {
   ).map((r) => r.type);
 }
 
-function addQueued(db: Database.Database, id: number, issue: number | null = id): void {
+// PD-951: each queued ticket gets a DISTINCT coder area so the per-area cap (one Coder per area)
+// never masks a test about global concurrency / breaker / budget — those want ids 1,2,3 dispatching
+// in the same cycle, which now requires different areas. `area` overrides it for an area-specific test.
+function addQueued(db: Database.Database, id: number, issue: number | null = id, area?: CoderArea): void {
+  const coderArea = area ?? CODER_AREA_IDS[id % CODER_AREA_IDS.length];
   db.prepare(
-    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, refined, project_id, github_issue_number, agent_state)
-     VALUES (?, ?, ?, 'queue', 'robot', 1, 1, 1, ?, NULL)`,
-  ).run(id, `T${id}`, READY, issue);
+    `INSERT INTO agent_tickets (id, title, body, status, assignee, ready, refined, project_id, github_issue_number, agent_state, coder_area)
+     VALUES (?, ?, ?, 'queue', 'robot', 1, 1, 1, ?, NULL, ?)`,
+  ).run(id, `T${id}`, READY, issue, coderArea);
 }
 
 /** Prior spend in the window, as finished runs (PD-463). */
@@ -110,8 +117,8 @@ describe('processRobotQueue', () => {
   });
 
   it('branchFor uses the issue number, or t<id> when unlinked', () => {
-    expect(branchFor({ id: 5, issueNumber: 220, displayId: 'PD-5', repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/220');
-    expect(branchFor({ id: 5, issueNumber: null, displayId: 'PD-5', repo: 'r', title: 't', body: null, priority: null, maxTurns: null })).toBe('robot/t5');
+    expect(branchFor({ id: 5, issueNumber: 220, displayId: 'PD-5', repo: 'r', title: 't', body: null, priority: null, maxTurns: null, coderArea: 'general' })).toBe('robot/220');
+    expect(branchFor({ id: 5, issueNumber: null, displayId: 'PD-5', repo: 'r', title: 't', body: null, priority: null, maxTurns: null, coderArea: 'general' })).toBe('robot/t5');
   });
 
   // PD-230: the loop must hand the session a progress callback that persists live turn counts.

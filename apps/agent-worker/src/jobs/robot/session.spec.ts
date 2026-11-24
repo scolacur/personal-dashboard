@@ -31,6 +31,7 @@ const candidate: RobotCandidate = {
   title: 'T',
   body: 'b',
   priority: 'P2',
+  coderArea: 'general',
 };
 
 describe('codingEnv', () => {
