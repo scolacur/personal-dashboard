@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { ROBOT_MAX_TURNS_DEFAULT } from '@dashboard/shared';
+import { CHECKPOINT_TOTAL_TURNS_DEFAULT, CHECKPOINT_WINDOW_TURNS_DEFAULT, ROBOT_MAX_TURNS_DEFAULT } from '@dashboard/shared';
 import { logger } from './logger';
 import { MAX_EVALUATION_ROUNDS } from '../jobs/evaluate/verdict';
 
@@ -189,8 +189,21 @@ export interface RobotConfig {
    *  NOT inherit the loop's HOME (root's — unreadable to it); git/gh/npm write their config +
    *  cache here instead. Matches the `robot` user's home created in the image. */
   codingHome: string;
-  /** Hard turn ceiling for one coding session (the Robot loop's max-turns cap). */
+  /** Legacy per-run turn ceiling (`ROBOT_MAX_TURNS`). Since PD-964 the Robot loop no longer reads it:
+   *  a run is bounded by the progress check (`checkpointWindowTurns`) and the episode cap
+   *  (`checkpointTotalTurns`). Kept only until the max-turns field is removed everywhere. */
   maxTurns: number;
+  /** PD-964: turns per progress-check window (`CHECKPOINT_WINDOW_TURNS`, default 25). */
+  checkpointWindowTurns: number;
+  /** PD-964: an episode's hard turn cap across auto-continues and retries (`CHECKPOINT_TOTAL_TURNS`,
+   *  default 200). */
+  checkpointTotalTurns: number;
+  /** PD-964: how many times the same tool call, or the same error, may appear in one window before
+   *  a tripwire parks the run (`CHECKPOINT_REPEAT_LIMIT`, default 4). */
+  checkpointRepeatLimit: number;
+  /** PD-964: the model the progress judge runs on (`CHECKPOINT_JUDGE_MODEL`). Empty = the worker's
+   *  own `model`, resolved at the call site. */
+  checkpointJudgeModel: string;
   /** Fault-tier retry guardrail (D-055, PD-343 / C2). Consumed by faults.ts as its `FaultPolicy`. */
   retryCap: number;
   /** Identical-signature repeats that promote a transient fault to deterministic (park). */
@@ -283,6 +296,10 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     // Default from @dashboard/shared so the board's denominator (PD-230) and the loop's real cap
     // cannot drift in code. An env override here is NOT visible to the web process.
     maxTurns: Number(env.ROBOT_MAX_TURNS ?? ROBOT_MAX_TURNS_DEFAULT),
+    checkpointWindowTurns: Number(env.CHECKPOINT_WINDOW_TURNS ?? CHECKPOINT_WINDOW_TURNS_DEFAULT),
+    checkpointTotalTurns: Number(env.CHECKPOINT_TOTAL_TURNS ?? CHECKPOINT_TOTAL_TURNS_DEFAULT),
+    checkpointRepeatLimit: Number(env.CHECKPOINT_REPEAT_LIMIT ?? 4),
+    checkpointJudgeModel: env.CHECKPOINT_JUDGE_MODEL ?? '',
     retryCap: Number(env.ROBOT_RETRY_CAP ?? 3),
     promoteAfter: Number(env.ROBOT_PROMOTE_AFTER ?? 2),
     breakerFailures: Number(env.ROBOT_BREAKER_FAILURES ?? 3),

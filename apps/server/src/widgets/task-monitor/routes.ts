@@ -15,9 +15,7 @@ import {
   type UpdateTicketInput,
 } from '@dashboard/shared';
 import {
-  CHECKPOINT_CONTINUE_TURNS_DEFAULT,
   HUMAN_REPLY_MARKER,
-  checkpointExtraTurnsError,
   parseAutoQueueMode,
 } from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
@@ -694,19 +692,15 @@ export function registerRoutes(
     return ticket;
   });
 
-  // D-094/PD-737: answer a checkpoint. Continue resumes from the saved work with `extraTurns` more
-  // turns (default 50, 1..ROBOT_MAX_TURNS_LIMIT, rejected above — never clamped, per D-066); Restart
-  // starts a fresh run from main. Both refuse a ticket that isn't parked in `checkpoint` (409).
+  // D-094/PD-737, PD-964 (D-114): answer a checkpoint. Continue resumes from the saved work as a
+  // fresh episode (the progress check and total cap start over); Restart starts a fresh run from
+  // main. Both refuse a ticket that isn't parked in `checkpoint` (409). A Continue no longer takes a
+  // turn count — an `extraTurns` in the body from an older client is ignored.
   app.post(`${base}/tickets/:id/robot/continue`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id))
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
-    const raw = (request.body as { extraTurns?: unknown } | null)?.extraTurns;
-    const extraTurns = raw === undefined ? CHECKPOINT_CONTINUE_TURNS_DEFAULT : raw;
-    const invalid = checkpointExtraTurnsError(extraTurns);
-    if (invalid) return reply.status(400).send({ error: invalid, code: 'INVALID_EXTRA_TURNS' });
-    const result = decideCheckpoint(db, id, { kind: 'continue', extraTurns: extraTurns as number });
-    return checkpointReply(reply, result);
+    return checkpointReply(reply, decideCheckpoint(db, id, { kind: 'continue' }));
   });
   app.post(`${base}/tickets/:id/robot/restart`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);

@@ -1,45 +1,126 @@
 import type Database from 'better-sqlite3';
-import { CHECKPOINT_CONTINUE_TURNS_DEFAULT, ROBOT_EVENT } from '@dashboard/shared';
-import { latestEvent, latestEventAt } from './events';
+import { ROBOT_EVENT, type RobotEventType } from '@dashboard/shared';
+import { latestEvent } from './events';
 
 /**
- * D-094/PD-737 — how the next run of a checkpointed ticket starts.
+ * D-094/PD-737, amended by PD-964 (D-114) — how the next run of a ticket starts, and how many turns
+ * its episode has used.
  *
- * A run that reaches its turn ceiling parks the ticket in `checkpoint` (robot.ts). Steve answers
- * from the board with **Continue** or **Restart**; the server records that as a
- * `robot_checkpoint_continue` / `robot_checkpoint_restart` event and re-queues the ticket. This is the
- * dispatch-time read of that choice — the same shape as `askHumanResume` (resume.ts): DB-native, and
- * consumed by the next `robot_dispatched`, so a Continue applies to exactly one run and can never be
- * re-applied to a later rework.
+ * **Episode.** The stretch of runs since a human last pointed the Robot at the ticket: a Continue or
+ * Restart on a checkpoint, a Reset/Unstick, an answered ask_human, a rework reactivation, or — with no
+ * such event — the ticket's whole history. The total turn cap (`checkpointTotalTurns`) is per
+ * episode, and it carries across the loop's own automatic retries, which are NOT boundaries: a run
+ * cut short by a transient fault (a worker restart, a network flake) resumes its episode, its budget
+ * and its window rather than starting over.
+ *
+ * **How a run starts.** Read at dispatch, BEFORE the new run's row exists:
+ *  - `continue` — Steve pressed Continue and no run has started since: restore the saved work, put
+ *    the checkpoint's report in the prompt.
+ *  - `restart` — Steve pressed Restart and no run has started since: a clean clone from main.
+ *  - `retry` — the episode's latest run ended in a transient fault: resume THAT run's saved work
+ *    (when it saved any), keep the episode's turns so far, and carry the Continue's report if the
+ *    episode began with one. Before PD-964 a Continue was consumed by the first dispatch after it, so
+ *    a SIGTERM mid-Continue sent the retry back to a clean tree and default turns, and it rebuilt the
+ *    change from scratch (PD-931, 2026-11-23).
+ *  - `fresh` — anything else.
  */
-export type CheckpointDecision =
+
+/** Events that begin a new episode. Each is a human (or a human's reply) re-pointing the Robot. */
+export const EPISODE_BOUNDARY_EVENTS: readonly RobotEventType[] = [
+  ROBOT_EVENT.checkpointContinue,
+  ROBOT_EVENT.checkpointRestart,
+  ROBOT_EVENT.reset,
+  ROBOT_EVENT.unstick,
+  ROBOT_EVENT.resumed,
+  ROBOT_EVENT.reactivated,
+];
+
+export interface Episode {
+  /** When the episode began (the boundary event's timestamp), or 0 for a ticket's first episode. */
+  start: number;
+  /** The boundary event that began it, or null for a ticket's first episode. */
+  startedBy: RobotEventType | null;
+  /** Turns used by this episode's runs so far (finished and in-flight), including judge turns. */
+  turnsUsed: number;
+}
+
+/** The ticket's current episode. Tolerates a missing events table (→ the whole history). */
+export function currentEpisode(db: Database.Database, ticketId: number): Episode {
+  let start = 0;
+  let startedBy: RobotEventType | null = null;
+  try {
+    const placeholders = EPISODE_BOUNDARY_EVENTS.map(() => '?').join(', ');
+    const row = db
+      .prepare(
+        `SELECT type, created_at FROM agent_ticket_events
+          WHERE ticket_id = ? AND type IN (${placeholders})
+          ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(ticketId, ...EPISODE_BOUNDARY_EVENTS) as { type: RobotEventType; created_at: number } | undefined;
+    if (row) {
+      start = row.created_at;
+      startedBy = row.type;
+    }
+  } catch {
+    // no events table yet — the whole history is one episode
+  }
+  const used = db
+    .prepare('SELECT COALESCE(SUM(turns), 0) AS n FROM agent_runs WHERE ticket_id = ? AND started_at > ?')
+    .get(ticketId, start) as { n: number };
+  return { start, startedBy, turnsUsed: used.n };
+}
+
+export type DispatchStart =
+  | { kind: 'fresh' }
+  | { kind: 'restart' }
   | {
       kind: 'continue';
-      /** The turn ceiling the continued run gets. */
-      extraTurns: number;
-      /** The checkpointed run's status report, for the prompt. */
+      /** The checkpoint's status report, for the prompt. */
       report: string;
     }
-  | { kind: 'restart' };
+  | {
+      kind: 'retry';
+      /** Restore the WIP ref? Only when the interrupted run itself saved one — otherwise the ref may
+       *  still hold work from BEFORE a Restart, which must never come back on its own. */
+      restoreWip: boolean;
+      /** What the prompt carries over: the episode's Continue report, or the interrupted run's tail. */
+      report: string;
+    };
 
-/** The unconsumed Continue/Restart for a ticket, or null. Pure read; call BEFORE writing the new
- *  run's `robot_dispatched` event. When both exist, the newer wins. */
-export function checkpointDecision(db: Database.Database, ticketId: number): CheckpointDecision | null {
-  const dispatchedAt = latestEventAt(db, ticketId, ROBOT_EVENT.dispatched);
-  const cont = latestEvent(db, ticketId, ROBOT_EVENT.checkpointContinue);
-  const restart = latestEvent(db, ticketId, ROBOT_EVENT.checkpointRestart);
-  const live = [cont && { kind: 'continue' as const, e: cont }, restart && { kind: 'restart' as const, e: restart }]
-    .filter((x): x is NonNullable<typeof x> => !!x && x.e.createdAt > dispatchedAt)
-    .sort((a, b) => b.e.createdAt - a.e.createdAt)[0];
-  if (!live) return null;
-  if (live.kind === 'restart') return { kind: 'restart' };
-  const checkpoint = latestEvent(db, ticketId, ROBOT_EVENT.checkpoint);
-  const extraTurns = live.e.detail.extraTurns;
-  return {
-    kind: 'continue',
-    extraTurns: typeof extraTurns === 'number' && extraTurns > 0 ? extraTurns : CHECKPOINT_CONTINUE_TURNS_DEFAULT,
-    report: checkpoint?.detail.report?.trim() || '(The previous run left no status report.)',
-  };
+/** The checkpoint report this episode's Continue was answering. */
+function checkpointReport(db: Database.Database, ticketId: number): string {
+  return latestEvent(db, ticketId, ROBOT_EVENT.checkpoint)?.detail.report?.trim() || '(The previous run left no status report.)';
+}
+
+/** How the next run of `ticketId` starts. Pure read; call BEFORE `startRun` for the new run. */
+export function dispatchStart(db: Database.Database, ticketId: number): DispatchStart {
+  const episode = currentEpisode(db, ticketId);
+  const last = db
+    .prepare(
+      `SELECT status, fault_tier, fault_reason, wip_ref, output_tail FROM agent_runs
+        WHERE ticket_id = ? AND started_at > ?
+        ORDER BY started_at DESC, id DESC LIMIT 1`,
+    )
+    .get(ticketId, episode.start) as
+    | { status: string; fault_tier: string | null; fault_reason: string | null; wip_ref: string | null; output_tail: string | null }
+    | undefined;
+
+  if (!last) {
+    if (episode.startedBy === ROBOT_EVENT.checkpointRestart) return { kind: 'restart' };
+    if (episode.startedBy === ROBOT_EVENT.checkpointContinue) return { kind: 'continue', report: checkpointReport(db, ticketId) };
+    return { kind: 'fresh' };
+  }
+
+  // The loop re-queued this ticket itself after a fault that was not the ticket's doing. A
+  // deterministic fault parks instead, so it never reaches here without a human boundary.
+  const transient = (last.status === 'error' || last.status === 'no-verify') && last.fault_tier !== 'deterministic';
+  if (!transient) return { kind: 'fresh' };
+  const why = last.fault_reason?.trim() || 'a transient fault';
+  const report =
+    episode.startedBy === ROBOT_EVENT.checkpointContinue
+      ? checkpointReport(db, ticketId)
+      : reportFromTail(last.output_tail ?? undefined, `the previous run was cut short (${why})`);
+  return { kind: 'retry', restoreWip: last.wip_ref !== null, report };
 }
 
 /** The text stored when the report step failed: the output tail, labelled so nobody mistakes it for
@@ -49,4 +130,16 @@ export function reportFromTail(outputTail: string | undefined, why: string): str
   return tail
     ? `(No status report — ${why}. The end of the run's output follows instead.)\n\n${tail}`
     : `(No status report — ${why}, and the run left no output.)`;
+}
+
+/**
+ * The window plan for a run: how long its first window is, and which window number that is. A retry
+ * finishes the window it was cut short in (so checks stay aligned to the episode, not to the run),
+ * and no window ever runs past the total cap. Pure.
+ */
+export function firstWindow(turnsUsed: number, windowTurns: number, totalTurns: number): { turns: number; index: number } {
+  const w = Math.max(1, windowTurns);
+  const intoWindow = turnsUsed % w;
+  const turns = Math.min(w - intoWindow, Math.max(0, totalTurns - turnsUsed));
+  return { turns, index: Math.floor(turnsUsed / w) + 1 };
 }

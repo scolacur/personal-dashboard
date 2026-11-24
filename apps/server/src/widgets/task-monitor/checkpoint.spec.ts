@@ -31,12 +31,13 @@ describe('decideCheckpoint', () => {
     db = freshDb();
   });
 
-  it('Continue logs robot_checkpoint_continue with the turns and re-queues', () => {
+  it('Continue logs robot_checkpoint_continue (no turn count, PD-964) and re-queues', () => {
     const id = seed(db, 'checkpoint');
-    const r = decideCheckpoint(db, id, { kind: 'continue', extraTurns: 80 });
+    const r = decideCheckpoint(db, id, { kind: 'continue' });
     expect(r.ok && r.ticket.agentState).toBe('queued');
     const e = listTicketEvents(db, id).find((x) => x.type === 'robot_checkpoint_continue');
-    expect(e?.detail).toMatchObject({ extraTurns: 80 });
+    expect(e).toBeDefined();
+    expect(e?.detail).not.toHaveProperty('extraTurns');
   });
 
   it('Restart logs robot_checkpoint_restart and re-queues', () => {
@@ -48,7 +49,7 @@ describe('decideCheckpoint', () => {
 
   it('writes no retry-boundary event — a checkpoint never consumed retry budget', () => {
     const id = seed(db, 'checkpoint');
-    decideCheckpoint(db, id, { kind: 'continue', extraTurns: 50 });
+    decideCheckpoint(db, id, { kind: 'continue' });
     const types = listTicketEvents(db, id).map((e) => e.type);
     expect(types).not.toContain('robot_reset');
     expect(types).not.toContain('robot_unstick');
@@ -62,7 +63,7 @@ describe('decideCheckpoint', () => {
 
   it('refuses a checkpoint ticket that has left the Queue', () => {
     const id = seed(db, 'checkpoint', 'backlog');
-    expect(decideCheckpoint(db, id, { kind: 'continue', extraTurns: 50 })).toEqual({ ok: false, reason: 'not_checkpoint' });
+    expect(decideCheckpoint(db, id, { kind: 'continue' })).toEqual({ ok: false, reason: 'not_checkpoint' });
   });
 
   it('a checkpoint counts as "needs you"', () => {
@@ -80,31 +81,21 @@ describe('POST /tickets/:id/robot/continue | restart', () => {
   }
   const url = (id: number, action: string) => `/api/widgets/task-monitor/tickets/${id}/robot/${action}`;
 
-  it('Continue defaults to +50 turns', async () => {
+  it('Continue re-queues and takes no turn count (PD-964, D-114)', async () => {
     const { app, db } = setup();
     const id = seed(db, 'checkpoint');
     const res = await app.inject({ method: 'POST', url: url(id, 'continue') });
     expect(res.statusCode).toBe(200);
     expect(res.json().agentState).toBe('queued');
-    expect(listTicketEvents(db, id).find((e) => e.type === 'robot_checkpoint_continue')?.detail).toMatchObject({ extraTurns: 50 });
+    expect(listTicketEvents(db, id).find((e) => e.type === 'robot_checkpoint_continue')?.detail).not.toHaveProperty('extraTurns');
   });
 
-  it('accepts 200 and rejects 201 — rejected, not clamped (D-066)', async () => {
+  it('ignores an extraTurns an older client still sends', async () => {
     const { app, db } = setup();
     const id = seed(db, 'checkpoint');
-    const over = await app.inject({ method: 'POST', url: url(id, 'continue'), payload: { extraTurns: 201 } });
-    expect(over.statusCode).toBe(400);
-    expect(over.json().code).toBe('INVALID_EXTRA_TURNS');
-    expect(getTicket(db, id)?.agentState).toBe('checkpoint'); // untouched
-    const ok = await app.inject({ method: 'POST', url: url(id, 'continue'), payload: { extraTurns: 200 } });
-    expect(ok.statusCode).toBe(200);
-  });
-
-  it.each([0, -5, 2.5, '50'])('rejects extraTurns=%s', async (extraTurns) => {
-    const { app, db } = setup();
-    const id = seed(db, 'checkpoint');
-    const res = await app.inject({ method: 'POST', url: url(id, 'continue'), payload: { extraTurns } });
-    expect(res.statusCode).toBe(400);
+    const res = await app.inject({ method: 'POST', url: url(id, 'continue'), payload: { extraTurns: 999 } });
+    expect(res.statusCode).toBe(200);
+    expect(listTicketEvents(db, id).find((e) => e.type === 'robot_checkpoint_continue')?.detail).not.toHaveProperty('extraTurns');
   });
 
   it('409 for a ticket not at a checkpoint, 404 for a missing one', async () => {

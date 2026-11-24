@@ -138,6 +138,24 @@ describe('parkReason', () => {
     expect(parkReason([], [run({ faultReason: 'lint failed' })])).toBe('lint failed');
   });
 
+  it('PD-964: a progress-check checkpoint names what parked it — tripwire, judge, or total cap', () => {
+    expect(
+      parkReason([event(ROBOT_EVENT.checkpoint, { checkedBy: 'tripwire', tripwire: 'no_diff_change', window: 2, turnsSoFar: 50, totalCap: 200 })], []),
+    ).toBe('Checkpoint — window 2 at 50/200 turns: tripwire — no change to the code across the window.');
+    expect(
+      parkReason([event(ROBOT_EVENT.checkpoint, { checkedBy: 'judge', progress: 'drifted', reason: 'rewriting the router', window: 1, turnsSoFar: 26, totalCap: 200 })], []),
+    ).toBe('Checkpoint — window 1 at 26/200 turns: judge says drifted — rewriting the router.');
+    expect(parkReason([event(ROBOT_EVENT.checkpoint, { checkedBy: 'total_cap', window: 8, turnsSoFar: 200, totalCap: 200 })], [])).toContain(
+      'stopped by the total turn cap, not the judge',
+    );
+  });
+
+  it('a pre-PD-964 checkpoint still reads its plain reason', () => {
+    expect(parkReason([event(ROBOT_EVENT.checkpoint, { reason: 'reached the turn ceiling (51/50)' })], [])).toBe(
+      'Checkpoint: reached the turn ceiling (51/50).',
+    );
+  });
+
   it('returns null when nothing explains the park', () => {
     expect(parkReason([], [])).toBeNull();
     expect(parkReason([event(ROBOT_EVENT.dispatched, {})], [run()])).toBeNull();

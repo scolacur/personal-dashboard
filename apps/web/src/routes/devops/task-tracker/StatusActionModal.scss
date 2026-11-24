@@ -130,14 +130,3 @@
 }
 
 // D-094/PD-737: the Continue turns input on a checkpoint.
-.sa-turns {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.75rem;
-  font-size: 0.9rem;
-
-  input {
-    width: 5rem;
-  }
-}

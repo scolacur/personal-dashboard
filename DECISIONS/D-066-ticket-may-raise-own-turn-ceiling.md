@@ -1,5 +1,7 @@
 # D-066: A ticket may raise its own turn ceiling, bounded — and decomposing stays preferred
 
+> **Amended by [[D-114]] (PD-964, Checkpoint auto-continues a progressing run), 2026-11-24:** the Robot loop no longer reads a ticket's `max_turns` or `ROBOT_MAX_TURNS`. A run is bounded by the progress check and an episode cap of 200 turns. Steve chose to remove the concept entirely; PD-967 (Remove the max-turns concept everywhere) removes the rest.
+
 **Decision:** `agent_tickets.max_turns` is a nullable per-ticket run ceiling; NULL means "inherit the
 loop's env default", which stays authoritative for ~every ticket. The loop uses
 `candidate.maxTurns ?? config.robot.maxTurns` and records the **effective** value on the run row and

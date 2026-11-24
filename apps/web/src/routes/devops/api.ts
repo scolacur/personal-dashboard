@@ -238,13 +238,10 @@ export async function unstickTicket(id: number): Promise<AgentTicket> {
   return res.json() as Promise<AgentTicket>;
 }
 
-/** D-094/PD-737: Continue a checkpointed ticket from its saved work with `extraTurns` more turns. */
-export async function continueTicket(id: number, extraTurns: number): Promise<AgentTicket> {
-  const res = await fetch(`${BASE}/${id}/robot/continue`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ extraTurns }),
-  });
+/** D-094/PD-737: Continue a checkpointed ticket from its saved work. PD-964 (D-114): a fresh episode —
+ *  progress-checked every window up to the total cap — so it takes no turn count. */
+export async function continueTicket(id: number): Promise<AgentTicket> {
+  const res = await fetch(`${BASE}/${id}/robot/continue`, { method: 'POST' });
   if (!res.ok) return parseError(res);
   return res.json() as Promise<AgentTicket>;
 }

@@ -13,6 +13,7 @@ import { buildDecisionToolServer } from './decision-tool';
 import type { Worktree } from './workspace';
 import type { RobotCandidate } from './select';
 import { OUTPUT_TAIL_MAX } from './runs';
+import { appendTranscript, transcriptEntries, type TranscriptEntry } from './progress';
 
 /**
  * The Robot coding session (D-055, PD-342): one write-enabled Agent-SDK session that implements a
@@ -47,7 +48,29 @@ export interface RobotSessionResult {
   /** Last `OUTPUT_TAIL_MAX` chars of the session's assistant text + tool output (PD-426).
    *  The evidence a `no-verify` run leaves behind — see the capture note below. */
   outputTail?: string;
+  /** PD-964: what this segment did and saw, for the progress check's tripwires and judge. Turn
+   *  numbers are run-wide (offset by `SessionSegment.turnOffset`). */
+  transcript?: TranscriptEntry[];
 }
+
+/**
+ * PD-964 (D-114): one window of a run. The first window starts the session; each later one RESUMES
+ * it (`resume: sessionId`) with a short "keep going" prompt, so a run that passed its progress check
+ * carries on with everything it knew — no new orientation, no re-reading. The window's length is the
+ * candidate's `maxTurns`, which the loop sets per window.
+ */
+export interface SessionSegment {
+  /** Resume this session instead of starting a new one. */
+  resumeSessionId?: string;
+  /** Turns already used by earlier windows of this run, so transcript turn numbers read run-wide. */
+  turnOffset?: number;
+}
+
+/** The prompt that resumes a session after it passed a progress check. */
+export const PROGRESS_CONTINUE_PROMPT = [
+  'Progress check passed: keep going from exactly where you are.',
+  'Your instructions have not changed. Continue the ticket, and do the full hand-off when it is done.',
+].join('\n');
 
 /**
  * Output-tail capture (PD-426). A `no-verify` run used to be undiagnosable: the SDK stream is
@@ -272,8 +295,12 @@ export async function runRobotSession(
   // dispatch, registers it in the ownership registry, and triggers it from the shutdown coordinator.
   // Optional/last so existing positional call sites are untouched.
   abortController?: AbortController,
+  // PD-964: which window of the run this is. Absent = a fresh session (the first window).
+  segment: SessionSegment = {},
 ): Promise<RobotSessionResult> {
-  const prompt = buildTaskPrompt({
+  const resuming = !!segment.resumeSessionId;
+  const turnOffset = segment.turnOffset ?? 0;
+  const prompt = resuming ? PROGRESS_CONTINUE_PROMPT : buildTaskPrompt({
     title: candidate.title,
     body: candidate.body,
     branch: worktree.branch,
@@ -314,6 +341,8 @@ export async function runRobotSession(
   let liveTokens: number | undefined;
   /** Rolling tail of what the session said and ran (PD-426). */
   let outputTail = '';
+  /** PD-964: the window transcript the progress check reads. */
+  const transcript: TranscriptEntry[] = [];
 
   try {
     for await (const message of runQuery({
@@ -321,6 +350,8 @@ export async function runRobotSession(
       options: {
         model: config.model,
         cwd: worktree.dir,
+        // PD-964: a later window resumes the same session — same context, same tools, more turns.
+        ...(resuming ? { resume: segment.resumeSessionId } : {}),
         // PD-784/D-104: a graceful stop aborts this; the SDK stops the query and the loop closes the
         // run as a transient `interrupted` fault.
         ...(abortController ? { abortController } : {}),
@@ -367,6 +398,12 @@ export async function runRobotSession(
         } catch (err) {
           logger.warn({ err, ticketId: candidate.id }, 'robot: output-tail capture failed');
         }
+        // PD-964: same posture — a capture failure costs the check evidence, never the session.
+        try {
+          appendTranscript(transcript, transcriptEntries(message, turnOffset + Math.max(liveTurns, 1)));
+        } catch (err) {
+          logger.warn({ err, ticketId: candidate.id }, 'robot: transcript capture failed');
+        }
       }
       // PD-230: live turn progress. The SDK only reports authoritative `num_turns` on the final
       // result message, so a `working` run would otherwise show no progress at all. Counting
@@ -381,7 +418,7 @@ export async function runRobotSession(
       // the live number (the "119/100" Steve saw). Read the id defensively: a message with no id
       // falls back to the old per-message count, so an SDK shape change degrades to prior behaviour
       // rather than counting nothing.
-      if (message.type === 'assistant' && message.parent_tool_use_id == null && onProgress) {
+      if (message.type === 'assistant' && message.parent_tool_use_id == null) {
         const messageId = (message as { message?: { id?: unknown } }).message?.id;
         let advanced: boolean;
         if (typeof messageId === 'string') {
@@ -401,7 +438,7 @@ export async function runRobotSession(
             liveTokens = (liveTokens ?? 0) + n;
           }
           try {
-            onProgress(liveTurns, liveTokens);
+            onProgress?.(liveTurns, liveTokens);
           } catch (err) {
             logger.warn({ err, ticketId: candidate.id }, 'robot: turn-progress report failed');
           }
@@ -426,13 +463,13 @@ export async function runRobotSession(
   const handoff = readHandoff(worktree.dir);
   // Empty tail (a session that produced nothing) reports as undefined, not '', so the column
   // stays null rather than storing a meaningless empty string.
-  return { ok, sessionId, error, turns, tokens, outputTail: outputTail || undefined, ...handoff };
+  return { ok, sessionId, error, turns, tokens, outputTail: outputTail || undefined, transcript, ...handoff };
 }
 
 /**
  * D-094/PD-737: the checkpoint status report.
  *
- * When a run reaches its turn ceiling the loop resumes THE SAME session (`resume: sessionId`, so the
+ * When a run stops at a progress check (PD-964: stalled, off-track, or at the total cap) the loop resumes THE SAME session (`resume: sessionId`, so the
  * agent still remembers everything it did) for a few turns with one instruction: stop and report.
  * The loop drives this, not the agent's own self-tracking, because agents do not reliably count their
  * turns and the ceiling is a hard stop (D-094's rejected alternative).
@@ -447,7 +484,7 @@ export const STATUS_REPORT_MAX_TURNS = 3;
 export const STATUS_REPORT_TIMEOUT_MS = 3 * 60_000;
 
 export const STATUS_REPORT_PROMPT = [
-  'STOP WORKING. You have reached the turn limit for this run. Do not change any files.',
+  'STOP WORKING. This run has been stopped at a progress check. Do not change any files.',
   '',
   'Your work so far will be saved, and a human will decide whether a new run continues from it or',
   'starts over. Write them a status report, in this shape:',

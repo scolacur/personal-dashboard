@@ -5,12 +5,13 @@ import {
   REFINE_TURN_ESTIMATE_FLOOR,
   coerceTicketStatus,
   refineRelationsError,
+  refineSupersedesError,
 } from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import type { RefineProposal, RefineQuestionRound } from '@dashboard/shared';
 import type Database from 'better-sqlite3';
 import { buildAskQuestionsTool } from './ask-tool';
-import { buildBoardTools } from './board-tools';
+import { buildBoardTools, read } from './board-tools';
 
 /**
  * The `propose_commit` SDK tool (D-044, PD-269). The agent-worker NEVER writes tickets — when a
@@ -80,6 +81,9 @@ const PROPOSE_COMMIT_SHAPE = {
   kind: KIND.optional(),
   children: z.array(CHILD).optional(),
   relations: z.array(RELATION).optional(),
+  // PD-931: existing members this decompose/Populate replaces, by display id. Validated here and
+  // re-validated on approval; the close/invalidate of the named members is a sibling slice.
+  supersedes: z.array(z.string()).optional(),
   rationale: z.string().optional(),
 };
 
@@ -99,6 +103,12 @@ const DESCRIPTION = [
   '{ from, to, type } with `from`/`to` as 0-based indexes into `children` and type "blocks" (from must',
   'finish before to can start) or "relates". When the slices form a dependency chain, PUT IT HERE —',
   'they are written on approval alongside the children. Never ask Steve to wire links by hand.',
+  'OPTIONAL `supersedes` (decompose/Populate only): display ids of EXISTING tickets this proposal',
+  'replaces — each MUST be an OPEN member of the Epic you are populating (check with',
+  'list_epic_members first). Use it when a child you are proposing takes over work an existing member',
+  'already owns, so that approval can later retire that member instead of leaving a duplicate. Do NOT',
+  'put it on refine_in_place, do not repeat an id, and do not name a ticket that is done, archived, or',
+  'under a different Epic — each is refused with a message telling you how to fix it.',
   'There is NO priority field: priority belongs to the Epic and cascades to its members, so a',
   'Ticket-level priority has nowhere to land. If the plan implies a different urgency, say so in',
   '`rationale` and let Steve price the Epic.',
@@ -137,6 +147,51 @@ function queueLaneError(where: string, status: string | undefined): string | nul
 /** The fully-qualified tool name the SDK exposes (server key `refine` + tool name). */
 export const PROPOSE_TOOL_NAME = 'mcp__refine__propose_commit';
 
+/**
+ * PD-931: the board half of `supersedes` validation — resolve each display id against the live
+ * board and reject any that is missing/archived, not open, or not a member of the Epic being
+ * populated. The caller has already run the mechanical `refineSupersedesError`, so every id here is
+ * well-formed and unique. Returns an instructive error (so the agent re-proposes), or null.
+ *
+ * The Epic whose members may be superseded is the target itself when it is an Epic (Populate);
+ * otherwise a plain decompose keeps its children under the target's own Epic, so that is the Epic.
+ * With no Epic in either case there is nothing a member could be superseded from.
+ */
+function supersedesBoardError(
+  board: Database.Database,
+  supersedes: readonly string[],
+  opts: { targetIsEpic?: boolean; targetTicketId?: number },
+): string | null {
+  let epicId: number | null = null;
+  if (opts.targetIsEpic) {
+    epicId = opts.targetTicketId ?? null;
+  } else if (opts.targetTicketId !== undefined) {
+    const row = read(board, 'SELECT epic_id FROM agent_tickets WHERE id = ? AND archived_at IS NULL').get(
+      opts.targetTicketId,
+    ) as { epic_id: number | null } | undefined;
+    epicId = row?.epic_id ?? null;
+  }
+  if (epicId === null) {
+    return '`supersedes` may only name members of the Epic being populated, but this decompose is not under an Epic — there is no Epic whose members it could replace. Drop `supersedes`.';
+  }
+  for (const raw of supersedes) {
+    const row = read(
+      board,
+      'SELECT status, epic_id FROM agent_tickets WHERE display_id = ? AND archived_at IS NULL',
+    ).get(raw.toUpperCase()) as { status: string; epic_id: number | null } | undefined;
+    if (!row) {
+      return `\`supersedes\` names "${raw}", but no such open ticket is on the board (wrong id, or it is archived). Only an existing OPEN member of the target Epic may be superseded — remove it or fix the id.`;
+    }
+    if (row.status === 'completed' || row.status === 'closed') {
+      return `\`supersedes\` names "${raw}", but it is already ${row.status} — a terminal ticket needs no replacing, only an OPEN member can be superseded. Remove it from \`supersedes\`.`;
+    }
+    if (row.epic_id !== epicId) {
+      return `\`supersedes\` names "${raw}", but it is not a member of the Epic being populated — you may only supersede members of the target Epic (PD-931). Move it under the Epic first, or drop it from \`supersedes\`.`;
+    }
+  }
+  return null;
+}
+
 /** The mode↔fields shape that Zod (optional-everything) can't express. Zod makes `children`
  *  and `body` unconditionally optional regardless of `mode`, so a `decompose` with no children
  *  (or a `refine_in_place` with no body) passes tool validation and is only caught much later at
@@ -145,8 +200,17 @@ export const PROPOSE_TOOL_NAME = 'mcp__refine__propose_commit';
  *  Returns an instructive error string, or null when the proposal is well-formed. */
 export function validateProposalShape(
   proposal: RefineProposal,
-  opts: { targetIsEpic?: boolean } = {},
+  opts: { targetIsEpic?: boolean; targetTicketId?: number; board?: Database.Database } = {},
 ): string | null {
+  // PD-931: the board-free shape rule (wrong mode / malformed id / duplicate) first, so the agent
+  // gets the cheap error before any id resolution. When the worker handed over its DB handle the
+  // id-resolution rule (exists / open / member of the target Epic) runs on top.
+  const supersedesErr = refineSupersedesError(proposal.supersedes, proposal.mode);
+  if (supersedesErr) return supersedesErr;
+  if (opts.board && proposal.supersedes && proposal.supersedes.length > 0) {
+    const boardErr = supersedesBoardError(opts.board, proposal.supersedes, opts);
+    if (boardErr) return boardErr;
+  }
   if (proposal.mode === 'decompose') {
     if (!proposal.children || proposal.children.length === 0) {
       return 'decompose requires a non-empty `children` array — you set mode "decompose" but attached no children. Re-call with each child ticket (title/body/status/assignee).';
@@ -183,7 +247,14 @@ export function validateProposalShape(
  */
 export function buildProposeToolServer(
   onProposal: (proposal: RefineProposal) => void,
-  opts: { targetIsEpic?: boolean; onRound?: (round: RefineQuestionRound) => void; board?: Database.Database } = {},
+  opts: {
+    targetIsEpic?: boolean;
+    /** PD-931: the row id of the ticket being refined, so the board half of `supersedes` validation
+     *  can resolve the Epic whose members may be superseded. Omitted ⇒ that half is skipped. */
+    targetTicketId?: number;
+    onRound?: (round: RefineQuestionRound) => void;
+    board?: Database.Database;
+  } = {},
 ) {
   const proposeCommit = tool(
     'propose_commit',
@@ -218,6 +289,9 @@ export function buildProposeToolServer(
           : {}),
         ...(args.relations !== undefined && args.relations.length > 0
           ? { relations: args.relations }
+          : {}),
+        ...(args.supersedes !== undefined && args.supersedes.length > 0
+          ? { supersedes: args.supersedes }
           : {}),
         ...(args.rationale !== undefined ? { rationale: args.rationale } : {}),
       };

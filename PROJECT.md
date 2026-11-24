@@ -400,16 +400,28 @@ signatures auto-promote transient→deterministic at N=2.
 _Avoid_: conflating a per-ticket deterministic fault with a system-wide pause.
 
 **Checkpoint**:
-What a **run** becomes when it reaches its turn ceiling ([[D-066]]): not a fault, but a pause. The
-Robot loop asks the session for a **status report**, saves the work, and parks the ticket in the
-`checkpoint` state for Steve to choose **Continue** (a new run with more turns, default +50,
-starting from the saved work with the report in its prompt) or **Restart** (a new run from a clean
-`main`). Only the ceiling checkpoints; crashes and stalls remain faults. Built in PD-737: the report
-step resumes the same session read-only (`runStatusReport`, ≤3 turns, output tail as fallback), the
-choice is a `robot_checkpoint_continue` / `robot_checkpoint_restart` event the loop reads at dispatch
-(`checkpoint.ts`), and Continue restores `robot-wip/t<id>` rebased onto `main` (`restoreWip`).
+Where a **run** parks when it stops at a **progress check** (D-094, amended by D-114): the Robot loop
+asks the session for a **status report**, saves the work, and parks the ticket in the `checkpoint`
+state for Steve to choose **Continue** (a new episode, starting from the saved work with the report
+in its prompt) or **Restart** (a new run from a clean `main`). Only a progress check parks here;
+crashes and stalls remain faults.
 _Avoid_: calling a checkpoint "stuck" or a fault, and calling Continue a "retry": it does not count
 against the retry cap.
+
+**Progress check** (D-114, PD-964):
+What the Robot loop does at the end of every **window** of `CHECKPOINT_WINDOW_TURNS` turns (default
+25): deterministic **tripwires** first (the same tool call or error repeated, no change to the tree,
+verify failing the same way twice), then, if none fires, a separate **judge** with no tools. Only a
+`progressing` verdict gives the run one more window, resuming the same session. Anything else, or a
+judge that fails, parks it in `checkpoint`. Each check is a `robot_progress_check` event.
+_Avoid_: "turn ceiling". There is no per-run ceiling any more. The bounds are the window and the
+**episode** cap.
+
+**Episode** (D-114):
+The runs since a human last pointed the Robot at a ticket: Continue, Restart, Reset, Unstick, an
+answered ask_human, or a rework reactivation. The total cap `CHECKPOINT_TOTAL_TURNS` (default 200)
+is per episode. The loop's own retry of a run that a transient fault cut short is **not** a new
+episode: it resumes that run's saved work and keeps the episode's turns so far.
 
 **agent-worker**:
 The long-running process (`apps/agent-worker`, Agent SDK, out of the Fastify web process)

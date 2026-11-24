@@ -1,5 +1,5 @@
 import type { AgentState, AgentRun, TicketEvent, RobotEventDetail } from '@dashboard/shared';
-import { AGENT_STATE_DESCRIPTIONS, ROBOT_EVENT } from '@dashboard/shared';
+import { AGENT_STATE_DESCRIPTIONS, ROBOT_EVENT, progressCheckLine } from '@dashboard/shared';
 
 /**
  * The "needs you" modal (T900). When a ticket's Robot status pill is in one of the input-needed
@@ -16,7 +16,8 @@ import { AGENT_STATE_DESCRIPTIONS, ROBOT_EVENT } from '@dashboard/shared';
  */
 
 /** The remediation a state's button triggers. `open-pr` is a link, not a server call. `continue` /
- *  `restart` answer a checkpoint (D-094); `continue` carries an editable extra-turns count. */
+ *  `restart` answer a checkpoint (D-094). Since PD-964 a Continue starts a fresh episode and takes no
+ *  turn count. */
 export type StatusActionKind = 'unstick' | 'reset' | 'open-pr' | 'continue' | 'restart';
 
 export interface StatusActionButton {
@@ -99,10 +100,10 @@ export const STATUS_ACTION_REGISTRY: Partial<Record<AgentState, StatusActionEntr
     ],
     reply: false,
   },
-  // PD-737 (the turn ceiling is a checkpoint, D-094).
+  // PD-737 (the turn ceiling is a checkpoint, D-094); PD-964 (the progress check, D-114).
   checkpoint: {
     state: 'checkpoint',
-    title: 'Hit the turn ceiling',
+    title: 'Stopped at a progress check',
     description: AGENT_STATE_DESCRIPTIONS.checkpoint,
     words: {
       source: 'status-report',
@@ -150,6 +151,9 @@ export function parkReason(events: TicketEvent[], runs: AgentRun[]): string | nu
     }
     if (e.type === ROBOT_EVENT.parked) return d.reason ?? 'The run was parked.';
     if (e.type === ROBOT_EVENT.checkpoint) {
+      // PD-964: a progress-check park names what stopped it — a tripwire, the judge's verdict and
+      // reason, or the total cap. An older (pre-PD-964) checkpoint carries only its reason text.
+      if (d.checkedBy) return `Checkpoint — ${progressCheckLine(d)}.`;
       return d.reason ? `Checkpoint: ${d.reason}.` : 'The run reached its turn ceiling.';
     }
     if (e.type === ROBOT_EVENT.stalled) {

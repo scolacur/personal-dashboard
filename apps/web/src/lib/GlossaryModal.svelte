@@ -63,10 +63,10 @@
       "If it isn't worth continuing, close it as wontfix.",
     ],
     checkpoint: [
-      "Click the pill and read the Robot's status report: what is done, what is left, its turn estimate.",
-      'If it is nearly done, Continue: a new run starts from the saved work with more turns (default +50).',
+      "Click the pill: it says why the progress check stopped the run (a tripwire, the judge's verdict, or the total turn cap), then the Robot's status report.",
+      'If it is on the right track, Continue: a new run starts from the saved work and is progress-checked again.',
       'If it went in circles or the approach is wrong, Restart (fresh from main), or edit/split the ticket first.',
-      'The run history shows the cumulative turns across every run of the ticket.',
+      'The run history shows every progress check and the cumulative turns across every run of the ticket.',
     ],
     'awaiting-human': [
       "Read the agent's ask_human question (shown inline on the ticket).",
