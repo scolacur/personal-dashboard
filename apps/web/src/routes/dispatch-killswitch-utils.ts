@@ -296,7 +296,9 @@ export function needsYouHref(parked: SystemStatus['needsHuman'], count: number):
   // The detail route is keyed by DISPLAY id (`tickets.find(t => t.displayId === id)`), not the row
   // id — linking `id` sent "1 needs you" to /devops/tickets/987, a page that reports "not found".
   // A ticket with no display id has no detail page to land on, so it falls back to the board.
-  if (count === 1 && parked.length === 1 && parked[0].displayId) return `/devops/tickets/${parked[0].displayId}`;
+  // PD-965: `?needs-you` opens the page's "needs you" modal on arrival, so the link lands on the
+  // actions, not just the ticket.
+  if (count === 1 && parked.length === 1 && parked[0].displayId) return `/devops/tickets/${parked[0].displayId}?needs-you`;
   return '/devops/task-tracker';
 }
 

@@ -17,13 +17,18 @@ export function decisionsAnchor(displayId: string): string {
 /**
  * Where a notification takes you. A Refine notification raised for a structured question round
  * opens that ticket's entry in the Decisions inbox, where it can be answered inline (PD-746); every
- * other ticket notification opens the ticket page, as before.
+ * other ticket notification opens the ticket page, as before — a Robot park with its actions open.
  */
 export function notificationHref(n: Pick<AgentNotification, 'kind' | 'title' | 'ticketDisplayId'>): string | null {
   if (!n.ticketDisplayId) return null;
   if (n.kind === 'agent_visual_review') return `${DECISIONS_ROUTE}#${visualAnchor(n.ticketDisplayId)}`;
   if (n.kind === 'agent_refine' && n.title.startsWith(REFINE_QUESTIONS_NOTIFICATION_PREFIX)) {
     return `${DECISIONS_ROUTE}#${decisionsAnchor(n.ticketDisplayId)}`;
+  }
+  // PD-965: a Robot park opens the page's "needs you" modal on arrival. The page only opens it while
+  // the ticket is still in an input-needed state, so a stale notification just lands on the page.
+  if (n.kind === 'agent_needs_human' || n.kind === 'agent_awaiting_human') {
+    return `/devops/tickets/${n.ticketDisplayId}?needs-you`;
   }
   return `/devops/tickets/${n.ticketDisplayId}`;
 }

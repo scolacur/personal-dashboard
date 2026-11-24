@@ -25,6 +25,8 @@
   import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
   import SpinOffModal from '../../task-tracker/SpinOffModal.svelte';
+  import StatusActionModal from '../../task-tracker/StatusActionModal.svelte';
+  import { isStatusActionState } from '../../task-tracker/status-action';
   import { planSpinOff } from '../../epic-spinoff';
   import { computeOrderWithin, isTerminal } from '../../board-logic';
   import {
@@ -329,6 +331,21 @@
       }
     }
     return null;
+  });
+
+  // PD-965: the board's "needs you" modal (StatusActionModal), opened from this page for any
+  // input-needed state — the header pill and the checkpoint banner both open it. `?needs-you` (what
+  // the fleet's "N needs you" link appends) opens it on arrival, once per ticket, so the link lands
+  // on the actions rather than on a page you have to search for them.
+  let statusActionOpen = $state(false);
+  let needsYouAutoOpenedFor: string | null = null;
+  const needsYouState = $derived(isStatusActionState(ticket?.agentState));
+  $effect(() => {
+    const t = ticket;
+    if (!t || !needsYouState || !page.url.searchParams.has('needs-you')) return;
+    if (needsYouAutoOpenedFor === t.displayId) return;
+    needsYouAutoOpenedFor = t.displayId;
+    statusActionOpen = true;
   });
 
   // C4 remediation: clear a ticket's retry budget (reset) or a park (unstick) and re-queue it.
@@ -690,7 +707,17 @@
         <span class="priority priority-{ticket.priority ?? 'none'}" title={ticket.priority ? PRIORITY_LABELS[ticket.priority] : 'No priority'}
           >{ticket.priority ?? '—'}</span
         >
-        {#if ticket.agentState}
+        {#if ticket.agentState && needsYouState}
+          <!-- PD-965: an input-needed state is a button, as on the board's card — it opens the actions. -->
+          <button
+            type="button"
+            class="agent-pill agent-pill-action agent-{ticket.agentState}"
+            title="Needs you — open the actions"
+            onclick={() => (statusActionOpen = true)}
+          >
+            {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState} ›
+          </button>
+        {:else if ticket.agentState}
           <span class="agent-pill agent-{ticket.agentState}">
             {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState}
           </span>
@@ -711,6 +738,21 @@
 
     <!-- ── OVERVIEW (desktop left 70% · mobile tab 1) ── -->
     <section class="pane pane-overview">
+      {#if ticket.agentState === 'checkpoint'}
+        <!-- PD-965: a checkpoint had no surface on this page at all, so "needs you" landed somewhere
+             with nothing to do. The decision (Continue / Restart) and the agent's report live in the
+             shared modal. -->
+        <div class="parked-banner agent-checkpoint">
+          <span class="pb-lead">⏸ {AGENT_STATE_LABELS.checkpoint}</span>
+          <span class="pb-note">The Robot stopped at a progress check and is waiting for you to continue or restart it.</span>
+          <span class="pb-actions">
+            <button class="pb-btn primary" type="button" onclick={() => (statusActionOpen = true)}>
+              Review &amp; decide
+            </button>
+          </span>
+        </div>
+      {/if}
+
       {#if isRobotParked}
         <div class="parked-banner agent-{ticket.agentState}">
           <span class="pb-lead">⛔ {AGENT_STATE_LABELS[ticket.agentState!] ?? ticket.agentState}</span>
@@ -1163,6 +1205,13 @@
     </Modal>
   </article>
 {/if}
+
+<StatusActionModal
+  ticket={statusActionOpen ? ticket : null}
+  onClose={() => (statusActionOpen = false)}
+  onUpdate={() => ticketId && load(ticketId)}
+  showDetailLink={false}
+/>
 
 <style lang="scss" src="./+page.scss"></style>
 
