@@ -17,6 +17,8 @@
   import { clearLegacyLayoutKeys } from '$lib/layout';
   import Toast from '$lib/Toast.svelte';
   import { arrangeMode } from '$lib/arrange.svelte';
+  import { homeView, recordWidgetUse } from '$lib/widget-usage.svelte';
+  import { widgetIdForPath } from '$lib/recent-widgets';
   import FloatingPomodoro from './widgets/pomodoro/FloatingPomodoro.svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -50,11 +52,25 @@
   //
   // Still a synchronous derivation even though membership now lives server-side — that is the
   // whole reason the store boot-loads every page at once rather than fetching per navigation
-  // (D-073). Home has no special case any more; it is an ordinary page.
+  // (D-073). Home's one special case is below.
   const canArrange = $derived.by(() => {
     const pageId = arrangeablePageId(page.url.pathname);
     if (pageId === undefined) return false;
+    // Home is the one exception (PD-751, Home shows recently used widgets): it shows recently
+    // used widgets when there is usage, and that view is derived, not arranged. Arrange applies
+    // only when Home has fallen back to its curated grid.
+    if (pageId === 'home' && homeView.current !== 'curated') return false;
     return pageWidgets.forPage(pageId).length > 0;
+  });
+
+  // Visiting a widget's own page counts as using it (PD-751, Home shows recently used widgets).
+  // Throttled per widget inside `recordWidgetUse`, so moving around within one widget's
+  // sub-pages doesn't send a request per navigation.
+  const widgetIdRoutes = widgets.map((w) => ({ id: w.id, route: w.route }));
+  $effect(() => {
+    const pathname = page.url.pathname;
+    const id = widgetIdForPath(pathname, widgetIdRoutes);
+    if (id) recordWidgetUse(id, pathname);
   });
 
   // Exit arrange mode whenever the page changes.
