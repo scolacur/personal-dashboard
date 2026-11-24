@@ -16,6 +16,21 @@
   position: relative;
 }
 
+/*
+ * Day slide (PD-779 ([Habit Tracker] date header + day arrows on Today)): the outgoing and incoming
+ * days share one grid cell so they slide across each other rather than stacking, and the slider clips
+ * the horizontal overflow. The transition itself is Svelte's `fly` (duration 0 under reduced motion).
+ */
+.day-slider {
+  display: grid;
+  overflow-x: clip;
+}
+
+.day-slide {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
 /* Yesterday banner (T889): "Yesterday: N habits unchecked", dismissible, links to Log › By Day. */
 .yesterday-banner {
   display: flex;

@@ -232,7 +232,15 @@ export function registerHabitRoutes(app: FastifyInstance, db: Database.Database)
 
   /* ── Today view (PD-722, D-095) ───────────── */
 
-  app.get(`${BASE}/today`, async () => getTodayView(db));
+  /** `?day=YYYY-MM-DD` views a past habit day (PD-779 ([Habit Tracker] date header + day arrows on Today)); omitted = today. */
+  app.get(`${BASE}/today`, async (request, reply) => {
+    const q = request.query as { day?: string };
+    try {
+      return getTodayView(db, Date.now(), q.day === undefined || q.day === '' ? undefined : q.day);
+    } catch (e) {
+      return sendValidation(reply, e);
+    }
+  });
 
   /* ── Completions ──────────────────────────── */
 

@@ -24,6 +24,8 @@
     onMetric,
     loaded = true,
     compact = false,
+    isToday = true,
+    chip = $bindable('all'),
   }: {
     tree: HabitTreeNode[];
     metrics?: HabitMetricTodayRow[];
@@ -32,6 +34,14 @@
     onMetric?: (itemId: number, value: string | null) => void;
     loaded?: boolean;
     compact?: boolean;
+    /** False when the Today surface is showing a past habit day (PD-779 ([Habit Tracker] date header + day arrows on Today)). */
+    isToday?: boolean;
+    /**
+     * The selected filter chip: 'all' or a top-level set id. Bindable so the selection survives a day
+     * change, which re-creates this list for the slide (PD-779 ([Habit Tracker] date header + day
+     * arrows on Today)).
+     */
+    chip?: 'all' | number;
   } = $props();
 
   const COLLAPSE_KEY = 'habit-tracker:set-collapse';
@@ -69,8 +79,6 @@
 
   const sets = $derived(topLevelSets(tree));
 
-  // Filter chips: 'all' or a top-level set id.
-  let chip = $state<'all' | number>('all');
   // If the selected set disappears (archived/moved), fall back to All.
   $effect(() => {
     if (chip !== 'all' && !sets.some((s) => s.item.id === chip)) chip = 'all';
@@ -230,14 +238,18 @@
   {/if}
 {/snippet}
 
-<ul class="today-list" class:compact aria-label="Today's habits">
+<ul class="today-list" class:compact aria-label={isToday ? "Today's habits" : 'Habits for this day'}>
   {#each roots as node (node.item.id)}
     {@render renderNode(node)}
   {/each}
 
   {#if roots.length === 0 && loaded}
     <li class="empty">
-      {compact ? 'Nothing due today.' : 'Nothing due today — add or schedule a habit on the Habits tab.'}
+      {#if !isToday}
+        Nothing was due this day.
+      {:else}
+        {compact ? 'Nothing due today.' : 'Nothing due today — add or schedule a habit on the Habits tab.'}
+      {/if}
     </li>
   {/if}
 </ul>

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import Database from 'better-sqlite3';
-import type { HabitItemView, HabitSchedule, HabitSettings, HabitTodayView } from '@dashboard/shared';
+import { addHabitDays, type HabitItemView, type HabitSchedule, type HabitSettings, type HabitTodayView } from '@dashboard/shared';
 import { bootstrapHabitsSchema } from './habits';
 import { registerHabitRoutes } from './habits-routes';
 
@@ -211,6 +211,66 @@ describe('today route (PD-722, D-095)', () => {
     expect(view.rows.map((r) => r.item.id)).toEqual([gym.id]);
     expect(view.rows[0].due).toBe(true); // unscheduled → daily
     expect(view.rows[0].streak).toEqual({ current: expect.any(Number), longest: expect.any(Number) });
+  });
+
+  describe('?day= (PD-779 ([Habit Tracker] date header + day arrows on Today))', () => {
+    async function view(query = ''): Promise<{ status: number; body: HabitTodayView & { code?: string } }> {
+      const res = await app.inject({ method: 'GET', url: `/api/habits/today${query}` });
+      return { status: res.statusCode, body: res.json() as HabitTodayView & { code?: string } };
+    }
+
+    it('serves a past habit day, with that day\'s completions and metric values', async () => {
+      const gym = await create('Gym');
+      const drinks = (
+        await app.inject({
+          method: 'POST',
+          url: '/api/habits/items',
+          payload: { name: 'Drinks', kind: 'metric', metricType: 'number' },
+        })
+      ).json() as HabitItemView;
+      const today = (await view()).body.day;
+      const yesterday = addHabitDays(today, -1);
+      await app.inject({
+        method: 'PUT',
+        url: '/api/habits/completions',
+        payload: { itemId: gym.id, day: yesterday, done: true },
+      });
+      await app.inject({
+        method: 'PUT',
+        url: '/api/habits/metric-values',
+        payload: { itemId: drinks.id, day: yesterday, value: '2' },
+      });
+
+      const past = await view(`?day=${yesterday}`);
+      expect(past.status).toBe(200);
+      expect(past.body.day).toBe(yesterday);
+      expect(past.body.rows.find((r) => r.item.id === gym.id)?.completedToday).toBe(true);
+      expect(past.body.metrics.find((m) => m.item.id === drinks.id)?.value).toBe('2');
+
+      // The current day is untouched by yesterday's writes.
+      const current = await view();
+      expect(current.body.rows.find((r) => r.item.id === gym.id)?.completedToday).toBe(false);
+      expect(current.body.metrics.find((m) => m.item.id === drinks.id)?.value).toBeNull();
+    });
+
+    it('treats ?day=<today> the same as no day', async () => {
+      await create('Gym');
+      const today = (await view()).body.day;
+      expect((await view(`?day=${today}`)).body).toEqual((await view()).body);
+    });
+
+    it('clamps a future day to today (Today never pages forward)', async () => {
+      const today = (await view()).body.day;
+      const future = await view(`?day=${addHabitDays(today, 3)}`);
+      expect(future.status).toBe(200);
+      expect(future.body.day).toBe(today);
+    });
+
+    it('rejects a malformed day with 400 invalid_day', async () => {
+      const bad = await view('?day=yesterday');
+      expect(bad.status).toBe(400);
+      expect(bad.body.code).toBe('invalid_day');
+    });
   });
 });
 
