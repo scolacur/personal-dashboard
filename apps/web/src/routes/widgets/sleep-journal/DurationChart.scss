@@ -1,0 +1,84 @@
+.chart {
+  position: relative;
+  width: 100%;
+}
+
+svg {
+  display: block;
+  overflow: visible;
+}
+
+.grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.tick {
+  fill: var(--muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+
+  &.y {
+    text-anchor: end;
+  }
+
+  &.x {
+    text-anchor: middle;
+  }
+}
+
+.bar {
+  cursor: pointer;
+  outline: none;
+
+  &:focus-visible,
+  &.active {
+    stroke: var(--text);
+    stroke-width: 2;
+  }
+}
+
+.avg {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-md);
+  justify-content: center;
+  margin-top: var(--space-xs);
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+}
+
+.key {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.key-line {
+  width: 14px;
+  border-top: 2px dashed var(--text);
+}
+
+.detail {
+  margin: var(--space-sm) 0 0;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+
+  strong {
+    color: var(--text);
+  }
+}
