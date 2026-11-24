@@ -376,9 +376,9 @@ button.agent-pill-action {
   }
 }
 
-// The "Spin off into new Epic…" action beside the epic breadcrumb (slice C).
+// The "Spin off into new Epic…" action (slice C). Its breadcrumb moved to the header (PD-993).
 .spin-off-btn {
-  margin-left: var(--space-sm);
+  margin-left: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -393,6 +393,29 @@ button.agent-pill-action {
 
 .no-epic {
   color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+}
+
+// PD-993 (D-080): "Part of [icon] PD-NNN [P]" in the header — a member's priority is its Epic's.
+.epic-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.epic-ref-id {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 // GitHub icon links (header + details) — visual parity with the board cards (PD-374).
