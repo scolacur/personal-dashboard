@@ -131,40 +131,44 @@ see below.
 
 ### Auto-deploy cutover (one time per host) 🧑
 
+Done on the NAS on 2026-11-24. You'll only need it again on a new host (the Mac Mini, PD-787) or
+after rebuilding the stack from scratch.
+
 Two Watchtowers share one Docker daemon, so **order matters**. An unscoped Watchtower removes every
-other Watchtower instance, scoped ones included.
+other Watchtower instance, scoped ones included. Every path below is absolute, so it works from
+any directory (an SSH session starts in your home dir, not the repo). Set `R` to the host's checkout.
 
 ```bash
-cd /volume1/docker/personal-dashboard/personal-dashboard && git pull --ff-only
+R=/volume1/docker/personal-dashboard/personal-dashboard
+git -C $R pull --ff-only
 
 # 1. Rescope the APP's Watchtower to `none` FIRST, so it stops watching the worker and stops
-#    removing other instances.
-( cd docker && sudo docker-compose -f docker-compose.nas.yml up -d watchtower )
-sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
-  $(sudo docker ps -qf name=watchtower -f label=com.docker.compose.project=docker) | grep SCOPE   # WATCHTOWER_SCOPE=none
+#    removing other instances. Check the pulled compose has the scope before you apply it.
+grep WATCHTOWER_SCOPE $R/docker/docker-compose.nas.yml      # must print WATCHTOWER_SCOPE=none; stop if not
+sudo docker-compose -f $R/docker/docker-compose.nas.yml up -d watchtower
 
-# 2. Switch the worker to the GHCR image and start its scoped Watchtower.
-#    Recreating the worker here is forced, so do it when no Robot run is in flight.
-sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml pull agent-worker
-sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
+# 2. Switch the worker to the GHCR image and start its scoped Watchtower. This recreates the
+#    worker WITHOUT the drain, so run it when no Robot run is in flight.
+sudo docker-compose -f $R/ops/agent-worker/docker-compose.egress.yml pull agent-worker
+sudo docker-compose -f $R/ops/agent-worker/docker-compose.egress.yml up -d
 
 # 3. Verify.
-sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'   # both watchtowers up; worker on ghcr.io/...
-sudo docker logs agent-worker-watchtower | head          # scope "agent-worker", 1 container watched
-sudo docker logs $(sudo docker ps -qf name=watchtower -f label=com.docker.compose.project=docker) | tail   # still only `app`
-sudo docker exec agent-worker node /app/apps/agent-worker/dist/deploy-drain.js; echo "exit=$?"   # 0 idle / 75 busy
-```
-
-> **Note:** the manual drain in step 3 TAKES the deploy hold. If no recreate follows, the hold
-> blocks dispatch until it lapses (stall threshold, about 2h). Clear it right away with
-> `robot-refresh`, which recreates the worker and releases the hold on boot.
-
-Then check the uid split on the GHCR-built container (D-039/D-055). The loop runs as root, the
-coding session as uid 1500, and `dashboard.db` stays mode 660:
-
-```bash
+sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+sudo docker logs agent-worker-watchtower 2>&1 | head
 sudo docker exec agent-worker sh -c 'id; id robot; ls -l /data/dashboard.db'
 ```
+
+Step 3 should show:
+
+- **`docker ps`:** `agent-worker` runs a `ghcr.io/scolacur/personal-dashboard-agent-worker` image, and
+  BOTH Watchtowers are up. If the app's Watchtower is gone, step 1 didn't take; redo it.
+- **The worker Watchtower's log:** it mentions scope `agent-worker`.
+- **The uid split (D-039/D-055):** `id` shows root (the loop), `id robot` shows uid 1500 (the coding
+  session), and `dashboard.db` is `-rw-rw----`.
+
+> **Don't run `deploy-drain.js` by hand to test it.** It takes the deploy hold. If no recreate
+> follows, Robot dispatch stays blocked until the hold lapses (stall threshold, about 2h). If you
+> did run it, `robot-refresh` recreates the worker and releases the hold on boot.
 
 **Prove the loop once:** merge a worker-touching PR. Within about 5 min, `build_sha` should move with
 no manual step. To check the drain path, land one while a Robot run is in flight: the Watchtower log
