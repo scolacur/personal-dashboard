@@ -154,6 +154,9 @@ export interface RefineTurnInput {
   onProposal?: (proposal: RefineProposal) => void;
   /** PD-634: the ticket is an Epic, so a decompose is a Populate and must carry the Epic's body. */
   targetIsEpic?: boolean;
+  /** PD-931: the row id of the ticket being refined, so propose_commit can resolve the Epic whose
+   *  members a `supersedes` may name. */
+  targetTicketId?: number;
   /** PD-744: called when the agent invokes ask_questions; stages the round for this turn. A warm
    *  session binds this once, on open, so it must not close over per-turn state. */
   onRound?: (round: RefineQuestionRound) => void;
@@ -201,6 +204,7 @@ export function refineOptions(
   targetIsEpic?: boolean,
   onRound?: (round: RefineQuestionRound) => void,
   db?: Database.Database,
+  targetTicketId?: number,
 ) {
   const boardTools: readonly string[] = onProposal && db ? BOARD_TOOL_NAMES : [];
   const refineTools = onProposal ? [PROPOSE_TOOL_NAME, ...(onRound ? [ASK_TOOL_NAME] : []), ...boardTools] : [];
@@ -224,7 +228,7 @@ export function refineOptions(
     // PD-844: sub-agents only as the read-only explorer, and only in the foreground.
     agents: { [REFINE_EXPLORER_AGENT]: refineExplorerAgent(boardTools) },
     hooks: REFINE_HOOKS,
-    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic, onRound, board: db }) } } : {}),
+    ...(onProposal ? { mcpServers: { refine: buildProposeToolServer(onProposal, { targetIsEpic, targetTicketId, onRound, board: db }) } } : {}),
     ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
 }
@@ -253,6 +257,7 @@ export async function runRefineTurn(input: RefineTurnInput): Promise<RefineTurnR
       input.targetIsEpic,
       input.onRound,
       input.db,
+      input.targetTicketId,
     ),
   })) {
     if (message.type === 'result') result = resultFrom(message);
@@ -290,6 +295,9 @@ export interface OpenSessionInput {
   onProposal?: (proposal: RefineProposal) => void;
   /** PD-634: the ticket is an Epic, so a decompose is a Populate and must carry the Epic's body. */
   targetIsEpic?: boolean;
+  /** PD-931: the row id of the ticket being refined, so propose_commit can resolve the Epic whose
+   *  members a `supersedes` may name. */
+  targetTicketId?: number;
   /** PD-744: called when the agent invokes ask_questions; stages the round for this turn. A warm
    *  session binds this once, on open, so it must not close over per-turn state. */
   onRound?: (round: RefineQuestionRound) => void;
@@ -382,6 +390,7 @@ export const openWarmSession: OpenRefineSession = (input) => {
       input.targetIsEpic,
       input.onRound,
       input.db,
+      input.targetTicketId,
     ),
   });
 

@@ -1658,6 +1658,11 @@ export const REFINE_PROPOSAL_EVENT = {
   proposal: 'refine_proposal',
   committed: 'refine_committed',
   rejected: 'refine_rejected',
+  /** PD-931: logged on a member when another proposal's approved `supersedes` replaces it (the
+   *  close/invalidate itself is the sibling slice). It terminates a member's proposal thread — once
+   *  a member is superseded its own proposal must stop being actionable, so `latestActionableProposal`
+   *  treats it like a decision. */
+  superseded: 'refine_superseded',
 } as const;
 
 /**
@@ -1768,6 +1773,40 @@ export function refineRelationsError(
   return null;
 }
 
+/** A display id like `PD-433` (the shape `agent_tickets.display_id` takes). Used to reject a
+ *  malformed `supersedes` entry before the board is ever consulted (PD-931). */
+const DISPLAY_ID_RE = /^[A-Za-z]+-\d+$/;
+
+/**
+ * Mechanical shape check for a proposal's `supersedes` (PD-931): the display ids of existing
+ * tickets a decompose/Populate replaces. Returns an instructive error, or null when well-formed.
+ * This is the board-FREE half — it rejects use on the wrong mode, malformed ids and duplicates.
+ * The id-resolution half (exists / open / member of the target Epic) needs the live board and lives
+ * in the propose tool. Shared, mirroring `refineRelationsError`, so the propose tool (immediate
+ * agent feedback) and the approve path (defence against a stored proposal) apply the same rule.
+ */
+export function refineSupersedesError(
+  supersedes: readonly string[] | undefined,
+  mode: RefineCommitMode,
+): string | null {
+  if (!supersedes || supersedes.length === 0) return null;
+  if (mode === 'refine_in_place') {
+    return '`supersedes` names existing members a decompose/Populate replaces, but this is refine_in_place — there is nothing to supersede. Drop `supersedes`, or decompose/Populate if this work really replaces other tickets.';
+  }
+  const seen = new Set<string>();
+  for (const raw of supersedes) {
+    if (typeof raw !== 'string' || !DISPLAY_ID_RE.test(raw)) {
+      return `\`supersedes\` entry "${raw}" is not a display id like PD-433. Each entry must be the display id of an existing ticket.`;
+    }
+    const key = raw.toUpperCase();
+    if (seen.has(key)) {
+      return `\`supersedes\` lists "${raw}" more than once. Each superseded ticket must appear at most once.`;
+    }
+    seen.add(key);
+  }
+  return null;
+}
+
 /**
  * The structured commit proposal, stored as the detail of a `refine_proposal` event.
  *
@@ -1795,22 +1834,33 @@ export interface RefineProposal {
    *  Written in the approval transaction, so a dependency chain arrives wired instead of needing
    *  Steve to link it by hand. Omitted on every proposal stored before PD-842. */
   relations?: RefineRelationProposal[];
+  /** decompose/Populate (PD-931): display ids of EXISTING tickets this proposal replaces — each an
+   *  OPEN member of the Epic being populated. Validated at propose time and re-validated on approval;
+   *  the close/invalidate of the named members is a sibling slice, so nothing acts on this yet.
+   *  Omitted on every proposal stored before PD-931, and the common case. */
+  supersedes?: string[];
   /** Short why, shown in the approval panel. */
   rationale?: string;
 }
 
 /**
  * The latest proposal still awaiting a decision, or null. "Actionable" = a `refine_proposal`
- * event with no `refine_committed`/`refine_rejected` event after it (a later proposal or a
- * decision supersedes it). Shared so the web panel and the server's approve path agree.
+ * event with no `refine_committed`/`refine_rejected`/`refine_superseded` event after it (a later
+ * proposal or any of those terminators retires it). A `refine_superseded` event terminates because
+ * once another proposal's approval replaces this member (PD-931) its own proposal must no longer be
+ * approvable. Shared so the web panel and the server's approve path agree.
  */
 export function latestActionableProposal(
   events: TicketEvent[],
 ): { eventId: number; proposal: RefineProposal } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e.type === REFINE_PROPOSAL_EVENT.committed || e.type === REFINE_PROPOSAL_EVENT.rejected) {
-      return null; // newest lifecycle event is a decision → nothing pending
+    if (
+      e.type === REFINE_PROPOSAL_EVENT.committed ||
+      e.type === REFINE_PROPOSAL_EVENT.rejected ||
+      e.type === REFINE_PROPOSAL_EVENT.superseded
+    ) {
+      return null; // newest lifecycle event is a decision/supersede → nothing pending
     }
     if (e.type === REFINE_PROPOSAL_EVENT.proposal) {
       return { eventId: e.id, proposal: (e.detail ?? {}) as RefineProposal };
