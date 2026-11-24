@@ -88,6 +88,7 @@ const CONFIG: AgentWorkerConfig = {
   httpsProxy: '',
   robot: loadRobotConfig({}),
   conflictResolver: { enabled: false, intervalMs: 1 },
+  retest: { enabled: false, intervalMs: 1 },
   szz: { enabled: false, intervalMs: 1, historyDir: '/tmp/szz' },
   visual: { enabled: false, intervalMs: 1, chromiumPath: '', publicUrl: '' },
   evaluator: loadEvaluatorConfig({}),
