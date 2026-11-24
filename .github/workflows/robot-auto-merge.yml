@@ -82,8 +82,13 @@ on:
     workflows: ["ci", "review-gate"]
     types: [completed]
   # Fires when a PR is force-pushed or reopened after an earlier check.
+  # `labeled`: Steve applying `sensitive-change-approved` re-runs path-guard (a pull_request_target
+  # workflow), and nothing else re-fires this bridge when path-guard goes green. A path-guard
+  # completion can't be caught via workflow_run either: a pull_request_target run's head_sha is the
+  # base branch, not the PR head, so the PR lookup below would miss it. PR #537 (PD-930) sat CLEAN
+  # and unmerged for 7h on exactly this gap.
   pull_request:
-    types: [synchronize, reopened]
+    types: [synchronize, reopened, labeled]
   # PD-765: the agent-worker posts `review-gate` with its own token (REVIEW_GATE_TOKEN), and statuses
   # posted by a PAT DO trigger workflows — only GITHUB_TOKEN-originated events are suppressed. This is
   # what merges a Robot PR whose Evaluator verdict lands after CI went green.
@@ -103,7 +108,7 @@ jobs:
     # Event gate:
     #  - pull_request_review: only an APPROVED review from an authorized user.
     #  - workflow_run: only when the `ci` run succeeded (a failed CI can't be CLEAN anyway).
-    #  - pull_request (synchronize/reopened): always run.
+    #  - pull_request (synchronize/reopened): always run; (labeled): only `sensitive-change-approved`.
     #  - status: only `review-gate` turning success (PD-765). Every other status is noise.
     if: >-
       (
@@ -121,7 +126,13 @@ jobs:
         github.event_name == 'workflow_run' &&
         github.event.workflow_run.conclusion == 'success'
       ) ||
-      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'pull_request' &&
+        (
+          github.event.action != 'labeled' ||
+          github.event.label.name == 'sensitive-change-approved'
+        )
+      ) ||
       (
         github.event_name == 'status' &&
         github.event.context == 'review-gate' &&
@@ -180,6 +191,31 @@ jobs:
 
           if [ "$EVENT" = "pull_request_review" ] || [ "$EVENT" = "pull_request" ]; then
             PRS=("${{ github.event.pull_request.number }}")
+            # The approval label re-runs path-guard concurrently with this job. Wait for that run
+            # to finish (it takes seconds) so the mergeability check below sees its verdict rather
+            # than a pending check. Polling is safe here: path-guard is a different workflow, so
+            # this cannot deadlock on itself the way PD-424 describes. On timeout the normal checks
+            # below just skip, exactly as before.
+            if [ "${{ github.event.action }}" = "labeled" ]; then
+              PR_NUM="${{ github.event.pull_request.number }}"
+              # The label write bumps the PR's updated_at; path-guard's re-run starts at or after it.
+              LABELED_AT="${{ github.event.pull_request.updated_at }}"
+              sleep 10
+              for _ in $(seq 1 18); do
+                PG="$(gh pr view "$PR_NUM" --repo "$REPO" --json statusCheckRollup | jq -r '
+                  [ .statusCheckRollup[]? | select((.name // .context // "") == "path-guard") ]
+                  | sort_by(.startedAt // .completedAt // "") | last
+                  | "\(.status // "")|\(.startedAt // "")|\(.conclusion // .state // "")"
+                ')"
+                PG_STATUS="${PG%%|*}"; PG_REST="${PG#*|}"; PG_STARTED="${PG_REST%%|*}"
+                echo "PR #$PR_NUM: path-guard=$PG"
+                # Done once the latest path-guard run is completed and is not the pre-label run.
+                if [ "$PG_STATUS" = "COMPLETED" ] && [[ ! "$PG_STARTED" < "$(date -u -d "$LABELED_AT - 5 seconds" +%Y-%m-%dT%H:%M:%SZ)" ]]; then
+                  break
+                fi
+                sleep 10
+              done
+            fi
           elif [ "$EVENT" = "workflow_run" ] || [ "$EVENT" = "status" ]; then
             # Neither carries a PR number — map the commit SHA to an open PR whose head it is.
             # (Note: gh's --jq flag does NOT accept --arg, so pipe to the runner's real jq.)
