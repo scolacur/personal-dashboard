@@ -252,6 +252,45 @@ describe('createOutbox', () => {
     await Promise.all([outbox.flush(), outbox.flush()]);
     expect(maxConcurrent).toBe(1);
   });
+
+  it('remove drops a pending entry and persists the drop (Undo before sync)', async () => {
+    const kv = memoryKV();
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send: async () => {
+        throw new Error('offline');
+      },
+      isRejected,
+      kv,
+    });
+    outbox.add(p('a'));
+    outbox.add(p('b'));
+    await outbox.flush();
+    expect(outbox.remove((e) => e.id === 'a')).toBe(1);
+    expect(outbox.remove((e) => e.id === 'zzz')).toBe(0);
+    expect(outbox.pending().map((e) => e.id)).toEqual(['b']);
+    expect(loadQueue<Payload>(KEY, kv).map((e) => e.id)).toEqual(['b']);
+  });
+
+  it('an entry removed while its send is in flight is not re-queued when that send fails', async () => {
+    const kv = memoryKV();
+    let release: (() => void) | null = null;
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send: (e) =>
+        new Promise<Payload>((_resolve, reject) => {
+          release = () => reject(new Error(`offline ${e.id}`));
+        }),
+      isRejected,
+      kv,
+    });
+    outbox.add(p('a')); // kicks a flush; 'a' is now in flight
+    expect(outbox.remove((e) => e.id === 'a')).toBe(1);
+    (release as unknown as () => void)();
+    await outbox.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(outbox.pending()).toEqual([]);
+  });
 });
 
 describe('visible pending signal (PD-778)', () => {

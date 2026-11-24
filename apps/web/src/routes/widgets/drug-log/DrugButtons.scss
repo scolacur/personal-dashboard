@@ -1,0 +1,150 @@
+.drug-grid {
+  --size: 6.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--size), 1fr));
+  justify-items: center;
+  gap: var(--space-lg) var(--space-md);
+  padding: var(--space-md) 0;
+
+  &.compact {
+    --size: 4.75rem;
+    gap: var(--space-md) var(--space-sm);
+    padding: var(--space-sm);
+  }
+}
+
+.drug {
+  --drug-color: var(--accent);
+  --drug-text: var(--on-accent);
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  border-radius: 50%;
+  border: none;
+  background: var(--drug-color);
+  color: var(--drug-text);
+  padding: var(--space-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+
+  /* The soft press. */
+  &:active {
+    transform: scale(0.92);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  }
+
+  &:focus-visible {
+    outline: 3px solid var(--text);
+    outline-offset: 3px;
+  }
+
+  .label {
+    font-family: var(--font-display);
+    font-weight: 700;
+    /* 1.35rem at full size; `--label-scale` shrinks long labels so they fit the circle. */
+    font-size: calc(1.35rem * var(--label-scale, 1));
+    line-height: 1.1;
+    text-align: center;
+    overflow-wrap: anywhere;
+    max-width: 100%;
+    pointer-events: none;
+  }
+
+  .badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 1.6rem;
+    height: 1.6rem;
+    padding: 0 var(--space-xs);
+    border-radius: 0.8rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 2px solid var(--drug-color);
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .edit-mark {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+  }
+
+  /* A ring that swells out from the edge and fades — restarted per tap by a `{#key}`. */
+  .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid var(--drug-color);
+    pointer-events: none;
+    animation: ring 520ms ease-out forwards;
+  }
+
+  &.add {
+    background: transparent;
+    border: 2px dashed var(--border);
+    color: var(--muted);
+    box-shadow: none;
+
+    .label {
+      font-size: 2rem;
+    }
+  }
+}
+
+.compact .drug .label {
+  font-size: calc(1.05rem * var(--label-scale, 1));
+}
+
+.editing .drug:not(.add) {
+  outline: 2px dashed var(--border);
+  outline-offset: 3px;
+}
+
+@keyframes ring {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drug {
+    transition: none;
+
+    &:active {
+      transform: none;
+    }
+
+    .ring {
+      display: none;
+    }
+  }
+}

@@ -1,0 +1,129 @@
+.drug-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.preview-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.preview {
+  flex: none;
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 50%;
+  background: var(--drug-color);
+  color: var(--drug-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+
+  span {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: calc(1rem * var(--label-scale, 1));
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+}
+
+.field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+
+  small {
+    align-self: flex-end;
+    font-size: var(--font-size-xs);
+  }
+}
+
+input[type='text'] {
+  font: inherit;
+  font-size: var(--font-size-base); /* 16px keeps iOS from zooming on focus */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+
+  &[aria-invalid='true'] {
+    border-color: var(--status-stuck);
+  }
+}
+
+.error {
+  margin: 0;
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+.confirm-text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--status-stuck);
+}
+
+.secondary {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+
+  .move {
+    display: flex;
+    gap: var(--space-xs);
+  }
+}
+
+button {
+  min-height: 2.5rem;
+  padding: 0 var(--space-md);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+
+  .delete {
+    margin-right: auto;
+    background: none;
+    color: var(--status-stuck);
+
+    &.confirm {
+      background: var(--status-stuck);
+      border-color: var(--status-stuck);
+      color: var(--surface);
+    }
+  }
+
+  .save {
+    border: none;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+}

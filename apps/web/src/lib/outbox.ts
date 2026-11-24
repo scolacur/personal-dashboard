@@ -173,6 +173,13 @@ export interface Outbox<T> {
   visiblePending(): T[];
   /** Queue an entry, persist, and kick a flush. */
   add(entry: T): void;
+  /**
+   * Drop every pending entry `match` accepts (e.g. an Undo before the write synced — PD-975, Drug
+   * log widget). Returns how many were dropped. An entry already in flight may still reach the
+   * server — that send can't be recalled, so the caller must handle it in `onSent` — but if that
+   * send fails, the removed entry is not re-queued.
+   */
+  remove(match: (entry: T) => boolean): number;
   /** Send everything queued, oldest-first. Re-entrant-safe: a second call while one is in flight is a no-op. */
   flush(): Promise<void>;
   /** Load any persisted queue and wire the retry triggers. Returns a teardown for `onMount`. */
@@ -194,6 +201,8 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
   let flushing = false;
   let visible: T[] = [];
   let showTimer: ReturnType<typeof setTimeout> | null = null;
+  // Entries `remove`d while a flush was in flight, so a failed send doesn't resurrect them.
+  const removed = new WeakSet<object>();
 
   function cancelShow(): void {
     if (showTimer !== null) clearTimeout(showTimer);
@@ -251,7 +260,8 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
       // subject supersedes its stale, already-sent snapshot entry.
       const inSnapshot = new Set<T>(snapshot);
       const added = pending.filter((e) => !inSnapshot.has(e));
-      setPending(collapse([...r.remaining, ...added]));
+      const remaining = r.remaining.filter((e) => !(typeof e === 'object' && e !== null && removed.has(e)));
+      setPending(collapse([...remaining, ...added]));
       if (r.sent.length > 0) opts.onSent?.(r.sent);
       for (const { entry, message } of r.rejected) opts.onRejected?.(entry, message);
     } finally {
@@ -262,6 +272,14 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
   function add(entry: T): void {
     setPending(collapse([...pending, entry]), !isOnline());
     void flush();
+  }
+
+  function remove(match: (entry: T) => boolean): number {
+    const drop = pending.filter(match);
+    if (drop.length === 0) return 0;
+    for (const e of drop) if (typeof e === 'object' && e !== null) removed.add(e);
+    setPending(pending.filter((e) => !match(e)));
+    return drop.length;
   }
 
   function start(): () => void {
@@ -288,5 +306,5 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
     };
   }
 
-  return { pending: () => pending, visiblePending: () => visible, add, flush, start };
+  return { pending: () => pending, visiblePending: () => visible, add, remove, flush, start };
 }

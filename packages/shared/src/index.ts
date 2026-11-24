@@ -506,3 +506,30 @@ export {
   weekOf,
   weekRange,
 } from './velocity';
+export type { ColorPreset } from './color';
+export {
+  COLOR_PRESETS,
+  CONTRAST_DARK,
+  CONTRAST_LIGHT,
+  isHexColor,
+  normalizeHexColor,
+  relativeLuminance,
+  contrastRatio,
+  contrastText,
+} from './color';
+export type {
+  DrugLogDrug,
+  DrugLogEvent,
+  DrugLogDrugsResponse,
+  CreateDrugLogDrugInput,
+  UpdateDrugLogDrugInput,
+  CreateDrugLogEventInput,
+  UpdateDrugLogEventInput,
+} from './drug-log';
+export {
+  DRUG_LOG_LABEL_MAX_LENGTH,
+  DRUG_LOG_FUTURE_TOLERANCE_MS,
+  DRUG_LOG_DEFAULT_DRUG,
+  DRUG_LOG_FALLBACK_DAY_SETTINGS,
+  normalizeDrugLabel,
+} from './drug-log';

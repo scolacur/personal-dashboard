@@ -28,6 +28,7 @@ import { widget as buySellTradeWidget } from './widgets/buy-sell-trade/index';
 import { widget as idTrackerWidget } from './widgets/id-tracker/index';
 import { widget as tinnitusTrackerWidget } from './widgets/tinnitus-tracker/index';
 import { widget as e2eCanaryWidget } from './widgets/e2e-canary/index';
+import { widget as drugLogWidget } from './widgets/drug-log/index';
 import { initDeployStatus, getDeployInfo } from './deploy-status';
 
 const widgets: BackendWidget[] = [
@@ -39,6 +40,7 @@ const widgets: BackendWidget[] = [
   idTrackerWidget,
   tinnitusTrackerWidget,
   e2eCanaryWidget,
+  drugLogWidget,
 ];
 
 // Structured JSON in prod (log aggregation); human-readable pretty logs in dev.
