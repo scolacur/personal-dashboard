@@ -391,15 +391,41 @@ export {
   normalizeSleepTagName,
   SLEEP_RUBRIC,
   sleepRestedLabel,
-  SLEEP_RESTED_COLORS,
-  SLEEP_RESTED_INK,
-  sleepRestedColor,
   sleepWallClock,
   sleepWakeDate,
   sleepInstantAt,
   addSleepDays,
   sleepNightInstants,
 } from './sleep-journal';
+export type {
+  MoodEnergyTag,
+  MoodEnergyEntry,
+  SaveMoodEnergyEntryInput,
+  UpdateMoodEnergyEntryInput,
+} from './mood-energy';
+export {
+  MOOD_ENERGY_MIN,
+  MOOD_ENERGY_MAX,
+  MOOD_ENERGY_DEFAULT_VALUE,
+  MOOD_ENERGY_DEFAULT_TAGS,
+  MOOD_ENERGY_TAG_MAX_LENGTH,
+  MOOD_ENERGY_NOTE_MAX_LENGTH,
+  MOOD_ENERGY_FUTURE_TOLERANCE_MS,
+  MOOD_RUBRIC,
+  ENERGY_RUBRIC,
+  moodLabel,
+  energyLabel,
+  isValidMoodEnergyValue,
+  ENERGY_COLORS,
+  energyColor,
+} from './mood-energy';
+export {
+  SCALE_1_5_MIN,
+  SCALE_1_5_MAX,
+  SCALE_1_5_COLORS,
+  SCALE_1_5_INK,
+  scale15Color,
+} from './scale-1-5';
 export type {
   HabitItemKind,
   HabitMetricType,

@@ -28,6 +28,7 @@ import { widget as buySellTradeWidget } from './widgets/buy-sell-trade/index';
 import { widget as idTrackerWidget } from './widgets/id-tracker/index';
 import { widget as tinnitusTrackerWidget } from './widgets/tinnitus-tracker/index';
 import { widget as sleepJournalWidget } from './widgets/sleep-journal/index';
+import { widget as moodEnergyWidget } from './widgets/mood-energy/index';
 import { widget as e2eCanaryWidget } from './widgets/e2e-canary/index';
 import { initDeployStatus, getDeployInfo } from './deploy-status';
 
@@ -40,6 +41,7 @@ const widgets: BackendWidget[] = [
   idTrackerWidget,
   tinnitusTrackerWidget,
   sleepJournalWidget,
+  moodEnergyWidget,
   e2eCanaryWidget,
 ];
 

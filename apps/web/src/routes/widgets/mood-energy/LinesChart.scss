@@ -1,0 +1,115 @@
+.chart {
+  position: relative;
+  width: 100%;
+}
+
+svg {
+  display: block;
+  overflow: visible;
+}
+
+.grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.tick {
+  fill: var(--muted);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+
+  &.y {
+    text-anchor: end;
+  }
+
+  &.x {
+    text-anchor: middle;
+  }
+}
+
+.line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+
+  &.mood {
+    stroke: var(--text);
+  }
+
+  &.energy {
+    stroke-dasharray: 5 4;
+  }
+}
+
+/* 2px surface ring keeps dots legible where the lines cross. */
+.dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+  pointer-events: none;
+
+  &.active {
+    stroke: var(--text);
+  }
+}
+
+.hit {
+  fill: transparent;
+  cursor: pointer;
+  outline: none;
+
+  &:focus-visible {
+    stroke: var(--text);
+    stroke-width: 1;
+  }
+}
+
+.popup {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 14px));
+  min-width: 9rem;
+  max-width: 14rem;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  font-size: var(--font-size-sm);
+  pointer-events: none;
+  z-index: 1;
+
+  &.below {
+    transform: translate(-50%, 14px);
+  }
+}
+
+.pw {
+  color: var(--muted);
+}
+
+.legend {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: center;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+}
+
+.key-mood {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.key-energy {
+  width: 14px;
+  height: 0;
+  border-top: 2px dashed;
+}
