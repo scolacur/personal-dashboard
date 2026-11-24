@@ -194,9 +194,19 @@ export async function replyToTicket(id: number, body: string): Promise<void> {
 /**
  * Start a Refine session on a ticket (D-044, PD-268). Writes the kickoff turn the agent-worker
  * picks up. Returns the created event, or throws (409 if a session is already running).
+ *
+ * `addedMemberId` (PD-996): the session follows a ticket joining this refined Epic, so the kickoff
+ * asks only what that ticket changes, and continues the Epic's thread if it already has one.
  */
-export async function startRefine(id: number): Promise<TicketEvent> {
-  const res = await fetch(`${BASE}/${id}/refine`, { method: 'POST' });
+export async function startRefine(id: number, opts: { addedMemberId?: number } = {}): Promise<TicketEvent> {
+  const res =
+    opts.addedMemberId === undefined
+      ? await fetch(`${BASE}/${id}/refine`, { method: 'POST' })
+      : await fetch(`${BASE}/${id}/refine`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ addedMemberId: opts.addedMemberId }),
+        });
   if (!res.ok) return parseError(res);
   return res.json() as Promise<TicketEvent>;
 }

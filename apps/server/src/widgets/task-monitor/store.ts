@@ -1503,24 +1503,69 @@ export type StartRefineResult =
   | { ok: true; event: TicketEvent }
   | { ok: false; reason: 'not_found' | 'already_started' };
 
+/** `Epic PD-742 (Async Refine)`: a ticket named the way Refine is told to name them. */
+function ticketRef(t: Pick<AgentTicket, 'displayId' | 'title'>): string {
+  return t.displayId ? `${t.displayId} (${t.title})` : `"${t.title}"`;
+}
+
+/**
+ * The kickoff for re-refining an Epic after a ticket joined it (PD-996, from PD-703's "Add &
+ * re-refine"). The Epic was already refined, so the job is a delta check, not a fresh refinement:
+ * the generic kickoff (the Epic's whole title + body) read as "refine this Epic" and the agent
+ * redid all of it. This names the Epic and the new member by reference — the agent reads both
+ * through its board tools — and scopes the session to what the new member changes.
+ */
+export function epicMemberJoinedKickoff(
+  epic: Pick<AgentTicket, 'displayId' | 'title'>,
+  member: Pick<AgentTicket, 'displayId' | 'title'>,
+): string {
+  return [
+    `Epic ${ticketRef(epic)} was already refined, but Steve has just added a new ticket to it: ${ticketRef(member)}.`,
+    '',
+    'Do not re-refine the Epic from scratch — its description and existing members were already agreed.',
+    'Read the Epic, its existing members (list_epic_members) and the new ticket, then decide whether',
+    'the new ticket changes anything: the Epic\'s description, the scope or order of existing members,',
+    'overlap or duplication with an existing member, or the new ticket itself.',
+    '',
+    'If something needs to change, propose only that change. If nothing does, say so in a short reply,',
+    'and Steve will press ✓ Mark refined on the Epic.',
+  ].join('\n');
+}
+
+/** What prompted a Refine start, when it is not the plain Refine button. */
+export interface StartRefineOpts {
+  /** PD-996: a ticket just joined this (refined) Epic — kick off a delta check, not a full refine. */
+  addedMemberId?: number;
+}
+
 /**
  * Start a Refine session on a ticket (D-044, PD-268). The DB is the queue: this writes the
  * KICKOFF `refine_human` event (the ticket's title + body) that the agent-worker's poll loop
  * consumes to open a grounded session. No-op-safe: returns `already_started` if the ticket
  * already has any refine_* turn, so a double-click can't spawn a second thread.
+ *
+ * With `addedMemberId` (PD-996) the kickoff is {@link epicMemberJoinedKickoff} instead, and an
+ * Epic that already has a thread gets it appended as a new turn rather than refused: an Epic
+ * refined through a session always has one, and that session already holds the Epic's context.
  */
-export function startRefine(db: Database.Database, ticketId: number): StartRefineResult {
+export function startRefine(db: Database.Database, ticketId: number, opts: StartRefineOpts = {}): StartRefineResult {
   const ticket = getTicket(db, ticketId);
   if (ticket === null) return { ok: false, reason: 'not_found' };
+
+  const member = opts.addedMemberId !== undefined ? getTicket(db, opts.addedMemberId) : null;
+  if (opts.addedMemberId !== undefined && member === null) return { ok: false, reason: 'not_found' };
 
   const existing = db
     .prepare(
       `SELECT 1 FROM agent_ticket_events WHERE ticket_id = ? AND type IN (?, ?) LIMIT 1`,
     )
     .get(ticketId, REFINE_EVENT_TYPE.human, REFINE_EVENT_TYPE.agent);
-  if (existing) return { ok: false, reason: 'already_started' };
+  if (existing && member === null) return { ok: false, reason: 'already_started' };
 
-  const kickoff = [ticket.title, ticket.body ?? ''].join('\n\n').trim();
+  const kickoff =
+    member !== null
+      ? epicMemberJoinedKickoff(ticket, member)
+      : [ticket.title, ticket.body ?? ''].join('\n\n').trim();
   const now = Date.now();
   const res = db
     .prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)')

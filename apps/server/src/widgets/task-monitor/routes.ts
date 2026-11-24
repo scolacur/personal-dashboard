@@ -727,12 +727,18 @@ export function registerRoutes(
   // Start a Refine session (D-044, PD-268): the Refine button POSTs here. Writes the kickoff
   // refine_human event (ticket title + body) the agent-worker worker polls to open a grounded
   // session. 409 if a thread already exists so a double-click can't spawn a second.
+  // PD-996: `{ addedMemberId }` (from "Add & re-refine" on a refined Epic) kicks off a delta check
+  // on that new member instead, appended to the Epic's thread if it already has one.
   app.post(`${base}/tickets/:id/refine`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
-    const result = startRefine(db, id);
+    const addedMemberId = ((request.body ?? {}) as { addedMemberId?: unknown }).addedMemberId;
+    if (addedMemberId !== undefined && !Number.isInteger(addedMemberId)) {
+      return reply.status(400).send({ error: 'addedMemberId must be an integer', code: 'INVALID_ID' });
+    }
+    const result = startRefine(db, id, addedMemberId === undefined ? {} : { addedMemberId: addedMemberId as number });
     if (!result.ok) {
       return result.reason === 'not_found'
         ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })
