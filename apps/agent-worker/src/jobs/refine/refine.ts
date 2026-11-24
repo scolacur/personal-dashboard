@@ -5,6 +5,9 @@ import {
   REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
   REFINE_QUESTIONS_NOTIFICATION_PREFIX,
+  REFINE_ROUND_STALE_EVENT,
+  proposalCitedIds,
+  roundCitedIds,
   refineThreadFromEvents,
 } from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
@@ -54,27 +57,35 @@ export function nextRefineWork(events: TicketEvent[]): RefineWork | null {
     (e) =>
       e.type === REFINE_EVENT_TYPE.human ||
       e.type === REFINE_EVENT_TYPE.agent ||
-      e.type === REFINE_PARKED_EVENT,
+      e.type === REFINE_PARKED_EVENT ||
+      e.type === REFINE_ROUND_STALE_EVENT,
   );
   if (refine.length === 0) return null;
 
   // PD-743: a park closes the pending set just like an agent turn does — human turns before it
   // were deliberately left unanswered. Resume still comes from the last AGENT turn.
+  // PD-889: a stale turn is NOT a boundary — like a human reply it is pending work the agent must
+  // answer; only an agent turn or a park ends the pending window.
+  const isBoundary = (t: string): boolean => t === REFINE_EVENT_TYPE.agent || t === REFINE_PARKED_EVENT;
   let boundaryIdx = -1;
   let lastAgentIdx = -1;
   for (let i = refine.length - 1; i >= 0; i--) {
-    if (boundaryIdx === -1 && refine[i].type !== REFINE_EVENT_TYPE.human) boundaryIdx = i;
+    if (boundaryIdx === -1 && isBoundary(refine[i].type)) boundaryIdx = i;
     if (refine[i].type === REFINE_EVENT_TYPE.agent) {
       lastAgentIdx = i;
       break;
     }
   }
 
-  const pending = refine.slice(boundaryIdx + 1); // only human turns after the last agent turn or park
+  const pending = refine.slice(boundaryIdx + 1); // human + stale turns after the last agent turn / park
   if (pending.length === 0) return null;
 
-  const prompt = refineThreadFromEvents(pending)
-    .map((m) => m.text)
+  // Human turns and stale turns both carry their agent-facing message in `detail.text`.
+  const prompt = pending
+    .map((e) => {
+      const d = (e.detail ?? {}) as { text?: unknown };
+      return typeof d.text === 'string' ? d.text : '';
+    })
     .filter((t) => t.trim() !== '')
     .join('\n\n')
     .trim();
@@ -147,33 +158,68 @@ export function listTicketEvents(db: Database.Database, ticketId: number): Ticke
   return rows.map(rowToEvent);
 }
 
-/** Ticket ids whose newest `refine_human` turn is newer than both their newest `refine_agent`
- *  turn and their newest `refine_parked` event — i.e. a human is waiting on the agent and the
- *  session was not parked after they wrote (PD-743). A reply after a park is newer than it, so
- *  it reopens the session. Filtered in SQL to avoid scanning the log. */
+/** Ticket ids whose newest `refine_human` turn OR `refine_round_stale` turn is newer than both their
+ *  newest `refine_agent` turn and their newest `refine_parked` event — i.e. the agent owes a turn and
+ *  the session was not parked since (PD-743). A reply after a park is newer than it, so it reopens the
+ *  session. PD-889: a stale turn is treated like a human reply, so the worker re-grounds a round or
+ *  proposal whose cited ticket changed, with no action from Steve. Filtered in SQL to avoid scanning. */
 export function findPendingRefineTicketIds(db: Database.Database): number[] {
   const rows = db
     .prepare(
       `SELECT ticket_id
          FROM agent_ticket_events
-        WHERE type IN (?, ?, ?)
+        WHERE type IN (?, ?, ?, ?)
         GROUP BY ticket_id
-       HAVING MAX(CASE WHEN type = ? THEN created_at END) >
+       HAVING MAX(CASE WHEN type IN (?, ?) THEN created_at END) >
               COALESCE(MAX(CASE WHEN type IN (?, ?) THEN created_at END), 0)`,
     )
     .all(
       REFINE_EVENT_TYPE.human,
       REFINE_EVENT_TYPE.agent,
       REFINE_PARKED_EVENT,
+      REFINE_ROUND_STALE_EVENT,
       REFINE_EVENT_TYPE.human,
+      REFINE_ROUND_STALE_EVENT,
       REFINE_EVENT_TYPE.agent,
       REFINE_PARKED_EVENT,
     ) as { ticket_id: number }[];
   return rows.map((r) => r.ticket_id);
 }
 
+/**
+ * PD-889: the ticket ids a round or proposal depends on — the resolvable display ids it cites, plus
+ * the ticket's own relation partners and its Epic *at this moment*. Unknown / unresolvable ids (a
+ * decision id, another project, a typo) and the ticket's own id are dropped. Recorded on the event
+ * so a later change to any of these can mark the round / proposal stale.
+ */
+export function refineDependsOn(
+  db: Database.Database,
+  ticketId: number,
+  citedDisplayIds: readonly string[],
+): number[] {
+  const ids = new Set<number>();
+  const resolve = db.prepare('SELECT id FROM agent_tickets WHERE display_id = ? AND archived_at IS NULL');
+  for (const raw of citedDisplayIds) {
+    const row = resolve.get(raw.toUpperCase()) as { id: number } | undefined;
+    if (row) ids.add(row.id);
+  }
+  // Relations touching this ticket — the partner on the other end, whichever direction.
+  const rels = db
+    .prepare('SELECT from_ticket_id AS a, to_ticket_id AS b FROM agent_ticket_relations WHERE from_ticket_id = ? OR to_ticket_id = ?')
+    .all(ticketId, ticketId) as { a: number; b: number }[];
+  for (const r of rels) ids.add(r.a === ticketId ? r.b : r.a);
+  // The ticket's Epic at ask time.
+  const epic = db.prepare('SELECT epic_id FROM agent_tickets WHERE id = ?').get(ticketId) as
+    | { epic_id: number | null }
+    | undefined;
+  if (epic?.epic_id != null) ids.add(epic.epic_id);
+  ids.delete(ticketId); // a round never depends on its own ticket
+  return [...ids];
+}
+
 /** Persist a agent-worker turn as a `refine_agent` event, carrying the SDK session id for resume
- *  and, when the agent asked through ask_questions, the structured round (PD-744). */
+ *  and, when the agent asked through ask_questions, the structured round (PD-744). The round's
+ *  `dependsOn` (PD-889) is computed and stored so a later change to a cited ticket can stale it. */
 export function writeRefineAgentTurn(
   db: Database.Database,
   ticketId: number,
@@ -182,9 +228,15 @@ export function writeRefineAgentTurn(
   now: number = Date.now(),
   round?: RefineQuestionRound,
 ): void {
+  const dependsOn = round ? refineDependsOn(db, ticketId, roundCitedIds(round)) : undefined;
   db.prepare(
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
-  ).run(ticketId, REFINE_EVENT_TYPE.agent, JSON.stringify({ text, sessionId, ...(round ? { round } : {}) }), now);
+  ).run(
+    ticketId,
+    REFINE_EVENT_TYPE.agent,
+    JSON.stringify({ text, sessionId, ...(round ? { round } : {}), ...(dependsOn ? { dependsOn } : {}) }),
+    now,
+  );
 }
 
 /**
@@ -242,9 +294,12 @@ export function writeRefineProposal(
   proposal: RefineProposal,
   now: number = Date.now(),
 ): void {
+  // PD-889: record what the proposal depends on (cited tickets + this ticket's relations and Epic)
+  // so a later change to one of them stales the proposal and stops it being approvable.
+  const stored: RefineProposal = { ...proposal, dependsOn: refineDependsOn(db, ticketId, proposalCitedIds(proposal)) };
   db.prepare(
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
-  ).run(ticketId, REFINE_PROPOSAL_EVENT.proposal, JSON.stringify(proposal), now);
+  ).run(ticketId, REFINE_PROPOSAL_EVENT.proposal, JSON.stringify(stored), now);
 
   const t = db.prepare('SELECT display_id, is_epic FROM agent_tickets WHERE id = ?').get(ticketId) as
     | { display_id: string | null; is_epic: number }

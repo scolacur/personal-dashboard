@@ -6,6 +6,7 @@ import {
   REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
   REFINE_QUESTIONS_NOTIFICATION_PREFIX,
+  REFINE_ROUND_STALE_EVENT,
 } from '@dashboard/shared';
 import {
   type AgentWorkerConfig,
@@ -24,6 +25,8 @@ import {
   findPendingRefineTicketIds,
   listTicketEvents,
   processPendingRefines,
+  refineDependsOn,
+  writeRefineAgentTurn,
   writeRefineProposal,
   RefineBackoff,
   roundOnlyText,
@@ -41,11 +44,15 @@ function freshDb(): Database.Database {
   db.exec(`
     CREATE TABLE agent_tickets (
       id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL,
-      is_epic INTEGER NOT NULL DEFAULT 0
+      is_epic INTEGER NOT NULL DEFAULT 0, epic_id INTEGER, archived_at INTEGER
     );
     CREATE TABLE agent_ticket_events (
       id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL,
       detail TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE agent_ticket_relations (
+      id INTEGER PRIMARY KEY, from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL,
+      type TEXT NOT NULL, origin TEXT NOT NULL DEFAULT 'agent', created_at INTEGER NOT NULL
     );
     CREATE TABLE agent_notifications (
       id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER,
@@ -183,6 +190,25 @@ describe('nextRefineWork (pure)', () => {
     ]);
     expect(work).toEqual({ prompt: 'back again', resumeSessionId: 'sess-42' });
   });
+
+  it('PD-889: a stale turn is pending work — its text becomes the prompt, resuming the last agent turn', () => {
+    const work = nextRefineWork([
+      ev(REFINE_EVENT_TYPE.human, { text: 'body' }, 1),
+      ev(REFINE_EVENT_TYPE.agent, { text: 'a round', sessionId: 'sess-42' }, 2),
+      ev(REFINE_ROUND_STALE_EVENT, { text: 'PD-9 was closed; re-read it' }, 3),
+    ]);
+    expect(work).toEqual({ prompt: 'PD-9 was closed; re-read it', resumeSessionId: 'sess-42' });
+  });
+
+  it('PD-889: a stale turn is not a boundary — it is answered together with a following human reply', () => {
+    const work = nextRefineWork([
+      ev(REFINE_EVENT_TYPE.human, { text: 'body' }, 1),
+      ev(REFINE_EVENT_TYPE.agent, { text: 'a round', sessionId: 'sess-42' }, 2),
+      ev(REFINE_ROUND_STALE_EVENT, { text: 'PD-9 changed' }, 3),
+      ev(REFINE_EVENT_TYPE.human, { text: 'also this' }, 4),
+    ]);
+    expect(work).toEqual({ prompt: 'PD-9 changed\n\nalso this', resumeSessionId: 'sess-42' });
+  });
 });
 
 describe('findPendingRefineTicketIds', () => {
@@ -220,6 +246,81 @@ describe('findPendingRefineTicketIds', () => {
     addEvent(db, 4, REFINE_EVENT_TYPE.human, { text: 'reopen' });
     expect(findPendingRefineTicketIds(db)).toEqual([4]);
   });
+
+  it('PD-889: lists a session whose newest turn is a stale turn (re-grounds with no human action)', () => {
+    addTicket(db, 5, 'PD-5');
+    addEvent(db, 5, REFINE_EVENT_TYPE.human, { text: 'a' });
+    addEvent(db, 5, REFINE_EVENT_TYPE.agent, { text: 'b', sessionId: 's' });
+    expect(findPendingRefineTicketIds(db)).toEqual([]);
+    addEvent(db, 5, REFINE_ROUND_STALE_EVENT, { text: 'PD-9 changed; re-read it' });
+    expect(findPendingRefineTicketIds(db)).toEqual([5]);
+  });
+});
+
+describe('refineDependsOn (PD-889)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = freshDb();
+    seq = 0;
+  });
+
+  it('resolves cited display ids, adds relations and the Epic, and drops unknowns and self', () => {
+    addTicket(db, 1, 'PD-1'); // the session ticket
+    addTicket(db, 2, 'PD-2'); // cited
+    addTicket(db, 3, 'PD-3'); // relation partner
+    addTicket(db, 10, 'PD-10', /* isEpic */ true);
+    db.prepare('UPDATE agent_tickets SET epic_id = 10 WHERE id = 1').run();
+    db.prepare(
+      'INSERT INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (?, ?, ?, ?)',
+    ).run(3, 1, 'blocks', ++seq);
+    // Cites PD-2 (known), PD-999 (unknown → dropped), PD-1 (self → dropped).
+    const deps = refineDependsOn(db, 1, ['PD-2', 'PD-999', 'PD-1']);
+    expect(deps.sort((a, b) => a - b)).toEqual([2, 3, 10]);
+  });
+
+  it('writeRefineAgentTurn records dependsOn from the round text', () => {
+    addTicket(db, 1, 'PD-1');
+    addTicket(db, 2, 'PD-2');
+    const round: RefineQuestionRound = {
+      questions: [
+        {
+          id: 'q1',
+          question: 'Follow PD-2 (the cited ticket)?',
+          why: 'it decides the shape',
+          options: [
+            { label: 'yes', description: 'do it' },
+            { label: 'no', description: 'skip' },
+          ],
+          recommended: 0,
+        },
+      ],
+      assumptions: [],
+    };
+    writeRefineAgentTurn(db, 1, 'a question', 'sess-1', ++seq, round);
+    const ev = listTicketEvents(db, 1).find((e) => e.type === REFINE_EVENT_TYPE.agent);
+    expect((ev?.detail as { dependsOn?: number[] }).dependsOn).toEqual([2]);
+  });
+
+  it('writeRefineAgentTurn without a round records no dependsOn', () => {
+    addTicket(db, 1, 'PD-1');
+    writeRefineAgentTurn(db, 1, 'free text', 'sess-1', ++seq);
+    const ev = listTicketEvents(db, 1).find((e) => e.type === REFINE_EVENT_TYPE.agent);
+    expect((ev?.detail as { dependsOn?: number[] }).dependsOn).toBeUndefined();
+  });
+
+  it('writeRefineProposal records dependsOn from the proposal (supersedes + rationale)', () => {
+    addTicket(db, 1, 'PD-1');
+    addTicket(db, 2, 'PD-2');
+    addTicket(db, 3, 'PD-3');
+    writeRefineProposal(
+      db,
+      1,
+      { mode: 'decompose', rationale: 'replaces PD-2, builds on PD-3', children: [], supersedes: ['PD-2'] },
+      ++seq,
+    );
+    const ev = listTicketEvents(db, 1).find((e) => e.type === REFINE_PROPOSAL_EVENT.proposal);
+    expect(((ev?.detail as { dependsOn?: number[] }).dependsOn ?? []).sort((a, b) => a - b)).toEqual([2, 3]);
+  });
 });
 
 describe('processPendingRefines (orchestration)', () => {
@@ -251,6 +352,27 @@ describe('processPendingRefines (orchestration)', () => {
     };
     expect(notif.kind).toBe('agent_refine');
     expect(notif.title).toContain('PD-1');
+  });
+
+  it('PD-889: resumes a session on a stale turn with no human action, sending the stale text', async () => {
+    addTicket(db, 1, 'PD-1');
+    addEvent(db, 1, REFINE_EVENT_TYPE.human, { text: 'body' });
+    addEvent(db, 1, REFINE_EVENT_TYPE.agent, { text: 'a round', sessionId: 'sess-OLD' });
+    // A ticket the round cited changed → the server appended this stale turn. No human reply.
+    addEvent(db, 1, REFINE_ROUND_STALE_EVENT, { text: 'PD-9 was closed; re-read it' });
+    const fake = fakeSessions('a revised round', 'sess-OLD');
+
+    const handled = await processPendingRefines(db, CONFIG, {
+      sessions: new WarmSessions(fake.open),
+      buildContext: noContext,
+      now: () => ++seq,
+    });
+
+    expect(handled).toBe(1);
+    expect(fake.sends[0].prompt).toBe('PD-9 was closed; re-read it');
+    expect(fake.sends[0].resumeSessionId).toBe('sess-OLD');
+    // A fresh agent turn is posted on top of the stale turn.
+    expect(listTicketEvents(db, 1).filter((e) => e.type === REFINE_EVENT_TYPE.agent)).toHaveLength(2);
   });
 
   it('opens cold with the persisted session id (survives a worker restart)', async () => {
