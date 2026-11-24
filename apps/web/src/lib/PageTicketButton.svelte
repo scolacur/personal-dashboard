@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { resolvePageTitle } from '$lib/nav-utils';
   import { widgets } from '$lib/widgets';
+  import { navPages } from '$lib/nav-pages.svelte';
   import TicketComposeModal from './TicketComposeModal.svelte';
 
   // "Change something": a suggestion scoped to the page as a whole — its layout, what's on it,
@@ -14,7 +15,7 @@
   // mount its own instance beside the Refine chat without re-deriving them.
   const widgetRoutes = widgets.map((w) => ({ route: w.route, title: w.title }));
   const route = $derived(page.url.pathname);
-  const pageTitle = $derived(resolvePageTitle(route, widgetRoutes));
+  const pageTitle = $derived(resolvePageTitle(route, widgetRoutes, navPages.routes));
 
   let open = $state(false);
 </script>

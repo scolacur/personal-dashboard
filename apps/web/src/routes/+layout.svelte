@@ -13,6 +13,7 @@
   import DeployStatus from './DeployStatus.svelte';
   import DispatchKillswitch from './DispatchKillswitch.svelte';
   import { pageWidgets } from '$lib/page-widgets.svelte';
+  import { navPages } from '$lib/nav-pages.svelte';
   import { widgets } from '$lib/widgets';
   import { clearLegacyLayoutKeys } from '$lib/layout';
   import Toast from '$lib/Toast.svelte';
@@ -32,7 +33,7 @@
 
   // Widget routes as plain {route, title}, so nav-utils stays free of `.svelte` imports (PD-717).
   const widgetRoutes = widgets.map((w) => ({ route: w.route, title: w.title }));
-  const currentPageTitle = $derived(resolvePageTitle(page.url.pathname, widgetRoutes));
+  const currentPageTitle = $derived(resolvePageTitle(page.url.pathname, widgetRoutes, navPages.routes));
 
   // The ticket-detail page mounts its own FloatDock — "Change something" beside its Refine chat —
   // so the app-wide one (which also carries the Pomodoro) stands down there. The Pomodoro was
@@ -52,7 +53,7 @@
   // whole reason the store boot-loads every page at once rather than fetching per navigation
   // (D-073). Home has no special case any more; it is an ordinary page.
   const canArrange = $derived.by(() => {
-    const pageId = arrangeablePageId(page.url.pathname);
+    const pageId = arrangeablePageId(page.url.pathname, navPages.routes);
     if (pageId === undefined) return false;
     return pageWidgets.forPage(pageId).length > 0;
   });
@@ -68,6 +69,7 @@
     // One fetch for every page's membership (D-073), plus a one-time sweep of the per-device
     // layout keys D-053 wrote — nothing reads those any more.
     void pageWidgets.load();
+    void navPages.load(); // user-managed pages (PD-969)
     clearLegacyLayoutKeys();
 
     const t = document.documentElement.getAttribute('data-theme');

@@ -18,6 +18,12 @@ export interface TitledRoute {
   title: string;
 }
 
+/** A user-managed page as the pure helpers see it (PD-969): id, current route, title. Passed in
+ *  by callers from the nav-pages store, so this module stays free of `.svelte.ts` state. */
+export interface RoutedPage extends TitledRoute {
+  id: string;
+}
+
 /**
  * Returns the title of the nav page that best matches `pathname`. Failing that, it returns the
  * title of the widget whose route it is (or a sub-path of), and otherwise "Dashboard".
@@ -26,11 +32,16 @@ export interface TitledRoute {
  * `widgets.ts` pulls in `.svelte` components and the web vitest config has no Svelte plugin. Without
  * them every `/widgets/<id>` page fell through to "Dashboard" (PD-717).
  */
-export function resolvePageTitle(pathname: string, widgetRoutes: TitledRoute[] = []): string {
+export function resolvePageTitle(
+  pathname: string,
+  widgetRoutes: TitledRoute[] = [],
+  customPages: RoutedPage[] = [],
+): string {
   if (pathname === LIBRARY_ROUTE) return LIBRARY_TITLE;
 
-  // Sort longest route first so /devops/tickets/... matches /devops before /.
-  const sorted = [...pages].sort((a, b) => b.route.length - a.route.length);
+  // Sort longest route first so /devops/tickets/... matches /devops before /, and a nested
+  // custom page beats its parent.
+  const sorted = [...pages, ...customPages].sort((a, b) => b.route.length - a.route.length);
   const match = sorted.find((p) =>
     p.route === '/'
       ? pathname === '/'
@@ -54,8 +65,8 @@ export function resolvePageTitle(pathname: string, widgetRoutes: TitledRoute[] =
  * Kept free of any `widgets.ts` import so this module stays pure TS: the web vitest config
  * runs without the Svelte plugin, so a transitive `.svelte` import would break the suite.
  */
-export function arrangeablePageId(pathname: string): string | undefined {
-  return pages.find((pg) => pg.route === pathname)?.id;
+export function arrangeablePageId(pathname: string, customPages: RoutedPage[] = []): string | undefined {
+  return [...pages, ...customPages].find((pg) => pg.route === pathname)?.id;
 }
 
 /**

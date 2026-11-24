@@ -1,20 +1,32 @@
 import { describe, it, expect } from 'vitest';
-import { arrangeablePageId, isDevOpsRoute, resolvePageTitle } from './nav-utils';
+import { arrangeablePageId, isDevOpsRoute, resolvePageTitle, type RoutedPage } from './nav-utils';
+
+// User-managed pages arrive from the nav-pages store since PD-969 (pages become data).
+const custom: RoutedPage[] = [
+  { id: 'productivity', title: 'Productivity', route: '/p/productivity' },
+  { id: 'health-fitness', title: 'Health / Fitness', route: '/p/health-fitness' },
+  { id: 'music-discovery', title: 'Music Discovery', route: '/p/music-discovery' },
+  { id: 'sub', title: 'Sub Page', route: '/p/productivity/sub' },
+];
 
 describe('resolvePageTitle', () => {
   it('returns "Home" for the root path', () => {
     expect(resolvePageTitle('/')).toBe('Home');
   });
 
-  it('returns the exact page title for a top-level route', () => {
-    expect(resolvePageTitle('/productivity')).toBe('Productivity');
-    expect(resolvePageTitle('/health-fitness')).toBe('Health / Fitness');
-    expect(resolvePageTitle('/music-discovery')).toBe('Music Discovery');
+  it('returns the exact page title for a custom page route', () => {
+    expect(resolvePageTitle('/p/productivity', [], custom)).toBe('Productivity');
+    expect(resolvePageTitle('/p/health-fitness', [], custom)).toBe('Health / Fitness');
+    expect(resolvePageTitle('/p/music-discovery', [], custom)).toBe('Music Discovery');
+  });
+
+  it('prefers a nested custom page over its parent', () => {
+    expect(resolvePageTitle('/p/productivity/sub', [], custom)).toBe('Sub Page');
   });
 
   it('matches the nav page when the pathname is a sub-path', () => {
     expect(resolvePageTitle('/devops/tickets/PD-1')).toBe('Dev Ops');
-    expect(resolvePageTitle('/productivity/some-subpage')).toBe('Productivity');
+    expect(resolvePageTitle('/p/productivity/some-subpage', [], custom)).toBe('Productivity');
   });
 
   it('returns "Dashboard" for unknown routes', () => {
@@ -31,12 +43,12 @@ describe('resolvePageTitle', () => {
     expect(resolvePageTitle('/widgets/id-tracker/123', routes)).toBe('ID Tracker');
     expect(resolvePageTitle('/widgets/unknown', routes)).toBe('Dashboard');
     // A nav page still wins over a widget route.
-    expect(resolvePageTitle('/productivity', routes)).toBe('Productivity');
+    expect(resolvePageTitle('/p/productivity', routes, custom)).toBe('Productivity');
   });
 
   it('does not match "/" as a prefix for other routes', () => {
     // The root route should only match exactly "/", not "/productivity".
-    expect(resolvePageTitle('/productivity')).not.toBe('Home');
+    expect(resolvePageTitle('/p/productivity', [], custom)).not.toBe('Home');
   });
 });
 
@@ -47,7 +59,8 @@ describe('arrangeablePageId', () => {
 
   it('resolves a top-level page route to its own grid', () => {
     expect(arrangeablePageId('/devops')).toBe('devops');
-    expect(arrangeablePageId('/productivity')).toBe('productivity');
+    expect(arrangeablePageId('/p/productivity', custom)).toBe('productivity');
+    expect(arrangeablePageId('/p/productivity/sub', custom)).toBe('sub');
   });
 
   it('resolves no grid for a subroute — it is its own view, not the parent page grid', () => {

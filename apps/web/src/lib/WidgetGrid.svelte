@@ -5,6 +5,7 @@
   import { resolvePlacements } from './layout';
   import { widgets as registry, defaultSpan } from './widgets';
   import { pageById } from './pages';
+  import { navPages } from './nav-pages.svelte';
   import Widget from './Widget.svelte';
   import LibraryModal from './LibraryModal.svelte';
 
@@ -38,7 +39,7 @@
   // The library picker. Reachable from the ghost card at every viewport and whether or not
   // Arrange is active — adding a widget is not a spatial operation (D-073).
   let libraryOpen = $state(false);
-  const pageTitle = $derived(pageById(pageId)?.title ?? 'this page');
+  const pageTitle = $derived(pageById(pageId)?.title ?? navPages.byId(pageId)?.title ?? 'this page');
 
   // ── Drag-to-reorder ───────────────────────────────────────────────────────────
   let dragId = $state<string | null>(null);
