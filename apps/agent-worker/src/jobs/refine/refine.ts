@@ -479,7 +479,7 @@ export async function processPendingRefines(
     try {
       let result = await sessions.turn(
         ticketId,
-        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal, targetIsEpic, onRound, db },
+        { config, contextPack, resumeSessionId: work.resumeSessionId, onProposal, targetIsEpic, targetTicketId: ticketId, onRound, db },
         work.prompt,
       );
       // Stale resume: the SDK's session store is per-container and not persisted, so a rebuild
@@ -491,7 +491,7 @@ export async function processPendingRefines(
         stagedRounds.delete(ticketId);
         result = await sessions.turn(
           ticketId,
-          { config, contextPack, resumeSessionId: undefined, onProposal, targetIsEpic, onRound, db },
+          { config, contextPack, resumeSessionId: undefined, onProposal, targetIsEpic, targetTicketId: ticketId, onRound, db },
           fullThreadPrompt(events),
         );
       }
@@ -509,7 +509,7 @@ export async function processPendingRefines(
         try {
           nudged = await sessions.turn(
             ticketId,
-            { config, contextPack, resumeSessionId: result.sessionId, onProposal, targetIsEpic, onRound, db },
+            { config, contextPack, resumeSessionId: result.sessionId, onProposal, targetIsEpic, targetTicketId: ticketId, onRound, db },
             REFINE_NUDGE,
           );
         } catch (err) {

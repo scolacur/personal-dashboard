@@ -253,6 +253,7 @@ export {
   REFINE_STATE_EVENT,
   latestActionableProposal,
   refineRelationsError,
+  refineSupersedesError,
   REFINE_RELATION_TYPES,
   REFINE_STATE_LABELS,
   REFINE_STATE_DESCRIPTIONS,
