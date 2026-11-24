@@ -628,6 +628,22 @@ export const HABIT_MONTH_NAMES = [
   'Dec',
 ] as const;
 
+/** Full month names (January … December), indexed by month-1 — the By Day grid's month row. */
+export const HABIT_MONTH_FULL_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
 /**
  * The `count` habit-week starts ending at (and including) `lastWeekStart`, oldest first — the rows
  * the calendar renders top-to-bottom with the newest week at the bottom. `count ≤ 0` yields `[]`.

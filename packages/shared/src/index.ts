@@ -468,6 +468,7 @@ export {
   habitWeeksEndingAt,
   habitMonthSpans,
   HABIT_MONTH_NAMES,
+  HABIT_MONTH_FULL_NAMES,
 } from './habits';
 export type {
   AwaitingRefineItem,
