@@ -201,6 +201,15 @@
     }
   }
 
+  &.agent-checkpoint {
+    background: color-mix(in srgb, var(--status-checkpoint) 10%, transparent);
+    border-color: color-mix(in srgb, var(--status-checkpoint) 34%, transparent);
+
+    .pb-lead {
+      color: var(--status-checkpoint);
+    }
+  }
+
   .pb-lead {
     font-weight: 600;
     color: var(--status-stuck);
@@ -233,6 +242,11 @@
     color: var(--status-awaiting-human);
     border-color: color-mix(in srgb, var(--status-awaiting-human) 40%, transparent);
   }
+  &.primary {
+    color: var(--status-checkpoint);
+    border-color: color-mix(in srgb, var(--status-checkpoint) 45%, transparent);
+    font-weight: 600;
+  }
   &:hover {
     border-color: var(--muted);
   }
@@ -256,6 +270,19 @@
   &.agent-stuck { color: var(--status-stuck); }
   &.agent-awaiting-human,
   &.agent-needs-human { color: var(--status-awaiting-human); }
+  &.agent-checkpoint { color: var(--status-checkpoint); }
+}
+// PD-965: the pill is a button for an input-needed state — it opens the "needs you" modal.
+button.agent-pill-action {
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, currentColor 25%, transparent);
+  }
 }
 
 .rel-add-row {

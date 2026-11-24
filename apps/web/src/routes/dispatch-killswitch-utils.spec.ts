@@ -413,7 +413,7 @@ describe('needsYouHref', () => {
   it('goes to the ticket itself when exactly one is parked', () => {
     // The complaint this fixes: the count sent you to the board and left you to find which ticket
     // it meant — the exact trip the number was supposed to save.
-    expect(needsYouHref([t(42)], 1)).toBe('/devops/tickets/PD-42');
+    expect(needsYouHref([t(42)], 1)).toBe('/devops/tickets/PD-42?needs-you');
   });
 
   it('falls back to the board when several are parked', () => {
@@ -452,7 +452,7 @@ describe('fleetRows', () => {
         needsHuman: [{ id: 99, displayId: 'PD-99', title: 't', agentState: 'stuck' }],
       }),
     );
-    expect(rows.find((r) => r.key === 'needsYou')?.href).toBe('/devops/tickets/PD-99');
+    expect(rows.find((r) => r.key === 'needsYou')?.href).toBe('/devops/tickets/PD-99?needs-you');
   });
 
   it('links by display id, never the row id — the detail route is keyed by display id', () => {
@@ -462,7 +462,7 @@ describe('fleetRows', () => {
         needsHuman: [{ id: 987, displayId: 'PD-825', title: 't', agentState: 'awaiting-human' }],
       }),
     );
-    expect(rows.find((r) => r.key === 'needsYou')?.href).toBe('/devops/tickets/PD-825');
+    expect(rows.find((r) => r.key === 'needsYou')?.href).toBe('/devops/tickets/PD-825?needs-you');
   });
 
   it('falls back to the board when the one parked ticket has no display id', () => {

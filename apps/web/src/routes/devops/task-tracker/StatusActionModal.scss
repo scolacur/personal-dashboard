@@ -95,6 +95,12 @@
   gap: var(--space-sm);
 }
 
+// PD-965: the actions lead the modal; a rule separates them from the details below.
+.sa-actions-top {
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
 .sa-btn {
   padding: var(--space-xs) var(--space-md);
   border-radius: var(--radius-sm, 6px);
