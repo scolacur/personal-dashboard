@@ -38,7 +38,8 @@ export {
   isSentinelTitle,
   pendingRename,
 } from './id-tracker';
-export type { PageWidget, PageWidgetMap } from './shell';
+export type { PageWidget, PageWidgetMap, NavPage, NavPagePatch } from './shell';
+export { PINNED_PAGE_IDS } from './shell';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
 export {
   JOB_RUN_STATUSES,
@@ -570,3 +571,14 @@ export {
   DRUG_LOG_FALLBACK_DAY_SETTINGS,
   normalizeDrugLabel,
 } from './drug-log';
+export {
+  NAV_PAGE_ROUTE_PREFIX,
+  navChildren,
+  isSelfOrDescendant,
+  moveNavPage,
+  flattenNavTree,
+  navAncestry,
+  navPagePath,
+  resolveNavPath,
+} from './nav-tree';
+export type { MoveError, NavRow } from './nav-tree';

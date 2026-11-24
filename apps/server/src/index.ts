@@ -14,6 +14,8 @@ import { bootstrapMaintenanceJobRequestsSchema } from './lib/maintenance-job-req
 import { registerMaintenanceRoutes } from './lib/maintenance-routes';
 import { bootstrapShellLayoutSchema } from './lib/shell-layout';
 import { registerShellLayoutRoutes } from './lib/shell-layout-routes';
+import { bootstrapShellPagesSchema } from './lib/shell-pages';
+import { registerShellPagesRoutes } from './lib/shell-pages-routes';
 import { bootstrapDecisionIdsSchema } from './lib/decision-ids';
 import { registerDecisionIdRoutes } from './lib/decision-ids-routes';
 import { bootstrapHabitsSchema } from './lib/habits';
@@ -68,6 +70,8 @@ closeStaleHolds(db, HOLD_WINDOW_MS);
 // Shell page membership (PD-334, D-073). Bootstrapped alongside the job-run store: the shell is
 // not a widget, and its one-time seed must land before anything serves a page.
 bootstrapShellLayoutSchema(db);
+// User-managed nav pages (PD-969 — pages become data), beside their widget membership.
+bootstrapShellPagesSchema(db);
 
 // Decision-id allocation (PD-557, part of PD-556). Core infrastructure like the two above: the
 // decision log is not a widget, and the counter must exist before anything can ask for an id.
@@ -93,6 +97,7 @@ for (const widget of widgets) {
 registerJobRunRoutes(app, db);
 registerMaintenanceRoutes(app, db);
 registerShellLayoutRoutes(app, db);
+registerShellPagesRoutes(app, db);
 registerDecisionIdRoutes(app, db);
 registerHabitRoutes(app, db);
 

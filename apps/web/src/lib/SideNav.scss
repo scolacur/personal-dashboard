@@ -211,6 +211,7 @@
   color: var(--muted);
   font-size: var(--font-size-sm);
   text-decoration: none;
+  white-space: nowrap;
 
   &:hover {
     background: var(--surface-2);
@@ -221,4 +222,102 @@
     background: var(--surface-2);
     color: var(--text);
   }
+}
+
+// A <button> in the bottom row (Edit) needs the link's reset.
+button.side-bottom-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ── Edit mode (PD-969) ──────────────────────────────────────────────────────
+   The whole custom tree, expanded and indented, between the pinned Home and
+   Dev Ops rows. Spotify-style drop lines: indented = nest inside, full width =
+   place beside. */
+
+.side-edit-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  user-select: none;
+
+  &.pinned {
+    color: var(--muted);
+  }
+
+  // The page being dragged, and everything that travels with it.
+  &.lifted {
+    opacity: 0.4;
+  }
+}
+
+.side-edit-grip,
+.side-edit-pin {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.side-edit-grip {
+  cursor: grab;
+  // Touch drags start on the grip without scrolling the list; the rest of the row still scrolls.
+  touch-action: none;
+  padding: 2px;
+  border-radius: var(--radius);
+
+  &:hover {
+    color: var(--text);
+    background: var(--surface-2);
+  }
+}
+
+.side-links.dragging .side-edit-grip {
+  cursor: grabbing;
+}
+
+.drop-line {
+  position: absolute;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  pointer-events: none;
+
+  // A dot at the line's start, so an indented line (nest inside) reads as visibly different from
+  // a full-width one (place beside) rather than as the same line nudged a few pixels.
+  &::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--surface, var(--bg));
+    box-sizing: border-box;
+  }
+
+  &.before {
+    top: -1px;
+  }
+
+  &.after {
+    bottom: -1px;
+  }
+}
+
+.side-edit-hint {
+  margin: var(--space-sm) 0 0;
+  padding: 0 var(--space-sm);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
 }
