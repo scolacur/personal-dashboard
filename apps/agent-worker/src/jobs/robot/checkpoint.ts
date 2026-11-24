@@ -133,13 +133,21 @@ export function reportFromTail(outputTail: string | undefined, why: string): str
 }
 
 /**
- * The window plan for a run: how long its first window is, and which window number that is. A retry
- * finishes the window it was cut short in (so checks stay aligned to the episode, not to the run),
- * and no window ever runs past the total cap. Pure.
+ * The window plan for a run: how long its first window is, and which window number that is. An
+ * episode opens with a longer window (`openingTurns`), then checks every `windowTurns` — boundaries
+ * at opening, opening+w, opening+2w, … A retry finishes the window it was cut short in (so checks
+ * stay aligned to the episode, not to the run), and no window ever runs past the total cap. Pure.
  */
-export function firstWindow(turnsUsed: number, windowTurns: number, totalTurns: number): { turns: number; index: number } {
+export function firstWindow(
+  turnsUsed: number,
+  openingTurns: number,
+  windowTurns: number,
+  totalTurns: number,
+): { turns: number; index: number } {
+  const o = Math.max(1, openingTurns);
   const w = Math.max(1, windowTurns);
-  const intoWindow = turnsUsed % w;
-  const turns = Math.min(w - intoWindow, Math.max(0, totalTurns - turnsUsed));
-  return { turns, index: Math.floor(turnsUsed / w) + 1 };
+  const left = Math.max(0, totalTurns - turnsUsed);
+  if (turnsUsed < o) return { turns: Math.min(o - turnsUsed, left), index: 1 };
+  const past = turnsUsed - o;
+  return { turns: Math.min(w - (past % w), left), index: Math.floor(past / w) + 2 };
 }
