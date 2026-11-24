@@ -22,7 +22,14 @@ name: deploy
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  # Manual runs, AND the auto-merge bridge: a merge made with GITHUB_TOKEN fires no `push` workflows
+  # (GitHub suppresses them), so robot-auto-merge dispatches this after every merge it makes (PD-999).
+  workflow_dispatch:
+    inputs:
+      force_worker:
+        description: Publish the agent-worker image even if none of its build inputs changed
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy
@@ -77,7 +84,7 @@ jobs:
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
 
-  # Did this push touch anything that goes into the agent-worker image? (PD-816)
+  # Does main differ from the PUBLISHED worker image in anything that goes into it? (PD-816, PD-999)
   #
   # A dedicated Watchtower on the host recreates the worker whenever :latest moves, and every
   # recreate drains: it holds new Robot dispatch until in-flight runs finish. BUILD_SHA changes the
@@ -87,8 +94,14 @@ jobs:
   # reads. That lets the dashboard tell "behind main" apart from "main moved on without touching
   # the worker".
   #
-  # No third-party paths-filter action: a plain `git diff` over the pushed range. Manual dispatch,
-  # or a range that can't be resolved, publishes. When unsure, deploy; the drain protects runs.
+  # Compared against the commit the published :latest was BUILT FROM (its baked-in
+  # AGENT_WORKER_BUILD_SHA), not against the push's `before`. Two reasons:
+  #   - The auto-merge bridge's merges arrive as workflow_dispatch, which carries no range.
+  #   - The `deploy` concurrency group cancels a PENDING run when a newer one queues, so a burst of
+  #     merges can skip runs. A per-push range would then lose the cancelled run's worker change.
+  #     Diffing from what is actually published can't skip anything.
+  # No third-party action, only the registry API with an anonymous pull token (the package is public).
+  # If anything can't be resolved, publish. When unsure, deploy; the drain protects runs.
   agent-worker-changed:
     runs-on: ubuntu-latest
     outputs:
@@ -98,23 +111,37 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Diff the pushed range against the worker's inputs
+      - name: Diff main against the published worker image's build commit
         id: diff
         env:
-          EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
+          FORCE: ${{ inputs.force_worker || false }}
+          REPO_IMAGE: ${{ github.repository }}-agent-worker
         run: |
           set -euo pipefail
-          if [ "$EVENT" != "push" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            echo "worker=true" >> "$GITHUB_OUTPUT"; echo "publish: $EVENT / range unresolvable"; exit 0
-          fi
+          publish() { echo "worker=true" >> "$GITHUB_OUTPUT"; echo "publish: $1"; exit 0; }
+          [ "$FORCE" = "true" ] && publish "forced by workflow_dispatch input"
+
+          # The :latest worker image's AGENT_WORKER_BUILD_SHA, via the registry API. The image is
+          # an OCI index (amd64 + an attestation manifest), so resolve the linux/amd64 manifest first.
+          IMG="$(echo "$REPO_IMAGE" | tr '[:upper:]' '[:lower:]')"
+          ACCEPT='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+          TOKEN="$(curl -fsS "https://ghcr.io/token?scope=repository:${IMG}:pull" | jq -r .token)" || publish "no registry token"
+          reg() { curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: $ACCEPT" "https://ghcr.io/v2/${IMG}/$1"; }
+          M="$(reg manifests/latest)" || publish "no published :latest"
+          D="$(echo "$M" | jq -r '[.manifests[]? | select(.platform.os=="linux" and .platform.architecture=="amd64")][0].digest // empty')"
+          [ -n "$D" ] && { M="$(reg "manifests/$D")" || publish "amd64 manifest unreadable"; }
+          CFG="$(echo "$M" | jq -r '.config.digest // empty')"
+          [ -n "$CFG" ] || publish "no image config"
+          PUBLISHED="$(reg "blobs/$CFG" | jq -r '.config.Env[]? | select(startswith("AGENT_WORKER_BUILD_SHA=")) | sub("^AGENT_WORKER_BUILD_SHA=";"")' | head -1)" || true
+          [ -n "${PUBLISHED:-}" ] || publish "published image has no BUILD_SHA"
+          git cat-file -e "${PUBLISHED}^{commit}" 2>/dev/null || publish "published BUILD_SHA $PUBLISHED not in history"
+
           mapfile -t INPUTS < <(grep -vE '^[[:space:]]*(#|$)' ops/agent-worker/build-inputs.txt)
-          CHANGED=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- "${INPUTS[@]}")
+          CHANGED=$(git diff --name-only "$PUBLISHED" "$GITHUB_SHA" -- "${INPUTS[@]}")
           if [ -n "$CHANGED" ]; then
-            echo "worker=true" >> "$GITHUB_OUTPUT"; printf 'publish — worker inputs changed:\n%s\n' "$CHANGED"
-          else
-            echo "worker=false" >> "$GITHUB_OUTPUT"; echo "skip — no worker inputs changed"
+            publish "worker inputs changed since published $PUBLISHED:"$'\n'"$CHANGED"
           fi
+          echo "worker=false" >> "$GITHUB_OUTPUT"; echo "skip: no worker inputs changed since published $PUBLISHED"
 
   # The agent-worker (Robot loop / Refine / Audit host) image (PD-802). The dedicated, scoped
   # Watchtower in ops/agent-worker/docker-compose.egress.yml pulls it and recreates the worker behind
