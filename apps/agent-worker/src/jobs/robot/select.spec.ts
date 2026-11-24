@@ -522,6 +522,26 @@ describe('runningCoderAreas (PD-951)', () => {
   it('returns an empty map when there are no running runs', () => {
     expect(runningCoderAreas(db).size).toBe(0);
   });
+
+  it('ignores an orphaned running row whose ticket is completed, closed or archived', () => {
+    addTicket(db, { id: 20, status: 'completed', coderArea: null });
+    addTicket(db, { id: 21, status: 'closed', coderArea: 'loop' });
+    addTicket(db, { id: 22, status: 'queue', agentState: 'working', coderArea: 'board', archived: true });
+    addRunningRun(db, 20);
+    addRunningRun(db, 21);
+    addRunningRun(db, 22);
+    expect(runningCoderAreas(db).size).toBe(0);
+  });
+
+  it('an orphaned general run does not hold back a queued general candidate', () => {
+    addTicket(db, { id: 30, status: 'completed', coderArea: null }); // the orphan's ticket
+    addRunningRun(db, 30);
+    addTicket(db, { id: 31, status: 'queue', coderArea: null });
+    const candidates = robotQueueCandidates(db);
+    const running = runningCoderAreas(db);
+    expect(selectDispatchable(candidates, robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 1 }), 0, running).map((c) => c.id)).toEqual([31]);
+    expect(areaBusySkips(candidates, robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 1 }), 0, running)).toEqual([]);
+  });
 });
 
 describe('robotQueueCandidates — coder area (PD-951)', () => {
