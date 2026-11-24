@@ -46,6 +46,9 @@
   let tags = $state<string[]>([...TINNITUS_DEFAULT_TAGS]);
   let entries = $state<TinnitusEntry[]>([]);
   let pending = $state<PendingEntry[]>([]);
+  // The "N pending sync" line renders from the outbox's delayed-visible signal, not the raw queue, so
+  // an entry that syncs normally never flashes it (PD-778). `pending` stays the raw queue for EntryList.
+  let visiblePending = $state<PendingEntry[]>([]);
 
   // The offline outbox lives in `$lib/outbox` (PD-736); this binds it to a Tinnitus entry. `onChange`
   // mirrors its queue into the reactive `pending` above so the "N pending sync" line stays live.
@@ -54,6 +57,7 @@
     send: createEntry,
     isRejected: (e) => e instanceof RejectedError,
     onChange: (list) => (pending = list),
+    onVisibleChange: (list) => (visiblePending = list),
     onSent: (sent) => {
       if (!compact) mergeEntries(sent);
     },
@@ -196,8 +200,8 @@
 
   <button type="button" class="enter" onclick={submit}>Enter</button>
 
-  {#if pending.length > 0}
-    <p class="pending" role="status">{pending.length} pending sync</p>
+  {#if visiblePending.length > 0}
+    <p class="pending" role="status">{visiblePending.length} pending sync</p>
   {/if}
 
   <!-- No "History" link on the card: the card's own title already links to the page. -->

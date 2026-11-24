@@ -21,6 +21,7 @@
     type CellState,
   } from './by-habit';
   import {
+    applyCompletionWrite,
     buildDayRows,
     buildMetricValueMap,
     formatMetricCell,
@@ -184,13 +185,19 @@
   function onHabitCell(row: DayRow, day: string): void {
     if (row.isMetric) return;
     if (row.isSet) {
-      for (const w of setDayShortcut(items, schedulesByItem, daySets, row.item.id, day)) {
-        onToggle(w.leafId, day, w.done);
-      }
+      const writes = setDayShortcut(items, schedulesByItem, daySets, row.item.id, day);
+      for (const w of writes) writeCompletion(w.leafId, day, w.done);
       return;
     }
     const done = !(daySets.get(row.item.id)?.has(day) ?? false);
-    onToggle(row.item.id, day, done);
+    writeCompletion(row.item.id, day, done);
+  }
+
+  // Optimistic local update first — the pending overlay vanishes once the outbox flushes, so the
+  // loaded completions must carry the new state too (PD-972). The outbox owns the durable write.
+  function writeCompletion(itemId: number, day: string, done: boolean): void {
+    completions = applyCompletionWrite(completions, itemId, day, done);
+    onToggle(itemId, day, done);
   }
 
   function cellLabel(row: DayRow, day: string, state: CellState): string {
