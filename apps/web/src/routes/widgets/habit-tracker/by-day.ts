@@ -3,6 +3,7 @@ import {
   isDue,
   parseChoiceValue,
   type HabitChoiceOption,
+  type HabitCompletion,
   type HabitItemView,
   type HabitMetricType,
   type HabitMetricValue,
@@ -145,4 +146,20 @@ export function setDayShortcut(
   const isDone = (id: number): boolean => daySets.get(id)?.has(day) ?? false;
   const target = !dueLeaves.every(isDone);
   return dueLeaves.filter((id) => isDone(id) !== target).map((id) => ({ leafId: id, done: target }));
+}
+
+/**
+ * Apply a completion write to the grid's loaded completions (PD-972). The pending-write overlay only
+ * lasts until the outbox flushes — usually milliseconds — so without this the cell fell back to the
+ * mount-time snapshot and visibly reverted. Mirrors `ByHabitCalendar.toggleCell`. Idempotent.
+ */
+export function applyCompletionWrite(
+  completions: HabitCompletion[],
+  itemId: number,
+  day: string,
+  done: boolean,
+  now: number = Date.now(),
+): HabitCompletion[] {
+  const rest = completions.filter((c) => !(c.itemId === itemId && c.day === day));
+  return done ? [...rest, { itemId, day, completedAt: now }] : rest;
 }
