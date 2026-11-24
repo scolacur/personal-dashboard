@@ -3,12 +3,13 @@ import {
   ROBOT_MAX_TURNS_DEFAULT,
   ROBOT_MAX_TURNS_LIMIT,
   REFINE_TURN_ESTIMATE_FLOOR,
+  CODER_AREA_IDS,
   coerceTicketStatus,
   refineRelationsError,
   refineSupersedesError,
 } from '@dashboard/shared';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import type { RefineProposal, RefineQuestionRound } from '@dashboard/shared';
+import type { CoderArea, RefineProposal, RefineQuestionRound } from '@dashboard/shared';
 import type Database from 'better-sqlite3';
 import { buildAskQuestionsTool } from './ask-tool';
 import { buildBoardTools, read } from './board-tools';
@@ -47,6 +48,11 @@ const MAX_TURNS = z.number().int().min(1).max(ROBOT_MAX_TURNS_LIMIT).nullable();
 // PD-896: what kind of work the ticket is. Feeds the Velocity bug-rate metrics (PD-881).
 const KIND = z.enum(['bug', 'feature', 'chore']).nullable();
 
+// PD-880: the Coder code-area subtype, validated against the shared registry. An invalid area is a
+// self-correcting tool error here (at propose time), before the proposal is ever recorded. Driven
+// off `CODER_AREA_IDS` so the enum can never drift from the registry the server validates against.
+const CODER_AREA = z.enum(CODER_AREA_IDS as unknown as [CoderArea, ...CoderArea[]]).nullable();
+
 // D-080: no `priority` field, on a child or on the parent. Priority is an Epic property that
 // cascades to members, so a Ticket-level priority has nowhere to land — the write path overrides it
 // from the Epic. Offering the field would have the agent spend turns on a value that is discarded
@@ -58,6 +64,8 @@ const CHILD = z.object({
   assignee: ASSIGNEE.optional(),
   maxTurns: MAX_TURNS.optional(),
   kind: KIND.optional(),
+  // PD-880: a child's area override. Omit to inherit the Epic's area; set only when the child differs.
+  coderArea: CODER_AREA.optional(),
   // PD-634: born refined unless the agent says otherwise. The server still downgrades a robot child
   // whose body is not Ready-shaped, so this can only ever claim less than the mechanical check.
   refined: z.boolean().optional(),
@@ -79,6 +87,9 @@ const PROPOSE_COMMIT_SHAPE = {
   assignee: ASSIGNEE.optional(),
   maxTurns: MAX_TURNS.optional(),
   kind: KIND.optional(),
+  // PD-880: on refine_in_place THIS ticket's area; on a Populate (decompose of an Epic) the Epic's
+  // default area its members inherit.
+  coderArea: CODER_AREA.optional(),
   children: z.array(CHILD).optional(),
   relations: z.array(RELATION).optional(),
   // PD-931: existing members this decompose/Populate replaces, by display id. Validated here and
@@ -131,6 +142,13 @@ const DESCRIPTION = [
   'user-visible change) — on THIS ticket (refine_in_place) and on each child. A child without `kind`',
   "inherits the parent's. The bug-rate metrics count `kind: \"bug\"`, so classify by what the work IS,",
   'not by how the ticket was titled; null only when it genuinely fits none.',
+  'ALWAYS SET `coderArea` (PD-880) — the Coder code-area subtype — choosing from the paths the body',
+  'names: "board" (Task Monitor, detail pages), "planning" (Refine, Decisions inbox, auto-queue),',
+  '"loop" (worker, dispatch, Evaluator, merge pipeline), "metrics" (Velocity, Agent Dashboard),',
+  '"widgets" (widgets), "infra" (Docker, CI, deploy), "shell" (nav, layout, pages), or "general"',
+  'when it spans several. On refine_in_place set it on THIS ticket; on a Populate set the Epic\'s',
+  'default on the parent and set a child\'s `coderArea` ONLY when that child\'s area differs from the',
+  "Epic's (an unset child inherits the Epic). Do not ask Steve — infer it from the files the work touches.",
 ].join(' ');
 
 /** The queue lane the agent must not route into (D-057/D-058): entering the queue is Steve's
@@ -276,6 +294,7 @@ export function buildProposeToolServer(
         ...(args.assignee !== undefined ? { assignee: args.assignee } : {}),
         ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
         ...(args.kind !== undefined ? { kind: args.kind } : {}),
+        ...(args.coderArea !== undefined ? { coderArea: args.coderArea } : {}),
         ...(args.children !== undefined
           ? {
               children: args.children.map((c) => ({

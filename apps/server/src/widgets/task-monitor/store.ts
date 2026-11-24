@@ -26,6 +26,7 @@ import type {
   TicketLineage,
   TicketPriority,
   TicketKind,
+  CoderArea,
   TicketStatus,
   UpdateTicketInput,
   WorkerHeartbeat,
@@ -41,6 +42,8 @@ import {
   isReady,
   isTicketKind,
   TICKET_KINDS,
+  isCoderArea,
+  CODER_AREA_IDS,
   queueEntryRefusals,
   latestActionableProposal,
   refineRelationsError,
@@ -86,6 +89,7 @@ interface TicketRow {
   ready_bypassed: number;
   max_turns: number | null;
   kind: string | null;
+  coder_area: string | null;
   is_epic: number;
   epic_id: number | null;
   auto_queue_excluded: number;
@@ -158,6 +162,7 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     readyBypassed: row.ready_bypassed === 1,
     maxTurns: row.max_turns,
     kind: isTicketKind(row.kind) ? row.kind : null,
+    coderArea: isCoderArea(row.coder_area) ? row.coder_area : null,
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
     autoQueueExcluded: row.auto_queue_excluded === 1,
@@ -388,7 +393,7 @@ function nextDisplayId(db: Database.Database, projectId: number): string {
  *  that isn't a coercible legacy alias. Surfaced by the routes as a 400. */
 export class ValidationError extends Error {
   constructor(
-    public readonly code: 'INVALID_STATUS' | 'INVALID_MAX_TURNS' | 'INVALID_KIND',
+    public readonly code: 'INVALID_STATUS' | 'INVALID_MAX_TURNS' | 'INVALID_KIND' | 'INVALID_CODER_AREA',
     message: string,
   ) {
     super(message);
@@ -419,6 +424,19 @@ function validKind(value: unknown): TicketKind | null {
   if (value === null) return null;
   if (!isTicketKind(value)) {
     throw new ValidationError('INVALID_KIND', `kind must be one of ${TICKET_KINDS.join(', ')}, or null`);
+  }
+  return value;
+}
+
+/** PD-880: a Coder area is one of CODER_AREAS, or null (unset). Validated at the write boundary so
+ *  an invalid area (from PATCH or an approved proposal) is rejected rather than stored. */
+function validCoderArea(value: unknown): CoderArea | null {
+  if (value === null || value === undefined) return null;
+  if (!isCoderArea(value)) {
+    throw new ValidationError(
+      'INVALID_CODER_AREA',
+      `coderArea must be one of ${CODER_AREA_IDS.join(', ')}, or null`,
+    );
   }
   return value;
 }
@@ -493,12 +511,14 @@ export function createTicket(
     // PD-432: per-ticket run ceiling, validated at the write boundary (see `validMaxTurns`).
     const maxTurns = validMaxTurns(input.maxTurns ?? null);
     const kind = validKind(input.kind ?? null);
+    // PD-880: Coder code-area, validated at the write boundary. NULL = unset (reads as `general`).
+    const coderArea = validCoderArea(input.coderArea ?? null);
     const result = db
       .prepare(
-        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, max_turns, kind, is_epic, epic_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agent_tickets (display_id, title, body, status, priority, project_id, assignee, recur_interval, source, sort_order, ready, max_turns, kind, coder_area, is_epic, epic_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, maxTurns, kind, isEpic ? 1 : 0, epicId, now, now);
+      .run(displayId, input.title, input.body ?? null, status, priority, input.projectId, assignee, input.recurInterval ?? null, source, now, readyFlag, maxTurns, kind, coderArea, isEpic ? 1 : 0, epicId, now, now);
     const id = Number(result.lastInsertRowid);
     logEvent(db, id, 'created');
     // PD-610: a new member changes the Epic's set, so the Epic's claim that its members are the
@@ -560,6 +580,8 @@ export function updateTicket(
     maxTurns: patch.maxTurns === undefined ? existing.maxTurns : validMaxTurns(patch.maxTurns),
     // PD-896: `null` is meaningful (unclassify).
     kind: patch.kind === undefined ? existing.kind : validKind(patch.kind),
+    // PD-880: `null` is meaningful (clear the area → inherit the Epic / `general`).
+    coderArea: patch.coderArea === undefined ? existing.coderArea : validCoderArea(patch.coderArea),
     // `null` is meaningful (leave/clear the Epic); distinguish it from "not provided".
     epicId: patch.epicId === undefined ? existing.epicId : patch.epicId,
     // D-103: auto-queue exclusion, meaningful on Epics. Defaults to the existing value.
@@ -707,7 +729,7 @@ export function updateTicket(
     }
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, coder_area = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -724,6 +746,7 @@ export function updateTicket(
       next.readyBypassed ? 1 : 0,
       next.maxTurns,
       next.kind,
+      next.coderArea,
       next.isEpic ? 1 : 0,
       next.epicId,
       next.autoQueueExcluded ? 1 : 0,
@@ -2111,6 +2134,10 @@ export function approveRefine(
         maxTurns: p.maxTurns === undefined ? parent.maxTurns : p.maxTurns,
         // PD-896: Refine may classify the ticket; omitted leaves it as it is.
         kind: p.kind === undefined ? parent.kind : p.kind,
+        // PD-880: Refine sets the Coder area. `isCoderArea` guard keeps approveRefine's no-throw
+        // contract against an invalid value in a stored proposal (leave it unchanged rather than let
+        // `validCoderArea` throw out of the transaction); the propose tool's enum is the real check.
+        coderArea: isCoderArea(p.coderArea) ? p.coderArea : parent.coderArea,
         refined: true,
       });
       // PD-610: "Approve & resume" — the Epic counterpart of "Approve & queue", and human dispatch
@@ -2187,6 +2214,10 @@ export function approveRefine(
         // PD-896: a child the proposal doesn't classify inherits its parent's kind (a split bug's
         // slices are still bug work).
         kind: c.kind === undefined ? parent.kind : c.kind,
+        // PD-880: a child's area is stored ONLY when the proposal overrides it — an unset child
+        // inherits the Epic's area at read time (`effectiveCoderArea`), so there is nothing to copy
+        // down. Invalid values are dropped (no-throw contract) exactly as in refine_in_place.
+        coderArea: isCoderArea(c.coderArea) ? c.coderArea : undefined,
         projectId,
         // Populate: members belong to the Epic itself. Split: children inherit the parent's Epic
         // (if any), staying under the same umbrella (D-054 split-inheritance).
@@ -2215,7 +2246,14 @@ export function approveRefine(
     // claim, on evidence Steve read in one panel. **This must run LAST.** Every `createTicket` above
     // fires `invalidateEpicRefinement`, so marking first would be undone by the next child. Plain
     // update, not `markTicketRefined`: approval never re-arms a paused Epic (D-057, D-089 §7).
-    if (populate) updateTicket(db, ticketId, { body: epicBody, refined: true });
+    // PD-880: a Populate sets the Epic's default area (its members inherit it). Guarded for the
+    // no-throw contract, as above.
+    if (populate)
+      updateTicket(db, ticketId, {
+        body: epicBody,
+        refined: true,
+        coderArea: isCoderArea(p.coderArea) ? p.coderArea : parent.coderArea,
+      });
     logProposalEvent(db, ticketId, REFINE_PROPOSAL_EVENT.committed, {
       mode: p.mode,
       childIds,
