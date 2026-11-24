@@ -382,12 +382,12 @@
   // Start a Refine session (D-044, PD-268) from the detail page. The TicketThread below
   // polls, so the kickoff turn appears shortly after; reload to flip refineState now.
   let starting = $state(false);
-  async function startRefine() {
+  async function startRefine(opts: { addedMemberId?: number } = {}) {
     if (!ticket || starting || !ticketId) return;
     starting = true;
     error = null;
     try {
-      await api.startRefine(ticket.id);
+      await api.startRefine(ticket.id, opts);
       await load(ticketId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -518,8 +518,9 @@
     joinRequest = null;
     if (!req || !ticket) return;
     if (!(await setMemberEpic(req.member.id, ticket.id, joinWriteOpts(req.plan, choice)))) return;
-    // Already on the Epic's page, so re-refining is just starting the session here.
-    if (choice.reRefine) await startRefine();
+    // Already on the Epic's page, so re-refining is just starting the session here — as a delta
+    // check on the member that joined, not a from-scratch re-refine (PD-996).
+    if (choice.reRefine) await startRefine({ addedMemberId: req.member.id });
     else toast.show(unrefinedToast(req.plan.epic), 'info');
   }
 
@@ -1238,7 +1239,7 @@
     epic={parentEpic ?? null}
     epicMembers={parentEpic ? allTickets.filter((m) => m.epicId === parentEpic.id) : []}
     onChanged={() => ticketId && load(ticketId)}
-    onStart={startRefine}
+    onStart={() => startRefine()}
     {starting}
   />
   <div class="refine-footer">

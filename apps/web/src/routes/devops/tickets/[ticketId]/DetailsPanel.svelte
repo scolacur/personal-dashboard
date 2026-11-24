@@ -135,7 +135,8 @@
       return;
     }
     try {
-      await api.startRefine(plan.epic.id);
+      // PD-996: a delta check on this ticket joining, not a from-scratch re-refine of the Epic.
+      await api.startRefine(plan.epic.id, { addedMemberId: ticket.id });
     } catch (e) {
       // Most likely a session is already open on the Epic: the move stands, and going there is
       // still the right next step.

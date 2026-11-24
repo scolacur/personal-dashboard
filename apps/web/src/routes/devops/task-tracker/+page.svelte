@@ -317,14 +317,15 @@
     if (req) await req.run(choice);
   }
 
-  /** After an add has un-refined `epicId`: re-refine it and go there, or say how to. */
-  async function afterJoin(plan: EpicJoinPlan, choice: EpicJoinChoice) {
+  /** After `memberId` joined and un-refined `plan.epic`: re-refine it and go there, or say how to. */
+  async function afterJoin(plan: EpicJoinPlan, choice: EpicJoinChoice, memberId: number) {
     if (!choice.reRefine) {
       showToast(unrefinedToast(plan.epic));
       return;
     }
     try {
-      await api.startRefine(plan.epic.id);
+      // PD-996: a delta check on the new member, not a from-scratch re-refine of the Epic.
+      await api.startRefine(plan.epic.id, { addedMemberId: memberId });
     } catch (e) {
       // Most likely a session is already open on the Epic: the add stands, and going to the Epic is
       // still the right next step.
@@ -360,7 +361,7 @@
       plan,
       joining: ticket?.displayId ?? ticket?.title ?? 'this ticket',
       run: async (choice) => {
-        if (await commitTicketEpic(ticketId, epicId, joinWriteOpts(plan, choice))) await afterJoin(plan, choice);
+        if (await commitTicketEpic(ticketId, epicId, joinWriteOpts(plan, choice))) await afterJoin(plan, choice, ticketId);
       },
     };
   }
@@ -546,10 +547,12 @@
       // Blank = clear the override (inherit the loop default). NaN can't reach here: the input is
       // type=number and the Save button gates on the modal's `maxTurnsInvalid`.
       const maxTurns = form.maxTurns.trim() === '' ? null : Number(form.maxTurns);
+      // The ticket that joined an Epic, if this write is a join — the re-refine names it (PD-996).
+      let writtenId = editingId;
       if (editingId === null) {
         // No `readyBypassed` follow-up after a create any more: a create into the Robot's Queue never
         // gets past the gate (a new ticket is unrefined), so there is no bypass to record (PD-633).
-        await api.createTicket({
+        const created = await api.createTicket({
           title,
           projectId: form.projectId,
           body: form.body.trim() || null,
@@ -561,6 +564,7 @@
           maxTurns,
           kind: form.isEpic ? null : form.kind,
         }, joinOpts);
+        writtenId = created.id;
       } else {
         const nextBody = form.body.trim() || null;
         // D-097: editing a refined ticket's body must say whether it stays refined. Prompt (default
@@ -589,7 +593,7 @@
       formOpen = false;
       await load(true);
       if (minted) showToast(`Created Epic ${minted.displayId} — ${title} is its first member.`);
-      if (join) await afterJoin(join.plan, join.choice);
+      if (join && writtenId !== null) await afterJoin(join.plan, join.choice, writtenId);
     } catch (e) {
       if (editingId !== null && minted === null) {
         const id = editingId;
