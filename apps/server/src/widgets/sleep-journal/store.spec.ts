@@ -23,7 +23,9 @@ const HOUR = 3_600_000;
 beforeEach(() => {
   db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
-  bootstrapSchema(db);
+  // Booted an hour before the spec's fixed clock, like a real install, so the default tags are
+  // always older than anything a test creates at NOW (this was a wall-clock time bomb at NOW).
+  bootstrapSchema(db, NOW - HOUR);
 });
 
 /** 23:00 → 07:00 waking on `wakeDate`. */

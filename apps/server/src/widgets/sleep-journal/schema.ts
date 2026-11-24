@@ -8,7 +8,7 @@ import { SLEEP_DEFAULT_TAGS, SLEEP_RESTED_MAX, SLEEP_RESTED_MIN, SLEEP_TAG_COUNT
  * client id that has ever written to it (the creator and later upserts) is remembered in
  * `sleep_journal_entry_clients`, so an outbox replay of any of them is a no-op.
  */
-export function bootstrapSchema(db: Database.Database): void {
+export function bootstrapSchema(db: Database.Database, now: number = Date.now()): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS sleep_journal_tags (
       id         INTEGER PRIMARY KEY,
@@ -44,7 +44,8 @@ export function bootstrapSchema(db: Database.Database): void {
   `);
 
   // Seed the default tags. OR IGNORE means a default the user has hidden stays hidden across boots.
+  // `now` is injectable so a spec with a fixed clock can boot the schema before its own writes;
+  // otherwise tag order (by created_at) would depend on the wall clock at test time.
   const seed = db.prepare(`INSERT OR IGNORE INTO sleep_journal_tags (name, created_at) VALUES (?, ?)`);
-  const now = Date.now();
   SLEEP_DEFAULT_TAGS.forEach((name, i) => seed.run(name, now + i));
 }

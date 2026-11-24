@@ -2,6 +2,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  // History is wide on desktop for the By Day grid; this calendar's square cells would balloon, so it
+  // keeps the original measure.
+  max-width: 640px;
 }
 
 .controls {

@@ -444,10 +444,11 @@
     await refreshToday();
   }
 
+  // Ids are stable (persisted tab, deep links); only the labels were renamed.
   const TABS = [
-    { id: 'today', label: 'Today' },
-    { id: 'log', label: 'Log' },
-    { id: 'habits', label: 'Habits' },
+    { id: 'today', label: 'Daily Log' },
+    { id: 'log', label: 'History' },
+    { id: 'habits', label: 'Config' },
   ];
   let tab = $state('today');
 
@@ -527,43 +528,48 @@
     <Tabs tabs={TABS} bind:active={tab} storeKey="habit-tracker" label="Habit Tracker sections">
       {#snippet panel(id)}
         {#if id === 'habits'}
-          <HabitsManager
-            {items}
-            {schedules}
-            {today}
-            {settings}
-            onAdd={addHabit}
-            onAddMetric={addMetric}
-            onRename={rename}
-            onArchive={archive}
-            onDelete={remove}
-            onMove={move}
-            onSchedule={updateSchedule}
-            onSettings={updateSettings}
-            onMetricType={changeMetricType}
-            onListOptions={listOptions}
-            onAddOption={addOption}
-            onEditOption={editOption}
-            onArchiveOption={archiveOption}
-            onDeleteOption={removeOption}
-          />
+          <div class="panel-narrow">
+            <HabitsManager
+              {items}
+              {schedules}
+              {today}
+              {settings}
+              onAdd={addHabit}
+              onAddMetric={addMetric}
+              onRename={rename}
+              onArchive={archive}
+              onDelete={remove}
+              onMove={move}
+              onSchedule={updateSchedule}
+              onSettings={updateSettings}
+              onMetricType={changeMetricType}
+              onListOptions={listOptions}
+              onAddOption={addOption}
+              onEditOption={editOption}
+              onArchiveOption={archiveOption}
+              onDeleteOption={removeOption}
+            />
+          </div>
         {:else if id === 'log'}
-          <LogView
-            {items}
-            {schedules}
-            {settings}
-            {today}
-            {pending}
-            {metricRows}
-            initialView={deepView === 'habit' ? 'habit' : 'day'}
-            initialItemId={deepItem}
-            initialDay={deepDay}
-            onToggle={toggleCompletionOnDay}
-            onMetricWrite={setMetricValueOnDay}
-            onOpenItem={openInCalendar}
-          />
+          <!-- History runs wider than the other tabs on desktop: the By Day grid wants the room. -->
+          <div class="panel-wide">
+            <LogView
+              {items}
+              {schedules}
+              {settings}
+              {today}
+              {pending}
+              {metricRows}
+              initialView={deepView === 'habit' ? 'habit' : 'day'}
+              initialItemId={deepItem}
+              initialDay={deepDay}
+              onToggle={toggleCompletionOnDay}
+              onMetricWrite={setMetricValueOnDay}
+              onOpenItem={openInCalendar}
+            />
+          </div>
         {:else}
-          {@render todayPanel()}
+          <div class="panel-narrow">{@render todayPanel()}</div>
         {/if}
       {/snippet}
     </Tabs>

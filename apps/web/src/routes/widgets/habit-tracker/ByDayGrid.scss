@@ -4,6 +4,12 @@
   gap: var(--space-sm);
   --namecol: 8rem;
   --daycol: 4.5rem;
+  --month-h: 1.5rem;
+  // A day column is capped, not `1fr`: in this max-content grid every `1fr` track grew to the widest
+  // metric value (a multi-select Mood), so a whole month of columns ballooned. Capped, a long value
+  // wraps and its row grows instead, and the wide History pane shows ~a month of days.
+  --day-track: minmax(2.25rem, 3.5rem);
+  --month-label-w: 10rem;
 }
 
 .toolbar {
@@ -48,6 +54,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
+  // The month labels centre themselves on the scroller's visible width (`cqw`, below).
+  container-type: inline-size;
 
   &.flipped {
     max-height: 60vh;
@@ -124,6 +132,81 @@
       font-style: italic;
     }
   }
+}
+
+/*
+ * Month header row (days as columns): one cell per month span. Its label is sticky, offset so it sits
+ * centred in the visible day area (the scroller's width less the sticky name column). Sticky stays
+ * inside its containing block — the month's cell — so at a month seam the label is carried out of
+ * view with its month and the adjacent month's label takes the centre.
+ */
+.month-head {
+  height: var(--month-h);
+  display: flex;
+  align-items: center;
+  overflow: clip; // not `hidden`: that would make the cell a scroll container and break sticky
+  background: var(--bg);
+
+  &.seam {
+    border-left: 1px solid var(--border);
+  }
+}
+
+.month-label {
+  position: sticky;
+  left: calc(var(--namecol) + (100cqw - var(--namecol) - var(--month-label-w)) / 2);
+  flex: 0 0 auto;
+  width: var(--month-label-w);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Day numbers sit under the month row. */
+.col-head.day {
+  top: var(--month-h);
+}
+
+/* Weekday letters under the table (days as columns). */
+.weekday,
+.weekday-corner {
+  background: var(--bg);
+}
+
+.weekday-corner {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.weekday {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs) 2px;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  &.today {
+    color: var(--accent);
+    font-weight: 600;
+  }
+}
+
+/* Weekday letter beside the date in a day-as-row header (flipped). */
+.dow {
+  display: inline-block;
+  min-width: 1.4em;
+  margin-left: var(--space-xs);
+  text-align: left;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  font-weight: 400;
 }
 
 /* An item-name header: a link into By Habit, or plain text until that view ships. */
