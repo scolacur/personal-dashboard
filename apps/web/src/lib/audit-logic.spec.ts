@@ -36,6 +36,7 @@ function finding(
     evidence: null,
     proposedChange: null,
     confidence: null,
+    fingerprint: null,
     decision: 'undecided',
     createdAt: 0,
     updatedAt: 0,

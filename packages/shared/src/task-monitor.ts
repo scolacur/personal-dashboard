@@ -2055,6 +2055,10 @@ export interface AuditFinding {
   evidence: string | null;
   proposedChange: string | null;
   confidence: string | null;
+  /** PD-285: stable hash of `type` + normalized `evidence` + `proposed_change`. Drives cross-run
+   *  reconciliation — an unchanged fingerprint carries the prior run's `decision` forward; a changed
+   *  one resets to `undecided`. Nullable: rows written before the column existed have no prior match. */
+  fingerprint: string | null;
   decision: FindingDecision;
   createdAt: number;
   updatedAt: number;

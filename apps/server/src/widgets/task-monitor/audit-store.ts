@@ -28,6 +28,7 @@ interface AuditFindingRow {
   evidence: string | null;
   proposed_change: string | null;
   confidence: string | null;
+  fingerprint: string | null;
   decision: string;
   created_at: number;
   updated_at: number;
@@ -58,6 +59,7 @@ function rowToFinding(r: AuditFindingRow): AuditFinding {
     evidence: r.evidence,
     proposedChange: r.proposed_change,
     confidence: r.confidence,
+    fingerprint: r.fingerprint,
     decision: r.decision as AuditFinding['decision'],
     createdAt: r.created_at,
     updatedAt: r.updated_at,
