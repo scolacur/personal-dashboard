@@ -25,6 +25,7 @@ function agent(over: Partial<ActiveAgent>): ActiveAgent {
     maxTurns: null,
     tokens: null,
     model: null,
+    coderArea: null,
     detail: null,
     ...over,
   };

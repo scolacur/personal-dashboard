@@ -63,8 +63,29 @@ describe('getActiveAgents', () => {
       maxTurns: 50,
       tokens: 34000,
       model: 'claude-opus-5-5',
+      // PD-955: the ticket carries no area and has no Epic, so it resolves to the `general` fallback.
+      coderArea: 'general',
       detail: null,
     });
+  });
+
+  it("resolves a Robot run's coderArea from the ticket, then its Epic, then the general fallback", () => {
+    const db = freshDb();
+    addWorkerTables(db);
+    const { project } = seed(db);
+    // An Epic with a default area, a member that overrides it, and a member that inherits it.
+    const epic = createTicket(db, { title: 'Widgets Epic', projectId: project.id, isEpic: true, coderArea: 'widgets' });
+    const override = createTicket(db, { title: 'Own area', projectId: project.id, epicId: epic.id, coderArea: 'board' });
+    const inherits = createTicket(db, { title: 'Inherits area', projectId: project.id, epicId: epic.id });
+    const run = db.prepare(
+      `INSERT INTO agent_runs (ticket_id, branch, status, started_at) VALUES (?, 'b', 'running', ?)`,
+    );
+    run.run(override.id, NOW - 30_000);
+    run.run(inherits.id, NOW - 20_000);
+
+    const byTitle = Object.fromEntries(getActiveAgents(db, NOW).map((a) => [a.ticket?.title, a.coderArea]));
+    expect(byTitle['Own area']).toBe('board'); // its own override wins
+    expect(byTitle['Inherits area']).toBe('widgets'); // falls back to the Epic's default
   });
 
   it('returns an in-flight Evaluator with its round and PR, and a running Audit with its scope', () => {

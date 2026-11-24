@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_PROFILES,
   AGENT_TYPES,
+  CODER_AREAS,
   ROBOT_MAX_TURNS_DEFAULT,
   REFINE_TURN_ESTIMATE_FLOOR,
   SAMPLE_CONTEXT_PACK,
@@ -136,6 +137,21 @@ describe('agent profiles', () => {
     expect(AGENT_PROFILES.robot.decisions).toContain('D-055');
     expect(AGENT_PROFILES.refine.decisions).toContain('D-044');
     expect(AGENT_PROFILES.audit.decisions).toContain('D-045');
+  });
+});
+
+describe('the Coder code areas (PD-955)', () => {
+  it('lists every registered area under the Coder (robot) tab, label + description', () => {
+    const view = agentGlossaryView('robot');
+    expect(view.areas).toEqual(CODER_AREAS);
+    expect(view.areas?.length).toBe(CODER_AREAS.length);
+  });
+
+  it('lists areas ONLY under the Coder — no other agent carries them', () => {
+    for (const id of AGENT_TYPES) {
+      if (id === 'robot') continue;
+      expect(agentGlossaryView(id).areas).toBeUndefined();
+    }
   });
 });
 

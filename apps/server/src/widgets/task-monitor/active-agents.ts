@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
-import type { ActiveAgent } from '@dashboard/shared';
+import type { ActiveAgent, CoderArea } from '@dashboard/shared';
+import { effectiveCoderArea, isCoderArea } from '@dashboard/shared';
 
 /**
  * PD-819: the agent runs in flight right now, one row per robot tile on the Agent Dashboard.
@@ -67,15 +68,30 @@ export function getActiveAgents(db: Database.Database, now: number = Date.now())
 
   const model = robotModel(db);
   for (const r of safeAll<
-    TicketJoin & { id: number; started_at: number; turns: number | null; max_turns: number | null; tokens: number | null }
+    TicketJoin & {
+      id: number;
+      started_at: number;
+      turns: number | null;
+      max_turns: number | null;
+      tokens: number | null;
+      ticket_coder_area: string | null;
+      epic_coder_area: string | null;
+    }
   >(
     db,
-    `SELECT r.id, r.started_at, r.turns, r.max_turns, r.tokens, ${TICKET_COLS}
+    // PD-955: the area the Robot runs this ticket under is `effectiveCoderArea` (PD-880) — the
+    // ticket's own override, then its Epic's default, then `general` — so the tile needs both the
+    // ticket's and its Epic's `coder_area`.
+    `SELECT r.id, r.started_at, r.turns, r.max_turns, r.tokens, ${TICKET_COLS},
+            t.coder_area AS ticket_coder_area, e.coder_area AS epic_coder_area
        FROM agent_runs r ${TICKET_JOIN}
+       LEFT JOIN agent_tickets e ON e.id = t.epic_id
       WHERE r.status = 'running' AND r.started_at >= ?
       ORDER BY r.started_at`,
     since,
   )) {
+    const ticketArea: CoderArea | null = isCoderArea(r.ticket_coder_area) ? r.ticket_coder_area : null;
+    const epicArea: CoderArea | null = isCoderArea(r.epic_coder_area) ? r.epic_coder_area : null;
     agents.push({
       kind: 'robot',
       runId: r.id,
@@ -85,6 +101,9 @@ export function getActiveAgents(db: Database.Database, now: number = Date.now())
       maxTurns: r.max_turns,
       tokens: r.tokens,
       model,
+      // Null when the run has no ticket (shouldn't happen for a Robot, but the join is a LEFT
+      // join); otherwise the resolved area, never null.
+      coderArea: r.ticket_id === null ? null : effectiveCoderArea({ coderArea: ticketArea }, { coderArea: epicArea }),
       detail: null,
     });
   }
@@ -116,6 +135,7 @@ export function getActiveAgents(db: Database.Database, now: number = Date.now())
       maxTurns: null,
       tokens: r.tokens,
       model: r.model,
+      coderArea: null,
       detail: `round ${r.round} · PR #${r.pr_number}`,
     });
   }
@@ -146,6 +166,7 @@ export function getActiveAgents(db: Database.Database, now: number = Date.now())
       maxTurns: null,
       tokens: r.tokens,
       model: r.model,
+      coderArea: null,
       detail: r.scope ? `scope ${r.scope}` : 'all projects',
     });
   }

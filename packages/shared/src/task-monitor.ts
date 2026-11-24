@@ -2298,6 +2298,10 @@ export interface ActiveAgent {
   maxTurns: number | null;
   tokens: number | null;
   model: string | null;
+  /** The code-area (PD-880) the agent is working under, for the "Smith-<area> #<runId>" label
+   *  (PD-955). Set for a Robot run (the ticket's `effectiveCoderArea`, resolved against its Epic);
+   *  null for an Evaluator or Auditor, which do not carry an area. */
+  coderArea: CoderArea | null;
   /** A short kind-specific line: evaluator "round 2 · PR #481", audit its scope. */
   detail: string | null;
 }

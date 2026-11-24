@@ -68,3 +68,23 @@
   color: var(--muted);
   font-size: var(--font-size-xs);
 }
+
+// PD-955: the member's code-area chip. Quiet, neutral metadata.
+.area-chip {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-xs);
+  white-space: nowrap;
+  line-height: 1.4;
+
+  &.inherited {
+    font-style: italic;
+  }
+}
+
+.area-from {
+  opacity: 0.8;
+}
