@@ -61,6 +61,7 @@
   import MemberCard from '../../MemberCard.svelte';
   import SegmentedToggle from '$lib/SegmentedToggle.svelte';
   import { RELATION_ACTIONS, relationLabel, type RelationAction } from '../../relation-logic';
+  import { closureLabel } from '../../closure-label';
   import { ticketMatchesQuery } from '../../filter-logic';
 
   // The route param is the human-facing display id, e.g. 'PD-173'.
@@ -530,6 +531,10 @@
   // PD-611. Only ever true on an Epic — `refine_stale` has no meaning on a Ticket, whose `refined`
   // flag has no membership half (D-089).
   const staleEpic = $derived(ticket !== null && ticket.isEpic && ticket.refineStale);
+  // PD-940 (web half of PD-888): why the system closed this ticket — split / superseded / duplicate
+  // — with the successors as links. Null for a plain close (banner then absent). Applies to both
+  // Epics and Tickets. Uncapped (`null` cap) so the banner lists every successor with its title.
+  const closure = $derived(ticket === null ? null : closureLabel(ticket, null));
   const pauseNotice = $derived(ticket === null ? null : stalePauseNotice(ticket, epicMembers));
   // T979/D-103: the header's composite refinement badge. Only the two NEW display states are shown
   // here — stale keeps its existing banner (unchanged treatment) and not-refined shows nothing — so
@@ -655,7 +660,7 @@
   <article class="ticket-detail" class:is-epic={ticket.isEpic} data-pane={mobilePane}>
     <!-- Full-width banners, above both columns. Kept out of the header so that on desktop the
          Details column can start level with the title rather than below every banner. -->
-    {#if error || frozen || staleEpic}
+    {#if error || frozen || closure || staleEpic}
       <div class="detail-banners">
       {#if error}
         <!-- An action failed; the ticket below is still valid, so it stays on screen. -->
@@ -679,6 +684,24 @@
           <button type="button" class="reopen-btn" disabled={reopening} onclick={() => reopen()}>
             {reopening ? 'Reopening…' : 'Reopen'}
           </button>
+        </p>
+      {/if}
+      <!-- PD-940 (web half of PD-888): why the system closed this ticket, with the successors
+           as links and their titles. Applies to Epics and Tickets alike; absent for a plain close. -->
+      {#if closure}
+        <p class="closure-banner closure-{closure.reason}">
+          <strong>{closure.verb}</strong>
+          {#if closure.successors.length > 0}
+            <span class="closure-successors">
+              {#each closure.successors as s, i (s.displayId ?? i)}
+                {#if s.href}
+                  <a class="closure-ref" href={s.href}>{s.displayId ?? `#${i + 1}`} — {s.title}</a>
+                {:else}
+                  <span class="closure-ref">{s.displayId ?? `#${i + 1}`} — {s.title}</span>
+                {/if}
+              {/each}
+            </span>
+          {/if}
         </p>
       {/if}
       <!-- PD-611: the stale-Epic banner sits BELOW the frozen banner and ABOVE "Part of epic …"
