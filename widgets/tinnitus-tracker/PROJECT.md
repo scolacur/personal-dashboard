@@ -23,6 +23,9 @@ correlations: PD-706 (Chart + correlation views).
 - **After Enter**: tags, notes and the time override clear. The slider stays where it was.
 - **History**: recent entries below; tap one to edit (value, tags, time, notes) or delete it.
 - **Dashboard card**: the same capture, without notes, backdating or history.
+- **Shared components**: the slider and the tag cloud are `$lib/RangeSlider.svelte` and
+  `$lib/TagCloud.svelte`, lifted out of this widget's folder by PD-51 (Sleep Journal widget) so the
+  Sleep Journal can use them too.
 - **Offline**: every Enter goes through a localStorage outbox (`queue.ts`) and syncs when the
   server is reachable, retrying on `online`, on tab focus, and every 20 s. A "N pending sync" line
   shows meanwhile. Off-LAN reach itself is Tailscale (D-030 — off-LAN access via the Tailscale tailnet).

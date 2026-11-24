@@ -1,4 +1,5 @@
-/* Fill shifts from the accent toward red as intensity rises. --pct is 0–100, set by the component. */
+/* By default the fill shifts from the accent toward red as the value rises; a `color` prop sets
+   --level-color inline instead. --pct is 0–100, set by the component. */
 .slider {
   --level-color: color-mix(in srgb, var(--status-stuck) calc(var(--pct) * 1%), var(--accent));
 
@@ -28,6 +29,55 @@
   &.compact {
     width: 4rem;
     height: 9.5rem;
+  }
+
+  /* Horizontal: full width, a thumb-sized band. Drag right to raise. */
+  &.horizontal {
+    width: 100%;
+    height: 4.5rem;
+
+    &.compact {
+      height: 3rem;
+    }
+
+    .fill {
+      inset: 0 auto 0 0;
+      width: calc(var(--pct) * 1%);
+      height: auto;
+      transition: width 80ms ease-out;
+    }
+
+    &.dragging .fill {
+      transition: none;
+    }
+
+    .ticks {
+      inset: 0 var(--space-sm);
+      flex-direction: row;
+
+      li {
+        width: 2px;
+        height: 1.25rem;
+      }
+    }
+
+    .thumb {
+      left: calc(var(--pct) * 1%);
+      bottom: 50%;
+      width: 0.5rem;
+      height: 70%;
+      transform: translate(-50%, 50%);
+    }
+  }
+
+  /* A caller-painted fill (e.g. the rested palette) is mid-tone: dark ink reads on all of it. */
+  &.painted {
+    /* Tint the empty track too, so the lowest value (an empty fill) still shows its colour. */
+    background: color-mix(in srgb, var(--level-color) 22%, var(--surface-2));
+
+    .ticks li.active {
+      background: rgb(0 0 0 / 55%);
+    }
   }
 }
 

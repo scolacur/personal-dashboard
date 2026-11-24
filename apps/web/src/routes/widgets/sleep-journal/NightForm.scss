@@ -1,0 +1,125 @@
+.night-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-lg);
+  width: 100%;
+
+  &.compact {
+    gap: var(--space-sm);
+
+    .value {
+      font-size: 2rem;
+    }
+
+    .label {
+      font-size: var(--font-size-sm);
+      padding: 0 var(--space-sm);
+    }
+
+    .times input {
+      padding: var(--space-xs) var(--space-sm);
+    }
+  }
+}
+
+.times {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.time,
+.date label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+}
+
+.arrow {
+  padding-bottom: var(--space-sm);
+  color: var(--muted);
+}
+
+.duration {
+  align-self: center;
+  margin-left: var(--space-xs);
+  padding-top: var(--space-md);
+  font-family: var(--font-display);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+input,
+.notes {
+  font: inherit;
+  font-size: var(--font-size-base); /* 16px keeps iOS from zooming on focus */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+  min-width: 0;
+}
+
+.date {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: var(--space-sm);
+  margin-top: calc(var(--space-sm) * -1);
+}
+
+.link {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: var(--space-sm);
+  cursor: pointer;
+}
+
+.rested {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.value-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.value {
+  font-family: var(--font-display);
+  font-size: 4rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The rubric word sits on a pill of the score's colour: the palette is mid-tone, so dark ink. */
+.label {
+  padding: 2px var(--space-md);
+  border-radius: 999px;
+  background: var(--rested);
+  color: var(--rested-ink);
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  text-align: center;
+}
+
+.notes {
+  width: 100%;
+  resize: vertical;
+}
