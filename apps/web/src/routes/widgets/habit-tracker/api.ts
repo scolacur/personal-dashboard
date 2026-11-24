@@ -118,8 +118,13 @@ export function setCompletion(
   return request<{ completion: HabitCompletion | null }>('/completions', withBody('PUT', { itemId, day, done }));
 }
 
-export function fetchToday(): Promise<HabitTodayView> {
-  return request<HabitTodayView>('/today');
+/**
+ * The server-computed Today view. `day` views a past habit day instead of the current one (PD-779
+ * ([Habit Tracker] date header + day arrows on Today)); the server clamps a future day to today and
+ * the returned view's `day` says which day it served.
+ */
+export function fetchToday(day?: string): Promise<HabitTodayView> {
+  return request<HabitTodayView>(day ? `/today?day=${encodeURIComponent(day)}` : '/today');
 }
 
 export async function fetchSchedules(): Promise<HabitSchedule[]> {
