@@ -28,6 +28,7 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
     agentState: null,
     maxTurns: null,
     kind: null,
+    coderArea: null,
     agentTurns: null,
     refineState: null,
     refined: false,

@@ -31,6 +31,60 @@ export function isTicketKind(v: unknown): v is TicketKind {
   return typeof v === 'string' && (TICKET_KINDS as readonly string[]).includes(v);
 }
 
+// ── Coder subtypes / code areas (PD-880) ─────────────────────────────────────
+// A Coder's subtype is the code AREA it works, so PD-951 (at most one Coder per area at a time) can
+// raise overall concurrency without two Coders touching the same code. The area is set by Refine —
+// an Epic carries a default its members inherit, and a Ticket may override it — and may be changed
+// later by hand. The registry is the single source of truth: an area is validated against it at
+// propose time, on create, and on PATCH. Area names deliberately never reuse an agent's name.
+//
+// Specialists such as accessibility or security are Evaluator lenses (PD-768), NOT Coder areas.
+
+export type CoderArea =
+  | 'board'
+  | 'planning'
+  | 'loop'
+  | 'metrics'
+  | 'widgets'
+  | 'infra'
+  | 'shell'
+  | 'general';
+
+/** The code-area registry (PD-880): id + label + one-line description of what the area covers.
+ *  Exported so the propose tool, the server validators and any later UI judge against ONE list. */
+export const CODER_AREAS: readonly { id: CoderArea; label: string; description: string }[] = [
+  { id: 'board', label: 'Board', description: 'Task Monitor, detail pages' },
+  { id: 'planning', label: 'Planning', description: 'Refine, Decisions inbox, auto-queue code' },
+  { id: 'loop', label: 'Loop', description: 'worker, dispatch, Evaluator, merge pipeline' },
+  { id: 'metrics', label: 'Metrics', description: 'Velocity, Agent Dashboard' },
+  { id: 'widgets', label: 'Widgets', description: 'widgets' },
+  { id: 'infra', label: 'Infra', description: 'Docker, CI, deploy' },
+  { id: 'shell', label: 'Shell', description: 'nav, layout, pages' },
+  { id: 'general', label: 'General', description: 'fallback' },
+] as const;
+
+export const CODER_AREA_IDS: readonly CoderArea[] = CODER_AREAS.map((a) => a.id);
+
+/** The area an unset ticket/Epic resolves to — the registry's explicit fallback (PD-880). */
+export const DEFAULT_CODER_AREA: CoderArea = 'general';
+
+export function isCoderArea(v: unknown): v is CoderArea {
+  return typeof v === 'string' && (CODER_AREA_IDS as readonly string[]).includes(v);
+}
+
+/**
+ * Resolve the area a Coder would actually run this ticket under (PD-880): the ticket's own override,
+ * then its Epic's default, then `general`. Never stored — computed on demand, because any of the
+ * three inputs can change independently. Pure and DB-free; the caller supplies the ticket's Epic (or
+ * null for an Epic itself / an Epic-less ticket).
+ */
+export function effectiveCoderArea(
+  ticket: { coderArea?: CoderArea | null },
+  epic: { coderArea?: CoderArea | null } | null,
+): CoderArea {
+  return ticket.coderArea ?? epic?.coderArea ?? DEFAULT_CODER_AREA;
+}
+
 /** Short label for each assignee value (shown in the create/edit modal). */
 export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
   steve: 'Steve',
@@ -433,6 +487,11 @@ export interface AgentTicket {
   maxTurns: number | null;
   /** Bug / feature / chore (PD-896); null = unclassified. */
   kind: TicketKind | null;
+  /** Coder code-area subtype (PD-880); null = unset. Meaningful on an Epic (the default its members
+   *  inherit) and on a Ticket (an override). `null` reads as `general` via `effectiveCoderArea`,
+   *  which resolves the Ticket's own value, then its Epic's, then `general`. Set by Refine and
+   *  changeable by hand; validated against `CODER_AREAS`. */
+  coderArea: CoderArea | null;
   /** True when this Ticket is an Epic umbrella (D-054, PD-336). An Epic groups member Tickets,
    *  is never dispatched (cannot enter `queue`), and its board status is derived. */
   isEpic: boolean;
@@ -480,6 +539,9 @@ export interface CreateTicketInput {
   maxTurns?: number | null;
   /** Bug / feature / chore (PD-896); omit or null for unclassified. */
   kind?: TicketKind | null;
+  /** Coder code-area subtype (PD-880); omit or null for unset (reads as `general`). Validated
+   *  against `CODER_AREAS` (→ 400 INVALID_CODER_AREA). */
+  coderArea?: CoderArea | null;
 }
 
 /**
@@ -544,6 +606,9 @@ export interface UpdateTicketInput {
   maxTurns?: number | null;
   /** Set or clear (null) the ticket kind (PD-896). Omit to leave unchanged. */
   kind?: TicketKind | null;
+  /** Set or clear (null) the Coder code-area subtype (PD-880) — Steve's override. Validated against
+   *  `CODER_AREAS` (→ 400 INVALID_CODER_AREA). Omit to leave unchanged. */
+  coderArea?: CoderArea | null;
   /** D-103 (PD-808): exclude/include this Epic from auto-queue. Meaningful on Epics. Omit to leave
    *  unchanged. */
   autoQueueExcluded?: boolean;
@@ -1744,6 +1809,9 @@ export interface RefineChildProposal {
   maxTurns?: number | null;
   /** PD-896: bug / feature / chore. Omitted = inherit the parent's kind. */
   kind?: TicketKind | null;
+  /** PD-880: the child's Coder code-area override. Omitted/null = inherit the Epic's default at read
+   *  time (`effectiveCoderArea`), so it is stored only when the child genuinely differs from its Epic. */
+  coderArea?: CoderArea | null;
   /** PD-634: whether the child is born refined. Omitted = true — the Refine session IS the read-through.
    *  The agent sets false only for a placeholder that needs its own session. The server downgrades a
    *  robot-assigned child whose body fails `isReady`, so the flag never claims more than that check. */
@@ -1864,6 +1932,10 @@ export interface RefineProposal {
   maxTurns?: number | null;
   /** refine_in_place (PD-896): classify THIS ticket. Omitted = leave unchanged. */
   kind?: TicketKind | null;
+  /** PD-880: the Coder code-area. On refine_in_place it is THIS ticket's area; on a Populate
+   *  (decompose of an Epic) it is the EPIC's default its members inherit. Omitted = leave unchanged.
+   *  Validated against `CODER_AREAS`. */
+  coderArea?: CoderArea | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
   /** decompose (PD-842): relations between the proposed children, by index into `children`.

@@ -1216,6 +1216,33 @@ describe('maxTurns over HTTP (PD-432)', () => {
     expect(bad.json().code).toBe('INVALID_KIND');
   });
 
+  it('PD-880: coderArea is accepted on create and PATCH, and an invalid area is a 400 INVALID_CODER_AREA', async () => {
+    const { app, db } = freshSetup();
+    const pid = getProjectBySlug(db, 'personal-dashboard')!.id;
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 't', projectId: pid, epicId: anEpic(db, pid), coderArea: 'loop' },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().coderArea).toBe('loop');
+    const id = created.json().id;
+    const patched = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { coderArea: 'board' } });
+    expect(patched.json().coderArea).toBe('board');
+    const cleared = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { coderArea: null } });
+    expect(cleared.json().coderArea).toBeNull();
+    const bad = await app.inject({ method: 'PATCH', url: `/api/widgets/task-monitor/tickets/${id}`, payload: { coderArea: 'frontend' } });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().code).toBe('INVALID_CODER_AREA');
+    const badCreate = await app.inject({
+      method: 'POST',
+      url: '/api/widgets/task-monitor/tickets',
+      payload: { title: 't2', projectId: pid, epicId: anEpic(db, pid), coderArea: 'frontend' },
+    });
+    expect(badCreate.statusCode).toBe(400);
+    expect(badCreate.json().code).toBe('INVALID_CODER_AREA');
+  });
+
   it('rejects an invalid budget with 400', async () => {
     const { app, db } = freshSetup();
     const pid = getProjectBySlug(db, 'personal-dashboard')!.id;
