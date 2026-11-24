@@ -14,7 +14,7 @@
   } from '@dashboard/shared';
   import { PRIORITY_LABELS, AGENT_STATE_LABELS, TICKET_STATUSES, ROBOT_EVENT } from '@dashboard/shared';
   import { MediaQuery } from 'svelte/reactivity';
-  import { ArrowLeft } from 'lucide-svelte';
+  import { ArrowLeft, Layers } from 'lucide-svelte';
   import * as api from '../../api';
   import TicketThread from '$lib/TicketThread.svelte';
   import RunHistory from '$lib/RunHistory.svelte';
@@ -704,9 +704,28 @@
            Lane, priority name, project and the GitHub issue live in Details, not both. -->
       <div class="head-badges">
         <span class="detail-id">{ticket.displayId}</span>
-        <span class="priority priority-{ticket.priority ?? 'none'}" title={ticket.priority ? PRIORITY_LABELS[ticket.priority] : 'No priority'}
-          >{ticket.priority ?? '—'}</span
-        >
+        <!-- D-080 / PD-993: a member's priority is its Epic's, so the header says which Epic —
+             "Part of [icon] PD-NNN [P]", the id linking to the Epic and its title on hover. An Epic
+             shows its own pill; a Ticket with no Epic has no priority to show. -->
+        {#if ticket.isEpic}
+          <span class="priority priority-{ticket.priority ?? 'none'}" title={ticket.priority ? PRIORITY_LABELS[ticket.priority] : 'No priority'}
+            >{ticket.priority ?? '—'}</span
+          >
+        {:else if parentEpic}
+          <span class="epic-ref">
+            Part of
+            <Layers size={14} aria-hidden="true" />
+            <a class="epic-ref-id" href="/devops/tickets/{parentEpic.displayId}" title={parentEpic.title}>{parentEpic.displayId}</a>
+            <span
+              class="priority priority-{parentEpic.priority ?? 'none'}"
+              title={parentEpic.priority
+                ? `${PRIORITY_LABELS[parentEpic.priority]} — set on ${parentEpic.displayId}`
+                : `${parentEpic.displayId} has no priority`}>{parentEpic.priority ?? '—'}</span
+            >
+          </span>
+        {:else}
+          <span class="no-epic" title="Not part of any Epic, so nothing sets its priority">No epic</span>
+        {/if}
         {#if ticket.agentState && needsYouState}
           <!-- PD-965: an input-needed state is a button, as on the board's card — it opens the actions. -->
           <button
@@ -829,19 +848,12 @@
         {/if}
       </Collapsible>
 
-      {#if !ticket.isEpic}
+      <!-- PD-993: which Epic this belongs to now reads in the header ("Part of …"). -->
+      {#if !ticket.isEpic && !frozen}
         <p class="belongs-to-epic">
-          {#if parentEpic}
-            Part of epic
-            <a href="/devops/tickets/{parentEpic.displayId}">{parentEpic.displayId} — {parentEpic.title}</a>
-          {:else}
-            <span class="no-epic">Not part of any epic.</span>
-          {/if}
-          {#if !frozen}
-            <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
-              Spin off into new Epic…
-            </button>
-          {/if}
+          <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
+            Spin off into new Epic…
+          </button>
         </p>
       {/if}
 
