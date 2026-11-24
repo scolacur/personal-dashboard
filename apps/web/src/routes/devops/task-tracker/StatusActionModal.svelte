@@ -1,10 +1,5 @@
 <script lang="ts">
   import type { AgentTicket, AgentRun, TicketEvent } from '@dashboard/shared';
-  import {
-    CHECKPOINT_CONTINUE_TURNS_DEFAULT,
-    ROBOT_MAX_TURNS_LIMIT,
-    checkpointExtraTurnsError,
-  } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import Collapsible from '$lib/Collapsible.svelte';
   import * as api from '../api';
@@ -37,9 +32,6 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
   let replyText = $state('');
-  /** D-094: the turn ceiling a Continue grants the next run. */
-  let extraTurns = $state(CHECKPOINT_CONTINUE_TURNS_DEFAULT);
-  const extraTurnsError = $derived(checkpointExtraTurnsError(extraTurns));
 
   const entry = $derived(
     ticket?.agentState ? (STATUS_ACTION_REGISTRY[ticket.agentState] ?? null) : null,
@@ -53,7 +45,6 @@
     runs = [];
     events = [];
     replyText = '';
-    extraTurns = CHECKPOINT_CONTINUE_TURNS_DEFAULT;
     error = null;
     if (!t) return;
     void Promise.all([
@@ -75,7 +66,7 @@
     try {
       if (kind === 'unstick') await api.unstickTicket(ticket.id);
       else if (kind === 'reset') await api.resetTicketRuns(ticket.id);
-      else if (kind === 'continue') await api.continueTicket(ticket.id, extraTurns);
+      else if (kind === 'continue') await api.continueTicket(ticket.id);
       else if (kind === 'restart') await api.restartTicket(ticket.id);
       onUpdate();
       onClose();
@@ -150,23 +141,6 @@
         </div>
       {/if}
 
-      {#if content.actions.some((a) => a.kind === 'continue')}
-        <label class="sa-turns">
-          Continue with
-          <input
-            type="number"
-            min="1"
-            max={ROBOT_MAX_TURNS_LIMIT}
-            bind:value={extraTurns}
-            disabled={busy}
-          />
-          more turns
-        </label>
-        {#if extraTurnsError}
-          <p class="sa-error" role="alert">{extraTurnsError}</p>
-        {/if}
-      {/if}
-
       {#if content.actions.length}
         <div class="sa-actions">
           {#each content.actions as action (action.kind)}
@@ -177,11 +151,8 @@
                 >
               {/if}
             {:else}
-              <button
-                class="sa-btn"
-                disabled={busy || (action.kind === 'continue' && extraTurnsError !== null)}
-                onclick={() => runAction(action.kind)}
-                >{action.kind === 'continue' ? `${action.label} (+${extraTurns})` : action.label}</button
+              <button class="sa-btn" disabled={busy} onclick={() => runAction(action.kind)}
+                >{action.label}</button
               >
             {/if}
           {/each}

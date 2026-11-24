@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { AgentRun, RobotFaultTier, RobotRunStatus } from '@dashboard/shared';
+  import type { AgentRun, RobotFaultTier, RobotRunStatus, TicketEvent } from '@dashboard/shared';
   import { SvelteSet } from 'svelte/reactivity';
-  import { fetchTicketRuns } from '../routes/devops/api';
+  import { fetchTicketEvents, fetchTicketRuns } from '../routes/devops/api';
+  import { progressChecksForRun } from './run-progress';
   import Collapsible from './Collapsible.svelte';
 
   // Robot run history for a ticket (C3/PD-344). Self-fetching like TicketThread. The loop is
@@ -9,11 +10,14 @@
   const { ticketId }: { ticketId: number } = $props();
 
   let runs = $state<AgentRun[]>([]);
+  /** PD-964: the ticket's events, for each run's progress checks. */
+  let events = $state<TicketEvent[]>([]);
   let loading = $state(true);
 
   async function load(): Promise<void> {
     try {
-      runs = await fetchTicketRuns(ticketId);
+      // A failed events fetch only costs the checks column, never the runs.
+      [runs, events] = await Promise.all([fetchTicketRuns(ticketId), fetchTicketEvents(ticketId).catch(() => [] as TicketEvent[])]);
     } catch {
       runs = []; // a failed fetch just renders nothing — observability is non-critical
     } finally {
@@ -77,7 +81,7 @@
   const totalTurns = $derived(runs.reduce((sum, r) => sum + (r.turns ?? 0), 0));
 
   /** Columns in the runs table — keeps the expanded row's colspan honest if a column is added. */
-  const RUN_COLUMNS = 11;
+  const RUN_COLUMNS = 12;
 </script>
 
 {#if !loading && runs.length > 0}
@@ -100,12 +104,13 @@
           <tr>
             <th><span class="sr-only">Output</span></th>
             <th>#</th><th>Status</th><th>Fault</th><th>Reason</th>
-            <th>Turns</th><th>Tokens</th><th>Dur</th><th>PR</th><th>WIP</th><th>Started</th>
+            <th>Turns</th><th>Checks</th><th>Tokens</th><th>Dur</th><th>PR</th><th>WIP</th><th>Started</th>
           </tr>
         </thead>
         <tbody>
           {#each runs as r, i (r.id)}
-            {@const hasOutput = !!r.outputTail || !!r.statusReport}
+            {@const checks = progressChecksForRun(r, events)}
+            {@const hasOutput = !!r.outputTail || !!r.statusReport || checks.length > 0}
             {@const isOpen = openOutputs.has(r.id)}
             <tr>
               <td class="expander">
@@ -126,6 +131,12 @@
               </td>
               <td class="reason" title={r.faultReason ?? r.error ?? ''}>{r.faultReason ?? r.error ?? '—'}</td>
               <td class="num">{r.turns ?? '—'}</td>
+              <!-- PD-964 (D-114): one mark per progress check — ✓ carried on, ✗ parked. -->
+              <td class="checks">
+                {#if checks.length}
+                  {#each checks as c (c.at)}<span class="check-mark" class:passed={c.passed} title={c.line}>{c.passed ? '✓' : '✗'}</span>{/each}
+                {:else}—{/if}
+              </td>
               <td class="num">{r.tokens != null ? r.tokens.toLocaleString() : '—'}</td>
               <td class="num">{duration(r)}</td>
               <td>{#if r.prUrl}<a href={r.prUrl} target="_blank" rel="noreferrer">PR</a>{:else}—{/if}</td>
@@ -137,6 +148,12 @@
             {#if hasOutput && isOpen}
               <tr class="output-row">
                 <td colspan={RUN_COLUMNS}>
+                  {#if checks.length}
+                    <p class="report-label">Progress checks</p>
+                    <ul class="progress-checks">
+                      {#each checks as c (c.at)}<li class:passed={c.passed}>{c.line}</li>{/each}
+                    </ul>
+                  {/if}
                   {#if r.statusReport}
                     <!-- D-094/PD-737: the checkpoint's status report, ahead of the raw tail. -->
                     <p class="report-label">Status report</p>

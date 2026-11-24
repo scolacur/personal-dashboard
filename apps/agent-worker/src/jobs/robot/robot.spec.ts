@@ -89,6 +89,11 @@ function deps(sessionResult?: Partial<RobotSessionResult>): RobotDeps {
     fetchPr: async () => null,
     hasCommit: async () => false, // PD-926: never shell out to git
     runSession: async () => ({ ok: true, sessionId: 'sess-1', verifyOk: true, prNumber: 314, ...sessionResult }),
+    // PD-964: never call a model or shell out to git. A window that ends at its turn limit is judged
+    // `stalled` by default, so a ceiling run parks in `checkpoint` exactly as before; the progress-check
+    // tests override this.
+    judge: async () => ({ verdict: 'stalled', reason: 'test default', turns: 1, tokens: 10 }),
+    snapshotter: () => ({ snapshot: async () => null, diff: async () => null, dispose: () => {} }),
     now: () => 1000,
   };
 }
@@ -499,27 +504,28 @@ describe('processRobotQueue', () => {
 
   // ---- PD-432: the per-ticket turn ceiling ----
 
-  it('records the effective ceiling on the run — the ticket override, else the env default', async () => {
+  it('records the first window as the run allowance — max_turns no longer bounds a run (PD-964, D-114)', async () => {
     addQueued(db, 1);
     db.prepare('UPDATE agent_tickets SET max_turns = 120 WHERE id = 1').run();
     addQueued(db, 2);
-
-    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_MAX_TURNS: '50' }), deps());
-
-    // Self-describing after the fact: the run says what it was allowed, so a max-turns fault can be
-    // read without guessing which config was live (and PD-230's N/M gets the real denominator).
-    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(120);
-    expect(listRunsForTicket(db, 2)[0].maxTurns).toBe(50);
+    const windows: (number | null)[] = [];
+    await processRobotQueue(db, cfg({ ROBOT_ALLOWLIST: '1,2', ROBOT_CONCURRENCY: '2', ROBOT_MAX_TURNS: '50' }), {
+      ...deps(),
+      runSession: async (_c, cand) => (windows.push(cand.maxTurns), { ok: true, sessionId: 's', verifyOk: true, prNumber: 314 }),
+    });
+    // Neither the ticket's override nor ROBOT_MAX_TURNS: every run's first window is CHECKPOINT_WINDOW_TURNS.
+    expect(windows).toEqual([25, 25]);
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(25);
+    expect(listRunsForTicket(db, 2)[0].maxTurns).toBe(25);
   });
 
-  it('puts the effective ceiling on the dispatched milestone', async () => {
+  it('puts the window, the episode so far and the cap on the dispatched milestone', async () => {
     addQueued(db, 1);
-    db.prepare('UPDATE agent_tickets SET max_turns = 75 WHERE id = 1').run();
-    await processRobotQueue(db, cfg(), deps());
+    await processRobotQueue(db, cfg({ CHECKPOINT_WINDOW_TURNS: '30', CHECKPOINT_TOTAL_TURNS: '150' }), deps());
     const ev = db
       .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = 1 AND type = 'robot_dispatched'")
       .get() as { detail: string };
-    expect(JSON.parse(ev.detail)).toMatchObject({ maxTurns: 75 });
+    expect(JSON.parse(ev.detail)).toMatchObject({ maxTurns: 30, window: 1, turnsSoFar: 0, totalCap: 150 });
   });
 
   // ---- PD-463: the loop-wide budget ceiling ----
@@ -1124,9 +1130,11 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     expect(eventTypes(db, 1)).not.toContain('robot_parked');
     expect(eventTypes(db, 1)).not.toContain('robot_fault');
     const [cp] = events(1, 'robot_checkpoint');
-    expect(cp).toMatchObject({ reportFallback: false, turns: 51, maxTurns: 50, wipRef: 'robot-wip/t1', wipSha: 'abc123' });
+    // 51 session turns + the judge's 1 (D-064: the judge's usage counts).
+    expect(cp).toMatchObject({ reportFallback: false, turns: 52, checkedBy: 'judge', progress: 'stalled', window: 1, wipRef: 'robot-wip/t1', wipSha: 'abc123' });
+    expect(cp.reason).toContain('judge says stalled — test default');
     const n = db.prepare("SELECT kind, title FROM agent_notifications WHERE ticket_id = 1").all();
-    expect(n).toEqual([{ kind: 'agent_awaiting_human', title: 'Robot reached its turn ceiling' }]);
+    expect(n).toEqual([{ kind: 'agent_awaiting_human', title: 'Robot stopped at a progress check' }]);
   });
 
   it.each([
@@ -1156,7 +1164,7 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     expect(listRunsForTicket(db, 1)[0].status).toBe('error');
   });
 
-  it('Continue: starts from the WIP with the report in the prompt and the requested ceiling, once', async () => {
+  it('Continue: starts from the WIP with the report in the prompt, and a transient retry keeps resuming it (PD-964)', async () => {
     addQueued(db, 1);
     let clock = 1000;
     const restored: string[] = [];
@@ -1176,24 +1184,25 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
 
     await processRobotQueue(db, cfg(), d); // run 1 → checkpoint
     clock = 2000;
-    answer(1, 'robot_checkpoint_continue', { extraTurns: 80 }, 1500);
+    answer(1, 'robot_checkpoint_continue', {}, 1500);
     nextResult = { ok: true, verifyOk: false, prNumber: undefined }; // run 2: no green verify (transient)
     await processRobotQueue(db, cfg(), d);
 
     expect(restored).toEqual(['/wt/robot-1']);
-    expect(seen[1]).toEqual({ maxTurns: 80, checkpoint: { report: 'Left: two tests', restored: true, rebased: true } });
-    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(80);
+    expect(seen[1]).toEqual({ maxTurns: 25, checkpoint: { why: 'continue', report: 'Left: two tests', restored: true, rebased: true } });
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(25);
 
-    // Run 3 (the transient retry) is NOT a continuation — the Continue was consumed by run 2.
+    // Run 3, the transient retry, resumes run 2's saved work and still carries the Continue's report.
+    // Before PD-964 the Continue was consumed by run 2 and the retry started from a clean tree.
     clock = 3000;
     nextResult = {};
     await processRobotQueue(db, cfgNoBackoff(), d);
     expect(seen).toHaveLength(3);
-    expect(seen[2]).toEqual({ maxTurns: 50, checkpoint: undefined });
-    expect(restored).toHaveLength(1);
+    expect(seen[2]).toEqual({ maxTurns: 25, checkpoint: { why: 'retry', report: 'Left: two tests', restored: true, rebased: true } });
+    expect(restored).toHaveLength(2);
   });
 
-  it('Continue that hits the ceiling again checkpoints again — there is no total cap', async () => {
+  it('each Continue starts a fresh episode, so the total cap never blocks a human Continue (PD-964)', async () => {
     addQueued(db, 1);
     let clock = 1000;
     const d: RobotDeps = {
@@ -1204,7 +1213,7 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     };
     await processRobotQueue(db, cfg(), d);
     for (const t of [2000, 3000, 4000]) {
-      answer(1, 'robot_checkpoint_continue', { extraTurns: 50 }, t - 500);
+      answer(1, 'robot_checkpoint_continue', {}, t - 500);
       clock = t;
       await processRobotQueue(db, cfg(), d);
       expect(agentState(db, 1)).toBe('checkpoint');
@@ -1241,7 +1250,232 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     expect(order[0]).toMatch(/^remove .*robot-1$/); // the kept clone goes first…
     expect(order[1]).toBe('ensure'); // …then a fresh one
     expect(order).not.toContain('restore');
-    expect(seen[1]).toEqual({ maxTurns: 50, checkpoint: undefined });
+    expect(seen[1]).toEqual({ maxTurns: 25, checkpoint: undefined });
+    expect(agentState(db, 1)).toBe('in-review');
+  });
+});
+
+// PD-964 (D-114): the rolling progress check — windows, tripwires, the judge, the total cap, and a
+// Continue that survives a worker restart.
+describe('progress check (PD-964, D-114)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+  const CEILING = 'Claude Code returned an error result: Reached maximum number of turns (25)';
+  /** A window that used every turn it had. */
+  const windowEnd = (turns: number, extra: Partial<RobotSessionResult> = {}): RobotSessionResult => ({
+    ok: false,
+    verifyOk: false,
+    sessionId: 'sess-w',
+    turns,
+    tokens: 100,
+    error: CEILING,
+    transcript: [],
+    ...extra,
+  });
+  const handoff: RobotSessionResult = { ok: true, sessionId: 'sess-w', verifyOk: true, prNumber: 77, turns: 5, tokens: 50 };
+  function details(id: number, type: string): Record<string, unknown>[] {
+    return (
+      db.prepare('SELECT detail FROM agent_ticket_events WHERE ticket_id = ? AND type = ? ORDER BY id').all(id, type) as { detail: string }[]
+    ).map((r) => JSON.parse(r.detail) as Record<string, unknown>);
+  }
+  /** A session that plays back `results` window by window, recording how each window was started. */
+  function scripted(results: RobotSessionResult[], calls: { maxTurns: number | null; resume?: string; offset?: number }[]): RobotDeps['runSession'] {
+    let i = 0;
+    return async (_c, cand, _wt, _resume, _p, _a, segment) => {
+      calls.push({ maxTurns: cand.maxTurns, resume: segment?.resumeSessionId, offset: segment?.turnOffset });
+      return results[Math.min(i++, results.length - 1)];
+    };
+  }
+
+  it('a progressing run resumes the SAME session for another window, then hands off', async () => {
+    addQueued(db, 1);
+    const calls: { maxTurns: number | null; resume?: string; offset?: number }[] = [];
+    const judged: number[] = [];
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      runSession: scripted([windowEnd(25), windowEnd(25), handoff], calls),
+      judge: async (_c, input) => (judged.push(input.window), { verdict: 'progressing', reason: 'tests going green', turns: 1, tokens: 20 }),
+    });
+    expect(calls).toEqual([
+      { maxTurns: 25, resume: undefined, offset: 0 },
+      { maxTurns: 25, resume: 'sess-w', offset: 26 }, // 25 + the judge's 1
+      { maxTurns: 25, resume: 'sess-w', offset: 52 },
+    ]);
+    expect(judged).toEqual([1, 2]);
+    expect(agentState(db, 1)).toBe('in-review');
+    const run = listRunsForTicket(db, 1)[0];
+    expect(run.status).toBe('handed-off');
+    expect(run.turns).toBe(57); // 25 + 1 + 25 + 1 + 5 — the judge's usage is the run's usage (D-064)
+    expect(run.tokens).toBe(290);
+    const checks = details(1, 'robot_progress_check');
+    expect(checks.map((c) => [c.window, c.progress, c.turnsSoFar])).toEqual([
+      [1, 'progressing', 26],
+      [2, 'progressing', 52],
+    ]);
+    expect(checks[0]).toMatchObject({ checkedBy: 'judge', reason: 'tests going green', totalCap: 200 });
+  });
+
+  it.each(['stalled', 'drifted', 'hallucinating'] as const)('a `%s` verdict parks in checkpoint with the verdict and reason', async (verdict) => {
+    addQueued(db, 1);
+    const calls: { maxTurns: number | null }[] = [];
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      runSession: scripted([windowEnd(25)], calls),
+      judge: async () => ({ verdict, reason: 'went round in circles', turns: 1, tokens: 5 }),
+      statusReport: async () => ({ report: 'r' }),
+    });
+    expect(calls).toHaveLength(1); // no second window
+    expect(agentState(db, 1)).toBe('checkpoint');
+    const [cp] = details(1, 'robot_checkpoint');
+    expect(cp).toMatchObject({ checkedBy: 'judge', progress: verdict, window: 1 });
+    expect(cp.reason).toContain(`judge says ${verdict} — went round in circles`);
+    expect(listRunsForTicket(db, 1)[0].faultReason).toContain(`judge says ${verdict}`);
+  });
+
+  it('judge error → park: a judge call that throws parks rather than continuing', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      runSession: scripted([windowEnd(25), handoff], []),
+      judge: async () => {
+        throw new Error('overloaded');
+      },
+      statusReport: async () => ({ report: 'r' }),
+    });
+    expect(agentState(db, 1)).toBe('checkpoint');
+    const [check] = details(1, 'robot_progress_check');
+    expect(check).toMatchObject({ checkedBy: 'judge', progress: 'error' });
+    expect(String(check.reason)).toContain('overloaded');
+  });
+
+  it('a tripwire parks without asking the judge', async () => {
+    addQueued(db, 1);
+    let judged = false;
+    const loop = Array.from({ length: 4 }, (_, i) => ({ kind: 'tool_use' as const, turn: i + 1, name: 'Bash', input: '{"command":"npm test"}' }));
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      runSession: scripted([windowEnd(25, { transcript: loop })], []),
+      judge: async () => ((judged = true), { verdict: 'progressing', reason: 'x', turns: 1, tokens: 1 }),
+      statusReport: async () => ({ report: 'r' }),
+    });
+    expect(judged).toBe(false);
+    expect(agentState(db, 1)).toBe('checkpoint');
+    expect(details(1, 'robot_checkpoint')[0]).toMatchObject({ checkedBy: 'tripwire', tripwire: 'repeated_tool_call' });
+  });
+
+  it('the no-change tripwire reads the tree before and after the window', async () => {
+    addQueued(db, 1);
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      runSession: scripted([windowEnd(25)], []),
+      snapshotter: () => ({ snapshot: async () => 'tree-same', diff: async () => '', dispose: () => {} }),
+      statusReport: async () => ({ report: 'r' }),
+    });
+    expect(details(1, 'robot_checkpoint')[0]).toMatchObject({ checkedBy: 'tripwire', tripwire: 'no_diff_change' });
+  });
+
+  it('the total cap parks a run that is still progressing, and says the cap stopped it', async () => {
+    addQueued(db, 1);
+    const calls: { maxTurns: number | null }[] = [];
+    let judgeCalls = 0;
+    await processRobotQueue(db, cfg({ CHECKPOINT_WINDOW_TURNS: '25', CHECKPOINT_TOTAL_TURNS: '60' }), {
+      ...deps(),
+      runSession: scripted([windowEnd(25), windowEnd(25), windowEnd(8)], calls),
+      judge: async () => (judgeCalls++, { verdict: 'progressing', reason: 'fine', turns: 1, tokens: 1 }),
+      statusReport: async () => ({ report: 'r' }),
+    });
+    // 25 (+1 judge) → 25 (+1 judge) = 52 → the last window is cut to the 8 turns left under the cap.
+    expect(calls.map((c) => c.maxTurns)).toEqual([25, 25, 8]);
+    expect(judgeCalls).toBe(2); // the cap decides the last check, not the judge
+    expect(agentState(db, 1)).toBe('checkpoint');
+    const [cp] = details(1, 'robot_checkpoint');
+    expect(cp).toMatchObject({ checkedBy: 'total_cap', turnsSoFar: 60, totalCap: 60 });
+    expect(cp.reason).toContain('stopped by the total turn cap, not the judge');
+    const n = db.prepare('SELECT title FROM agent_notifications WHERE ticket_id = 1').get() as { title: string };
+    expect(n.title).toBe('Robot reached its total turn cap');
+  });
+
+  it('regression (PD-931): Continue → SIGTERM → the retry restores the WIP and keeps the episode budget', async () => {
+    addQueued(db, 1);
+    let clock = 1000;
+    const restored: string[] = [];
+    const seen: { maxTurns: number | null; checkpoint: unknown }[] = [];
+    // Run 1 parks at a progress check.
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      now: () => clock,
+      runSession: scripted([windowEnd(25)], []),
+      statusReport: async () => ({ report: 'Blocking: nothing. Estimate: 3 turns' }),
+    });
+    expect(agentState(db, 1)).toBe('checkpoint');
+
+    // Steve presses Continue. Run 2 gets 10 turns in, then the worker is SIGTERMed.
+    clock = 2000;
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, ?, ?, ?)').run('robot_checkpoint_continue', '{}', 1500);
+    db.prepare("UPDATE agent_tickets SET agent_state = 'queued' WHERE id = 1").run();
+    const own = createRunOwnership(500);
+    const sd = new RobotShutdown(own);
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      now: () => clock,
+      ownership: own,
+      shutdown: sd,
+      pushWip: async () => ({ ref: 'robot-wip/t1', sha: 'wip-run2' }),
+      restoreWip: async (_c, wt) => (restored.push(wt.dir), { restored: true, rebased: true }),
+      runSession: async (_c, cand, _wt, resume, onProgress) => {
+        seen.push({ maxTurns: cand.maxTurns, checkpoint: resume?.checkpoint });
+        onProgress?.(10, 500);
+        sd.request();
+        throw new Error('aborted');
+      },
+    });
+    expect(agentState(db, 1)).toBe('queued');
+    expect(listRunsForTicket(db, 1)[0].turns).toBe(10); // the live count survived the abort
+
+    // The retry: same WIP, same report, and only the rest of the window (25 − 10).
+    clock = 3000;
+    await processRobotQueue(db, cfgNoBackoff(), {
+      ...deps(),
+      now: () => clock,
+      restoreWip: async (_c, wt) => (restored.push(wt.dir), { restored: true, rebased: true }),
+      runSession: async (_c, cand, _wt, resume) => {
+        seen.push({ maxTurns: cand.maxTurns, checkpoint: resume?.checkpoint });
+        return { ok: true, sessionId: 's3', verifyOk: true, prNumber: 931, turns: 3 };
+      },
+    });
+    expect(restored).toEqual(['/wt/robot-1', '/wt/robot-1']);
+    const report = 'Blocking: nothing. Estimate: 3 turns';
+    expect(seen[0]).toEqual({ maxTurns: 25, checkpoint: { why: 'continue', report, restored: true, rebased: true } });
+    expect(seen[1]).toEqual({ maxTurns: 15, checkpoint: { why: 'retry', report, restored: true, rebased: true } });
+    const dispatched = details(1, 'robot_dispatched');
+    expect(dispatched[2]).toMatchObject({ turnsSoFar: 10, window: 1, maxTurns: 15 });
+    expect(agentState(db, 1)).toBe('in-review');
+  });
+
+  it('a retry whose interrupted run saved no WIP does not restore an older ref', async () => {
+    addQueued(db, 1);
+    let restores = 0;
+    // A Restart, then the restarted run is interrupted before it saved anything.
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (1, ?, ?, ?)').run('robot_checkpoint_restart', '{}', 500);
+    const own = createRunOwnership(500);
+    const sd = new RobotShutdown(own);
+    await processRobotQueue(db, cfg(), {
+      ...deps(),
+      ownership: own,
+      shutdown: sd,
+      runSession: async () => {
+        sd.request();
+        throw new Error('aborted');
+      },
+    });
+    await processRobotQueue(db, cfgNoBackoff(), {
+      ...deps(),
+      now: () => 2000,
+      restoreWip: async () => (restores++, { restored: true, rebased: true }),
+    });
+    expect(restores).toBe(0); // the pre-Restart WIP ref must not come back on its own
     expect(agentState(db, 1)).toBe('in-review');
   });
 });

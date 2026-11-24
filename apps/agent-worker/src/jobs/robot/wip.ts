@@ -21,15 +21,17 @@ import { asOwnerOf, defaultChown, GitError, makeGitRunner, type GitRunner, type 
  *  - the push failing must NEVER fail or mask the run's real outcome — it is caught, logged, and
  *    treated as "nothing preserved".
  *
- * **Preserve only, no resume (D-094).** Nothing here makes the next dispatch start from the WIP ref;
- * PD-340's pristine-tree default stands. That includes the clone itself (PD-781): the WIP commit is
+ * **No resume by the back door (D-094).** Nothing here makes the next dispatch start from the WIP ref;
+ * PD-340's pristine-tree default stands. The WIP ref is restored only on purpose: by a human's
+ * Continue, and (PD-964, D-114) by the loop's retry of a run a transient fault cut short, which
+ * resumes that same run's work rather than starting it over. That includes the clone itself (PD-781): the WIP commit is
  * made on the live `robot/t<id>` branch only long enough to push it, then undone with
  * `reset --mixed` to the commit before it. The clone is kept and reused (PD-719), and reuse's
  * `reset --hard HEAD` keeps commits; a WIP commit left behind would have been the next run's
  * starting point, an automatic resume by the back door. Undone, the work is uncommitted debris
  * again, which reuse discards, exactly as before PD-736. Commits the Robot made itself stay. The ref exists for a human to `git fetch`, and for PD-737's
- * human-chosen Continue to read — not for automatic resume, which would let a broken WIP poison every
- * retry.
+ * human-chosen Continue and PD-964's transient-fault retry to read — never for a blanket resume of
+ * every dispatch, which would let a broken WIP poison every retry.
  */
 
 /** The dedicated scratch ref a non-hand-off run's work is pushed to. */

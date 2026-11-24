@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TicketEvent, RobotEventDetail } from '@dashboard/shared';
-  import { REFINE_BACKFILL_EXCLUDED_EVENT, ROBOT_EVENT, evaluatorVerdictLine } from '@dashboard/shared';
+  import { REFINE_BACKFILL_EXCLUDED_EVENT, ROBOT_EVENT, evaluatorVerdictLine, progressCheckLine } from '@dashboard/shared';
   import { fetchTicketEvents } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
@@ -75,6 +75,14 @@
         return '🤝';
       case ROBOT_EVENT.released:
         return '↩️';
+      case ROBOT_EVENT.progressCheck:
+        return '🩺';
+      case ROBOT_EVENT.checkpoint:
+        return '⏸️';
+      case ROBOT_EVENT.checkpointContinue:
+        return '▶️';
+      case ROBOT_EVENT.checkpointRestart:
+        return '🔁';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -129,6 +137,15 @@
         return `Robot took over PR #${d.prNumber ?? '?'}${d.branch ? ` on ${d.branch}` : ''} to rework it`;
       case ROBOT_EVENT.released:
         return `Handed PR #${d.prNumber ?? '?'} back to you${d.reason ? `: ${d.reason}` : ''}`;
+      // PD-964 (D-114): the rolling progress check, and the checkpoint it can end in.
+      case ROBOT_EVENT.progressCheck:
+        return `Progress check — ${progressCheckLine(d)}`;
+      case ROBOT_EVENT.checkpoint:
+        return `Stopped at a checkpoint${d.checkedBy ? ` — ${progressCheckLine(d)}` : d.reason ? `: ${d.reason}` : ''}`;
+      case ROBOT_EVENT.checkpointContinue:
+        return 'You chose Continue';
+      case ROBOT_EVENT.checkpointRestart:
+        return 'You chose Restart';
       case 'created':
         return 'Ticket created';
       case 'status_changed':
