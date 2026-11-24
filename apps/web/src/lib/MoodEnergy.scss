@@ -1,0 +1,97 @@
+/* Mobile-first: one centred column. Wider screens just get the same column. */
+.mood-energy {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-lg);
+  width: 100%;
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: var(--space-md) 0 var(--space-lg);
+
+  &.compact {
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+
+    .save {
+      min-height: 2.5rem;
+    }
+  }
+}
+
+.date {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: var(--space-sm);
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+  }
+
+  input {
+    font: inherit;
+    font-size: var(--font-size-base); /* 16px keeps iOS from zooming on focus */
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-sm) var(--space-md);
+  }
+}
+
+.link {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: var(--space-sm);
+  cursor: pointer;
+}
+
+.status {
+  margin: 0;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+.save {
+  width: 100%;
+  min-height: 3.5rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+
+  &:active {
+    filter: brightness(0.92);
+  }
+}
+
+.pending {
+  margin: 0;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--status-warn);
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  width: 100%;
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0 0 var(--space-xl);
+}

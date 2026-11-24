@@ -1,9 +1,9 @@
 <script lang="ts">
   import {
     addSleepDays,
-    sleepRestedColor,
+    scale15Color,
     sleepRestedLabel,
-    SLEEP_RESTED_COLORS,
+    SCALE_1_5_COLORS,
     SLEEP_RUBRIC,
     type SleepEntry,
   } from '@dashboard/shared';
@@ -83,7 +83,7 @@
         width={barW}
         height={Math.max(0, sy(0) - sy(h))}
         rx={Math.min(3, barW / 2)}
-        fill={sleepRestedColor(e.rested)}
+        fill={scale15Color(e.rested)}
         role="button"
         tabindex="0"
         aria-label="{formatWakeDate(e.wakeDate)}: {formatDuration(durationMs(e))}, rested {e.rested}"
@@ -103,7 +103,7 @@
   </svg>
 
   <div class="legend" aria-hidden="true">
-    {#each Object.entries(SLEEP_RESTED_COLORS) as [score, color] (score)}
+    {#each Object.entries(SCALE_1_5_COLORS) as [score, color] (score)}
       <span><i class="key" style:background={color}></i>{SLEEP_RUBRIC[Number(score)]}</span>
     {/each}
     <span><i class="key-line"></i>Average</span>

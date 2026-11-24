@@ -5,9 +5,9 @@
     habitWeekStart,
     habitWeeksEndingAt,
     HABIT_WEEKDAY_NAMES,
-    sleepRestedColor,
+    scale15Color,
     sleepRestedLabel,
-    SLEEP_RESTED_INK,
+    SCALE_1_5_INK,
     type SleepEntry,
   } from '@dashboard/shared';
   import { buildCells, weekSpanCount, type NightCell } from './calendar';
@@ -108,8 +108,8 @@
             class:filled={c.entry !== null}
             class:today={c.date === today}
             style={`grid-row:${c.row + 2};grid-column:${c.col + 2}`}
-            style:--rested={c.entry ? sleepRestedColor(c.entry.rested) : null}
-            style:--rested-ink={SLEEP_RESTED_INK}
+            style:--rested={c.entry ? scale15Color(c.entry.rested) : null}
+            style:--rested-ink={SCALE_1_5_INK}
             aria-label={cellLabel(c)}
             onclick={() => onOpen(c.date, c.entry)}
           >

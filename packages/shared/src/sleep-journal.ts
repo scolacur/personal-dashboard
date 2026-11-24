@@ -108,25 +108,6 @@ export function sleepRestedLabel(rested: number): string | null {
   return SLEEP_RUBRIC[rested] ?? null;
 }
 
-/**
- * The rested colour scale, red (1) to green (5). Mid-tone hues, so they read on both the light and
- * dark themes, and dark ink reads on all of them. Used by the slider, calendar, list and trends.
- */
-export const SLEEP_RESTED_COLORS: Readonly<Record<number, string>> = {
-  1: '#d64541',
-  2: '#ec8a3c',
-  3: '#e3c13b',
-  4: '#9ccc5a',
-  5: '#3fae68',
-};
-
-/** Ink for text drawn on a rested colour. */
-export const SLEEP_RESTED_INK = '#1f1f1f';
-
-export function sleepRestedColor(rested: number): string {
-  return SLEEP_RESTED_COLORS[rested] ?? SLEEP_RESTED_COLORS[SLEEP_RESTED_DEFAULT];
-}
-
 /* ── Wall clock ───────────────────────────────────────────────────────────────────────
  *
  * The journal speaks in wall-clock terms ("23:10", "Tue 24 Nov") in one home zone, so every

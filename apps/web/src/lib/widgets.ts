@@ -9,6 +9,7 @@ import MusicTracker from './MusicTracker.svelte';
 import DevOpsAgentWidget from '../routes/devops/AgentWidget.svelte';
 import DevOpsJobsWidget from '../routes/devops/JobsWidget.svelte';
 import DevOpsTaskTrackerWidget from '../routes/devops/TaskTrackerWidget.svelte';
+import MoodEnergy from './MoodEnergy.svelte';
 
 export interface WidgetEmbed {
   // Typed loosely: each widget's embedded component accepts `variant` and `view` props
@@ -135,6 +136,18 @@ export const widgets: WidgetMeta[] = [
       // 4 rows: times, the rested slider, counted tags and a dream-notes box.
       span: { cols: 1, rows: 4 },
       // No `flippable` (D-062): the card is capture; history, trends and tag editing live on the page.
+    },
+  },
+  {
+    id: 'mood-energy',
+    title: 'Mood & Energy',
+    description: 'One check-in a day: mood and energy 1–5, feelings and a note.',
+    route: '/widgets/mood-energy',
+    embed: {
+      component: MoodEnergy,
+      // 3 rows: two compact sliders, the feeling tags, a one-line note and Save.
+      span: { cols: 1, rows: 3 },
+      // No `flippable` (D-062): the card is capture; history, trends, tag editing and backfill live on the page.
     },
   },
   {

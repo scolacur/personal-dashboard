@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { sleepRestedColor, sleepRestedLabel, sleepWakeDate, SLEEP_RESTED_INK, type SleepEntry, type SleepTagCount } from '@dashboard/shared';
+  import { scale15Color, sleepRestedLabel, sleepWakeDate, SCALE_1_5_INK, type SleepEntry, type SleepTagCount } from '@dashboard/shared';
   import type { PendingNight } from './queue';
   import { formatClock, formatDuration, formatWakeDate } from './time';
 
@@ -17,7 +17,7 @@
 </script>
 
 {#snippet row(wakeDate: string, sleepAt: number, wakeAt: number, rested: number, tags: SleepTagCount[], notes: string | null | undefined, isPending: boolean)}
-  <span class="score" style:background={sleepRestedColor(rested)} style:color={SLEEP_RESTED_INK}>{rested}</span>
+  <span class="score" style:background={scale15Color(rested)} style:color={SCALE_1_5_INK}>{rested}</span>
   <span class="body">
     <span class="head">
       <strong>{formatWakeDate(wakeDate)}</strong>

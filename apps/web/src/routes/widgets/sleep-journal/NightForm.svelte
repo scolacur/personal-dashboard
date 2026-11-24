@@ -1,11 +1,11 @@
 <script lang="ts">
   import {
     normalizeSleepTagName,
-    sleepRestedColor,
+    scale15Color,
     sleepRestedLabel,
     SLEEP_NOTES_MAX_LENGTH,
     SLEEP_RESTED_MAX,
-    SLEEP_RESTED_INK,
+    SCALE_1_5_INK,
     SLEEP_RESTED_MIN,
     SLEEP_TAG_COUNT_MAX,
     SLEEP_TAG_MAX_LENGTH,
@@ -99,7 +99,7 @@
     </div>
   {/if}
 
-  <div class="rested" style:--rested={sleepRestedColor(draft.rested)} style:--rested-ink={SLEEP_RESTED_INK}>
+  <div class="rested" style:--rested={scale15Color(draft.rested)} style:--rested-ink={SCALE_1_5_INK}>
     <output class="value-block" aria-live="polite">
       <span class="value">{draft.rested}</span>
       <span class="label">{sleepRestedLabel(draft.rested)}</span>
@@ -110,7 +110,7 @@
       max={SLEEP_RESTED_MAX}
       orientation="horizontal"
       label="How rested"
-      color={sleepRestedColor(draft.rested)}
+      color={scale15Color(draft.rested)}
       {compact}
     />
   </div>

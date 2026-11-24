@@ -1,0 +1,49 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.error {
+  margin: 0;
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-sm);
+
+  button {
+    min-height: 2.75rem;
+    padding: 0 var(--space-lg);
+    border-radius: var(--radius);
+    font: inherit;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}
+
+.delete {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--status-stuck);
+
+  &.confirm {
+    background: var(--status-stuck);
+    border-color: var(--status-stuck);
+    color: var(--surface);
+  }
+}
+
+.save {
+  border: none;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}

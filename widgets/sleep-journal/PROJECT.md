@@ -24,7 +24,7 @@ Built by PD-51 (Sleep Journal widget).
     sleep time is kept.
 - **Rubric** (`SLEEP_RUBRIC` in `@dashboard/shared`): 1 Wrecked · 2 Groggy · 3 Okay · 4 Solid ·
   5 Quite Rested.
-- **Rested colours** (`SLEEP_RESTED_COLORS`): 1 red, 2 orange, 3 yellow, 4 light green, 5 green —
+- **Rested colours** (`SCALE_1_5_COLORS`, the shared 1–5 scale in `scale-1-5.ts`, also used by Mood & Energy): 1 red, 2 orange, 3 yellow, 4 light green, 5 green —
   mid-tone, with dark ink on top, so they read on both themes. The slider, calendar, list and trends
   all use them.
 - **Counted tags**: tapping an off tag turns it on at ×1 and shows − / + on the chip

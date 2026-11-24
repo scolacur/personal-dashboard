@@ -1,0 +1,83 @@
+.day-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-lg);
+  width: 100%;
+
+  &.compact {
+    gap: var(--space-sm);
+
+    .value {
+      font-size: 1.5rem;
+    }
+
+    .label {
+      font-size: var(--font-size-xs);
+      padding: 0 var(--space-sm);
+    }
+
+    .value-block {
+      flex-direction: row;
+      align-items: baseline;
+      justify-content: center;
+      gap: var(--space-sm);
+    }
+
+    .scale {
+      gap: var(--space-xs);
+    }
+  }
+}
+
+.scale {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.value-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.name {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.value {
+  font-family: var(--font-display);
+  font-size: 3rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The rubric word sits on a pill of the value's colour: both palettes are mid-tone, so dark ink. */
+.label {
+  padding: 2px var(--space-md);
+  border-radius: 999px;
+  background: var(--level);
+  color: var(--level-ink);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  text-align: center;
+}
+
+.note {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: var(--font-size-base); /* 16px keeps iOS from zooming on focus */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm) var(--space-md);
+}

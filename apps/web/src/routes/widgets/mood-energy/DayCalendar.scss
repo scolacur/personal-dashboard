@@ -1,0 +1,164 @@
+.calendar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.earlier {
+  align-self: center;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.scroller {
+  max-height: 22rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: 3.75rem repeat(7, minmax(1.75rem, 1fr));
+  gap: 3px;
+  padding: var(--space-sm);
+}
+
+.weekday {
+  grid-row: 1;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  padding-bottom: var(--space-xs);
+}
+
+/* Left gutter: a month name with a line spanning the rows that hold its days. */
+.month {
+  grid-column: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  .month-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .month-year {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .month-line {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    background: var(--border);
+    border-radius: 1px;
+  }
+}
+
+/* An empty day: muted and dashed, still tappable to backfill. */
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-height: 1.75rem;
+  padding: 0;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+
+  .day-num {
+    font-size: var(--font-size-xs);
+    font-variant-numeric: tabular-nums;
+    opacity: 0.6;
+  }
+
+  &:hover:not(.future) {
+    border-color: var(--accent);
+  }
+
+  /* A logged day: filled with its mood colour. */
+  &.filled {
+    border-style: solid;
+    border-color: var(--mood);
+    background: var(--mood);
+    color: var(--mood-ink);
+
+    .day-num {
+      opacity: 0.85;
+    }
+  }
+
+  /* A save still in the outbox. */
+  &.pending {
+    border-style: dashed;
+    border-color: var(--mood-ink);
+  }
+
+  &.today {
+    outline: 2px solid var(--text);
+    outline-offset: 1px;
+  }
+
+  &.future {
+    background: transparent;
+    border-color: transparent;
+    cursor: default;
+  }
+}
+
+/* Energy: a bar along the bottom, as wide as the energy, outlined in ink so it reads on any mood. */
+.energy {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: calc(var(--energy-pct) * 1%);
+  height: 4px;
+  background: var(--energy);
+  box-shadow: 0 -1px 0 var(--mood-ink);
+}
+
+.legend {
+  display: flex;
+  gap: var(--space-md);
+  justify-content: center;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+}
+
+.key-mood {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.key-energy {
+  width: 14px;
+  height: 4px;
+}
