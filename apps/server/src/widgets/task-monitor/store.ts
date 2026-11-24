@@ -1527,8 +1527,8 @@ export function epicMemberJoinedKickoff(
     'the new ticket changes anything: the Epic\'s description, the scope or order of existing members,',
     'overlap or duplication with an existing member, or the new ticket itself.',
     '',
-    'If something needs to change, propose only that change. If nothing does, say so in a short reply,',
-    'and Steve will press ✓ Mark refined on the Epic.',
+    'If something needs to change, propose only that change. If nothing does, end with a short reply',
+    'recommending that Steve press ✓ Mark refined on the Epic, and say why the breakdown still holds.',
   ].join('\n');
 }
 
