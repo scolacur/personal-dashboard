@@ -53,8 +53,9 @@
     <div>
       <h1 class="report-title">Ticket Audit</h1>
       <p class="report-sub">
-        Advisory findings from the weekly backlog audit. Read-only here — Accept / Reject lands
-        with PD-287.
+        Advisory findings from the weekly backlog audit. Each run is a full re-sweep, and this
+        page shows one run at a time — not a running total. A finding you don't resolve is raised
+        again as a new finding on the next run. Read-only here — Accept / Reject isn't built yet.
       </p>
     </div>
     <a class="report-board-link" href="/devops">← Dev Ops</a>
