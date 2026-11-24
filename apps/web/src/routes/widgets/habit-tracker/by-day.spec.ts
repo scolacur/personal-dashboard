@@ -8,6 +8,7 @@ import type {
 import { choiceValue } from '@dashboard/shared';
 import { buildDaySets, groupSchedulesByItem } from './by-habit';
 import {
+  applyCompletionWrite,
   buildDayRows,
   buildMetricValueMap,
   formatMetricCell,
@@ -142,5 +143,24 @@ describe('setDayShortcut', () => {
     const daySets = buildDaySets([], new Set([a.id, b.id]), []);
     // '2026-11-17' is a Tuesday — neither leaf is due.
     expect(setDayShortcut(items, schedulesByItem, daySets, set.id, '2026-11-17')).toEqual([]);
+  });
+});
+
+describe('applyCompletionWrite', () => {
+  const base = [
+    { itemId: 1, day: '2026-11-20', completedAt: 1 },
+    { itemId: 2, day: '2026-11-20', completedAt: 2 },
+  ];
+
+  it('adds a completion on tick and removes it on untick (PD-972)', () => {
+    const ticked = applyCompletionWrite(base, 1, '2026-11-21', true, 99);
+    expect(ticked).toContainEqual({ itemId: 1, day: '2026-11-21', completedAt: 99 });
+    expect(applyCompletionWrite(ticked, 1, '2026-11-21', false)).toEqual(base);
+  });
+
+  it('is idempotent: re-ticking never duplicates, unticking an absent day is a no-op', () => {
+    const twice = applyCompletionWrite(base, 1, '2026-11-20', true, 5);
+    expect(twice.filter((c) => c.itemId === 1 && c.day === '2026-11-20')).toHaveLength(1);
+    expect(applyCompletionWrite(base, 3, '2026-11-20', false)).toEqual(base);
   });
 });
