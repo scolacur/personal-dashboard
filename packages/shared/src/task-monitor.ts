@@ -537,7 +537,11 @@ export interface EpicSummary {
   done: number;
   /** Total member count. */
   total: number;
-  /** Derived lane per D-054; for an empty Epic, derived from the Epic's own hand-set status. */
+  /** Members whose status is `queue`. A Backlog Epic can hold queued members (hand-claimed work, or
+   *  members queued one by one); the board shows the count since the lane no longer does (D-115). */
+  queued: number;
+  /** The Epic's lane: its own status for pending work, derived from members once they are all done
+   *  (D-054, D-080, D-115). */
   derivedLane: EpicDerivedLane;
 }
 

@@ -98,11 +98,10 @@ export interface EpicRollbackPlan {
   /**
    * Whether the Epic's own status moves.
    *
-   * This is the fix for the bug where a rollback "did nothing": the Epic's lane is derived, and
-   * `deriveEpicLane` reports `in_progress` whenever ANY member sits in `queue`. So moving the Epic
-   * to `backlog` while a run is live wrote a status the view immediately overruled — the card never
-   * moved, and the Epic was left quietly disagreeing with its own lane. When work is in flight the
-   * Epic now stays in the Queue, which is simply the truth.
+   * When work is in flight the Epic stays in the Queue, which is simply the truth. (This began as the
+   * fix for a rollback that "did nothing", back when `deriveEpicLane` put an Epic in the Queue lane
+   * whenever ANY member sat in `queue`. D-115 since made the lane follow the Epic's own status, so
+   * the lane no longer overrules the write, but keeping a live Epic queued is still the honest state.)
    */
   movesEpic: boolean;
 }

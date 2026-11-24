@@ -1822,9 +1822,13 @@ describe('epics (D-054, PD-336)', () => {
     const m2 = createTicket(db, { title: 'm2', projectId: pd, epicId: e, status: 'backlog' }).id;
     // mixed backlog + backlog → least-advanced pending = backlog
     expect(computeEpicSummary(db, e).derivedLane).toBe('backlog');
-    // a member in the queue → in_progress
+    // D-115: a member in the queue does NOT move a Backlog Epic; it is counted instead
     updateTicket(db, m2, { status: 'queue' });
-    expect(computeEpicSummary(db, e).derivedLane).toBe('in_progress');
+    expect(computeEpicSummary(db, e)).toMatchObject({ derivedLane: 'backlog', queued: 1 });
+    // a hand-claimed member (steve + queue) is the case that bit: still Backlog
+    updateTicket(db, m1, { status: 'queue', assignee: 'steve' });
+    expect(computeEpicSummary(db, e)).toMatchObject({ derivedLane: 'backlog', queued: 2 });
+    updateTicket(db, m1, { status: 'backlog', assignee: null });
     // all done (one completed, one closed) → completed; roll-up counts both as done
     updateTicket(db, m1, { status: 'completed' });
     updateTicket(db, m2, { status: 'closed' });
@@ -1833,6 +1837,20 @@ describe('epics (D-054, PD-336)', () => {
     // all closed → closed
     updateTicket(db, m1, { status: 'closed' });
     expect(computeEpicSummary(db, e).derivedLane).toBe('closed');
+  });
+
+  it("D-115: an unfinished Epic's lane is its own status, whatever its members are doing", () => {
+    const e = epic();
+    const m = createTicket(db, { title: 'm', projectId: pd, epicId: e, status: 'backlog' }).id;
+    // queued Epic, no queued members → Queue lane
+    updateTicket(db, e, { status: 'queue' });
+    expect(computeEpicSummary(db, e)).toMatchObject({ derivedLane: 'in_progress', queued: 0 });
+    // queued Epic with a queued member → still Queue lane
+    updateTicket(db, m, { status: 'queue', assignee: 'steve' });
+    expect(computeEpicSummary(db, e)).toMatchObject({ derivedLane: 'in_progress', queued: 1 });
+    // completion stays derived from members, whatever the Epic's own status
+    updateTicket(db, m, { status: 'completed' });
+    expect(computeEpicSummary(db, e)).toMatchObject({ derivedLane: 'completed', queued: 0 });
   });
 
   it('listEpicMembers + listEpicSummaries see only live members', () => {
@@ -2264,7 +2282,9 @@ describe('epic refinement staleness (PD-610)', () => {
       updateTicket(db, a, { status: 'queue' });
       updateTicket(db, b, { status: 'queue' });
       expect(getTicket(db, epicId)!.status).toBe('backlog');
-      expect(computeEpicSummary(db, epicId).derivedLane).toBe('in_progress');
+      // D-115: the lane follows the Epic's own status; the queued members are counted, and the pause
+      // below still fires on them.
+      expect(computeEpicSummary(db, epicId)).toMatchObject({ derivedLane: 'backlog', queued: 2 });
 
       createTicket(db, { title: 'late arrival', projectId: pd, epicId, assignee: 'steve' });
       expect(getTicket(db, a)!.status).toBe('backlog');

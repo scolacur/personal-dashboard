@@ -1148,13 +1148,18 @@ export function listEpicMembers(db: Database.Database, epicId: number): AgentTic
   return rows.map(rowToTicket);
 }
 
-/** An Epic's board lane (D-054, as amended by D-080).
+/** An Epic's board lane (D-054, as amended by D-080 and D-115).
  *
- *  **D-080 splits this by direction.** The Epic's *own* status is now authoritative for the pending
- *  lanes — a human queues the Epic and its members follow — so a hand-set `queue` is honoured
- *  rather than treated as impossible. Progress stays derived: an Epic reads `completed`/`closed`
- *  only when its members actually got there, because that is an observation of what the loop did
- *  and no top-down push may overwrite it. */
+ *  **The Epic's own status decides the pending lanes; progress stays derived.** A Backlog Epic is in
+ *  the Backlog lane and a queued Epic is in the Queue lane, whatever its members are doing. An Epic
+ *  reads `completed`/`closed` only when its members actually got there, because that is an
+ *  observation of what the loop did and no top-down push may overwrite it.
+ *
+ *  D-115 removed D-080's "a member in `queue` puts the Epic in the Queue" clause. The ticket `queue`
+ *  feeds the Robot; the Epic's own status is the Epic queue, which feeds the ticket queue alongside
+ *  Steve's manual moves. A hand-claimed ticket (`steve` + `queue`) is not the Epic being queued, and
+ *  it was dragging Backlog Epics into the Queue lane. Queued members under a Backlog Epic are
+ *  surfaced by `EpicSummary.queued` instead. */
 function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus): EpicDerivedLane {
   if (memberStatuses.length === 0) {
     switch (ownStatus) {
@@ -1170,10 +1175,6 @@ function deriveEpicLane(memberStatuses: TicketStatus[], ownStatus: TicketStatus)
   }
   const allDone = memberStatuses.every((s) => s === 'completed' || s === 'closed');
   if (allDone) return memberStatuses.some((s) => s === 'completed') ? 'completed' : 'closed';
-  // D-080: not all done, so the Epic is pending. A member still in `queue` means work is live;
-  // otherwise the Epic's own lane decides, which is what makes queueing an Epic with nothing yet
-  // dispatchable (every member blocked, say) still read as active rather than snapping back.
-  if (memberStatuses.some((s) => s === 'queue')) return 'in_progress';
   return ownStatus === 'queue' ? 'in_progress' : 'backlog';
 }
 
@@ -1191,6 +1192,7 @@ export function computeEpicSummary(db: Database.Database, epicId: number): EpicS
     ticketId: epicId,
     done,
     total: statuses.length,
+    queued: statuses.filter((s) => s === 'queue').length,
     derivedLane: deriveEpicLane(statuses, (epic?.status ?? 'backlog') as TicketStatus),
   };
 }
@@ -1278,7 +1280,11 @@ function invalidateEpicRefinement(
     logEvent(db, epicId, 'epic_pause_declined', { ...detail });
     return;
   }
-  if (computeEpicSummary(db, epicId).derivedLane !== 'in_progress') return;
+  // Pause only an Epic with queued work: queued itself, or holding queued members. This is the test
+  // the derived lane used to encode; D-115 took member status out of the lane, but a stale Backlog
+  // Epic whose members were queued one by one must still be paused.
+  const summary = computeEpicSummary(db, epicId);
+  if (summary.derivedLane !== 'in_progress' && summary.queued === 0) return;
 
   // PD-850: select the members to un-arm, then un-arm each and log an event on IT — so a member's
   // own timeline shows why it left the Queue, not just the Epic's.
