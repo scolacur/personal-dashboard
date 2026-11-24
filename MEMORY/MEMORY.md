@@ -4,6 +4,7 @@ One line per day. Load today's and yesterday's files at session start.
 
 **Index rule:** one line per day, a single sentence, ≤ ~200 chars, navigational only — points at the day file, never summarizes it. Detail lives in the day file; durable decisions in `DECISIONS.md`. (Governed by the global `/wrap-up` skill, Step 5.)
 
+- [2026-11-24](2026-11-24.md) — PD-964 progress-check checkpoint shipped (#542, D-114), max-turns removal split to PD-967; PD-931 Robot run folded; worker refreshed.
 - [2026-11-23](2026-11-23.md) — PD-418 finished; Decisions inbox cleared; P1 epics refined; evening stall diagnosed (auto-merge label gap #539, auto-queue on); checkpoint auto-continue PD-964.
 - [2026-11-22](2026-11-22.md) — Refine steps recovered; PD-418 stale-pause; PD-825 hand-pushed; Robot runs folded; Velocity Epic PD-895 shipped (PD-896/897/881/916 SZZ/922/923).
 - [2026-11-21](2026-11-21.md) — Refine Q&A audit; PD-418 re-scoped; 13 proposals approved; PD-843/PD-844 shipped (Refine sub-agents); #465 stranded by Epic pause → PD-850.
