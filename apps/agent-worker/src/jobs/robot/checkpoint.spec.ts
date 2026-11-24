@@ -100,18 +100,30 @@ describe('dispatchStart', () => {
 });
 
 describe('firstWindow', () => {
-  it('a fresh episode gets a full window', () => {
-    expect(firstWindow(0, 25, 200)).toEqual({ turns: 25, index: 1 });
+  it('a fresh episode opens with the longer window', () => {
+    expect(firstWindow(0, 50, 25, 200)).toEqual({ turns: 50, index: 1 });
+  });
+
+  it('checks land at 50, then every 25 after', () => {
+    expect(firstWindow(50, 50, 25, 200)).toEqual({ turns: 25, index: 2 });
+    expect(firstWindow(75, 50, 25, 200)).toEqual({ turns: 25, index: 3 });
   });
 
   it('a retry finishes the window it was cut short in', () => {
-    expect(firstWindow(10, 25, 200)).toEqual({ turns: 15, index: 1 });
-    expect(firstWindow(60, 25, 200)).toEqual({ turns: 15, index: 3 });
+    expect(firstWindow(10, 50, 25, 200)).toEqual({ turns: 40, index: 1 });
+    expect(firstWindow(60, 50, 25, 200)).toEqual({ turns: 15, index: 2 });
+    expect(firstWindow(110, 50, 25, 200)).toEqual({ turns: 15, index: 4 });
+  });
+
+  it('equal opening and window lengths behave as fixed windows', () => {
+    expect(firstWindow(0, 25, 25, 200)).toEqual({ turns: 25, index: 1 });
+    expect(firstWindow(60, 25, 25, 200)).toEqual({ turns: 15, index: 3 });
   });
 
   it('never runs past the total cap', () => {
-    expect(firstWindow(190, 25, 200)).toEqual({ turns: 10, index: 8 });
-    expect(firstWindow(200, 25, 200).turns).toBe(0);
-    expect(firstWindow(230, 25, 200).turns).toBe(0);
+    expect(firstWindow(190, 50, 25, 200)).toEqual({ turns: 10, index: 7 });
+    expect(firstWindow(40, 50, 25, 45)).toEqual({ turns: 5, index: 1 });
+    expect(firstWindow(200, 50, 25, 200).turns).toBe(0);
+    expect(firstWindow(230, 50, 25, 200).turns).toBe(0);
   });
 });

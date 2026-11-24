@@ -75,8 +75,12 @@ function agentState(db: Database.Database, id: number): string | null {
   return (db.prepare('SELECT agent_state AS s FROM agent_tickets WHERE id = ?').get(id) as { s: string | null }).s;
 }
 
+/** Specs run with an opening window (40) that differs from the window (25) and from the default
+ *  opener (50), so each one proves the first window and the later ones are sized independently.
+ *  The real defaults have their own spec (`the default opening window is 50, then 25`). */
+const FIRST = 40;
 const cfg = (over: Record<string, string> = {}): AgentWorkerConfig =>
-  loadConfig({ ROBOT_DISPATCH_ENABLED: '1', ROBOT_ALLOWLIST: '1', ...over });
+  loadConfig({ ROBOT_DISPATCH_ENABLED: '1', ROBOT_ALLOWLIST: '1', CHECKPOINT_FIRST_WINDOW_TURNS: String(FIRST), ...over });
 
 /** Backoff off so multi-cycle tests with a fixed clock are always retry-eligible. */
 const cfgNoBackoff = (over: Record<string, string> = {}): AgentWorkerConfig =>
@@ -520,19 +524,23 @@ describe('processRobotQueue', () => {
       ...deps(),
       runSession: async (_c, cand) => (windows.push(cand.maxTurns), { ok: true, sessionId: 's', verifyOk: true, prNumber: 314 }),
     });
-    // Neither the ticket's override nor ROBOT_MAX_TURNS: every run's first window is CHECKPOINT_WINDOW_TURNS.
-    expect(windows).toEqual([25, 25]);
-    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(25);
-    expect(listRunsForTicket(db, 2)[0].maxTurns).toBe(25);
+    // Neither the ticket's override nor ROBOT_MAX_TURNS: every run's first window is CHECKPOINT_FIRST_WINDOW_TURNS.
+    expect(windows).toEqual([FIRST, FIRST]);
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(FIRST);
+    expect(listRunsForTicket(db, 2)[0].maxTurns).toBe(FIRST);
   });
 
   it('puts the window, the episode so far and the cap on the dispatched milestone', async () => {
     addQueued(db, 1);
-    await processRobotQueue(db, cfg({ CHECKPOINT_WINDOW_TURNS: '30', CHECKPOINT_TOTAL_TURNS: '150' }), deps());
+    await processRobotQueue(
+      db,
+      cfg({ CHECKPOINT_FIRST_WINDOW_TURNS: '45', CHECKPOINT_WINDOW_TURNS: '30', CHECKPOINT_TOTAL_TURNS: '150' }),
+      deps(),
+    );
     const ev = db
       .prepare("SELECT detail FROM agent_ticket_events WHERE ticket_id = 1 AND type = 'robot_dispatched'")
       .get() as { detail: string };
-    expect(JSON.parse(ev.detail)).toMatchObject({ maxTurns: 30, window: 1, turnsSoFar: 0, totalCap: 150 });
+    expect(JSON.parse(ev.detail)).toMatchObject({ maxTurns: 45, window: 1, turnsSoFar: 0, totalCap: 150 });
   });
 
   // ---- PD-463: the loop-wide budget ceiling ----
@@ -1196,8 +1204,9 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     await processRobotQueue(db, cfg(), d);
 
     expect(restored).toEqual(['/wt/robot-1']);
-    expect(seen[1]).toEqual({ maxTurns: 25, checkpoint: { why: 'continue', report: 'Left: two tests', restored: true, rebased: true } });
-    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(25);
+    // A Continue starts a new episode, so it opens with the first window again.
+    expect(seen[1]).toEqual({ maxTurns: FIRST, checkpoint: { why: 'continue', report: 'Left: two tests', restored: true, rebased: true } });
+    expect(listRunsForTicket(db, 1)[0].maxTurns).toBe(FIRST);
 
     // Run 3, the transient retry, resumes run 2's saved work and still carries the Continue's report.
     // Before PD-964 the Continue was consumed by run 2 and the retry started from a clean tree.
@@ -1205,7 +1214,8 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     nextResult = {};
     await processRobotQueue(db, cfgNoBackoff(), d);
     expect(seen).toHaveLength(3);
-    expect(seen[2]).toEqual({ maxTurns: 25, checkpoint: { why: 'retry', report: 'Left: two tests', restored: true, rebased: true } });
+    // Run 2 recorded no turns, so the retry still has the whole opening window.
+    expect(seen[2]).toEqual({ maxTurns: FIRST, checkpoint: { why: 'retry', report: 'Left: two tests', restored: true, rebased: true } });
     expect(restored).toHaveLength(2);
   });
 
@@ -1257,7 +1267,7 @@ describe('turn ceiling → checkpoint (PD-737, D-094)', () => {
     expect(order[0]).toMatch(/^remove .*robot-1$/); // the kept clone goes first…
     expect(order[1]).toBe('ensure'); // …then a fresh one
     expect(order).not.toContain('restore');
-    expect(seen[1]).toEqual({ maxTurns: 25, checkpoint: undefined });
+    expect(seen[1]).toEqual({ maxTurns: FIRST, checkpoint: undefined });
     expect(agentState(db, 1)).toBe('in-review');
   });
 });
@@ -1302,26 +1312,41 @@ describe('progress check (PD-964, D-114)', () => {
     const judged: number[] = [];
     await processRobotQueue(db, cfg(), {
       ...deps(),
-      runSession: scripted([windowEnd(25), windowEnd(25), handoff], calls),
+      runSession: scripted([windowEnd(FIRST), windowEnd(25), handoff], calls),
       judge: async (_c, input) => (judged.push(input.window), { verdict: 'progressing', reason: 'tests going green', turns: 1, tokens: 20 }),
     });
     expect(calls).toEqual([
-      { maxTurns: 25, resume: undefined, offset: 0 },
-      { maxTurns: 25, resume: 'sess-w', offset: 26 }, // 25 + the judge's 1
-      { maxTurns: 25, resume: 'sess-w', offset: 52 },
+      { maxTurns: 40, resume: undefined, offset: 0 }, // the opening window
+      { maxTurns: 25, resume: 'sess-w', offset: 41 }, // 40 + the judge's 1; later windows are 25
+      { maxTurns: 25, resume: 'sess-w', offset: 67 },
     ]);
     expect(judged).toEqual([1, 2]);
     expect(agentState(db, 1)).toBe('in-review');
     const run = listRunsForTicket(db, 1)[0];
     expect(run.status).toBe('handed-off');
-    expect(run.turns).toBe(57); // 25 + 1 + 25 + 1 + 5 — the judge's usage is the run's usage (D-064)
+    expect(run.turns).toBe(72); // 40 + 1 + 25 + 1 + 5 — the judge's usage is the run's usage (D-064)
     expect(run.tokens).toBe(290);
     const checks = details(1, 'robot_progress_check');
     expect(checks.map((c) => [c.window, c.progress, c.turnsSoFar])).toEqual([
-      [1, 'progressing', 26],
-      [2, 'progressing', 52],
+      [1, 'progressing', 41],
+      [2, 'progressing', 67],
     ]);
     expect(checks[0]).toMatchObject({ checkedBy: 'judge', reason: 'tests going green', totalCap: 200 });
+  });
+
+  it('the default opening window is 50, then 25 — orientation is not judged as a stall', async () => {
+    addQueued(db, 1);
+    const calls: { maxTurns: number | null; resume?: string; offset?: number }[] = [];
+    const judged: number[] = [];
+    // Real defaults: no CHECKPOINT_* overrides.
+    await processRobotQueue(db, loadConfig({ ROBOT_DISPATCH_ENABLED: '1', ROBOT_ALLOWLIST: '1' }), {
+      ...deps(),
+      runSession: scripted([windowEnd(50), windowEnd(25), handoff], calls),
+      judge: async (_c, input) => (judged.push(input.window), { verdict: 'progressing', reason: 'ok', turns: 1, tokens: 20 }),
+    });
+    expect(calls.map((c) => c.maxTurns)).toEqual([50, 25, 25]);
+    expect(judged).toEqual([1, 2]);
+    expect(details(1, 'robot_progress_check').map((c) => c.turnsSoFar)).toEqual([51, 77]);
   });
 
   it.each(['stalled', 'drifted', 'hallucinating'] as const)('a `%s` verdict parks in checkpoint with the verdict and reason', async (verdict) => {
@@ -1389,13 +1414,13 @@ describe('progress check (PD-964, D-114)', () => {
     let judgeCalls = 0;
     await processRobotQueue(db, cfg({ CHECKPOINT_WINDOW_TURNS: '25', CHECKPOINT_TOTAL_TURNS: '60' }), {
       ...deps(),
-      runSession: scripted([windowEnd(25), windowEnd(25), windowEnd(8)], calls),
+      runSession: scripted([windowEnd(FIRST), windowEnd(19)], calls),
       judge: async () => (judgeCalls++, { verdict: 'progressing', reason: 'fine', turns: 1, tokens: 1 }),
       statusReport: async () => ({ report: 'r' }),
     });
-    // 25 (+1 judge) → 25 (+1 judge) = 52 → the last window is cut to the 8 turns left under the cap.
-    expect(calls.map((c) => c.maxTurns)).toEqual([25, 25, 8]);
-    expect(judgeCalls).toBe(2); // the cap decides the last check, not the judge
+    // 40 (+1 judge) = 41 → the next window is cut from 25 to the 19 turns left under the cap.
+    expect(calls.map((c) => c.maxTurns)).toEqual([FIRST, 19]);
+    expect(judgeCalls).toBe(1); // the cap decides the last check, not the judge
     expect(agentState(db, 1)).toBe('checkpoint');
     const [cp] = details(1, 'robot_checkpoint');
     expect(cp).toMatchObject({ checkedBy: 'total_cap', turnsSoFar: 60, totalCap: 60 });
@@ -1441,7 +1466,7 @@ describe('progress check (PD-964, D-114)', () => {
     expect(agentState(db, 1)).toBe('queued');
     expect(listRunsForTicket(db, 1)[0].turns).toBe(10); // the live count survived the abort
 
-    // The retry: same WIP, same report, and only the rest of the window (25 − 10).
+    // The retry: same WIP, same report, and only the rest of the opening window (40 − 10).
     clock = 3000;
     await processRobotQueue(db, cfgNoBackoff(), {
       ...deps(),
@@ -1454,10 +1479,10 @@ describe('progress check (PD-964, D-114)', () => {
     });
     expect(restored).toEqual(['/wt/robot-1', '/wt/robot-1']);
     const report = 'Blocking: nothing. Estimate: 3 turns';
-    expect(seen[0]).toEqual({ maxTurns: 25, checkpoint: { why: 'continue', report, restored: true, rebased: true } });
-    expect(seen[1]).toEqual({ maxTurns: 15, checkpoint: { why: 'retry', report, restored: true, rebased: true } });
+    expect(seen[0]).toEqual({ maxTurns: FIRST, checkpoint: { why: 'continue', report, restored: true, rebased: true } });
+    expect(seen[1]).toEqual({ maxTurns: 30, checkpoint: { why: 'retry', report, restored: true, rebased: true } });
     const dispatched = details(1, 'robot_dispatched');
-    expect(dispatched[2]).toMatchObject({ turnsSoFar: 10, window: 1, maxTurns: 15 });
+    expect(dispatched[2]).toMatchObject({ turnsSoFar: 10, window: 1, maxTurns: 30 });
     expect(agentState(db, 1)).toBe('in-review');
   });
 

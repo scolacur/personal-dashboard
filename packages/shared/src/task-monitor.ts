@@ -253,6 +253,11 @@ export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-revie
  * `checkpoint`. Defaults for the worker's env (`CHECKPOINT_WINDOW_TURNS` / `CHECKPOINT_TOTAL_TURNS`).
  */
 export const CHECKPOINT_WINDOW_TURNS_DEFAULT = 25;
+/** The opening window of an episode is longer than the rest (`CHECKPOINT_FIRST_WINDOW_TURNS`): a run
+ *  spends its first stretch reading and planning, changing no code, and a 25-turn opener tripped the
+ *  `no_diff_change` tripwire on healthy runs (PD-888 parked at 26 turns with a clean plan). Checks
+ *  land at 50, then every `CHECKPOINT_WINDOW_TURNS` after (75, 100, …). */
+export const CHECKPOINT_FIRST_WINDOW_TURNS_DEFAULT = 50;
 /** PD-964: the episode's hard turn cap across auto-continues and retries (the D-066 bound). A run
  *  still progressing at the cap parks anyway, and the report says the cap stopped it. */
 export const CHECKPOINT_TOTAL_TURNS_DEFAULT = 200;

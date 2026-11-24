@@ -424,7 +424,7 @@ export async function processRobotQueue(
     const episode = currentEpisode(db, candidate.id);
     const windowTurns = config.robot.checkpointWindowTurns;
     const totalCap = config.robot.checkpointTotalTurns;
-    const first = firstWindow(episode.turnsUsed, windowTurns, totalCap);
+    const first = firstWindow(episode.turnsUsed, config.robot.checkpointFirstWindowTurns, windowTurns, totalCap);
     // PD-913 (D-111): a session PR the Robot adopted is reworked on Steve's branch, not robot/t<id>,
     // and the prompt is told whose branch it is.
     const adopted = adoptedFrom(db, candidate.id);
