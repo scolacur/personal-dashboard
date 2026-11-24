@@ -38,7 +38,7 @@ export {
   isSentinelTitle,
   pendingRename,
 } from './id-tracker';
-export type { PageWidget, PageWidgetMap } from './shell';
+export type { PageWidget, PageWidgetMap, WidgetUsage } from './shell';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
 export {
   JOB_RUN_STATUSES,
@@ -108,6 +108,7 @@ export type {
   TicketPriority,
   TicketAssignee,
   TicketKind,
+  CoderArea,
   AgentState,
   AgentTicket,
   CloseReason,
@@ -205,6 +206,11 @@ export {
   TICKET_KINDS,
   TICKET_KIND_LABELS,
   isTicketKind,
+  CODER_AREAS,
+  CODER_AREA_IDS,
+  DEFAULT_CODER_AREA,
+  isCoderArea,
+  effectiveCoderArea,
   laneForcedAssignee,
   AGENT_STATE_LABELS,
   AGENT_STATE_DESCRIPTIONS,
@@ -214,6 +220,7 @@ export {
   TURN_WARN_FRACTION,
   TURN_PROGRESS_STATES,
   CHECKPOINT_WINDOW_TURNS_DEFAULT,
+  CHECKPOINT_FIRST_WINDOW_TURNS_DEFAULT,
   CHECKPOINT_TOTAL_TURNS_DEFAULT,
   PROGRESS_VERDICTS,
   PROGRESS_TRIPWIRES,
@@ -363,6 +370,41 @@ export {
   tinnitusLabel,
 } from './tinnitus-tracker';
 export type {
+  SleepTag,
+  SleepTagCount,
+  SleepEntry,
+  CreateSleepEntryInput,
+  UpdateSleepEntryInput,
+  WallClock,
+} from './sleep-journal';
+export {
+  SLEEP_RESTED_MIN,
+  SLEEP_RESTED_MAX,
+  SLEEP_RESTED_DEFAULT,
+  SLEEP_DEFAULT_TAGS,
+  SLEEP_TAG_MAX_LENGTH,
+  SLEEP_NOTES_MAX_LENGTH,
+  SLEEP_TAG_COUNT_MIN,
+  SLEEP_TAG_COUNT_MAX,
+  SLEEP_MAX_DURATION_MS,
+  SLEEP_FUTURE_TOLERANCE_MS,
+  SLEEP_TIMEZONE,
+  SLEEP_DEFAULT_SLEEP_TIME,
+  isValidRested,
+  isValidTagCount,
+  normalizeSleepTagName,
+  SLEEP_RUBRIC,
+  sleepRestedLabel,
+  SLEEP_RESTED_COLORS,
+  SLEEP_RESTED_INK,
+  sleepRestedColor,
+  sleepWallClock,
+  sleepWakeDate,
+  sleepInstantAt,
+  addSleepDays,
+  sleepNightInstants,
+} from './sleep-journal';
+export type {
   HabitItemKind,
   HabitMetricType,
   HabitItem,
@@ -429,6 +471,7 @@ export {
   habitWeeksEndingAt,
   habitMonthSpans,
   HABIT_MONTH_NAMES,
+  HABIT_MONTH_FULL_NAMES,
 } from './habits';
 export type {
   AwaitingRefineItem,
@@ -503,3 +546,30 @@ export {
   weekOf,
   weekRange,
 } from './velocity';
+export type { ColorPreset } from './color';
+export {
+  COLOR_PRESETS,
+  CONTRAST_DARK,
+  CONTRAST_LIGHT,
+  isHexColor,
+  normalizeHexColor,
+  relativeLuminance,
+  contrastRatio,
+  contrastText,
+} from './color';
+export type {
+  DrugLogDrug,
+  DrugLogEvent,
+  DrugLogDrugsResponse,
+  CreateDrugLogDrugInput,
+  UpdateDrugLogDrugInput,
+  CreateDrugLogEventInput,
+  UpdateDrugLogEventInput,
+} from './drug-log';
+export {
+  DRUG_LOG_LABEL_MAX_LENGTH,
+  DRUG_LOG_FUTURE_TOLERANCE_MS,
+  DRUG_LOG_DEFAULT_DRUG,
+  DRUG_LOG_FALLBACK_DAY_SETTINGS,
+  normalizeDrugLabel,
+} from './drug-log';

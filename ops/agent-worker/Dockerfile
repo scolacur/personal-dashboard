@@ -104,7 +104,7 @@ ENV NODE_USE_ENV_PROXY=1
 # PD-528: the commit this image was built from — the worker's real version, reported on the
 # heartbeat. Without it the dashboard showed the GROUNDING CHECKOUT's sha, which the worker
 # re-pulls continuously, so a container running week-old code advertised a fresh sha. Passed by
-# `robot-refresh`; unset builds report "build unknown" rather than a misleading number.
+# deploy.yml (GHCR) and by `robot-rebuild` (emergency local build); unset builds report "build unknown" rather than a misleading number.
 ARG BUILD_SHA=""
 ENV AGENT_WORKER_BUILD_SHA=$BUILD_SHA
 

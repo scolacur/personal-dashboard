@@ -7,6 +7,7 @@
   import { projectIdColor } from './api';
   import { epicRefinementBadge } from './epic-members';
   import { queuedMembersNote } from './epic-logic';
+  import { coderAreaChip } from './coder-area';
 
   let {
     epic,
@@ -52,6 +53,8 @@
   const refineHref = $derived(
     refineBadge?.linkToMembers && detailHref ? `${detailHref}#epic-members` : detailHref,
   );
+  // PD-955: the Epic's default code-area (PD-880) — the area its members inherit when they set none.
+  const areaChip = $derived(coderAreaChip(epic, null));
 
   function assigneeLabel(a: TicketAssignee | null): string {
     if (a === 'steve') return 'S';
@@ -105,6 +108,8 @@
       >
     {/if}
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
+    <!-- PD-955: the Epic's default code-area, which its members inherit. -->
+    <span class="area-chip" title="Default code area for members: {areaChip.label}">{areaChip.label}</span>
     <!-- D-115: a Backlog Epic stays in Backlog while members sit in the ticket queue; say so here. -->
     {#if queuedNote}
       <span class="epic-queued" title="Members in the ticket Queue while this Epic is in Backlog">{queuedNote}</span>

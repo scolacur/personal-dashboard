@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { collapseByKey, createOutbox, flushQueue, loadQueue, saveQueue, type OutboxStorage } from './outbox';
 
 // A stand-in payload — the outbox is generic, so these tests use a trivial shape.
@@ -251,5 +251,164 @@ describe('createOutbox', () => {
     outbox.add(p('a'));
     await Promise.all([outbox.flush(), outbox.flush()]);
     expect(maxConcurrent).toBe(1);
+  });
+
+  it('remove drops a pending entry and persists the drop (Undo before sync)', async () => {
+    const kv = memoryKV();
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send: async () => {
+        throw new Error('offline');
+      },
+      isRejected,
+      kv,
+    });
+    outbox.add(p('a'));
+    outbox.add(p('b'));
+    await outbox.flush();
+    expect(outbox.remove((e) => e.id === 'a')).toBe(1);
+    expect(outbox.remove((e) => e.id === 'zzz')).toBe(0);
+    expect(outbox.pending().map((e) => e.id)).toEqual(['b']);
+    expect(loadQueue<Payload>(KEY, kv).map((e) => e.id)).toEqual(['b']);
+  });
+
+  it('an entry removed while its send is in flight is not re-queued when that send fails', async () => {
+    const kv = memoryKV();
+    let release: (() => void) | null = null;
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send: (e) =>
+        new Promise<Payload>((_resolve, reject) => {
+          release = () => reject(new Error(`offline ${e.id}`));
+        }),
+      isRejected,
+      kv,
+    });
+    outbox.add(p('a')); // kicks a flush; 'a' is now in flight
+    expect(outbox.remove((e) => e.id === 'a')).toBe(1);
+    (release as unknown as () => void)();
+    await outbox.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(outbox.pending()).toEqual([]);
+  });
+});
+
+describe('visible pending signal (PD-778)', () => {
+  // The delay timer is guarded behind `typeof window`, like the retry triggers; the suite runs in
+  // node, so stand in a window and drive time with fake timers.
+  beforeEach(() => {
+    vi.stubGlobal('window', {});
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /** A send the test resolves or fails by hand, so "slow" and "fast" are under its control. */
+  function controlledSend() {
+    const calls: { resolve: () => void; reject: (e: unknown) => void }[] = [];
+    const send = (e: Payload) =>
+      new Promise<Payload>((resolve, reject) => calls.push({ resolve: () => resolve(e), reject }));
+    return { send, calls };
+  }
+
+  function make(send: (e: Payload) => Promise<Payload>, online = true) {
+    const seen: string[][] = [];
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send,
+      isRejected,
+      kv: memoryKV(),
+      isOnline: () => online,
+      onVisibleChange: (list) => seen.push(list.map((e) => e.id)),
+    });
+    return { outbox, seen };
+  }
+
+  it('a sync that completes under the delay never shows the line', async () => {
+    const { send, calls } = controlledSend();
+    const { outbox, seen } = make(send);
+    outbox.add(p('a'));
+    expect(outbox.pending()).toHaveLength(1); // queued...
+    expect(outbox.visiblePending()).toEqual([]); // ...but not shown
+    await vi.advanceTimersByTimeAsync(300);
+    calls[0].resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outbox.pending()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2000); // the cancelled show-timer must not fire late
+    expect(outbox.visiblePending()).toEqual([]);
+    expect(seen).toEqual([]);
+  });
+
+  it('a sync still pending past the delay shows the line', async () => {
+    const { send } = controlledSend();
+    const { outbox, seen } = make(send);
+    outbox.add(p('a'));
+    await vi.advanceTimersByTimeAsync(799);
+    expect(outbox.visiblePending()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outbox.visiblePending().map((e) => e.id)).toEqual(['a']);
+    expect(seen).toEqual([['a']]);
+  });
+
+  it('honours a custom visibleDelayMs', async () => {
+    const { send } = controlledSend();
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send,
+      isRejected,
+      kv: memoryKV(),
+      isOnline: () => true,
+      visibleDelayMs: 2000,
+    });
+    outbox.add(p('a'));
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(outbox.visiblePending()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(outbox.visiblePending()).toHaveLength(1);
+  });
+
+  it('an add while offline shows the line immediately', () => {
+    const { send } = controlledSend();
+    const { outbox, seen } = make(send, false);
+    outbox.add(p('a'));
+    expect(outbox.visiblePending().map((e) => e.id)).toEqual(['a']);
+    expect(seen).toEqual([['a']]);
+  });
+
+  it('once showing, it tracks the queue, and hides immediately when the queue empties', async () => {
+    const { send, calls } = controlledSend();
+    const { outbox, seen } = make(send);
+    outbox.add(p('a'));
+    await vi.advanceTimersByTimeAsync(800);
+    outbox.add(p('b')); // joins the queue behind the in-flight flush
+    expect(outbox.visiblePending().map((e) => e.id)).toEqual(['a', 'b']);
+    calls[0].resolve(); // 'a' lands; the flush leaves 'b' queued
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outbox.visiblePending().map((e) => e.id)).toEqual(['b']);
+    const flushed = outbox.flush();
+    calls[1].resolve();
+    await flushed;
+    // Empty queue → hidden at once, no delay.
+    expect(outbox.pending()).toEqual([]);
+    expect(outbox.visiblePending()).toEqual([]);
+    expect(seen.at(-1)).toEqual([]);
+  });
+
+  it('leaves the raw queue and its onChange untouched by the delay', async () => {
+    const { send } = controlledSend();
+    const changes: number[] = [];
+    const outbox = createOutbox<Payload, Payload>({
+      key: KEY,
+      send,
+      isRejected,
+      kv: memoryKV(),
+      isOnline: () => true,
+      onChange: (list) => changes.push(list.length),
+    });
+    outbox.add(p('a'));
+    expect(changes).toEqual([1]);
+    expect(outbox.pending()).toHaveLength(1);
   });
 });

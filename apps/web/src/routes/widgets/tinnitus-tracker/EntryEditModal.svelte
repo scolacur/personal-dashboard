@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { TINNITUS_MAX, TINNITUS_MIN, tinnitusLabel, type TinnitusEntry } from '@dashboard/shared';
+  import { normalizeTagName, TINNITUS_MAX, TINNITUS_MIN, tinnitusLabel, type TinnitusEntry } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
-  import TagCloud from './TagCloud.svelte';
+  import TagCloud from '$lib/TagCloud.svelte';
   import { deleteEntry, updateEntry } from './api';
   import { fromLocalInput, toLocalInput } from './time';
 
@@ -82,7 +82,7 @@
     </div>
     <p class="label">{tinnitusLabel(intensity) ?? '\u00a0'}</p>
 
-    <TagCloud tags={allTags} bind:selected compact addable={false} />
+    <TagCloud tags={allTags} bind:selected compact addable={false} normalize={normalizeTagName} />
 
     <label>
       <span>When</span>

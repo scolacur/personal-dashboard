@@ -201,6 +201,15 @@
     }
   }
 
+  &.agent-checkpoint {
+    background: color-mix(in srgb, var(--status-checkpoint) 10%, transparent);
+    border-color: color-mix(in srgb, var(--status-checkpoint) 34%, transparent);
+
+    .pb-lead {
+      color: var(--status-checkpoint);
+    }
+  }
+
   .pb-lead {
     font-weight: 600;
     color: var(--status-stuck);
@@ -233,6 +242,11 @@
     color: var(--status-awaiting-human);
     border-color: color-mix(in srgb, var(--status-awaiting-human) 40%, transparent);
   }
+  &.primary {
+    color: var(--status-checkpoint);
+    border-color: color-mix(in srgb, var(--status-checkpoint) 45%, transparent);
+    font-weight: 600;
+  }
   &:hover {
     border-color: var(--muted);
   }
@@ -256,6 +270,19 @@
   &.agent-stuck { color: var(--status-stuck); }
   &.agent-awaiting-human,
   &.agent-needs-human { color: var(--status-awaiting-human); }
+  &.agent-checkpoint { color: var(--status-checkpoint); }
+}
+// PD-965: the pill is a button for an input-needed state — it opens the "needs you" modal.
+button.agent-pill-action {
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: color-mix(in srgb, currentColor 25%, transparent);
+  }
 }
 
 .rel-add-row {
@@ -349,9 +376,9 @@
   }
 }
 
-// The "Spin off into new Epic…" action beside the epic breadcrumb (slice C).
+// The "Spin off into new Epic…" action (slice C). Its breadcrumb moved to the header (PD-993).
 .spin-off-btn {
-  margin-left: var(--space-sm);
+  margin-left: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -366,6 +393,29 @@
 
 .no-epic {
   color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+}
+
+// PD-993 (D-080): "Part of [icon] PD-NNN [P]" in the header — a member's priority is its Epic's.
+.epic-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.epic-ref-id {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
 }
 
 // GitHub icon links (header + details) — visual parity with the board cards (PD-374).

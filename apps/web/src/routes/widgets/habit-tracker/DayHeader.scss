@@ -1,0 +1,85 @@
+/* The Today date header (PD-779 ([Habit Tracker] date header + day arrows on Today)). */
+.day-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+.day-title {
+  flex: 1 1 auto;
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-xs);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  text-align: center;
+}
+
+.day-date {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.day-relative + .day-date::before {
+  content: '· ';
+}
+
+.day-arrow {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.day-today {
+  flex: 0 0 auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-sm);
+  height: 2rem;
+  color: var(--accent);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--accent);
+  }
+}
+
+.compact {
+  .day-arrow,
+  .day-today {
+    height: 1.75rem;
+  }
+
+  .day-arrow {
+    width: 1.75rem;
+  }
+
+  .day-title {
+    font-size: var(--font-size-sm);
+  }
+}

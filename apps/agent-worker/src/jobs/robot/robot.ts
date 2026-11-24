@@ -3,9 +3,11 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { dbPathFor } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import {
+  areaBusySkips,
   queuedBlockedByAgentState,
   queuedButUnrefined,
   robotQueueCandidates,
+  runningCoderAreas,
   selectDispatchable,
   type RobotCandidate,
 } from './select';
@@ -295,6 +297,19 @@ export async function processRobotQueue(
     );
   }
 
+  // PD-951: the candidate set + the areas already running, read once and reused for both the
+  // area-busy skip report below and the dispatch selection further down (one DB read per cycle).
+  const candidates = robotQueueCandidates(db);
+  const runningAreas = runningCoderAreas(db);
+  // PD-951: name any ready candidate the per-area cap holds back this cycle, for the same reason
+  // the two skips above are named — a card that can never dispatch reads exactly like an idle loop.
+  for (const t of areaBusySkips(candidates, config.robot, 0, runningAreas)) {
+    logger.warn(
+      { ticketId: t.id, area: t.area },
+      `robot: queued + robot-assigned + Ready but NOT dispatching this cycle — ${t.reason} (one Coder per area, PD-951)`,
+    );
+  }
+
   // PD-719: a run that did not hand off keeps its clone so the next dispatch can reuse its commits.
   // Drop the clones of tickets the Robot no longer has. Before any dispatch, and cycles never
   // overlap, so no clone here is in use.
@@ -310,7 +325,9 @@ export async function processRobotQueue(
   }
 
   // Sequential within a cycle; the job loop's in-flight guard prevents overlapping cycles.
-  const selected = selectDispatchable(robotQueueCandidates(db), config.robot, 0);
+  // PD-951: `runningAreas` is passed so the per-area cap also counts Coders left running by a
+  // prior cycle (true parallelism under ROBOT_CONCURRENCY > 1), not only same-cycle claims.
+  const selected = selectDispatchable(candidates, config.robot, 0, runningAreas);
   let dispatched = 0;
 
   for (const candidate of selected) {
@@ -407,7 +424,7 @@ export async function processRobotQueue(
     const episode = currentEpisode(db, candidate.id);
     const windowTurns = config.robot.checkpointWindowTurns;
     const totalCap = config.robot.checkpointTotalTurns;
-    const first = firstWindow(episode.turnsUsed, windowTurns, totalCap);
+    const first = firstWindow(episode.turnsUsed, config.robot.checkpointFirstWindowTurns, windowTurns, totalCap);
     // PD-913 (D-111): a session PR the Robot adopted is reworked on Steve's branch, not robot/t<id>,
     // and the prompt is told whose branch it is.
     const adopted = adoptedFrom(db, candidate.id);

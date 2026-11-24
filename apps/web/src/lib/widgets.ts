@@ -3,7 +3,9 @@ import AcuteStrategiesGenerator from './AcuteStrategiesGenerator.svelte';
 import BuySellTrade from './BuySellTrade.svelte';
 import HabitTracker from './HabitTracker.svelte';
 import IdTracker from './IdTracker.svelte';
+import DrugLog from './DrugLog.svelte';
 import TinnitusTracker from './TinnitusTracker.svelte';
+import SleepJournal from './SleepJournal.svelte';
 import MusicTracker from './MusicTracker.svelte';
 import DevOpsAgentWidget from '../routes/devops/AgentWidget.svelte';
 import DevOpsJobsWidget from '../routes/devops/JobsWidget.svelte';
@@ -58,6 +60,18 @@ export const widgets: WidgetMeta[] = [
       component: HabitTracker,
       span: { cols: 1, rows: 3 },
       // No `flippable` (D-062): the card is the Today checklist; managing habits lives on the page.
+    },
+  },
+  {
+    // PD-975 (Drug log widget): a tap counter for a video game character's in-game use.
+    id: 'drug-log',
+    title: 'Drug Log',
+    description: 'Tap a round button to log it; see counts by day and by drug.',
+    route: '/widgets/drug-log',
+    embed: {
+      component: DrugLog,
+      span: { cols: 1, rows: 2 },
+      // No `flippable` (D-062): the card is the tap grid; editing buttons and the log live on the page.
     },
   },
   {
@@ -122,6 +136,18 @@ export const widgets: WidgetMeta[] = [
       // 3 rows: the card carries notes and backdating as well as the slider (PD-716).
       span: { cols: 1, rows: 3 },
       // No `flippable` (D-062): the card is capture; history and tag editing live on the page.
+    },
+  },
+  {
+    id: 'sleep-journal',
+    title: 'Sleep Journal',
+    description: 'Log each night: sleep and wake times, how rested, dream notes and supplements.',
+    route: '/widgets/sleep-journal',
+    embed: {
+      component: SleepJournal,
+      // 4 rows: times, the rested slider, counted tags and a dream-notes box.
+      span: { cols: 1, rows: 4 },
+      // No `flippable` (D-062): the card is capture; history, trends and tag editing live on the page.
     },
   },
   {

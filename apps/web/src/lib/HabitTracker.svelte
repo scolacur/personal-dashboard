@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { fly } from 'svelte/transition';
   import {
     addHabitDays,
     DEFAULT_DAY_BOUNDARY_MINUTES,
@@ -25,6 +26,8 @@
   import TodayList from '../routes/widgets/habit-tracker/TodayList.svelte';
   import HabitsManager from '../routes/widgets/habit-tracker/HabitsManager.svelte';
   import LogView from '../routes/widgets/habit-tracker/LogView.svelte';
+  import DayHeader from '../routes/widgets/habit-tracker/DayHeader.svelte';
+  import { stepHabitDay } from '../routes/widgets/habit-tracker/day-nav';
   import {
     createChoiceOption,
     createItem,
@@ -90,6 +93,9 @@
   const metricValues = new SvelteMap<number, string | null>();
   let loaded = $state(false);
   let pending = $state<PendingHabitWrite[]>([]);
+  // The "N pending sync" line renders from the outbox's delayed-visible signal, not the raw queue, so
+  // a tick that syncs normally never flashes it (PD-778). `pending` stays the raw queue for LogView.
+  let visiblePending = $state<PendingHabitWrite[]>([]);
 
   /**
    * Every tick / untick (and, when the metric UI lands, every metric write) rides the shared
@@ -104,6 +110,7 @@
     isRejected: (e) => e instanceof RejectedError,
     collapseKey: pendingKey,
     onChange: (list) => (pending = list),
+    onVisibleChange: (list) => (visiblePending = list),
     // A tick that reached the server changes its streak / per-week figures, so re-pull the
     // server-computed Today view once writes flush (D-095).
     onSent: () => {
@@ -116,6 +123,39 @@
   // Today view carries its own `day`; this is the fallback the optimistic tick writes against.
   const today = $derived(habitDay(Date.now(), settings));
   const yesterday = $derived(addHabitDays(today, -1));
+
+  // ── Day navigation (PD-779 ([Habit Tracker] date header + day arrows on Today)) ──────────────
+  // The Today surface (card and page) can step back through past habit days and forward again, never
+  // past today. `pickedDay` is the day asked for (null = the current habit day); `shownDay` is the day
+  // the rendered rows actually belong to (the server view's `day`), set once its fetch lands. Every
+  // Today write — tick, untick, set tick-all, metric — targets `shownDay`, through the one shared
+  // outbox, so a past day is edited exactly as today is.
+  let pickedDay = $state<string | null>(null);
+  const viewedDay = $derived(pickedDay !== null && pickedDay < today ? pickedDay : today);
+  let shownDay = $state<string | null>(null);
+  const writeDay = $derived(shownDay ?? today);
+  // Slide direction for the day change: -1 = back (incoming day enters from the left), 1 = forward.
+  let slideDir = $state<-1 | 1>(-1);
+  // The filter chip, held here so it survives the list being re-created for each day's slide.
+  let chip = $state<'all' | number>('all');
+  // Guards against out-of-order responses when arrows are tapped faster than the server answers.
+  let refreshSeq = 0;
+  const SLIDE_PX = 48;
+  const SLIDE_MS = 220;
+
+  function goToDay(day: string) {
+    if (day === viewedDay) return;
+    slideDir = day < viewedDay ? -1 : 1;
+    pickedDay = day >= today ? null : day;
+    refreshToday().catch(() => {
+      toast.show('Could not load that day.', 'error');
+      pickedDay = shownDay === null || shownDay >= today ? null : shownDay;
+    });
+  }
+
+  function stepDay(delta: -1 | 1) {
+    goToDay(stepHabitDay(viewedDay, delta, today));
+  }
 
   // ── Yesterday banner (T889) ──────────────────────────────────────────────────────
   // "Yesterday: N habits unchecked" — due leaf habits only (no metrics, no sets). Dismissible per
@@ -164,11 +204,29 @@
 
   /** Open Log › By Day scrolled to yesterday (the PD-725 deep link). Works from the card and the page. */
   function openYesterday() {
+    // On the page a repeat click leaves the URL unchanged, so the deep-link effect wouldn't re-fire;
+    // switch the tab directly too (PD-971). From the card, `goto` navigates to the page.
+    if (!compact) tab = 'log';
     void goto(`/widgets/habit-tracker?view=day&day=${yesterday}`, { keepFocus: true, noScroll: true });
   }
 
+  /**
+   * Pull the server-computed view for the viewed habit day (today unless the day arrows moved it,
+   * PD-779 ([Habit Tracker] date header + day arrows on Today)). A response superseded by a later
+   * pull is dropped, and so is its error.
+   */
   async function refreshToday() {
-    const view = await fetchToday();
+    const seq = ++refreshSeq;
+    const day = viewedDay;
+    let view;
+    try {
+      view = await fetchToday(day === today ? undefined : day);
+    } catch (e) {
+      if (seq !== refreshSeq) return;
+      throw e;
+    }
+    if (seq !== refreshSeq) return;
+    shownDay = view.day;
     todayRows = view.rows;
     metricRows = view.metrics;
     completedToday.clear();
@@ -217,6 +275,8 @@
   }
 
   $effect(() => {
+    // Only today's completion earns the burst; a complete past day viewed with the arrows does not.
+    if (shownDay !== today) return;
     if (!shouldFireDayBurst(today, dayComplete, lastBurstDay)) return;
     lastBurstDay = today;
     writeLs(BURST_KEY, today);
@@ -236,16 +296,16 @@
 
   function queueMetric(itemId: number, value: string | null) {
     metricValues.set(itemId, value); // optimistic
-    outbox.add({ kind: 'metric', itemId, day: today, value });
+    outbox.add({ kind: 'metric', itemId, day: writeDay, value });
   }
 
   /**
    * Set a metric's value on an arbitrary habit day — the Log › By Day past-day edits (PD-725). Rides
-   * the same shared outbox as Today (PROJECT.md §4, D-093); when the day is today, the Today tab's
-   * optimistic value is kept in sync too.
+   * the same shared outbox as Today (PROJECT.md §4, D-093); when the day is the one the Today tab is
+   * showing, its optimistic value is kept in sync too.
    */
   function setMetricValueOnDay(itemId: number, day: string, value: string | null) {
-    if (day === today) metricValues.set(itemId, value);
+    if (day === writeDay) metricValues.set(itemId, value);
     outbox.add({ kind: 'metric', itemId, day, value });
   }
 
@@ -254,7 +314,7 @@
     else completedToday.delete(itemId); // optimistic
     // The write is queued, not awaited: it shows immediately and syncs when the server is reachable.
     // Once it flushes, `onSent` re-pulls the server-computed streak / per-week figures (D-095).
-    outbox.add({ kind: 'completion', itemId, day: today, done });
+    outbox.add({ kind: 'completion', itemId, day: writeDay, done });
   }
 
   function toggle(item: HabitItemView) {
@@ -264,10 +324,10 @@
   /**
    * Toggle a completion on an arbitrary habit day — the Log views' past-day edits (PD-726). Rides the
    * same shared outbox as Today (PROJECT.md §4, D-093): never the write API directly. When the day is
-   * today, the Today tab's optimistic done-set is kept in sync too.
+   * the one the Today tab is showing, its optimistic done-set is kept in sync too.
    */
   function toggleCompletionOnDay(itemId: number, day: string, done: boolean) {
-    if (day === today) {
+    if (day === writeDay) {
       if (done) completedToday.add(itemId);
       else completedToday.delete(itemId);
     }
@@ -384,10 +444,11 @@
     await refreshToday();
   }
 
+  // Ids are stable (persisted tab, deep links); only the labels were renamed.
   const TABS = [
-    { id: 'today', label: 'Today' },
-    { id: 'log', label: 'Log' },
-    { id: 'habits', label: 'Habits' },
+    { id: 'today', label: 'Daily Log' },
+    { id: 'log', label: 'History' },
+    { id: 'habits', label: 'Config' },
   ];
   let tab = $state('today');
 
@@ -417,7 +478,7 @@
 </script>
 
 {#snippet todayPanel()}
-  <div class="today-panel">
+  <div class="today-panel" class:compact>
     {#if showYesterdayBanner}
       <div class="yesterday-banner">
         <button type="button" class="yesterday-link" onclick={openYesterday}>
@@ -429,17 +490,30 @@
         </button>
       </div>
     {/if}
-    <TodayList
-      {tree}
-      {metrics}
-      onToggleLeaf={toggle}
-      onToggleSet={toggleSet}
-      onMetric={queueMetric}
-      {loaded}
-      {compact}
-    />
-    {#if pending.length > 0}
-      <p class="pending" role="status">{pending.length} pending sync</p>
+    <DayHeader day={writeDay} {today} onStep={stepDay} onToday={() => goToDay(today)} {compact} />
+    <div class="day-slider">
+      {#key writeDay}
+        <div
+          class="day-slide"
+          in:fly={{ x: slideDir * SLIDE_PX, duration: prefersReducedMotion() ? 0 : SLIDE_MS }}
+          out:fly={{ x: -slideDir * SLIDE_PX, duration: prefersReducedMotion() ? 0 : SLIDE_MS }}
+        >
+          <TodayList
+            {tree}
+            {metrics}
+            onToggleLeaf={toggle}
+            onToggleSet={toggleSet}
+            onMetric={queueMetric}
+            {loaded}
+            {compact}
+            isToday={writeDay === today}
+            bind:chip
+          />
+        </div>
+      {/key}
+    </div>
+    {#if visiblePending.length > 0}
+      <p class="pending" role="status">{visiblePending.length} pending sync</p>
     {/if}
     {#if bursting}
       <div class="day-burst" aria-hidden="true"><span>🎉</span></div>
@@ -454,43 +528,48 @@
     <Tabs tabs={TABS} bind:active={tab} storeKey="habit-tracker" label="Habit Tracker sections">
       {#snippet panel(id)}
         {#if id === 'habits'}
-          <HabitsManager
-            {items}
-            {schedules}
-            {today}
-            {settings}
-            onAdd={addHabit}
-            onAddMetric={addMetric}
-            onRename={rename}
-            onArchive={archive}
-            onDelete={remove}
-            onMove={move}
-            onSchedule={updateSchedule}
-            onSettings={updateSettings}
-            onMetricType={changeMetricType}
-            onListOptions={listOptions}
-            onAddOption={addOption}
-            onEditOption={editOption}
-            onArchiveOption={archiveOption}
-            onDeleteOption={removeOption}
-          />
+          <div class="panel-narrow">
+            <HabitsManager
+              {items}
+              {schedules}
+              {today}
+              {settings}
+              onAdd={addHabit}
+              onAddMetric={addMetric}
+              onRename={rename}
+              onArchive={archive}
+              onDelete={remove}
+              onMove={move}
+              onSchedule={updateSchedule}
+              onSettings={updateSettings}
+              onMetricType={changeMetricType}
+              onListOptions={listOptions}
+              onAddOption={addOption}
+              onEditOption={editOption}
+              onArchiveOption={archiveOption}
+              onDeleteOption={removeOption}
+            />
+          </div>
         {:else if id === 'log'}
-          <LogView
-            {items}
-            {schedules}
-            {settings}
-            {today}
-            {pending}
-            {metricRows}
-            initialView={deepView === 'habit' ? 'habit' : 'day'}
-            initialItemId={deepItem}
-            initialDay={deepDay}
-            onToggle={toggleCompletionOnDay}
-            onMetricWrite={setMetricValueOnDay}
-            onOpenItem={openInCalendar}
-          />
+          <!-- History runs wider than the other tabs on desktop: the By Day grid wants the room. -->
+          <div class="panel-wide">
+            <LogView
+              {items}
+              {schedules}
+              {settings}
+              {today}
+              {pending}
+              {metricRows}
+              initialView={deepView === 'habit' ? 'habit' : 'day'}
+              initialItemId={deepItem}
+              initialDay={deepDay}
+              onToggle={toggleCompletionOnDay}
+              onMetricWrite={setMetricValueOnDay}
+              onOpenItem={openInCalendar}
+            />
+          </div>
         {:else}
-          {@render todayPanel()}
+          <div class="panel-narrow">{@render todayPanel()}</div>
         {/if}
       {/snippet}
     </Tabs>

@@ -782,7 +782,8 @@ exist?", never "what's on this page?". One concept, two surfaces:
   the only membership control that works below 768px, where Arrange is unavailable.
 
 _Avoid_: treating the library as page-scoped, or as a second name for Home — Home is an ordinary
-curated page like any other (PD-334), and no longer an auto-catalogue of everything. Note the
+curated page (PD-334), and no longer an auto-catalogue of everything — though it now shows
+the **recent view** whenever there is usage (PD-751, Home shows recently used widgets). Note the
 deliberate split between term and label: **library** is the domain term used in code and docs
 (`LibraryModal.svelte`, the Library page), **All Widgets** is only the nav button's copy, because
 "Library" alone reads vaguely beside "New Page" and "Edit". Don't rename the code to match the
@@ -796,6 +797,14 @@ and survive a cache clear, unlike the per-device *layout* override D-053 establi
 _Avoid_: the retired registry field `WidgetMeta.pages` and its `widgetsForPage()` reader — the
 registry no longer declares placement. Also avoid conflating membership with **layout**: membership
 is *which* widgets, layout is *where and how big*.
+
+**Recent view** (Home):
+What Home shows once any widget has been used: the most recently used widgets, newest first,
+capped at 8, only widgets still in the registry (PD-751, Home shows recently used widgets). A
+**use** is visiting a widget's own route or interacting with its card on any page *except Home* —
+Home never records, or it would reinforce itself. Usage is stored server-side (`widget_usage`) so
+it follows you across devices. A **derived view** like the Library page: not arrangeable, no Add
+control. With no usage yet, Home falls back to its curated grid, which stays arrangeable.
 
 ### Habit Tracker
 

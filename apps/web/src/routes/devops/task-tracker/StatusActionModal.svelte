@@ -13,18 +13,22 @@
    * The "needs you" modal (T900). Opens on the board for a ticket whose Robot pill is in an
    * input-needed state (`stuck` / `awaiting-human` / `needs-human` / `checkpoint`). Shows what happened, the agent's own words, the run count + cumulative
    * turns, and the state's actions — none of which leave the board. All per-state content comes from
-   * `status-action.ts`; this file is the renderer + the action wiring.
+   * `status-action.ts`; this file is the renderer + the action wiring. PD-965: it also opens from the
+   * ticket's detail page, with the actions first so they are visible without scrolling.
    */
   let {
     ticket,
     onClose,
     onUpdate,
+    showDetailLink = true,
   }: {
     /** The ticket whose pill was clicked; null closes the modal. */
     ticket: AgentTicket | null;
     onClose: () => void;
     /** Called after an action lands so the board can refresh the card. */
     onUpdate: () => void;
+    /** False on the ticket's own detail page, where "Open full ticket" would link to itself. */
+    showDetailLink?: boolean;
   } = $props();
 
   let runs = $state<AgentRun[]>([]);
@@ -93,9 +97,32 @@
   }
 </script>
 
-<Modal open={ticket !== null} title={content?.title} onClose={onClose}>
+<Modal open={ticket !== null} title={content?.title} size="wide" onClose={onClose}>
   {#if ticket && content}
     <div class="sa">
+      <!-- PD-965: the decision first — above the report, so it never needs a scroll to reach. -->
+      {#if content.actions.length}
+        <div class="sa-actions sa-actions-top">
+          {#each content.actions as action (action.kind)}
+            {#if action.kind === 'open-pr'}
+              {#if content.prUrl}
+                <a class="sa-btn" href={content.prUrl} target="_blank" rel="noreferrer"
+                  >{action.label}</a
+                >
+              {/if}
+            {:else}
+              <button class="sa-btn" disabled={busy} onclick={() => runAction(action.kind)}
+                >{action.label}</button
+              >
+            {/if}
+          {/each}
+        </div>
+      {/if}
+
+      {#if error}
+        <p class="sa-error" role="alert">{error}</p>
+      {/if}
+
       <p class="sa-desc">{content.description}</p>
       {#if content.reason}
         <p class="sa-reason">{content.reason}</p>
@@ -123,10 +150,6 @@
         {content.runCount === 1 ? 'run' : 'runs'} · {content.totalTurns} cumulative turns
       </p>
 
-      {#if error}
-        <p class="sa-error" role="alert">{error}</p>
-      {/if}
-
       {#if content.reply}
         <div class="sa-reply">
           <textarea
@@ -141,25 +164,7 @@
         </div>
       {/if}
 
-      {#if content.actions.length}
-        <div class="sa-actions">
-          {#each content.actions as action (action.kind)}
-            {#if action.kind === 'open-pr'}
-              {#if content.prUrl}
-                <a class="sa-btn" href={content.prUrl} target="_blank" rel="noreferrer"
-                  >{action.label}</a
-                >
-              {/if}
-            {:else}
-              <button class="sa-btn" disabled={busy} onclick={() => runAction(action.kind)}
-                >{action.label}</button
-              >
-            {/if}
-          {/each}
-        </div>
-      {/if}
-
-      {#if ticket.displayId}
+      {#if showDetailLink && ticket.displayId}
         <a class="sa-detail-link" href="/devops/tickets/{ticket.displayId}">Open full ticket →</a>
       {/if}
     </div>

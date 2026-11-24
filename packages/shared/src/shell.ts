@@ -19,3 +19,17 @@ export interface PageWidget {
 
 /** Every page's membership, keyed by page id. The client loads this whole map once at boot. */
 export type PageWidgetMap = Record<string, PageWidget[]>;
+
+/**
+ * How recently and how often a widget has been used (PD-751, Home shows recently used widgets).
+ *
+ * Server-side so "recent" is the same on every device. A "use" is a visit to the widget's own
+ * route or an interaction with its card on any page other than Home; see `recent-widgets.ts`.
+ */
+export interface WidgetUsage {
+  widgetId: string;
+  /** Unix ms of the most recent recorded use. */
+  lastUsedAt: number;
+  /** Recorded uses (after the client's throttle), all time. */
+  useCount: number;
+}

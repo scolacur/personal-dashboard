@@ -13,8 +13,8 @@ import { inFlightRunCount } from './jobs/maintenance/in-flight';
  * exited 0 on every worker boot: a crash loop under `restart: unless-stopped` (2026-11-21).
  *
  * A Watchtower pre-update lifecycle hook runs `node dist/deploy-drain.js` BEFORE it recreates the
- * agent-worker container. Recreating the container would kill any in-flight Robot run (the worker
- * has no SIGTERM drain), so this entrypoint:
+ * agent-worker container. Recreating the container would kill any in-flight Robot run (the SIGTERM
+ * drain of PD-784/D-104 only aborts it cleanly and pushes WIP; the run still ends), so this entrypoint:
  *
  *   1. takes a **deploy hold** (its own `robot_state` slot, D-105) so no NEW run dispatches during
  *      the swap — bounded by `stallThresholdMs` so a drain that dies mid-recreate cannot wedge
@@ -29,8 +29,10 @@ import { inFlightRunCount } from './jobs/maintenance/in-flight';
 
 /**
  * EX_TEMPFAIL from `sysexits.h`. Watchtower's pre-update lifecycle hook treats a 75 specially: the
- * update is **cancelled and retried on the next poll**, without being logged as an error the way any
- * other non-zero code would be. Exit 0 lets the recreate proceed.
+ * update is **skipped and retried on the next poll**. It is the ONLY code that stops an update: any
+ * other non-zero exit is just logged as an error and the recreate goes ahead anyway (Watchtower's
+ * lifecycle-hooks docs, "Execution failure"). Exit 0 lets the recreate proceed. Hence the drain
+ * fails closed — see {@link runDeployDrainFailClosed} (PD-816; amends D-105's exit-code claim).
  */
 export const EX_TEMPFAIL = 75;
 
@@ -54,6 +56,37 @@ export function runDeployDrain(db: Database.Database, config: AgentWorkerConfig,
   }
   logger.info('deploy-drain: no runs in flight — recreate may proceed (exit 0)');
   return 0;
+}
+
+/**
+ * The drain as the CLI runs it: open the DB, run {@link runDeployDrain}, close — and **fail closed**.
+ *
+ * Any error (config load, DB open/lock, a throw inside the drain) returns `EX_TEMPFAIL`, never 1.
+ * Watchtower only skips an update on 75; a crashing drain that exited 1 would let the recreate
+ * proceed and kill whatever Robot run is in flight — the exact thing the hook exists to prevent
+ * (PD-816). Skipping costs one poll interval; the next poll retries. A drain that is broken for
+ * good therefore blocks worker auto-deploys (loudly, in the logs) rather than silently killing runs;
+ * `robot-refresh` still deploys by hand.
+ */
+export function runDeployDrainFailClosed(
+  open: () => { db: Database.Database; config: AgentWorkerConfig },
+  now: number = Date.now(),
+): number {
+  let db: Database.Database | undefined;
+  try {
+    const opened = open();
+    db = opened.db;
+    return runDeployDrain(db, opened.config, now);
+  } catch (err) {
+    logger.error({ err }, 'deploy-drain: failed — skipping this update (exit 75, fail closed)');
+    return EX_TEMPFAIL;
+  } finally {
+    try {
+      db?.close();
+    } catch (err) {
+      logger.warn({ err }, 'deploy-drain: closing the DB failed (exit code unaffected)');
+    }
+  }
 }
 
 /**

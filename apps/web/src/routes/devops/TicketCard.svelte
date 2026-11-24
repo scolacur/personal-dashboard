@@ -9,10 +9,11 @@
     turnProgress,
   } from '@dashboard/shared';
   import GithubMark from '$lib/icons/GithubMark.svelte';
-  import { Pencil, Copy, Trash2, ClipboardCopy, MoreVertical, Bug } from 'lucide-svelte';
+  import { MoreVertical, Bug, Layers } from 'lucide-svelte';
   import Button from '$lib/Button.svelte';
   import { projectIdColor } from './api';
   import { RELATION_ACTIONS, type RelationAction, type RelationBadges } from './relation-logic';
+  import { coderAreaChip } from './coder-area';
 
   let {
     ticket,
@@ -96,7 +97,9 @@
     onRelationAction(action);
   }
 
-  function chooseEpicAction(fn: () => void) {
+  // PD-993: the card actions (edit / duplicate / copy / delete) live in the kebab too, so every
+  // menu item closes the menu before acting.
+  function chooseMenuAction(fn: () => void) {
     menuOpen = false;
     fn();
   }
@@ -132,8 +135,12 @@
     const p = ticket.priority ?? 'No priority';
     if (ticket.isEpic) return `${p} — set on this Epic`;
     if (!epic) return `${p} — this ticket has no Epic, so nothing is driving its priority`;
-    return `${p} — inherited from ${epic.displayId ?? epic.title}. Re-prioritise the Epic to change it.`;
+    return `${epic.priority ?? 'No priority'} — set on ${epic.displayId ?? epic.title}. Re-prioritise the Epic to change it.`;
   });
+
+  // PD-955 (PD-880): the Coder code-area this ticket would run under — its own override, else the
+  // Epic's default, else `general`. Marked "(from Epic)" when inherited.
+  const areaChip = $derived(coderAreaChip(ticket, epic));
 
   async function setAssignee(select: HTMLSelectElement) {
     const assignee = (select.value || null) as TicketAssignee | null;
@@ -170,6 +177,12 @@
         <!-- PD-896: icon + word, so a bug never rests on colour alone. -->
         <span class="kind-bug" title="Bug"><Bug size={12} aria-hidden="true" />Bug</span>
       {/if}
+      <!-- PD-955: the Coder code-area (PD-880) this ticket would run under. -->
+      <span
+        class="area-chip"
+        class:inherited={areaChip.inherited}
+        title={areaChip.inherited ? `Code area: ${areaChip.label} (inherited from its Epic)` : `Code area: ${areaChip.label}`}
+      >{areaChip.label}{#if areaChip.inherited}<span class="area-from"> (from Epic)</span>{/if}</span>
     </div>
     <span class="card-top-right">
       {#if ticket.githubIssueUrl}
@@ -185,11 +198,31 @@
           <GithubMark size={14} />
         </a>
       {/if}
-      <!-- D-080: priority belongs to the Epic. A member displays what it inherited and says
-           where that came from; changing it means re-prioritising the Epic. -->
-      <span class="priority priority-{bandKey(ticket.priority)} readonly" title={priorityTitle}>
-        {ticket.priority ?? '—'}
-      </span>
+      <!-- D-080: priority belongs to the Epic. PD-993: a member names the Epic it comes from
+           instead of showing a bare pill that reads as its own — the Epic id links to the Epic,
+           hovering it shows the Epic's title, and the pill is the Epic's priority. An Epic shows
+           its own priority; a ticket with no Epic has none to show. -->
+      {#if ticket.isEpic}
+        <span class="priority priority-{bandKey(ticket.priority)} readonly" title={priorityTitle}>
+          {ticket.priority ?? '—'}
+        </span>
+      {:else if epic}
+        <span class="epic-ref">
+          <Layers size={12} aria-hidden="true" />
+          {#if epic.displayId}
+            <a class="epic-ref-id" href="/devops/tickets/{epic.displayId}" draggable="false" title={epic.title}
+              >{epic.displayId}</a
+            >
+          {:else}
+            <span class="epic-ref-id" title={epic.title}>Epic</span>
+          {/if}
+          <span class="priority priority-{bandKey(epic.priority)} readonly" title={priorityTitle}>
+            {epic.priority ?? '—'}
+          </span>
+        </span>
+      {:else}
+        <span class="no-epic" title={priorityTitle}>No epic</span>
+      {/if}
     </span>
   </div>
   <p class="card-title">{ticket.title}</p>
@@ -218,7 +251,7 @@
   {/if}
   {#if autoQueued}
     <!-- D-103 (PD-811): moved into the Queue by the auto-queue promoter, not by hand. -->
-    <div class="card-eligible">
+    <div class="card-eligible align-end">
       <span class="eligible-badge auto-queued" title="Moved into the Queue automatically by the auto-queue promoter (D-103).">🤖 auto-queued</span>
     </div>
   {/if}
@@ -237,13 +270,12 @@
       {/if}
     </div>
   {/if}
-  {#if ticket.refined || ticket.refineState || ticket.agentState || (ticket.status !== 'completed' && ticket.status !== 'closed')}
+  {#if ticket.refined || ticket.refineState || (ticket.status !== 'completed' && ticket.status !== 'closed')}
     <div class="card-status-row">
-      <!-- Left: Refine-agent state (outlined pill). Always occupies the left slot so the
-           Robot badge stays right-aligned even when there's no refine state. -->
+      <!-- Refine-agent state (outlined pill). The Robot state moved to the bottom row (PD-993). -->
       <span class="status-left">
         {#if ticket.refined}
-          <span class="refined-mark" title="Refined">✓ Refined</span>
+          <span class="refined-mark compact" title="Refined">✓ R</span>
         {:else if ticket.refineState}
           <a
             class="refine-pill refine-{ticket.refineState}"
@@ -260,7 +292,25 @@
           >Not refined</button>
         {/if}
       </span>
-      <!-- Right: Robot agent state (filled pill), with turn progress toward the cap (PD-230). -->
+    </div>
+  {/if}
+  <div class="card-actions">
+    <select
+      class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
+      title={isLocked
+        ? 'Agent-controlled — cannot reassign'
+        : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
+      value={ticket.assignee ?? ''}
+      disabled={isLocked || isFrozen}
+      onchange={(e) => setAssignee(e.currentTarget)}
+    >
+      <option value="">—</option>
+      {#each TICKET_ASSIGNEES as a (a)}
+        <option value={a}>{assigneeLabel(a)}</option>
+      {/each}
+    </select>
+    <span class="actions-center">
+      <!-- Centre: Robot agent state (filled pill), with turn progress toward the cap (PD-230). -->
       {#if ticket.agentState}
         <button
           class="agent-state-badge {agentStateClass(ticket.agentState)}"
@@ -280,53 +330,40 @@
                   : ''}"
             >{turns.label}</span>{/if}</button>
       {/if}
-    </div>
-  {/if}
-  <div class="card-actions">
-    <select
-      class="assignee-pill assignee-{ticket.assignee ?? 'none'}"
-      title={isLocked
-        ? 'Agent-controlled — cannot reassign'
-        : `Assignee: ${ticket.assignee ? ASSIGNEE_LABELS[ticket.assignee] : 'None'}`}
-      value={ticket.assignee ?? ''}
-      disabled={isLocked || isFrozen}
-      onchange={(e) => setAssignee(e.currentTarget)}
-    >
-      <option value="">—</option>
-      {#each TICKET_ASSIGNEES as a (a)}
-        <option value={a}>{assigneeLabel(a)}</option>
-      {/each}
-    </select>
-    <span class="spacer"></span>
-    <Button
-      variant="icon"
-      title={isFrozen ? 'Completed work is read-only — Reopen it from its detail page to edit' : 'Edit'}
-      aria-label="Edit"
-      disabled={isFrozen}
-      onclick={onEdit}
-    ><Pencil size={13} /></Button>
-    <Button variant="icon" title="Duplicate" aria-label="Duplicate" onclick={onDuplicate}><Copy size={13} /></Button>
-    <Button variant="icon" title="Copy issue text" aria-label="Copy issue text" onclick={onCopy}><ClipboardCopy size={13} /></Button>
-    <Button
-      variant="icon"
-      title={isFrozen ? 'Completed work is read-only' : 'Delete'}
-      aria-label="Delete"
-      disabled={isFrozen}
-      onclick={onDelete}
-    ><Trash2 size={13} /></Button>
+    </span>
     <div class="kebab-wrap">
-      <Button variant="icon" title="Mark as…" aria-label="Relation actions" onclick={() => (menuOpen = !menuOpen)}><MoreVertical size={13} /></Button>
+      <Button variant="icon" title="More actions" aria-label="More actions" onclick={() => (menuOpen = !menuOpen)}><MoreVertical size={14} /></Button>
       {#if menuOpen}
         <button class="kebab-scrim" type="button" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
         <div class="kebab-menu" role="menu">
+          <!-- PD-993: the card's action buttons, moved here to give the card room. -->
+          <button
+            class="kebab-item"
+            type="button"
+            role="menuitem"
+            disabled={isFrozen}
+            title={isFrozen ? 'Completed work is read-only — Reopen it from its detail page to edit' : undefined}
+            onclick={() => chooseMenuAction(onEdit)}>Edit</button
+          >
+          <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseMenuAction(onDuplicate)}>Duplicate</button>
+          <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseMenuAction(onCopy)}>Copy issue text</button>
+          <button
+            class="kebab-item danger"
+            type="button"
+            role="menuitem"
+            disabled={isFrozen}
+            title={isFrozen ? 'Completed work is read-only' : undefined}
+            onclick={() => chooseMenuAction(onDelete)}>Delete</button
+          >
+          <div class="kebab-divider"></div>
           <p class="kebab-heading">Mark as…</p>
           {#each RELATION_ACTIONS as action (action.key)}
             <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseRelation(action)}>{action.label}</button>
           {/each}
           {#if !ticket.isEpic}
             <div class="kebab-divider"></div>
-            <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onAddToEpic)}>{ticket.epicId ? 'Move to Epic…' : 'Add to Epic…'}</button>
-            <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseEpicAction(onSpinOff)}>Spin off into new Epic…</button>
+            <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseMenuAction(onAddToEpic)}>{ticket.epicId ? 'Move to Epic…' : 'Add to Epic…'}</button>
+            <button class="kebab-item" type="button" role="menuitem" onclick={() => chooseMenuAction(onSpinOff)}>Spin off into new Epic…</button>
           {/if}
         </div>
       {/if}

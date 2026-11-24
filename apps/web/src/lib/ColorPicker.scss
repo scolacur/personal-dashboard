@@ -1,0 +1,119 @@
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.25rem, 1fr));
+  gap: var(--space-sm);
+}
+
+.swatch {
+  --swatch: var(--surface-2);
+  position: relative;
+  aspect-ratio: 1;
+  min-width: 2.25rem;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--swatch);
+  padding: 0;
+  cursor: pointer;
+  transition: transform 120ms ease;
+
+  &:hover {
+    transform: scale(1.06);
+  }
+
+  /* The checked swatch gets a ring in the text colour, offset so it reads on any fill. */
+  &[aria-checked='true'] {
+    border-color: var(--surface);
+    box-shadow: 0 0 0 2px var(--text);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  &.custom {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-style: dashed;
+    color: var(--muted);
+    font-size: var(--font-size-lg);
+    line-height: 1;
+  }
+
+  &.custom[aria-checked='true'] {
+    border-style: solid;
+  }
+}
+
+.custom-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.preview {
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+
+.hex {
+  flex: 1;
+  min-width: 0;
+
+  input {
+    width: 100%;
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: ui-monospace, monospace;
+    font-size: var(--font-size-sm);
+
+    &[aria-invalid='true'] {
+      border-color: var(--status-stuck);
+    }
+  }
+}
+
+.native {
+  flex: none;
+  width: 2.25rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--status-stuck);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swatch {
+    transition: none;
+  }
+}

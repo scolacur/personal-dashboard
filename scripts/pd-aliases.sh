@@ -19,6 +19,9 @@ PD_GH_REPO="${PD_GH_REPO:-scolacur/personal-dashboard}"
 PD_API="${PD_API:-http://192.168.68.50:8088/api/widgets/task-monitor}"
 PD_WORKER="${PD_WORKER:-agent-worker}"
 PD_COMPOSE="${PD_COMPOSE:-ops/agent-worker/docker-compose.egress.yml}"
+# LOCAL tag for the emergency build only (`robot-rebuild`). The normal image is the GHCR one the
+# compose file names; Watchtower can't pull a local-only tag, so an emergency build stays up until
+# the next `robot-refresh`.
 PD_IMAGE="${PD_IMAGE:-agent-worker-dashboard}"
 # The worker's env file (secrets — outside the repo, never committed). Set PD_BOT_LOGIN to the bot
 # account's GitHub login to make `robot-token` refuse any other account; unset, it asks instead.
@@ -27,8 +30,11 @@ PD_BOT_LOGIN="${PD_BOT_LOGIN:-}"
 
 # ── Robot loop / agent-worker operator helpers (PD-391) ──────────────────────
 #
-# NOTE: the agent-worker is NOT on the Watchtower/GHCR auto-update path (only the web app is), so
-# `robot-refresh` — build the image, recreate the container — IS the deploy.
+# DEPLOY (PD-816): the agent-worker auto-deploys. deploy.yml publishes its image to GHCR on a
+# worker-affecting merge, and the stack's own scoped Watchtower recreates it behind the deploy drain
+# (it waits out in-flight Robot runs). `robot-refresh` is the manual path: pull from GHCR and
+# recreate NOW. `robot-rebuild` is the emergency path: build from this checkout, for when GHCR or CI
+# is unavailable.
 #
 # Liveness is a heartbeat row in the DB (the worker serves no HTTP), which `robot-status` reads.
 # Stall detection is an in-process sweep in the loop, so there is nothing to run for it. Per-ticket
@@ -92,7 +98,30 @@ robot-resume() {
 }
 
 robot-refresh() {
-  # THE DEPLOY for the agent-worker: pull, rebuild the image, recreate the container.
+  # MANUAL DEPLOY (PD-816): pull the worker's GHCR image and recreate it NOW. Normally you don't
+  # need this; the stack's Watchtower deploys within a poll (~5 min) of the image moving. Use it
+  # to deploy immediately, or to come back from `robot-rebuild` to GHCR.
+  #
+  # FORCED: this skips the deploy drain, so an in-flight Robot run is NOT waited out. The recreate
+  # SIGTERMs it: the run is aborted, its WIP pushed, and it is closed `interrupted` (PD-784/D-104).
+  # `git pull` first so a changed compose file applies too. `up -d` (whole stack) also starts the
+  # Watchtower if it isn't running.
+  ( cd "$PD_REPO_ROOT" || return 1
+    git pull --ff-only || return 1
+    sudo docker-compose -f "$PD_COMPOSE" pull "$PD_WORKER" || return 1
+    sudo docker-compose -f "$PD_COMPOSE" up -d || return 1
+    sudo docker ps --filter "name=$PD_WORKER" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+  )
+}
+
+robot-rebuild() {
+  # EMERGENCY DEPLOY: build the worker image from this checkout and recreate it, bypassing GHCR. For
+  # when CI or GHCR is down, or a fix can't wait for a merge. Also forced (no drain), like
+  # `robot-refresh`.
+  #
+  # The image gets a LOCAL tag (PD_IMAGE), which Watchtower can't pull, so auto-deploy pauses
+  # while it runs. Run `robot-refresh` to return to the GHCR image. Any other `docker-compose up` on
+  # this stack (e.g. `robot-token`) returns to GHCR too, because the override below is not stored.
   # Runs from the repo root because the Dockerfile's build context is the whole repo.
   ( cd "$PD_REPO_ROOT" || return 1
     git pull --ff-only || return 1
@@ -100,8 +129,9 @@ robot-refresh() {
     # not the grounding checkout's HEAD (which tracks main and looks fresh regardless).
     sudo docker build --build-arg "BUILD_SHA=$(git rev-parse --short HEAD)" \
       -f ops/agent-worker/Dockerfile -t "$PD_IMAGE" . || return 1
-    sudo docker-compose -f "$PD_COMPOSE" up -d || return 1
-    sudo docker ps --filter "name=$PD_WORKER" --format 'table {{.Names}}\t{{.Status}}'
+    # `sudo env` because sudo drops the caller's environment; the compose file reads this variable.
+    sudo env AGENT_WORKER_IMAGE="$PD_IMAGE" docker-compose -f "$PD_COMPOSE" up -d "$PD_WORKER" || return 1
+    sudo docker ps --filter "name=$PD_WORKER" --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
   )
 }
 
@@ -212,7 +242,8 @@ pd-help() {
   printf '%-28s %-40s %s\n' 'robot-status'            'Armed/paused, holds, budget, API limits' 'GET /system-status'
   printf '%-28s %-40s %s\n' 'robot-pause [reason]'    'Stop the NEXT dispatch (not in-flight)'  'POST /robot/pause'
   printf '%-28s %-40s %s\n' 'robot-resume'            'Re-arm dispatch (clears fault pause too)' 'POST /robot/resume'
-  printf '%-28s %-40s %s\n' 'robot-refresh'           'THE DEPLOY: pull, build image, recreate' 'git pull && docker build && up -d'
+  printf '%-28s %-40s %s\n' 'robot-refresh'           'Deploy now: pull GHCR image, recreate'   'compose pull && up -d (no drain)'
+  printf '%-28s %-40s %s\n' 'robot-rebuild'           'EMERGENCY: build locally, recreate'      'docker build && up -d (local tag)'
   printf '%-28s %-40s %s\n' 'robot-token'             'Rotate the bot write token, recreate'    'verify on GitHub, edit env, up -d'
   printf '\n'
   printf 'Source: %s\n' "$PD_REPO_ROOT/scripts/pd-aliases.sh"

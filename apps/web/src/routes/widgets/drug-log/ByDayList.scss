@@ -1,0 +1,133 @@
+.by-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.day {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+
+  &.empty {
+    background: transparent;
+
+    .day-name {
+      color: var(--muted);
+    }
+  }
+}
+
+.day-head {
+  display: flex;
+  align-items: center;
+}
+
+.day-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  .caret {
+    color: var(--muted);
+    width: 1ch;
+  }
+
+  .day-name {
+    font-weight: 600;
+    min-width: 6.5rem;
+  }
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.chip {
+  padding: 1px var(--space-sm);
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.nothing {
+  color: var(--muted);
+}
+
+.add {
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-right: var(--space-xs);
+  border-radius: 50%;
+  border: 1px dashed var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: var(--font-size-lg);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--text);
+    border-color: var(--text);
+  }
+}
+
+.day-body {
+  padding: 0 var(--space-sm) var(--space-sm) calc(var(--space-sm) * 2 + 1ch);
+}
+
+.more {
+  align-self: center;
+  min-height: 2.5rem;
+  padding: 0 var(--space-lg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}

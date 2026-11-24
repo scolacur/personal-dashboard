@@ -12,6 +12,19 @@
 # Apply (repo checked out on the host):
 #   sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
 #
+# AUTO-DEPLOY (PD-816, supersedes the "worker deliberately NOT on GHCR/Watchtower" line — see the
+# decision record): the worker runs the PUBLIC image deploy.yml publishes on a worker-affecting
+# merge, and a DEDICATED, SCOPED Watchtower below recreates it when :latest moves. Before each
+# recreate, Watchtower runs the deploy drain inside the worker (pre-update hook). Exit 75 means a
+# Robot run is in flight, so skip and retry next poll. Exit 0 means recreate now. The new container
+# releases the deploy hold on boot (D-105).
+#
+# TWO WATCHTOWERS SHARE ONE DOCKER DAEMON, so both are scoped. This one has scope `agent-worker`
+# and watches only containers labelled with that scope. The app's (docker/docker-compose.nas.yml)
+# has scope `none` and so skips this stack. ORDER MATTERS on first bring-up: an UNSCOPED Watchtower
+# removes every other Watchtower instance, so rescope the app's to `none` FIRST, then start this
+# one. ops/agent-worker/README.md has the runbook.
+#
 # DEPLOY NOTE: the /data mount below MUST be the SAME host directory the web app mounts as
 # /data, so both share dashboard.db. The web app mounts `../data` run from docker/, i.e. the
 # repo-root data/ at /volume1/docker/personal-dashboard/personal-dashboard/data (note the
@@ -35,8 +48,20 @@ services:
       - /volume1/docker/personal-dashboard/personal-dashboard/ops/agent-worker/squid.conf:/etc/squid/squid.conf:ro
 
   agent-worker:
-    image: agent-worker-dashboard
+    # The GHCR image deploy.yml publishes (no secrets baked in; they arrive via env_file below).
+    # Overridable ONLY for the emergency local build: `robot-rebuild` sets AGENT_WORKER_IMAGE to a
+    # local tag, which Watchtower cannot pull, so the emergency build stays up until the next
+    # `robot-refresh` returns the worker to GHCR.
+    image: ${AGENT_WORKER_IMAGE:-ghcr.io/scolacur/personal-dashboard-agent-worker:latest}
     container_name: agent-worker
+    labels:
+      # Watched by the dedicated Watchtower below, and by no other: the enable label plus the scope.
+      - 'com.centurylinklabs.watchtower.enable=true'
+      - 'com.centurylinklabs.watchtower.scope=agent-worker'
+      # The deploy drain (D-105), run inside this container before every recreate. It fails closed:
+      # every failure exits 75. Watchtower skips an update ONLY on 75; any other non-zero exit is
+      # logged and the recreate proceeds (PD-816).
+      - 'com.centurylinklabs.watchtower.lifecycle.pre-update=node /app/apps/agent-worker/dist/deploy-drain.js'
     restart: unless-stopped
     # PD-784/D-104: give the Robot loop time to drain in-flight runs on SIGTERM (abort sessions,
     # push WIP time-boxed, close runs as `interrupted`) before SIGKILL. Must exceed the worker's
@@ -64,3 +89,30 @@ services:
       # MUST match the web app's /data host dir (repo-root data/, note the nested repo path)
       # so dashboard.db is shared — else the agent-worker opens an empty DB and sees no tickets.
       - /volume1/docker/personal-dashboard/personal-dashboard/data:/data
+
+  # Dedicated Watchtower for THIS stack only (PD-816). Separate from the app's because (a) lifecycle
+  # hooks, which run the drain, stay OFF the app's Watchtower, and (b) the worker deploys
+  # independently of the app.
+  agent-worker-watchtower:
+    image: containrrr/watchtower
+    container_name: agent-worker-watchtower
+    restart: unless-stopped
+    # Needs GHCR egress to poll the registry. It recreates the worker through the Docker socket,
+    # not over the network, so the worker can stay internal-only.
+    networks: [egress_out]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      # A scoped instance carries its own scope label (Watchtower's multiple-instances docs).
+      - 'com.centurylinklabs.watchtower.scope=agent-worker'
+    environment:
+      - WATCHTOWER_SCOPE=agent-worker # only containers labelled scope=agent-worker
+      - WATCHTOWER_LABEL_ENABLE=true # ...that also opt in with the enable label
+      - WATCHTOWER_LIFECYCLE_HOOKS=true # run the pre-update drain
+      - WATCHTOWER_POLL_INTERVAL=300 # check GHCR every 5 min; a deferred (75) update retries here
+      - WATCHTOWER_CLEANUP=true # delete the old image after a successful update
+      - WATCHTOWER_INCLUDE_RESTARTING=true # a crash-looping worker can still be fixed by a deploy
+      # Stop timeout for the recreate. Watchtower IGNORES compose's stop_grace_period and defaults to
+      # 10s, which would cut off the worker's SIGTERM drain (PD-784/D-104, ROBOT_SHUTDOWN_DRAIN_MS
+      # 20s). Matches agent-worker's stop_grace_period above.
+      - WATCHTOWER_TIMEOUT=30s

@@ -768,14 +768,23 @@ export function setSchedule(
 /* ── Today view (PD-722, D-095) ─────────────── */
 
 /**
- * Everything the Today surface needs for the current habit day, computed server-side because the
- * server owns full completion history: for each active item, the schedule in force, whether it is
- * due, this week's per-week progress, and the current/longest streak. The client stays thin and
- * "today" matches the server's `habitDay` (D-092).
+ * Everything the Today surface needs for one habit day, computed server-side because the server owns
+ * full completion history: for each active item, the schedule in force, whether it is due, that
+ * week's per-week progress, and the current/longest streak. The client stays thin and "today"
+ * matches the server's `habitDay` (D-092).
+ *
+ * `day` (PD-779 ([Habit Tracker] date header + day arrows on Today)) views a past habit day instead
+ * of the current one. Every helper below already takes an arbitrary reference day, so this is only
+ * the reference day swapped in. Omitted means the current habit day. A malformed day throws a
+ * `HabitValidationError`; a future day is clamped to today, since Today never pages forward and a
+ * client a few seconds ahead of the server's day boundary should not get an error. The view's `day`
+ * says which day was actually served.
  */
-export function getTodayView(db: Database.Database, now = Date.now()): HabitTodayView {
+export function getTodayView(db: Database.Database, now = Date.now(), day?: unknown): HabitTodayView {
   const settings = getSettings(db);
-  const today = habitDay(now, settings);
+  const current = habitDay(now, settings);
+  const requested = day === undefined ? current : validDay(day);
+  const today = requested > current ? current : requested;
   const items = listItems(db); // active only, ordered by sort_order
 
   const schedulesByItem = new Map<number, HabitSchedule[]>();

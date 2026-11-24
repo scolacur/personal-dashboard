@@ -31,6 +31,60 @@ export function isTicketKind(v: unknown): v is TicketKind {
   return typeof v === 'string' && (TICKET_KINDS as readonly string[]).includes(v);
 }
 
+// ── Coder subtypes / code areas (PD-880) ─────────────────────────────────────
+// A Coder's subtype is the code AREA it works, so PD-951 (at most one Coder per area at a time) can
+// raise overall concurrency without two Coders touching the same code. The area is set by Refine —
+// an Epic carries a default its members inherit, and a Ticket may override it — and may be changed
+// later by hand. The registry is the single source of truth: an area is validated against it at
+// propose time, on create, and on PATCH. Area names deliberately never reuse an agent's name.
+//
+// Specialists such as accessibility or security are Evaluator lenses (PD-768), NOT Coder areas.
+
+export type CoderArea =
+  | 'board'
+  | 'planning'
+  | 'loop'
+  | 'metrics'
+  | 'widgets'
+  | 'infra'
+  | 'shell'
+  | 'general';
+
+/** The code-area registry (PD-880): id + label + one-line description of what the area covers.
+ *  Exported so the propose tool, the server validators and any later UI judge against ONE list. */
+export const CODER_AREAS: readonly { id: CoderArea; label: string; description: string }[] = [
+  { id: 'board', label: 'Board', description: 'Task Monitor, detail pages' },
+  { id: 'planning', label: 'Planning', description: 'Refine, Decisions inbox, auto-queue code' },
+  { id: 'loop', label: 'Loop', description: 'worker, dispatch, Evaluator, merge pipeline' },
+  { id: 'metrics', label: 'Metrics', description: 'Velocity, Agent Dashboard' },
+  { id: 'widgets', label: 'Widgets', description: 'widgets' },
+  { id: 'infra', label: 'Infra', description: 'Docker, CI, deploy' },
+  { id: 'shell', label: 'Shell', description: 'nav, layout, pages' },
+  { id: 'general', label: 'General', description: 'fallback' },
+] as const;
+
+export const CODER_AREA_IDS: readonly CoderArea[] = CODER_AREAS.map((a) => a.id);
+
+/** The area an unset ticket/Epic resolves to — the registry's explicit fallback (PD-880). */
+export const DEFAULT_CODER_AREA: CoderArea = 'general';
+
+export function isCoderArea(v: unknown): v is CoderArea {
+  return typeof v === 'string' && (CODER_AREA_IDS as readonly string[]).includes(v);
+}
+
+/**
+ * Resolve the area a Coder would actually run this ticket under (PD-880): the ticket's own override,
+ * then its Epic's default, then `general`. Never stored — computed on demand, because any of the
+ * three inputs can change independently. Pure and DB-free; the caller supplies the ticket's Epic (or
+ * null for an Epic itself / an Epic-less ticket).
+ */
+export function effectiveCoderArea(
+  ticket: { coderArea?: CoderArea | null },
+  epic: { coderArea?: CoderArea | null } | null,
+): CoderArea {
+  return ticket.coderArea ?? epic?.coderArea ?? DEFAULT_CODER_AREA;
+}
+
 /** Short label for each assignee value (shown in the create/edit modal). */
 export const ASSIGNEE_LABELS: Record<TicketAssignee, string> = {
   steve: 'Steve',
@@ -199,6 +253,11 @@ export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-revie
  * `checkpoint`. Defaults for the worker's env (`CHECKPOINT_WINDOW_TURNS` / `CHECKPOINT_TOTAL_TURNS`).
  */
 export const CHECKPOINT_WINDOW_TURNS_DEFAULT = 25;
+/** The opening window of an episode is longer than the rest (`CHECKPOINT_FIRST_WINDOW_TURNS`): a run
+ *  spends its first stretch reading and planning, changing no code, and a 25-turn opener tripped the
+ *  `no_diff_change` tripwire on healthy runs (PD-888 parked at 26 turns with a clean plan). Checks
+ *  land at 50, then every `CHECKPOINT_WINDOW_TURNS` after (75, 100, …). */
+export const CHECKPOINT_FIRST_WINDOW_TURNS_DEFAULT = 50;
 /** PD-964: the episode's hard turn cap across auto-continues and retries (the D-066 bound). A run
  *  still progressing at the cap parks anyway, and the report says the cap stopped it. */
 export const CHECKPOINT_TOTAL_TURNS_DEFAULT = 200;
@@ -454,6 +513,11 @@ export interface AgentTicket {
   maxTurns: number | null;
   /** Bug / feature / chore (PD-896); null = unclassified. */
   kind: TicketKind | null;
+  /** Coder code-area subtype (PD-880); null = unset. Meaningful on an Epic (the default its members
+   *  inherit) and on a Ticket (an override). `null` reads as `general` via `effectiveCoderArea`,
+   *  which resolves the Ticket's own value, then its Epic's, then `general`. Set by Refine and
+   *  changeable by hand; validated against `CODER_AREAS`. */
+  coderArea: CoderArea | null;
   /** True when this Ticket is an Epic umbrella (D-054, PD-336). An Epic groups member Tickets,
    *  is never dispatched (cannot enter `queue`), and its board status is derived. */
   isEpic: boolean;
@@ -509,6 +573,9 @@ export interface CreateTicketInput {
   maxTurns?: number | null;
   /** Bug / feature / chore (PD-896); omit or null for unclassified. */
   kind?: TicketKind | null;
+  /** Coder code-area subtype (PD-880); omit or null for unset (reads as `general`). Validated
+   *  against `CODER_AREAS` (→ 400 INVALID_CODER_AREA). */
+  coderArea?: CoderArea | null;
 }
 
 /**
@@ -578,6 +645,9 @@ export interface UpdateTicketInput {
   maxTurns?: number | null;
   /** Set or clear (null) the ticket kind (PD-896). Omit to leave unchanged. */
   kind?: TicketKind | null;
+  /** Set or clear (null) the Coder code-area subtype (PD-880) — Steve's override. Validated against
+   *  `CODER_AREAS` (→ 400 INVALID_CODER_AREA). Omit to leave unchanged. */
+  coderArea?: CoderArea | null;
   /** D-103 (PD-808): exclude/include this Epic from auto-queue. Meaningful on Epics. Omit to leave
    *  unchanged. */
   autoQueueExcluded?: boolean;
@@ -1471,6 +1541,10 @@ export interface AwaitingVisualItem {
   requestedAt: number;
   /** PD-794: what actually happened with capture for the PR's current head. */
   capture: VisualCaptureState;
+  /** PD-795: approving this check is the last gate before the PR merges — the Evaluator has shipped
+   *  the current head AND the matching auto-merge switch is on — so the Approve button says it will
+   *  merge. False means approving only opens review-gate; a human still merges. */
+  mergesOnApprove: boolean;
 }
 
 /**
@@ -1774,6 +1848,9 @@ export interface RefineChildProposal {
   maxTurns?: number | null;
   /** PD-896: bug / feature / chore. Omitted = inherit the parent's kind. */
   kind?: TicketKind | null;
+  /** PD-880: the child's Coder code-area override. Omitted/null = inherit the Epic's default at read
+   *  time (`effectiveCoderArea`), so it is stored only when the child genuinely differs from its Epic. */
+  coderArea?: CoderArea | null;
   /** PD-634: whether the child is born refined. Omitted = true — the Refine session IS the read-through.
    *  The agent sets false only for a placeholder that needs its own session. The server downgrades a
    *  robot-assigned child whose body fails `isReady`, so the flag never claims more than that check. */
@@ -1894,6 +1971,10 @@ export interface RefineProposal {
   maxTurns?: number | null;
   /** refine_in_place (PD-896): classify THIS ticket. Omitted = leave unchanged. */
   kind?: TicketKind | null;
+  /** PD-880: the Coder code-area. On refine_in_place it is THIS ticket's area; on a Populate
+   *  (decompose of an Epic) it is the EPIC's default its members inherit. Omitted = leave unchanged.
+   *  Validated against `CODER_AREAS`. */
+  coderArea?: CoderArea | null;
   /** decompose: the children to create; the parent is then closed + linked (split). */
   children?: RefineChildProposal[];
   /** decompose (PD-842): relations between the proposed children, by index into `children`.
@@ -2044,6 +2125,13 @@ export interface WorkerHeartbeat {
    * which the UI reports as unknown rather than falling back to a number that means something else.
    */
   buildSha: string | null;
+  /**
+   * PD-816: did any of the image's build inputs change between `buildSha` and `checkoutSha`? The
+   * worker image publishes only on worker-affecting merges, so after a web-only merge the shas
+   * differ and the worker is still current. `true` = no input changed (current); `false` = one did
+   * (behind); `null` = the worker can't tell, and only exact sha equality counts as current.
+   */
+  buildCurrent: boolean | null;
   /** Model the worker's jobs run on; null if unknown. */
   model: string | null;
 }
@@ -2244,6 +2332,10 @@ export interface ActiveAgent {
   maxTurns: number | null;
   tokens: number | null;
   model: string | null;
+  /** The code-area (PD-880) the agent is working under, for the "Smith-<area> #<runId>" label
+   *  (PD-955). Set for a Robot run (the ticket's `effectiveCoderArea`, resolved against its Epic);
+   *  null for an Evaluator or Auditor, which do not carry an area. */
+  coderArea: CoderArea | null;
   /** A short kind-specific line: evaluator "round 2 · PR #481", audit its scope. */
   detail: string | null;
 }
@@ -2309,11 +2401,13 @@ export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human
 export type WorkerVersionState = 'current' | 'stale' | 'unknown';
 
 export function workerVersionState(
-  w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'>,
+  w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'> & { buildCurrent?: boolean | null },
 ): WorkerVersionState {
   if (!w.buildSha) return 'unknown';
   if (!w.checkoutSha) return 'unknown';
-  return w.buildSha === w.checkoutSha ? 'current' : 'stale';
+  if (w.buildSha === w.checkoutSha) return 'current';
+  // PD-816: main moved on without touching the worker's build inputs, so there was nothing to deploy.
+  return w.buildCurrent === true ? 'current' : 'stale';
 }
 
 /** The fault taxonomy a failed run is classified into (C2/PD-343). */

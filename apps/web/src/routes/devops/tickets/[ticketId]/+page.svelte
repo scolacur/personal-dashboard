@@ -14,7 +14,7 @@
   } from '@dashboard/shared';
   import { PRIORITY_LABELS, AGENT_STATE_LABELS, TICKET_STATUSES, ROBOT_EVENT } from '@dashboard/shared';
   import { MediaQuery } from 'svelte/reactivity';
-  import { ArrowLeft } from 'lucide-svelte';
+  import { ArrowLeft, Layers } from 'lucide-svelte';
   import * as api from '../../api';
   import TicketThread from '$lib/TicketThread.svelte';
   import RunHistory from '$lib/RunHistory.svelte';
@@ -25,6 +25,8 @@
   import Modal from '$lib/Modal.svelte';
   import RelationPicker from '../../RelationPicker.svelte';
   import SpinOffModal from '../../task-tracker/SpinOffModal.svelte';
+  import StatusActionModal from '../../task-tracker/StatusActionModal.svelte';
+  import { isStatusActionState } from '../../task-tracker/status-action';
   import { planSpinOff } from '../../epic-spinoff';
   import { computeOrderWithin, isTerminal } from '../../board-logic';
   import {
@@ -331,6 +333,21 @@
     return null;
   });
 
+  // PD-965: the board's "needs you" modal (StatusActionModal), opened from this page for any
+  // input-needed state — the header pill and the checkpoint banner both open it. `?needs-you` (what
+  // the fleet's "N needs you" link appends) opens it on arrival, once per ticket, so the link lands
+  // on the actions rather than on a page you have to search for them.
+  let statusActionOpen = $state(false);
+  let needsYouAutoOpenedFor: string | null = null;
+  const needsYouState = $derived(isStatusActionState(ticket?.agentState));
+  $effect(() => {
+    const t = ticket;
+    if (!t || !needsYouState || !page.url.searchParams.has('needs-you')) return;
+    if (needsYouAutoOpenedFor === t.displayId) return;
+    needsYouAutoOpenedFor = t.displayId;
+    statusActionOpen = true;
+  });
+
   // C4 remediation: clear a ticket's retry budget (reset) or a park (unstick) and re-queue it.
   let remediating = $state(false);
   async function remediate(kind: 'reset' | 'unstick') {
@@ -365,12 +382,12 @@
   // Start a Refine session (D-044, PD-268) from the detail page. The TicketThread below
   // polls, so the kickoff turn appears shortly after; reload to flip refineState now.
   let starting = $state(false);
-  async function startRefine() {
+  async function startRefine(opts: { addedMemberId?: number } = {}) {
     if (!ticket || starting || !ticketId) return;
     starting = true;
     error = null;
     try {
-      await api.startRefine(ticket.id);
+      await api.startRefine(ticket.id, opts);
       await load(ticketId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -501,8 +518,9 @@
     joinRequest = null;
     if (!req || !ticket) return;
     if (!(await setMemberEpic(req.member.id, ticket.id, joinWriteOpts(req.plan, choice)))) return;
-    // Already on the Epic's page, so re-refining is just starting the session here.
-    if (choice.reRefine) await startRefine();
+    // Already on the Epic's page, so re-refining is just starting the session here — as a delta
+    // check on the member that joined, not a from-scratch re-refine (PD-996).
+    if (choice.reRefine) await startRefine({ addedMemberId: req.member.id });
     else toast.show(unrefinedToast(req.plan.epic), 'info');
   }
 
@@ -687,10 +705,39 @@
            Lane, priority name, project and the GitHub issue live in Details, not both. -->
       <div class="head-badges">
         <span class="detail-id">{ticket.displayId}</span>
-        <span class="priority priority-{ticket.priority ?? 'none'}" title={ticket.priority ? PRIORITY_LABELS[ticket.priority] : 'No priority'}
-          >{ticket.priority ?? '—'}</span
-        >
-        {#if ticket.agentState}
+        <!-- D-080 / PD-993: a member's priority is its Epic's, so the header says which Epic —
+             "Part of [icon] PD-NNN [P]", the id linking to the Epic and its title on hover. An Epic
+             shows its own pill; a Ticket with no Epic has no priority to show. -->
+        {#if ticket.isEpic}
+          <span class="priority priority-{ticket.priority ?? 'none'}" title={ticket.priority ? PRIORITY_LABELS[ticket.priority] : 'No priority'}
+            >{ticket.priority ?? '—'}</span
+          >
+        {:else if parentEpic}
+          <span class="epic-ref">
+            Part of
+            <Layers size={14} aria-hidden="true" />
+            <a class="epic-ref-id" href="/devops/tickets/{parentEpic.displayId}" title={parentEpic.title}>{parentEpic.displayId}</a>
+            <span
+              class="priority priority-{parentEpic.priority ?? 'none'}"
+              title={parentEpic.priority
+                ? `${PRIORITY_LABELS[parentEpic.priority]} — set on ${parentEpic.displayId}`
+                : `${parentEpic.displayId} has no priority`}>{parentEpic.priority ?? '—'}</span
+            >
+          </span>
+        {:else}
+          <span class="no-epic" title="Not part of any Epic, so nothing sets its priority">No epic</span>
+        {/if}
+        {#if ticket.agentState && needsYouState}
+          <!-- PD-965: an input-needed state is a button, as on the board's card — it opens the actions. -->
+          <button
+            type="button"
+            class="agent-pill agent-pill-action agent-{ticket.agentState}"
+            title="Needs you — open the actions"
+            onclick={() => (statusActionOpen = true)}
+          >
+            {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState} ›
+          </button>
+        {:else if ticket.agentState}
           <span class="agent-pill agent-{ticket.agentState}">
             {AGENT_STATE_LABELS[ticket.agentState] ?? ticket.agentState}
           </span>
@@ -711,6 +758,21 @@
 
     <!-- ── OVERVIEW (desktop left 70% · mobile tab 1) ── -->
     <section class="pane pane-overview">
+      {#if ticket.agentState === 'checkpoint'}
+        <!-- PD-965: a checkpoint had no surface on this page at all, so "needs you" landed somewhere
+             with nothing to do. The decision (Continue / Restart) and the agent's report live in the
+             shared modal. -->
+        <div class="parked-banner agent-checkpoint">
+          <span class="pb-lead">⏸ {AGENT_STATE_LABELS.checkpoint}</span>
+          <span class="pb-note">The Robot stopped at a progress check and is waiting for you to continue or restart it.</span>
+          <span class="pb-actions">
+            <button class="pb-btn primary" type="button" onclick={() => (statusActionOpen = true)}>
+              Review &amp; decide
+            </button>
+          </span>
+        </div>
+      {/if}
+
       {#if isRobotParked}
         <div class="parked-banner agent-{ticket.agentState}">
           <span class="pb-lead">⛔ {AGENT_STATE_LABELS[ticket.agentState!] ?? ticket.agentState}</span>
@@ -787,19 +849,12 @@
         {/if}
       </Collapsible>
 
-      {#if !ticket.isEpic}
+      <!-- PD-993: which Epic this belongs to now reads in the header ("Part of …"). -->
+      {#if !ticket.isEpic && !frozen}
         <p class="belongs-to-epic">
-          {#if parentEpic}
-            Part of epic
-            <a href="/devops/tickets/{parentEpic.displayId}">{parentEpic.displayId} — {parentEpic.title}</a>
-          {:else}
-            <span class="no-epic">Not part of any epic.</span>
-          {/if}
-          {#if !frozen}
-            <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
-              Spin off into new Epic…
-            </button>
-          {/if}
+          <button type="button" class="spin-off-btn" onclick={() => (spinOffOpen = true)}>
+            Spin off into new Epic…
+          </button>
         </p>
       {/if}
 
@@ -1164,6 +1219,13 @@
   </article>
 {/if}
 
+<StatusActionModal
+  ticket={statusActionOpen ? ticket : null}
+  onClose={() => (statusActionOpen = false)}
+  onUpdate={() => ticketId && load(ticketId)}
+  showDetailLink={false}
+/>
+
 <style lang="scss" src="./+page.scss"></style>
 
 <!-- The mobile Refine pane's thread + controls. Desktop uses RefineModal, which carries its own. -->
@@ -1177,7 +1239,7 @@
     epic={parentEpic ?? null}
     epicMembers={parentEpic ? allTickets.filter((m) => m.epicId === parentEpic.id) : []}
     onChanged={() => ticketId && load(ticketId)}
-    onStart={startRefine}
+    onStart={() => startRefine()}
     {starting}
   />
   <div class="refine-footer">
@@ -1199,6 +1261,7 @@
 {#snippet memberCardSnippet(m: AgentTicket, drag: { dragging: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
   <MemberCard
     ticket={m}
+    epic={ticket!}
     dragging={drag.dragging}
     onDragStart={drag.onDragStart}
     onDragEnd={drag.onDragEnd}

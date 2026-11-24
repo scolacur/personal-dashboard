@@ -6,7 +6,7 @@ function t(o: Partial<AgentTicket> = {}): AgentTicket {
   return {
     id: 1, displayId: 'PD-1', projectId: 1, title: 'T', body: null, status: 'backlog', priority: null,
     assignee: 'robot', recurInterval: null, source: 'manual', sortOrder: 0, githubIssueNumber: null,
-    githubIssueUrl: null, agentState: null, maxTurns: null, kind: null, agentTurns: null, refineState: null,
+    githubIssueUrl: null, agentState: null, maxTurns: null, kind: null, coderArea: null, agentTurns: null, refineState: null,
     refined: false, refineStale: false, isEpic: false, epicId: 10, ready: true, readyBypassed: false,
     closeReason: null, archivedAt: null, createdAt: 0, updatedAt: 0, ...o,
   };

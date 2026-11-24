@@ -40,12 +40,12 @@ git checkout main && git pull --ff-only
 cp ops/agent-worker/agent-worker.env.example /volume1/docker/personal-dashboard/agent-worker.env
 #    edit it and fill in ANTHROPIC_API_KEY and GITHUB_READ_TOKEN
 
-# 3. Build the image (build context = repo root)
-#    --build-arg BUILD_SHA is NOT optional — see "Always pass BUILD_SHA" below.
-sudo docker build --build-arg "BUILD_SHA=$(git rev-parse --short HEAD)" \
-  -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
+# 3. Pull the published image (public on GHCR, built by deploy.yml, no secrets baked in, D-116)
+sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml pull agent-worker
 
-# 4. Bring it up on the egress-hardened network (proxy sidecar + internal net)
+# 4. Bring it up on the egress-hardened network: proxy sidecar + internal net + the worker's own
+#    scoped Watchtower. FIRST TIME ON A HOST that also runs the app's Watchtower: do the
+#    "Auto-deploy cutover" below first, or the app's unscoped Watchtower removes this one.
 sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
 
 # 5. Watch it boot and take a turn
@@ -97,48 +97,86 @@ with Contents: Read.
 
 ## Redeploy after a code change
 
-The agent-worker image is a build artifact — merging agent-worker changes to `main` does **not** update
-the running container. Rebuild and recreate:
+**It's automatic (PD-816, D-116).** A merge that touches the worker's build inputs publishes
+`ghcr.io/scolacur/personal-dashboard-agent-worker:latest` (`deploy.yml`, `agent-worker-changed` gate).
+Within one poll (5 min), the stack's own Watchtower (`agent-worker-watchtower`) sees the new digest
+and runs the **deploy drain** inside the worker (pre-update hook). Then:
 
-**Normally just run `robot-refresh`** — the shell helper does all three steps with the right flags.
-The long form, if you need it:
+- **Exit 75:** a Robot run is in flight. The update is skipped, the deploy hold stops new dispatch,
+  and the next poll retries. The drain also exits 75 on *any* failure (fail closed). Watchtower
+  only skips on 75; any other code lets the recreate through.
+- **Exit 0:** nothing is in flight. Watchtower recreates the worker, and the new container
+  releases the deploy hold on boot (D-105).
 
-```bash
-cd /volume1/docker/personal-dashboard/personal-dashboard && git pull --ff-only
-sudo docker build --build-arg "BUILD_SHA=$(git rev-parse --short HEAD)" \
-  -f ops/agent-worker/Dockerfile -t agent-worker-dashboard .
-sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d   # recreates from the new image
-```
+Merges that only touch the web app don't publish the worker, so they don't recreate it.
 
-Confirm it actually landed — a rebuild that changed nothing looks identical to one that worked:
+Manual commands (from `scripts/pd-aliases.sh`):
+
+| Command | What it does | When |
+|---|---|---|
+| `robot-refresh` | `git pull`, `compose pull`, `up -d` from GHCR | Deploy **now** without waiting for the poll, or return from `robot-rebuild`. **Forced:** skips the drain, so an in-flight run is SIGTERM-drained (aborted, WIP pushed, closed `interrupted`, D-104). |
+| `robot-rebuild` | Local `docker build` (BUILD_SHA stamped) to `$PD_IMAGE`, then `up -d` with `AGENT_WORKER_IMAGE` pointing at it | **Emergency only:** CI or GHCR is down, or a fix can't wait for a merge. Watchtower can't pull the local tag, so auto-deploy pauses until the next `robot-refresh`. |
+
+Confirm a deploy landed:
 
 ```bash
 sqlite3 /volume1/docker/personal-dashboard/personal-dashboard/data/dashboard.db \
   'SELECT worker, build_sha, sha FROM worker_heartbeat;'
+sudo docker logs agent-worker-watchtower | tail     # "Found new ... image", or the hook's skip
 ```
 
-`build_sha` must equal the sha you just built. If it is **empty**, the build arg was missed.
+`build_sha` is the short sha of the last **worker-affecting** merge. It does not move on web-only
+merges, so it can trail `main` and still be current. If it is **empty**, the image wasn't stamped;
+see below.
+
+### Auto-deploy cutover (one time per host) 🧑
+
+Two Watchtowers share one Docker daemon, so **order matters**. An unscoped Watchtower removes every
+other Watchtower instance, scoped ones included.
+
+```bash
+cd /volume1/docker/personal-dashboard/personal-dashboard && git pull --ff-only
+
+# 1. Rescope the APP's Watchtower to `none` FIRST, so it stops watching the worker and stops
+#    removing other instances.
+( cd docker && sudo docker-compose -f docker-compose.nas.yml up -d watchtower )
+sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  $(sudo docker ps -qf name=watchtower -f label=com.docker.compose.project=docker) | grep SCOPE   # WATCHTOWER_SCOPE=none
+
+# 2. Switch the worker to the GHCR image and start its scoped Watchtower.
+#    Recreating the worker here is forced, so do it when no Robot run is in flight.
+sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml pull agent-worker
+sudo docker-compose -f ops/agent-worker/docker-compose.egress.yml up -d
+
+# 3. Verify.
+sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'   # both watchtowers up; worker on ghcr.io/...
+sudo docker logs agent-worker-watchtower | head          # scope "agent-worker", 1 container watched
+sudo docker logs $(sudo docker ps -qf name=watchtower -f label=com.docker.compose.project=docker) | tail   # still only `app`
+sudo docker exec agent-worker node /app/apps/agent-worker/dist/deploy-drain.js; echo "exit=$?"   # 0 idle / 75 busy
+```
+
+> **Note:** the manual drain in step 3 TAKES the deploy hold. If no recreate follows, the hold
+> blocks dispatch until it lapses (stall threshold, about 2h). Clear it right away with
+> `robot-refresh`, which recreates the worker and releases the hold on boot.
+
+Then check the uid split on the GHCR-built container (D-039/D-055). The loop runs as root, the
+coding session as uid 1500, and `dashboard.db` stays mode 660:
+
+```bash
+sudo docker exec agent-worker sh -c 'id; id robot; ls -l /data/dashboard.db'
+```
+
+**Prove the loop once:** merge a worker-touching PR. Within about 5 min, `build_sha` should move with
+no manual step. To check the drain path, land one while a Robot run is in flight: the Watchtower log
+shows the hook skip, the run finishes, and the next poll recreates the worker.
 
 ### Always pass `BUILD_SHA`
 
 `Dockerfile` declares `ARG BUILD_SHA=""` and bakes it into `AGENT_WORKER_BUILD_SHA`, which is the
-`build_sha` the heartbeat reports (D-079, PD-528). Omit the arg and it defaults to empty, and the
-Dev Ops readout can no longer tell you what code the worker is running — while the `sha` column
-keeps tracking `main` and looks reassuringly current. **This is the whole point of D-079**: the
-checkout sha is not the running version. It has been missed twice; on 2026-08-30 it was missed by
-following the command that used to be written here.
-
-### Check the image tag matches the compose
-
-`robot-refresh` builds to `$PD_IMAGE`; `docker-compose.egress.yml` runs whatever is in its `image:`
-field. They agree today (`agent-worker-dashboard`). If they ever diverge, a rebuild **succeeds and
-changes nothing** — the new image is built under a tag the compose never runs, and `up -d` finds
-nothing to recreate. Nothing errors; `build_sha` simply does not move.
-
-```bash
-bash -lc 'echo "$PD_IMAGE"'                                 # note: a non-login ssh won't have it
-grep 'image:' ops/agent-worker/docker-compose.egress.yml
-```
+`build_sha` the heartbeat reports (D-079, PD-528). `deploy.yml` passes it on every publish, and
+`robot-rebuild` passes it on the emergency path. A hand-run `docker build` without
+`--build-arg BUILD_SHA=...` reports an empty sha, and the Dev Ops readout can no longer say what
+the worker is running.
 
 ## Troubleshooting
 

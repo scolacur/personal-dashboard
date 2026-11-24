@@ -14,6 +14,7 @@
     nearTurnCap,
     type AvatarMode,
   } from './agent-fleet';
+  import { coderAgentName } from '../coder-area';
 
   interface Props {
     agent: ActiveAgent;
@@ -28,6 +29,8 @@
   let tokens = $derived(formatTokens(agent.tokens));
   let model = $derived(formatModel(agent.model));
   let nearCap = $derived(nearTurnCap(agent.turns, agent.maxTurns));
+  // PD-955: a running Coder's identity — "Smith-<area> #<runId>". Only Robots carry an area.
+  let coderName = $derived(agent.kind === 'robot' ? coderAgentName(agent.coderArea, agent.runId) : null);
 </script>
 
 <article class="agent-tile kind-{agent.kind}" style="--tint: {color}">
@@ -36,6 +39,9 @@
   </div>
 
   <div class="speech" role="group" aria-label="{label.one} status">
+    {#if coderName}
+      <p class="coder-name" title="Coder identity — nickname-area #runId (PD-955)">{coderName}</p>
+    {/if}
     <div class="speech-head">
       {#if agent.ticket}
         <a class="ticket-id" href="/devops/tickets/{agent.ticket.displayId}">{agent.ticket.displayId ?? `#${agent.ticket.id}`}</a>

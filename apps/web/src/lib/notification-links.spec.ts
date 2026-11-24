@@ -12,7 +12,11 @@ describe('notificationHref (PD-746)', () => {
   it('keeps every other ticket notification on the ticket page, including other Refine ones', () => {
     expect(notificationHref({ kind: 'agent_refine', title: 'Refine agent replied on PD-7', ticketDisplayId: 'PD-7' })).toBe('/devops/tickets/PD-7');
     expect(notificationHref({ kind: 'agent_refine', title: 'Refine agent proposed changes on PD-7', ticketDisplayId: 'PD-7' })).toBe('/devops/tickets/PD-7');
-    expect(notificationHref({ kind: 'agent_needs_human', title: 'x', ticketDisplayId: 'PD-7' })).toBe('/devops/tickets/PD-7');
+  });
+
+  it('opens a Robot park on the ticket page with its "needs you" actions up (PD-965)', () => {
+    expect(notificationHref({ kind: 'agent_needs_human', title: 'x', ticketDisplayId: 'PD-7' })).toBe('/devops/tickets/PD-7?needs-you');
+    expect(notificationHref({ kind: 'agent_awaiting_human', title: 'x', ticketDisplayId: 'PD-7' })).toBe('/devops/tickets/PD-7?needs-you');
   });
 
   it('has no link without a ticket', () => {

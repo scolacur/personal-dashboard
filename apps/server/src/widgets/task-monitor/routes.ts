@@ -5,6 +5,7 @@ import {
   TICKET_STATUSES,
   TICKET_ASSIGNEES,
   RELATION_TYPES,
+  type CoderArea,
   type CreateTicketInput,
   type RefineAnswerSet,
   type RelationType,
@@ -237,6 +238,8 @@ export function registerRoutes(
       maxTurns: body.maxTurns === undefined ? undefined : (body.maxTurns as number | null),
       // PD-896: validated by the store (→ 400 INVALID_KIND).
       kind: body.kind === undefined ? undefined : (body.kind as TicketKind | null),
+      // PD-880: Coder code-area, validated by the store (→ 400 INVALID_CODER_AREA).
+      coderArea: body.coderArea === undefined ? undefined : (body.coderArea as CoderArea | null),
     };
     // PD-542: the create-time half of "every Ticket belongs to an Epic" (D-080 / PD-509),
     // which until now only the board's form enforced.
@@ -428,6 +431,11 @@ export function registerRoutes(
     // PD-896: bug / feature / chore, or null to unclassify. Validated by the store (→ 400 INVALID_KIND).
     if (body.kind !== undefined) {
       patch.kind = body.kind as TicketKind | null;
+    }
+    // PD-880: Steve's Coder code-area override, or null to clear (→ inherit the Epic / `general`).
+    // Validated by the store (→ 400 INVALID_CODER_AREA).
+    if (body.coderArea !== undefined) {
+      patch.coderArea = body.coderArea as CoderArea | null;
     }
     // D-103 (PD-808): switch an Epic in or out of auto-queue. Meaningful only on an Epic — the
     // promoter reads it from a member's Epic — so it is stored on any row without an isEpic check.
@@ -719,12 +727,18 @@ export function registerRoutes(
   // Start a Refine session (D-044, PD-268): the Refine button POSTs here. Writes the kickoff
   // refine_human event (ticket title + body) the agent-worker worker polls to open a grounded
   // session. 409 if a thread already exists so a double-click can't spawn a second.
+  // PD-996: `{ addedMemberId }` (from "Add & re-refine" on a refined Epic) kicks off a delta check
+  // on that new member instead, appended to the Epic's thread if it already has one.
   app.post(`${base}/tickets/:id/refine`, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
     if (!Number.isInteger(id)) {
       return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
     }
-    const result = startRefine(db, id);
+    const addedMemberId = ((request.body ?? {}) as { addedMemberId?: unknown }).addedMemberId;
+    if (addedMemberId !== undefined && !Number.isInteger(addedMemberId)) {
+      return reply.status(400).send({ error: 'addedMemberId must be an integer', code: 'INVALID_ID' });
+    }
+    const result = startRefine(db, id, addedMemberId === undefined ? {} : { addedMemberId: addedMemberId as number });
     if (!result.ok) {
       return result.reason === 'not_found'
         ? reply.status(404).send({ error: 'ticket not found', code: 'NOT_FOUND' })

@@ -1,7 +1,25 @@
+/*
+ * The page spans the content column; the tab bar and the Daily Log / Config panels keep a 640px
+ * measure, while History widens so the By Day grid shows more days on desktop.
+ */
 .habit-tracker-page {
   padding: var(--space-md);
-  max-width: 640px;
-  margin: 0 auto;
+
+  :global(.tabs-bar),
+  .panel-narrow {
+    max-width: 640px;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  :global(.tabs-root) {
+    min-width: 0;
+  }
+}
+
+.panel-wide {
+  max-width: 1400px;
+  margin-inline: auto;
 }
 
 /* Live count of writes queued offline, shown under Today on both the card and the page. */
@@ -14,6 +32,33 @@
 /* The Today panel positions the whole-day burst overlay (T889). */
 .today-panel {
   position: relative;
+
+  // On the dashboard card (PD-974): `.widget-card-content` has no padding and clips, so the panel
+  // pads itself and scrolls within the card. The scroll area stops short of the card's bottom by
+  // the footprint of the widget-ticket + (PD-734: 28px, floated 0.625rem from the bottom-left), so
+  // the + sits in its own strip and never covers a habit — not just at the end of the scroll.
+  // Scoped to the card so the shared card styles, and every other widget, are unchanged.
+  &.compact {
+    box-sizing: border-box;
+    height: calc(100% - (0.625rem + 28px));
+    overflow-y: auto;
+    padding: var(--space-sm) var(--space-md);
+  }
+}
+
+/*
+ * Day slide (PD-779 ([Habit Tracker] date header + day arrows on Today)): the outgoing and incoming
+ * days share one grid cell so they slide across each other rather than stacking, and the slider clips
+ * the horizontal overflow. The transition itself is Svelte's `fly` (duration 0 under reduced motion).
+ */
+.day-slider {
+  display: grid;
+  overflow-x: clip;
+}
+
+.day-slide {
+  grid-area: 1 / 1;
+  min-width: 0;
 }
 
 /* Yesterday banner (T889): "Yesterday: N habits unchecked", dismissible, links to Log › By Day. */

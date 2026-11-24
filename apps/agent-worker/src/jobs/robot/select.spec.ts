@@ -2,12 +2,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { loadRobotConfig, type RobotConfig } from '../../shared/config';
 import {
+  areaBusySkips,
   queuedBlockedByAgentState,
   queuedButUnrefined,
   robotQueueCandidates,
+  runningCoderAreas,
   selectDispatchable,
   type RobotCandidate,
 } from './select';
+import { CODER_AREA_IDS, type CoderArea } from '@dashboard/shared';
 
 const READY = ['## Context', 'ctx', '## Task', 'do it', '## Done When', 'done', '## Out of scope', 'no'].join('\n');
 
@@ -24,10 +27,16 @@ function boardDb(): Database.Database {
       ready INTEGER NOT NULL DEFAULT 0, ready_bypassed INTEGER NOT NULL DEFAULT 0, refined INTEGER NOT NULL DEFAULT 0,
       project_id INTEGER, github_issue_number INTEGER, agent_state TEXT, max_turns INTEGER, archived_at INTEGER,
       -- D-080: the dispatch order joins the Epic and reads both drag orders.
-      epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0
+      epic_id INTEGER, sort_order REAL NOT NULL DEFAULT 0, is_epic INTEGER NOT NULL DEFAULT 0,
+      -- PD-880/PD-951: the Coder code-area subtype; NULL = unset (reads as 'general').
+      coder_area TEXT
     );
     CREATE TABLE agent_ticket_relations (
       id INTEGER PRIMARY KEY, from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL, type TEXT NOT NULL
+    );
+    -- PD-951: the loop's run table — \`runningCoderAreas\` reads the in-flight runs' areas off it.
+    CREATE TABLE agent_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL DEFAULT 0
     );
   `);
   db.prepare('INSERT INTO agent_projects (id, github_repo, robot_enabled) VALUES (1, ?, 1)').run('scolacur/personal-dashboard');
@@ -60,11 +69,15 @@ function addTicket(
     priority?: string | null;
     /** Display id (PD-725). Defaults to `PD-<id>`; pass null to test the unset case. */
     displayId?: string | null;
+    /** PD-880/PD-951: the ticket's own coder-area override. Defaults to null (unset → 'general'). */
+    coderArea?: CoderArea | null;
+    /** PD-951: the ticket's Epic (for the Epic-default area resolution). Defaults to null. */
+    epicId?: number | null;
   },
 ): void {
   db.prepare(
-    `INSERT INTO agent_tickets (id, display_id, title, body, status, assignee, priority, ready, ready_bypassed, refined, project_id, github_issue_number, agent_state, max_turns, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_tickets (id, display_id, title, body, status, assignee, priority, ready, ready_bypassed, refined, project_id, github_issue_number, agent_state, max_turns, archived_at, coder_area, epic_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     t.id,
     t.displayId === undefined ? `PD-${t.id}` : t.displayId,
@@ -81,7 +94,14 @@ function addTicket(
     t.agentState ?? null,
     t.maxTurns ?? null,
     t.archived ? 1 : null,
+    t.coderArea ?? null,
+    t.epicId ?? null,
   );
+}
+
+/** A `running` run row for ticket `ticketId` — so `runningCoderAreas` sees its area as busy. */
+function addRunningRun(db: Database.Database, ticketId: number): void {
+  db.prepare("INSERT INTO agent_runs (ticket_id, status, started_at) VALUES (?, 'running', 0)").run(ticketId);
 }
 
 function addBlocks(db: Database.Database, blocker: number, blocked: number): void {
@@ -334,7 +354,9 @@ describe('queuedBlockedByAgentState', () => {
 });
 
 describe('selectDispatchable', () => {
-  const cand = (id: number, body: string | null = READY): RobotCandidate => ({
+  // PD-951: each candidate defaults to a DISTINCT area (so the per-area cap never interferes with a
+  // test about concurrency/allowlist); pass an explicit `area` to exercise the per-area cap itself.
+  const cand = (id: number, area?: CoderArea, body: string | null = READY): RobotCandidate => ({
     id,
     issueNumber: id,
     displayId: `PD-${id}`,
@@ -343,6 +365,7 @@ describe('selectDispatchable', () => {
     title: `T${id}`,
     body,
     priority: null,
+    coderArea: area ?? CODER_AREA_IDS[id % CODER_AREA_IDS.length],
   });
 
   it('dispatches nothing when disabled', () => {
@@ -379,5 +402,162 @@ describe('selectDispatchable', () => {
     expect(selectDispatchable([cand(1), cand(2), cand(3)], cfg, 0).map((c) => c.id)).toEqual([1, 2]);
     expect(selectDispatchable([cand(1), cand(2), cand(3)], cfg, 1).map((c) => c.id)).toEqual([1]);
     expect(selectDispatchable([cand(1), cand(2), cand(3)], cfg, 2)).toEqual([]);
+  });
+
+  // ── PD-951: the per-area concurrency cap (one Coder per code area at a time) ──
+  describe('per-area cap (PD-951)', () => {
+    // ROBOT_CONCURRENCY=2 throughout, so any single-dispatch outcome is the AREA cap biting, never
+    // the global one.
+    const cfg2 = robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 2 });
+
+    it('dispatches only one of two ready tickets in the SAME area', () => {
+      const out = selectDispatchable([cand(1, 'loop'), cand(2, 'loop')], cfg2, 0);
+      expect(out.map((c) => c.id)).toEqual([1]); // 2 waits — area loop already claimed this cycle
+    });
+
+    it('dispatches tickets in DIFFERENT areas in parallel', () => {
+      const out = selectDispatchable([cand(1, 'loop'), cand(2, 'board')], cfg2, 0);
+      expect(out.map((c) => c.id)).toEqual([1, 2]);
+    });
+
+    it('caps general like any other area, and treats an unset area as general', () => {
+      // One candidate carries an explicit 'general', the other leaves it unset — both resolve to
+      // general, so only the first dispatches.
+      const unset: RobotCandidate = { ...cand(2, 'general'), coderArea: 'general' };
+      const out = selectDispatchable([cand(1, 'general'), unset], cfg2, 0);
+      expect(out.map((c) => c.id)).toEqual([1]);
+    });
+
+    it('keys the cap on the highest-priority candidate in the area (dispatch order wins the slot)', () => {
+      // robotQueueCandidates feeds candidates already in priority order; the first in an area wins.
+      const out = selectDispatchable([cand(5, 'loop'), cand(6, 'board'), cand(7, 'loop')], cfg2, 0);
+      expect(out.map((c) => c.id)).toEqual([5, 6]); // 7 waits on loop; 5 took it
+    });
+
+    it('counts a Coder already running in an area as occupying it', () => {
+      // loop is busy (a run from a prior cycle), so a loop candidate waits; a board one still goes.
+      const out = selectDispatchable(
+        [cand(1, 'loop'), cand(2, 'board')],
+        cfg2,
+        0,
+        new Map([['loop', 1]]),
+      );
+      expect(out.map((c) => c.id)).toEqual([2]);
+    });
+
+    it('still respects the global cap on top of the per-area cap', () => {
+      // Three distinct areas but concurrency 2 → only two dispatch; the third waits on CAPACITY.
+      const out = selectDispatchable([cand(1, 'loop'), cand(2, 'board'), cand(3, 'infra')], cfg2, 0);
+      expect(out.map((c) => c.id)).toEqual([1, 2]);
+    });
+  });
+});
+
+describe('areaBusySkips (PD-951)', () => {
+  const cand = (id: number, area: CoderArea): RobotCandidate => ({
+    id,
+    issueNumber: id,
+    displayId: `PD-${id}`,
+    maxTurns: null,
+    repo: 'r',
+    title: `T${id}`,
+    body: READY,
+    priority: null,
+    coderArea: area,
+  });
+  const cfg2 = robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 2 });
+
+  it('names the same-area ticket held back, with its reason — so the skip is not silent', () => {
+    expect(areaBusySkips([cand(1, 'loop'), cand(2, 'loop')], cfg2, 0)).toEqual([
+      { id: 2, area: 'loop', reason: 'waiting: area loop busy' },
+    ]);
+  });
+
+  it('names a ticket whose area is held by an already-running Coder', () => {
+    expect(areaBusySkips([cand(1, 'board')], cfg2, 0, new Map([['board', 1]]))).toEqual([
+      { id: 1, area: 'board', reason: 'waiting: area board busy' },
+    ]);
+  });
+
+  it('does NOT name a ticket merely waiting on the global concurrency cap (not an area skip)', () => {
+    // Three distinct areas, concurrency 2: the third waits on capacity, not its area.
+    expect(areaBusySkips([cand(1, 'loop'), cand(2, 'board'), cand(3, 'infra')], cfg2, 0)).toEqual([]);
+  });
+
+  it('is empty when nothing is held back', () => {
+    expect(areaBusySkips([cand(1, 'loop'), cand(2, 'board')], cfg2, 0)).toEqual([]);
+  });
+});
+
+describe('runningCoderAreas (PD-951)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  it('counts running runs by the ticket effective area, ignoring finished runs', () => {
+    addTicket(db, { id: 1, status: 'working', coderArea: 'loop' });
+    addTicket(db, { id: 2, status: 'working', coderArea: 'loop' });
+    addTicket(db, { id: 3, status: 'working', coderArea: 'board' });
+    addTicket(db, { id: 4, status: 'working', coderArea: null }); // unset → general
+    addRunningRun(db, 1);
+    addRunningRun(db, 2);
+    addRunningRun(db, 3);
+    addRunningRun(db, 4);
+    // a finished run must not count
+    db.prepare("INSERT INTO agent_runs (ticket_id, status, started_at) VALUES (3, 'handed-off', 0)").run();
+    const areas = runningCoderAreas(db);
+    expect(areas.get('loop')).toBe(2);
+    expect(areas.get('board')).toBe(1);
+    expect(areas.get('general')).toBe(1);
+  });
+
+  it('resolves a running run via its Epic default when the ticket has no override', () => {
+    addTicket(db, { id: 10, status: 'backlog', coderArea: 'metrics' }); // the Epic row
+    addTicket(db, { id: 11, status: 'working', coderArea: null, epicId: 10 });
+    addRunningRun(db, 11);
+    expect(runningCoderAreas(db).get('metrics')).toBe(1);
+  });
+
+  it('returns an empty map when there are no running runs', () => {
+    expect(runningCoderAreas(db).size).toBe(0);
+  });
+
+  it('ignores an orphaned running row whose ticket is completed, closed or archived', () => {
+    addTicket(db, { id: 20, status: 'completed', coderArea: null });
+    addTicket(db, { id: 21, status: 'closed', coderArea: 'loop' });
+    addTicket(db, { id: 22, status: 'queue', agentState: 'working', coderArea: 'board', archived: true });
+    addRunningRun(db, 20);
+    addRunningRun(db, 21);
+    addRunningRun(db, 22);
+    expect(runningCoderAreas(db).size).toBe(0);
+  });
+
+  it('an orphaned general run does not hold back a queued general candidate', () => {
+    addTicket(db, { id: 30, status: 'completed', coderArea: null }); // the orphan's ticket
+    addRunningRun(db, 30);
+    addTicket(db, { id: 31, status: 'queue', coderArea: null });
+    const candidates = robotQueueCandidates(db);
+    const running = runningCoderAreas(db);
+    expect(selectDispatchable(candidates, robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 1 }), 0, running).map((c) => c.id)).toEqual([31]);
+    expect(areaBusySkips(candidates, robotCfg({ dispatchEnabled: true, allowlist: 'all', concurrency: 1 }), 0, running)).toEqual([]);
+  });
+});
+
+describe('robotQueueCandidates — coder area (PD-951)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = boardDb();
+  });
+
+  it('carries the ticket override, resolves the Epic default, and falls back to general', () => {
+    addTicket(db, { id: 100, status: 'backlog', coderArea: 'metrics' }); // the Epic (not a candidate)
+    addTicket(db, { id: 1, status: 'queue', coderArea: 'board' }); // own override
+    addTicket(db, { id: 2, status: 'queue', coderArea: null, epicId: 100 }); // inherits the Epic
+    addTicket(db, { id: 3, status: 'queue', coderArea: null }); // unset, no Epic → general
+    const byId = new Map(robotQueueCandidates(db).map((c) => [c.id, c.coderArea]));
+    expect(byId.get(1)).toBe('board');
+    expect(byId.get(2)).toBe('metrics');
+    expect(byId.get(3)).toBe('general');
   });
 });

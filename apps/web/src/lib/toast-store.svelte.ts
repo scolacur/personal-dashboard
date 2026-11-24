@@ -14,8 +14,18 @@ const DEFAULT_MS = 3000;
 
 export type ToastTone = 'info' | 'error';
 
+/**
+ * An optional button on the toast, e.g. "Undo" (PD-975, Drug log widget). Clicking it runs
+ * `onClick` and dismisses the toast. Callers that pass none get the plain, non-interactive toast.
+ */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 let _message = $state<string | null>(null);
 let _tone = $state<ToastTone>('info');
+let _action = $state<ToastAction | null>(null);
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 export const toast = {
@@ -25,19 +35,34 @@ export const toast = {
   get tone() {
     return _tone;
   },
-  /** Show a message, replacing any current one and restarting the dismiss timer. */
-  show(message: string, tone: ToastTone = 'info', ms: number = DEFAULT_MS) {
+  get action() {
+    return _action;
+  },
+  /**
+   * Show a message, replacing any current one (and its action) and restarting the dismiss timer.
+   * `action` adds a button to the toast; it is dropped with the toast when it dismisses.
+   */
+  show(message: string, tone: ToastTone = 'info', ms: number = DEFAULT_MS, action: ToastAction | null = null) {
     _message = message;
     _tone = tone;
+    _action = action;
     if (timer !== null) clearTimeout(timer);
     timer = setTimeout(() => {
       _message = null;
+      _action = null;
       timer = null;
     }, ms);
+  },
+  /** Run the current action (if any) and dismiss. */
+  act() {
+    const action = _action;
+    toast.dismiss();
+    action?.onClick();
   },
   dismiss() {
     if (timer !== null) clearTimeout(timer);
     timer = null;
     _message = null;
+    _action = null;
   },
 };

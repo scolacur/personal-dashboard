@@ -63,7 +63,7 @@
   {:else if metric.item.metricType === 'choice'}
     <div class="metric-choices" role="group" aria-label={`${metric.item.name} options`}>
       {#if metric.options.length === 0}
-        <span class="no-options">No options yet — add some on the Habits tab.</span>
+        <span class="no-options">No options yet — add some on the Config tab.</span>
       {/if}
       {#each metric.options as option (option.id)}
         <button

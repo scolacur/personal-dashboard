@@ -85,6 +85,7 @@ export function bootstrapSchema(db: Database.Database): void {
       ready_bypassed      INTEGER NOT NULL DEFAULT 0, -- 1 when a human queued a not-Ready robot ticket via confirm modal (D-058)
       max_turns           INTEGER,                  -- per-ticket run ceiling (PD-432); NULL = the loop's env default
       kind                TEXT,                     -- bug | feature | chore (PD-896); NULL = unclassified
+      coder_area          TEXT,                     -- Coder code-area subtype (PD-880); NULL = unset (reads as 'general')
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       auto_queue_excluded INTEGER NOT NULL DEFAULT 0, -- 1 = Epic excluded from auto-queue (D-103, PD-808)
@@ -180,7 +181,10 @@ export function bootstrapSchema(db: Database.Database): void {
       -- The commit the running image was BUILT from — what the worker RUNS (PD-528).
       -- Null on an image built before the build-arg existed; the UI says so rather than guessing.
       build_sha   TEXT,
-      model       TEXT
+      model       TEXT,
+      -- PD-816: 1 when no worker build input changed between build_sha and sha, so the worker is
+      -- current even though main moved on. 0 when one did. NULL when the worker can't tell.
+      build_current INTEGER
     );
   `);
 
@@ -201,6 +205,11 @@ export function bootstrapSchema(db: Database.Database): void {
   // seeing.
   migrate(db, 'worker_heartbeat_add_build_sha', (d) => {
     addColumn(d, 'worker_heartbeat', 'build_sha', 'TEXT');
+  });
+  // PD-816: the worker image now publishes only on worker-affecting merges, so build_sha trails
+  // main after a web-only merge without being behind. The worker reports which case it's in.
+  migrate(db, 'worker_heartbeat_add_build_current', (d) => {
+    addColumn(d, 'worker_heartbeat', 'build_current', 'INTEGER');
   });
   // PD-910: live turn/token counts for the Audit agent's tile on the Agent Dashboard. The worker
   // writes these; it tolerates their absence, so either side can deploy first.
@@ -367,6 +376,13 @@ export function bootstrapSchema(db: Database.Database): void {
       .all() as { id: number; title: string }[];
     const set = d.prepare(`UPDATE agent_tickets SET kind = 'bug' WHERE id = ?`);
     for (const r of rows) if (BUG_TITLE.test(r.title)) set.run(r.id);
+  });
+
+  // PD-880: Coder code-area subtype. Nullable — NULL means "unset", which `effectiveCoderArea`
+  // resolves to the Epic's area and then to `general`, so no backfill is needed (the ticket says
+  // none). Refine fills it in as tickets are refined; Steve can override it per ticket.
+  migrate(db, 'agent_tickets_add_coder_area', (d) => {
+    addColumn(d, 'agent_tickets', 'coder_area', 'TEXT');
   });
 
   // PD-610: the third refinement state. `refined = 0` otherwise means two different things — "never

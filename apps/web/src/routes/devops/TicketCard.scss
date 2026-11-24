@@ -94,6 +94,29 @@
   line-height: 1.4;
 }
 
+// PD-955: the Coder code-area chip — a quiet, neutral pill so it reads as metadata, not a status.
+.area-chip {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 0 var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+
+  &.inherited {
+    font-style: italic;
+  }
+}
+
+.area-from {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
 .card-top-right {
   display: inline-flex;
   align-items: center;
@@ -109,7 +132,7 @@
 
 .card-status-row {
   display: flex;
-  // Refine-agent state sits left, Robot state sits right (PD card status row).
+  // Refine-agent state. The Robot state moved to the actions row, centred (PD-993).
   justify-content: space-between;
   align-items: center;
   gap: var(--space-xs);
@@ -205,6 +228,10 @@
   cursor: help;
 }
 
+.card-eligible.align-end {
+  justify-content: flex-end;
+}
+
 .eligible-wait {
   font-size: var(--font-size-xs);
   color: var(--muted);
@@ -220,14 +247,42 @@
 }
 
 .card-actions {
-  display: flex;
+  // PD-993: assignee left, Robot state centred, kebab right. A 1fr/auto/1fr grid keeps the
+  // centre column truly centred whatever the side slots measure.
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: var(--space-xs);
+  min-height: 32px;
   margin-top: var(--space-sm);
 
-  .spacer {
-    flex: 1;
+  > :first-child {
+    justify-self: start;
   }
+
+  .kebab-wrap {
+    justify-self: end;
+  }
+
+  // A touch larger than the shared 22px circle — the bottom row has the room now.
+  .assignee-pill {
+    width: 26px;
+    height: 26px;
+    flex-basis: 26px;
+    line-height: 26px;
+    font-size: var(--font-size-sm);
+  }
+
+  .agent-state-badge {
+    font-size: var(--font-size-sm);
+    padding: 1px var(--space-sm);
+  }
+}
+
+.actions-center {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 0;
 }
 
 // ⋮ relation menu — anchored to the kebab button in the actions row.
@@ -287,11 +342,26 @@
   font-size: var(--font-size-sm);
   cursor: pointer;
 
-  &:hover,
+  &:hover:not(:disabled),
   &:focus-visible {
     background: var(--surface-2);
     outline: none;
   }
+
+  &:disabled {
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+
+  &.danger:not(:disabled) {
+    color: var(--status-stuck);
+  }
+}
+
+// PD-993: the card's compact "✓ R" refined mark, a notch brighter than the shared done-green.
+.refined-mark.compact {
+  color: #2ea043;
+  border-color: #2ea043;
 }
 
 // Assignee circle — in-place <select> on each card.
@@ -461,6 +531,36 @@
   }
 }
 
+// PD-993 (D-080): a member's Epic attribution — Epic icon, Epic id (links to it, title on hover),
+// and the Epic's priority pill.
+.epic-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.epic-ref-id {
+  font-family: var(--font-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+
+  &:is(a):hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+}
+
+.no-epic {
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  color: var(--muted);
+  cursor: help;
+}
+
 .issue-link {
   display: inline-flex;
   align-items: center;
@@ -497,7 +597,7 @@
   }
 
   /* Assignee circle: scale up but keep circular */
-  .assignee-pill {
+  .card-actions .assignee-pill {
     width: 40px;
     height: 40px;
     flex: 0 0 40px;

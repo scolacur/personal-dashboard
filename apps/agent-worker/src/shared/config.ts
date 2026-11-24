@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { CHECKPOINT_TOTAL_TURNS_DEFAULT, CHECKPOINT_WINDOW_TURNS_DEFAULT, ROBOT_MAX_TURNS_DEFAULT } from '@dashboard/shared';
+import { CHECKPOINT_FIRST_WINDOW_TURNS_DEFAULT, CHECKPOINT_TOTAL_TURNS_DEFAULT, CHECKPOINT_WINDOW_TURNS_DEFAULT, ROBOT_MAX_TURNS_DEFAULT } from '@dashboard/shared';
 import { logger } from './logger';
 import { MAX_EVALUATION_ROUNDS } from '../jobs/evaluate/verdict';
 
@@ -195,6 +195,9 @@ export interface RobotConfig {
   maxTurns: number;
   /** PD-964: turns per progress-check window (`CHECKPOINT_WINDOW_TURNS`, default 25). */
   checkpointWindowTurns: number;
+  /** Turns in an episode's opening window (`CHECKPOINT_FIRST_WINDOW_TURNS`, default 50) — longer than
+   *  the rest so orientation isn't judged as a stall. */
+  checkpointFirstWindowTurns: number;
   /** PD-964: an episode's hard turn cap across auto-continues and retries (`CHECKPOINT_TOTAL_TURNS`,
    *  default 200). */
   checkpointTotalTurns: number;
@@ -297,6 +300,7 @@ export function loadRobotConfig(env: NodeJS.ProcessEnv): RobotConfig {
     // cannot drift in code. An env override here is NOT visible to the web process.
     maxTurns: Number(env.ROBOT_MAX_TURNS ?? ROBOT_MAX_TURNS_DEFAULT),
     checkpointWindowTurns: Number(env.CHECKPOINT_WINDOW_TURNS ?? CHECKPOINT_WINDOW_TURNS_DEFAULT),
+    checkpointFirstWindowTurns: Number(env.CHECKPOINT_FIRST_WINDOW_TURNS ?? CHECKPOINT_FIRST_WINDOW_TURNS_DEFAULT),
     checkpointTotalTurns: Number(env.CHECKPOINT_TOTAL_TURNS ?? CHECKPOINT_TOTAL_TURNS_DEFAULT),
     checkpointRepeatLimit: Number(env.CHECKPOINT_REPEAT_LIMIT ?? 4),
     checkpointJudgeModel: env.CHECKPOINT_JUDGE_MODEL ?? '',

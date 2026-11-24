@@ -138,7 +138,9 @@
   overflow-wrap: anywhere;
 }
 
-.placeholder-list {
+// PD-955: the Code-areas list shares the two-column key/description layout of the placeholders.
+.placeholder-list,
+.area-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -167,7 +169,8 @@
 }
 
 @media (width <= 40rem) {
-  .placeholder-list li {
+  .placeholder-list li,
+  .area-list li {
     grid-template-columns: 1fr;
     gap: 2px;
   }

@@ -1,0 +1,71 @@
+.event-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--muted);
+}
+
+input,
+select {
+  font: inherit;
+  font-size: var(--font-size-base); /* 16px keeps iOS from zooming on focus */
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-sm);
+}
+
+.error {
+  margin: 0;
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+
+  button {
+    min-height: 2.75rem;
+    padding: 0 var(--space-lg);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+
+  .delete {
+    margin-right: auto;
+    background: none;
+    color: var(--status-stuck);
+
+    &.confirm {
+      background: var(--status-stuck);
+      border-color: var(--status-stuck);
+      color: var(--surface);
+    }
+  }
+
+  .save {
+    border: none;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+  }
+}

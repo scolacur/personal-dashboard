@@ -111,6 +111,18 @@ export function collapseByKey<T>(list: T[], key: (entry: T) => string): T[] {
 /** How long between unprompted flush attempts while entries are pending. */
 export const OUTBOX_RETRY_MS = 20_000;
 
+/**
+ * How long entries must sit in the queue before the *visible* pending signal shows them (PD-778).
+ * A normal online round-trip finishes well under this, so a healthy tick never flashes the
+ * "N pending sync" line; only a sync that is genuinely lagging does.
+ */
+export const OUTBOX_VISIBLE_DELAY_MS = 800;
+
+function defaultIsOnline(): boolean {
+  // Unknown (no navigator, e.g. server-side) counts as online: only a definite `false` is offline.
+  return typeof navigator === 'undefined' || navigator.onLine !== false;
+}
+
 export interface OutboxOptions<T, S> {
   /** localStorage key the queue persists under. Keep it stable across deploys or pending writes are orphaned. */
   key: string;
@@ -126,6 +138,19 @@ export interface OutboxOptions<T, S> {
   collapseKey?: (entry: T) => string;
   /** Fires whenever the pending list changes, so a component can mirror it into reactive state. */
   onChange?: (pending: T[]) => void;
+  /**
+   * Fires whenever the *visible* pending list changes (see {@link Outbox.visiblePending}) — the
+   * signal a "N pending sync" indicator should render from, so a fast sync never flashes it (PD-778).
+   */
+  onVisibleChange?: (pending: T[]) => void;
+  /** How long the queue must stay non-empty before it becomes visible (ms). Defaults to {@link OUTBOX_VISIBLE_DELAY_MS}. */
+  visibleDelayMs?: number;
+  /**
+   * Whether the device is online. When it reports offline at the moment an entry is added, the
+   * visible signal shows at once instead of after the delay. Defaults to `navigator.onLine`;
+   * injectable for tests.
+   */
+  isOnline?: () => boolean;
   /** Fires with the entries a flush got through, for the caller to fold into its view. */
   onSent?: (sent: S[]) => void;
   /** Fires per entry the server refused, so the caller can surface it. */
@@ -139,8 +164,22 @@ export interface OutboxOptions<T, S> {
 export interface Outbox<T> {
   /** The current pending entries (also delivered via `onChange`). */
   pending(): T[];
+  /**
+   * The pending entries as an indicator should show them (also delivered via `onVisibleChange`):
+   * empty until the queue has been non-empty for `visibleDelayMs`, or at once if an entry is added
+   * while offline; cleared immediately when the queue empties. Indicator-only — `pending()` stays
+   * the source of truth for the queue itself (PD-778).
+   */
+  visiblePending(): T[];
   /** Queue an entry, persist, and kick a flush. */
   add(entry: T): void;
+  /**
+   * Drop every pending entry `match` accepts (e.g. an Undo before the write synced — PD-975, Drug
+   * log widget). Returns how many were dropped. An entry already in flight may still reach the
+   * server — that send can't be recalled, so the caller must handle it in `onSent` — but if that
+   * send fails, the removed entry is not re-queued.
+   */
+  remove(match: (entry: T) => boolean): number;
   /** Send everything queued, oldest-first. Re-entrant-safe: a second call while one is in flight is a no-op. */
   flush(): Promise<void>;
   /** Load any persisted queue and wire the retry triggers. Returns a teardown for `onMount`. */
@@ -156,13 +195,53 @@ export interface Outbox<T> {
 export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
   const kv = opts.kv === undefined ? defaultStorage() : opts.kv;
   const retryMs = opts.retryMs ?? OUTBOX_RETRY_MS;
+  const visibleDelayMs = opts.visibleDelayMs ?? OUTBOX_VISIBLE_DELAY_MS;
+  const isOnline = opts.isOnline ?? defaultIsOnline;
   let pending: T[] = [];
   let flushing = false;
+  let visible: T[] = [];
+  let showTimer: ReturnType<typeof setTimeout> | null = null;
+  // Entries `remove`d while a flush was in flight, so a failed send doesn't resurrect them.
+  const removed = new WeakSet<object>();
 
-  function setPending(next: T[]): void {
+  function cancelShow(): void {
+    if (showTimer !== null) clearTimeout(showTimer);
+    showTimer = null;
+  }
+
+  function setVisible(next: T[]): void {
+    if (visible.length === 0 && next.length === 0) return; // still hidden: nothing to report
+    visible = next;
+    opts.onVisibleChange?.(visible);
+  }
+
+  /**
+   * Recompute the visible signal from `pending`. Hide is immediate; show waits `visibleDelayMs`
+   * unless `showNow` (offline at add time) or it is already showing (then it just tracks the queue).
+   * Timers need a browser: without `window` there is nothing to delay for, so show at once.
+   */
+  function syncVisible(showNow: boolean): void {
+    if (pending.length === 0) {
+      cancelShow();
+      setVisible([]);
+      return;
+    }
+    if (showNow || visible.length > 0 || visibleDelayMs <= 0 || typeof window === 'undefined') {
+      cancelShow();
+      setVisible(pending);
+      return;
+    }
+    showTimer ??= setTimeout(() => {
+      showTimer = null;
+      if (pending.length > 0) setVisible(pending);
+    }, visibleDelayMs);
+  }
+
+  function setPending(next: T[], showNow = false): void {
     pending = next;
     saveQueue(opts.key, pending, kv);
     opts.onChange?.(pending);
+    syncVisible(showNow);
   }
 
   function collapse(list: T[]): T[] {
@@ -181,7 +260,8 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
       // subject supersedes its stale, already-sent snapshot entry.
       const inSnapshot = new Set<T>(snapshot);
       const added = pending.filter((e) => !inSnapshot.has(e));
-      setPending(collapse([...r.remaining, ...added]));
+      const remaining = r.remaining.filter((e) => !(typeof e === 'object' && e !== null && removed.has(e)));
+      setPending(collapse([...remaining, ...added]));
       if (r.sent.length > 0) opts.onSent?.(r.sent);
       for (const { entry, message } of r.rejected) opts.onRejected?.(entry, message);
     } finally {
@@ -190,13 +270,24 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
   }
 
   function add(entry: T): void {
-    setPending(collapse([...pending, entry]));
+    setPending(collapse([...pending, entry]), !isOnline());
     void flush();
+  }
+
+  function remove(match: (entry: T) => boolean): number {
+    const drop = pending.filter(match);
+    if (drop.length === 0) return 0;
+    for (const e of drop) if (typeof e === 'object' && e !== null) removed.add(e);
+    setPending(pending.filter((e) => !match(e)));
+    return drop.length;
   }
 
   function start(): () => void {
     pending = collapse(loadQueue<T>(opts.key, kv));
     opts.onChange?.(pending);
+    // Leftovers from an earlier page load get the same rule as a fresh add: shown after the delay
+    // if the flush that follows `start` hasn't cleared them, or at once when offline.
+    syncVisible(pending.length > 0 && !isOnline());
 
     // The retry triggers need a browser. `onMount` only fires client-side, but guard anyway so the
     // module is safe to construct and load from anywhere (and unit-testable without a DOM).
@@ -211,8 +302,9 @@ export function createOutbox<T, S>(opts: OutboxOptions<T, S>): Outbox<T> {
       window.removeEventListener('online', retry);
       document.removeEventListener('visibilitychange', onVisible);
       clearInterval(timer);
+      cancelShow();
     };
   }
 
-  return { pending: () => pending, add, flush, start };
+  return { pending: () => pending, visiblePending: () => visible, add, remove, flush, start };
 }

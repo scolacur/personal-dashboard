@@ -3,6 +3,10 @@
   import {
     TINNITUS_DEFAULT_TAGS,
     TINNITUS_FUTURE_TOLERANCE_MS,
+    TINNITUS_MAX,
+    TINNITUS_MIN,
+    TINNITUS_TAG_MAX_LENGTH,
+    normalizeTagName,
     tinnitusLabel,
     type TinnitusEntry,
   } from '@dashboard/shared';
@@ -11,8 +15,8 @@
   import { RejectedError, createEntry, createTag, fetchEntries, fetchTags, hideTag } from '../routes/widgets/tinnitus-tracker/api';
   import { newClientId, QUEUE_KEY, type PendingEntry } from '../routes/widgets/tinnitus-tracker/queue';
   import { fromLocalInput, toLocalInput } from '../routes/widgets/tinnitus-tracker/time';
-  import IntensitySlider from '../routes/widgets/tinnitus-tracker/IntensitySlider.svelte';
-  import TagCloud from '../routes/widgets/tinnitus-tracker/TagCloud.svelte';
+  import RangeSlider from '$lib/RangeSlider.svelte';
+  import TagCloud from '$lib/TagCloud.svelte';
   import EntryList from '../routes/widgets/tinnitus-tracker/EntryList.svelte';
   import EntryEditModal from '../routes/widgets/tinnitus-tracker/EntryEditModal.svelte';
   import TrendsView from '../routes/widgets/tinnitus-tracker/TrendsView.svelte';
@@ -46,6 +50,9 @@
   let tags = $state<string[]>([...TINNITUS_DEFAULT_TAGS]);
   let entries = $state<TinnitusEntry[]>([]);
   let pending = $state<PendingEntry[]>([]);
+  // The "N pending sync" line renders from the outbox's delayed-visible signal, not the raw queue, so
+  // an entry that syncs normally never flashes it (PD-778). `pending` stays the raw queue for EntryList.
+  let visiblePending = $state<PendingEntry[]>([]);
 
   // The offline outbox lives in `$lib/outbox` (PD-736); this binds it to a Tinnitus entry. `onChange`
   // mirrors its queue into the reactive `pending` above so the "N pending sync" line stays live.
@@ -54,6 +61,7 @@
     send: createEntry,
     isRejected: (e) => e instanceof RejectedError,
     onChange: (list) => (pending = list),
+    onVisibleChange: (list) => (visiblePending = list),
     onSent: (sent) => {
       if (!compact) mergeEntries(sent);
     },
@@ -171,7 +179,16 @@
 
 {#snippet capture()}
 <div class="tinnitus" class:compact>
-  <TagCloud {tags} bind:selected {compact} editable={!compact} onAdd={addTag} onHide={removeTag} />
+  <TagCloud
+    {tags}
+    bind:selected
+    {compact}
+    editable={!compact}
+    normalize={normalizeTagName}
+    maxLength={TINNITUS_TAG_MAX_LENGTH}
+    onAdd={addTag}
+    onHide={removeTag}
+  />
 
   <div class="reading">
     <output class="value-block" aria-live="polite">
@@ -179,7 +196,7 @@
       <!-- Always rendered, so the slider doesn't jump when 0 (no label) is reached. -->
       <span class="label">{tinnitusLabel(value) ?? '\u00a0'}</span>
     </output>
-    <IntensitySlider bind:value {compact} />
+    <RangeSlider bind:value min={TINNITUS_MIN} max={TINNITUS_MAX} label="Tinnitus intensity" {compact} />
   </div>
 
   <!-- Notes and backdating on the card too (PD-716); only tag editing and history are page-only. -->
@@ -196,8 +213,8 @@
 
   <button type="button" class="enter" onclick={submit}>Enter</button>
 
-  {#if pending.length > 0}
-    <p class="pending" role="status">{pending.length} pending sync</p>
+  {#if visiblePending.length > 0}
+    <p class="pending" role="status">{visiblePending.length} pending sync</p>
   {/if}
 
   <!-- No "History" link on the card: the card's own title already links to the page. -->
