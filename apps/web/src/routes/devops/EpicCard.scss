@@ -54,6 +54,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+// D-115: queued members under a Backlog Epic. Informational, like the count beside it.
+.epic-queued {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 // D-103 (PD-808): auto-queue exclusion marker. Muted outline — informational, not a warning
 // (nothing is wrong; the Epic is deliberately hand-queued only).
 .auto-queue-pill {

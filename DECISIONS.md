@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-115](DECISIONS/D-115-an-epics-lane-is-its-own-status-queued-members-do-not-move-it.md)** — An Epic's lane is its own status; queued members do not move it (PD-968; amends D-080)
 - **[D-114](DECISIONS/D-114-a-checkpoint-is-a-progress-check-progressing-runs-continue-on-their-own.md)** — A checkpoint is a progress check: a run that is making progress continues on its own, and only a stalled one waits for Steve
 - **[D-111](DECISIONS/D-111-the-robot-adopts-an-idle-session-pr-the-evaluator-sent-back.md)** — The Robot adopts an idle session PR the Evaluator sent back, and reworks it on Steve's branch
 - **[D-110](DECISIONS/D-110-refine-estimates-maxturns-in-both-directions-against-a-fixed-scale-with-a-floor.md)** — Refine estimates `maxTurns` in both directions, against a fixed scale with a floor

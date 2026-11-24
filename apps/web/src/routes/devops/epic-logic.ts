@@ -86,3 +86,15 @@ export function buildEpicBand(
   }
   return cells;
 }
+
+/**
+ * D-115: the "N in Queue" note for an Epic card, or null when there is nothing to say.
+ *
+ * An Epic's lane is its own status, so a Backlog Epic stays in Backlog even while some of its members
+ * sit in the ticket `queue` (hand-claimed work, or members queued one by one). The note keeps that
+ * live work visible. A queued Epic's lane already says it, so it gets no note.
+ */
+export function queuedMembersNote(summary: Pick<EpicSummary, 'queued' | 'derivedLane'> | undefined): string | null {
+  if (!summary || summary.derivedLane !== 'backlog' || summary.queued <= 0) return null;
+  return `${summary.queued} in Queue`;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildEpicBand } from './epic-logic';
+import { buildEpicBand, queuedMembersNote } from './epic-logic';
 import type { AgentTicket, EpicDerivedLane, EpicSummary, TicketStatus } from '@dashboard/shared';
 
 /**
@@ -46,7 +46,7 @@ function summaries(pairs: [number, EpicDerivedLane][]): Map<number, EpicSummary>
   return new Map(
     pairs.map(([ticketId, derivedLane]) => [
       ticketId,
-      { ticketId, derivedLane, total: 0, done: 0 } as EpicSummary,
+      { ticketId, derivedLane, total: 0, done: 0, queued: 0 } as EpicSummary,
     ]),
   );
 }
@@ -168,5 +168,22 @@ describe('buildEpicBand — geometry', () => {
   it('labels the in_progress lane "Queue"', () => {
     const cells = buildEpicBand([], new Map(), ALL_COLUMNS);
     expect(cells.find((c) => c.lane === 'in_progress')!.label).toBe('Queue');
+  });
+});
+
+describe('queuedMembersNote (D-115)', () => {
+  it('names queued members under a Backlog Epic', () => {
+    expect(queuedMembersNote({ derivedLane: 'backlog', queued: 2 })).toBe('2 in Queue');
+    expect(queuedMembersNote({ derivedLane: 'backlog', queued: 1 })).toBe('1 in Queue');
+  });
+  it('says nothing when no member is queued', () => {
+    expect(queuedMembersNote({ derivedLane: 'backlog', queued: 0 })).toBeNull();
+  });
+  it('says nothing for a queued or finished Epic, whose lane already tells the story', () => {
+    expect(queuedMembersNote({ derivedLane: 'in_progress', queued: 3 })).toBeNull();
+    expect(queuedMembersNote({ derivedLane: 'completed', queued: 0 })).toBeNull();
+  });
+  it('says nothing without a summary', () => {
+    expect(queuedMembersNote(undefined)).toBeNull();
   });
 });

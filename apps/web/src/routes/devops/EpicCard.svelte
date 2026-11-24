@@ -6,6 +6,7 @@
   import * as api from './api';
   import { projectIdColor } from './api';
   import { epicRefinementBadge } from './epic-members';
+  import { queuedMembersNote } from './epic-logic';
 
   let {
     epic,
@@ -40,6 +41,7 @@
   const done = $derived(summary?.done ?? 0);
   const total = $derived(summary?.total ?? 0);
   const pct = $derived(total > 0 ? Math.round((done / total) * 100) : 0);
+  const queuedNote = $derived(queuedMembersNote(summary));
   const detailHref = $derived(
     epic.displayId ? `/devops/tickets/${epic.displayId}` : undefined,
   );
@@ -103,6 +105,10 @@
       >
     {/if}
     <span class="epic-count" title="{done} of {total} members done">{done}/{total}</span>
+    <!-- D-115: a Backlog Epic stays in Backlog while members sit in the ticket queue; say so here. -->
+    {#if queuedNote}
+      <span class="epic-queued" title="Members in the ticket Queue while this Epic is in Backlog">{queuedNote}</span>
+    {/if}
     <!-- T979/D-103: the composite refinement badge. A never-refined Epic still gets nothing (78 of
          80 are in that state; a badge on all of them would be noise), but a refined Epic now shows
          whether the whole breakdown is refined ("Fully refined", green) or only the plan is
