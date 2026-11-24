@@ -244,6 +244,35 @@ describe('approveRefine triggers stale fan-out (split / superseded)', () => {
     expect(stale).toHaveLength(1);
     expect((stale[0].detail as { change: string }).change).toBe('split');
   });
+
+  it('a Populate that supersedes a member stales sessions that cited that member', () => {
+    const db = freshDb();
+    const project = pd(db);
+    // An Epic with a member that will be superseded by the Populate.
+    const epic = createTicket(db, { title: 'epic', projectId: project, isEpic: true });
+    const member = createTicket(db, { title: 'old member', projectId: project, epicId: epic.id });
+    const session = createTicket(db, { title: 'session', projectId: project }).id;
+    seedRound(db, session, [member.id]);
+    // A Populate on the Epic that supersedes the member → it closes with closeReason 'superseded'.
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+      epic.id,
+      REFINE_PROPOSAL_EVENT.proposal,
+      JSON.stringify({
+        mode: 'decompose',
+        body: 'Epic reframed around its new members.',
+        children: [{ title: 'new work', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' }],
+        supersedes: [member.displayId!],
+      } satisfies RefineProposal),
+      Date.now(),
+    );
+    const res = approveRefine(db, epic.id);
+    expect(res.ok).toBe(true);
+    const stale = staleTurns(db, session);
+    expect(stale).toHaveLength(1);
+    expect((stale[0].detail as { change: string }).change).toBe('superseded');
+    // The stale message reflects the superseded trigger, not a generic close.
+    expect((stale[0].detail as { text: string }).text).toContain('has been superseded by other tickets');
+  });
 });
 
 describe('answering a stale round is refused ROUND_STALE', () => {
