@@ -90,6 +90,9 @@
   const metricValues = new SvelteMap<number, string | null>();
   let loaded = $state(false);
   let pending = $state<PendingHabitWrite[]>([]);
+  // The "N pending sync" line renders from the outbox's delayed-visible signal, not the raw queue, so
+  // a tick that syncs normally never flashes it (PD-778). `pending` stays the raw queue for LogView.
+  let visiblePending = $state<PendingHabitWrite[]>([]);
 
   /**
    * Every tick / untick (and, when the metric UI lands, every metric write) rides the shared
@@ -104,6 +107,7 @@
     isRejected: (e) => e instanceof RejectedError,
     collapseKey: pendingKey,
     onChange: (list) => (pending = list),
+    onVisibleChange: (list) => (visiblePending = list),
     // A tick that reached the server changes its streak / per-week figures, so re-pull the
     // server-computed Today view once writes flush (D-095).
     onSent: () => {
@@ -438,8 +442,8 @@
       {loaded}
       {compact}
     />
-    {#if pending.length > 0}
-      <p class="pending" role="status">{pending.length} pending sync</p>
+    {#if visiblePending.length > 0}
+      <p class="pending" role="status">{visiblePending.length} pending sync</p>
     {/if}
     {#if bursting}
       <div class="day-burst" aria-hidden="true"><span>🎉</span></div>
