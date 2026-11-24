@@ -20,7 +20,7 @@ export type RunStatus =
   | 'handed-off' // green verify → pushed branch + PR (the success path)
   | 'no-verify' // turn ended before a green verify → red PR withheld (D-046 gate); WIP pushed to robot-wip/t<id> (PD-737/T898)
   | 'ask-human' // the Robot posted a question and parked (awaiting-human) — not a failure (C2)
-  | 'checkpoint' // reached its turn ceiling: report + WIP saved, parked for Continue/Restart — not a failure (D-094)
+  | 'checkpoint' // stopped at a progress check (stalled, or the total cap): report + WIP saved, parked for Continue/Restart — not a failure (D-094, D-114)
   | 'superseded' // a rework stopped because its PR merged, closed, or was pushed to by someone else — not a failure (PD-926)
   | 'error'; // the coding session itself failed (spawn/SDK/crash)
 
@@ -43,8 +43,9 @@ export interface RunRow {
   faultReason: string | null;
   /** C3 observability metrics off the SDK result (null for older rows / no result). */
   turns: number | null;
-  /** PD-432: the ceiling this run ran under — the ticket's override, or the loop's env default.
-   *  Null on pre-PD-432 rows, where the reader falls back to the shared default. */
+  /** PD-432: the ceiling this run ran under. Since PD-964, the turn at which its current window
+   *  ends (its next progress check), moved forward each time it passes one. Null on pre-PD-432 rows,
+   *  where the reader falls back to the shared default. */
   maxTurns: number | null;
   tokens: number | null;
   /** PD-426: bounded tail of the session's output, so a `no-verify` run is diagnosable from the
@@ -164,6 +165,15 @@ export function updateRunProgress(
   ).run(turns, tokens ?? null, runId);
 }
 
+/**
+ * PD-964: move a running run's turn allowance. A run that passes its progress check gets one more
+ * window, so the board's N/M reads "turns so far / where the next check is" rather than a ceiling
+ * that no longer exists.
+ */
+export function updateRunAllowance(db: Database.Database, runId: number, maxTurns: number): void {
+  db.prepare(`UPDATE agent_runs SET max_turns = ? WHERE id = ? AND status = 'running'`).run(maxTurns, runId);
+}
+
 export interface FinishRunInput {
   status: Exclude<RunStatus, 'running'>;
   sessionId?: string | null;
@@ -173,7 +183,9 @@ export interface FinishRunInput {
   faultTier?: FaultTier | null;
   faultSignature?: string | null;
   faultReason?: string | null;
-  /** C3 observability metrics off the SDK result. */
+  /** C3 observability metrics off the SDK result. Omitted (or null) keeps the live value
+   *  `updateRunProgress` last wrote: a run cut short (SIGTERM, a reclaimed orphan) has no result
+   *  message, and its live count is what PD-964's episode cap must carry into the retry. */
   turns?: number | null;
   tokens?: number | null;
   /** PD-426: bounded tail of the session's output. Clamped to `OUTPUT_TAIL_MAX` on write. */
@@ -205,7 +217,7 @@ export function finishRun(
     `UPDATE agent_runs
         SET status = ?, session_id = ?, pr_url = ?, error = ?,
             fault_tier = ?, fault_signature = ?, fault_reason = ?,
-            turns = ?, tokens = ?, output_tail = ?, wip_ref = ?, wip_sha = ?, status_report = ?, finished_at = ?
+            turns = COALESCE(?, turns), tokens = COALESCE(?, tokens), output_tail = ?, wip_ref = ?, wip_sha = ?, status_report = ?, finished_at = ?
       WHERE id = ?`,
   ).run(
     input.status,

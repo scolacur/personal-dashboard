@@ -143,7 +143,12 @@ export interface ResumeContext {
    * report is handed to it here.
    */
   checkpoint?: {
-    /** The status report the previous run gave at its turn ceiling. */
+    /** PD-964: why this run starts from saved work. `continue` (default): Steve pressed Continue on a
+     *  checkpoint. `retry`: the previous run was cut short by a transient fault (a worker restart, a
+     *  network flake) and this is the loop's automatic retry, resuming the same work. */
+    why?: 'continue' | 'retry';
+    /** The status report the previous run gave at its checkpoint (or, on a retry, a note saying none
+     *  was taken). */
     report: string;
     /** Whether the saved work was restored into the tree (false: the WIP ref could not be fetched). */
     restored: boolean;
@@ -222,8 +227,16 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
   const checkpointBlock = cp
     ? [
         '## You are continuing a previous run',
-        'A previous run on this ticket reached its turn ceiling before finishing. A human chose to let',
-        'you continue from where it stopped instead of starting over.',
+        ...(cp.why === 'retry'
+          ? [
+              'A previous run on this ticket was cut short by an infrastructure fault (for example the worker',
+              'restarting), not by anything it did wrong. You are its automatic retry: continue from where it',
+              'stopped instead of starting over.',
+            ]
+          : [
+              'A previous run on this ticket stopped at a progress check before finishing. A human chose to',
+              'let you continue from where it stopped instead of starting over.',
+            ]),
         '',
         cp.restored
           ? cp.rebased
@@ -233,7 +246,7 @@ export function buildTaskPrompt(input: TaskPromptInput): string {
         '- **Run `npm ci && npm run verify` first**, before changing anything, to see exactly where it stands.',
         '- Do not redo work the report says is done unless verify shows it is broken.',
         '',
-        "The previous run's status report:",
+        cp.why === 'retry' ? 'Context carried over from earlier runs:' : "The previous run's status report:",
         '',
         ...cp.report.split('\n').map((l) => `> ${l}`),
         '',

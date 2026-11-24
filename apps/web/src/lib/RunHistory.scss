@@ -220,3 +220,30 @@
 .status-badge.status-superseded {
   color: var(--muted);
 }
+
+// PD-964 (D-114): progress checks — ✓ carried on, ✗ parked the run.
+.checks {
+  white-space: nowrap;
+}
+
+.check-mark {
+  color: var(--status-checkpoint);
+
+  &.passed {
+    color: var(--muted);
+  }
+}
+
+.progress-checks {
+  margin: 0 0 0.75rem;
+  padding-left: 1.25rem;
+  font-size: 0.85rem;
+
+  li {
+    color: var(--status-checkpoint);
+  }
+
+  li.passed {
+    color: inherit;
+  }
+}

@@ -192,21 +192,49 @@ export const TURN_WARN_FRACTION = 0.8;
  *  (a card reading "50/50" explains itself at a glance). */
 export const TURN_PROGRESS_STATES: readonly AgentState[] = ['working', 'in-review', 'stuck', 'checkpoint'];
 
-/**
- * D-094/PD-737: the default extra turns a checkpoint's **Continue** grants the next run. Editable per
- * Continue, bounded by `ROBOT_MAX_TURNS_LIMIT` (rejected above it, never clamped — same rule as
- * D-066's per-ticket override).
- */
-export const CHECKPOINT_CONTINUE_TURNS_DEFAULT = 50;
 
-/** Validate a Continue's `extraTurns`: an integer in 1..ROBOT_MAX_TURNS_LIMIT. Returns an error
- *  message, or null when valid. Shared so the server route and the modal agree on the bound. */
-export function checkpointExtraTurnsError(extraTurns: unknown): string | null {
-  if (typeof extraTurns !== 'number' || !Number.isInteger(extraTurns)) return 'extraTurns must be an integer';
-  if (extraTurns < 1) return 'extraTurns must be at least 1';
-  if (extraTurns > ROBOT_MAX_TURNS_LIMIT) return `extraTurns must be at most ${ROBOT_MAX_TURNS_LIMIT}`;
-  return null;
+/**
+ * PD-964 (D-114): the rolling progress check. Every `CHECKPOINT_WINDOW_TURNS` turns the loop
+ * judges the last window; a run that is progressing gets one more window, anything else parks in
+ * `checkpoint`. Defaults for the worker's env (`CHECKPOINT_WINDOW_TURNS` / `CHECKPOINT_TOTAL_TURNS`).
+ */
+export const CHECKPOINT_WINDOW_TURNS_DEFAULT = 25;
+/** PD-964: the episode's hard turn cap across auto-continues and retries (the D-066 bound). A run
+ *  still progressing at the cap parks anyway, and the report says the cap stopped it. */
+export const CHECKPOINT_TOTAL_TURNS_DEFAULT = 200;
+
+/** PD-964: the judge's verdict on a window. Only `progressing` continues. `error` is the loop's own
+ *  label for a judge call that failed or answered malformed — it parks, like any non-progressing one. */
+export const PROGRESS_VERDICTS = ['progressing', 'stalled', 'drifted', 'hallucinating', 'error'] as const;
+export type ProgressVerdict = (typeof PROGRESS_VERDICTS)[number];
+
+/** PD-964: the deterministic tripwires, checked before the judge. Any one parks immediately. */
+export const PROGRESS_TRIPWIRES = ['repeated_tool_call', 'repeated_error', 'no_diff_change', 'verify_same_failure'] as const;
+export type ProgressTripwire = (typeof PROGRESS_TRIPWIRES)[number];
+
+/** PD-964: what decided a progress check. */
+export type ProgressCheckSource = 'tripwire' | 'judge' | 'total_cap';
+
+/** PD-964: the human-readable name of each tripwire, for the checkpoint card and the timeline. */
+export const PROGRESS_TRIPWIRE_LABELS: Record<ProgressTripwire, string> = {
+  repeated_tool_call: 'the same tool call repeated',
+  repeated_error: 'the same error repeated',
+  no_diff_change: 'no change to the code across the window',
+  verify_same_failure: 'verify failing the same way in consecutive windows',
+};
+
+/** PD-964: one line saying why a progress check decided what it did. Shared by the checkpoint card
+ *  and the activity timeline so they cannot word it differently. */
+export function progressCheckLine(detail: Pick<RobotEventDetail, 'progress' | 'checkedBy' | 'tripwire' | 'reason' | 'window' | 'turnsSoFar' | 'totalCap'>): string {
+  const at = detail.turnsSoFar !== undefined ? ` at ${detail.turnsSoFar}${detail.totalCap ? `/${detail.totalCap}` : ''} turns` : '';
+  const win = detail.window !== undefined ? `window ${detail.window}` : 'progress check';
+  if (detail.checkedBy === 'total_cap') return `${win}${at}: stopped by the total turn cap, not the judge`;
+  if (detail.checkedBy === 'tripwire' && detail.tripwire) {
+    return `${win}${at}: tripwire — ${PROGRESS_TRIPWIRE_LABELS[detail.tripwire]}${detail.reason ? ` (${detail.reason})` : ''}`;
+  }
+  return `${win}${at}: judge says ${detail.progress ?? 'unknown'}${detail.reason ? ` — ${detail.reason}` : ''}`;
 }
+
 
 export interface TurnProgress {
   turns: number;
@@ -274,7 +302,7 @@ export const AGENT_STATE_DESCRIPTIONS: Record<AgentState, string> = {
   'awaiting-human':
     'The agent deliberately paused after asking a question (ask_human) and is waiting on a reply. Least urgent / expected.',
   checkpoint:
-    'The run reached its turn ceiling. Its work was saved with a status report; choose Continue (more turns, from the saved work) or Restart (fresh from main).',
+    'The run stopped at a progress check: it looked stalled, looping or off-track, or it reached the total turn cap. Its work was saved with a status report; choose Continue (from the saved work) or Restart (fresh from main).',
   wontfix: "Terminal: the ticket was closed as won't-fix.",
   done: 'Terminal: the Robot loop finished the work and the PR merged (green pill; lives in the Completed lane).',
 };
@@ -2349,6 +2377,10 @@ export const ROBOT_EVENT = {
   checkpoint: 'robot_checkpoint',
   checkpointContinue: 'robot_checkpoint_continue',
   checkpointRestart: 'robot_checkpoint_restart',
+  // PD-964 (D-114): the rolling progress check. Loop-written at the end of every window
+  // (`CHECKPOINT_WINDOW_TURNS`): the verdict, why, which window and the episode's turns so far. A
+  // `progressing` verdict continues the run; anything else parks it in `checkpoint`.
+  progressCheck: 'robot_progress_check',
   // PD-913: the Robot took over a session PR the Evaluator sent back and nobody touched for the idle
   // window (`adopted`, detail: prNumber, branch, headSha), or handed it back to Steve before it started
   // because the PR moved or closed under it (`released`, detail: prNumber, reason).
@@ -2455,8 +2487,22 @@ export interface RobotEventDetail {
   reportFallback?: boolean;
   /** D-094/PD-737: turns the checkpointed run used (`robot_checkpoint`). */
   turns?: number;
-  /** D-094/PD-737: the turn ceiling a Continue grants the next run (`robot_checkpoint_continue`). */
+  /** D-094/PD-737: the turn ceiling a Continue granted the next run (`robot_checkpoint_continue`).
+   *  Historical only: since PD-964 a Continue grants a fresh episode and the field is not written. */
   extraTurns?: number;
+  /** PD-964: the progress check's verdict (`robot_progress_check`), and on a `robot_checkpoint` the
+   *  verdict that parked the run. */
+  progress?: ProgressVerdict;
+  /** PD-964: what decided a progress check — a named tripwire, the judge, or the total turn cap. */
+  checkedBy?: ProgressCheckSource;
+  /** PD-964: the tripwire that fired, when `checkedBy` is `tripwire`. */
+  tripwire?: ProgressTripwire;
+  /** PD-964: which window of the episode this check closed (1-based). */
+  window?: number;
+  /** PD-964: the episode's turns at the check, across runs and retries. */
+  turnsSoFar?: number;
+  /** PD-964: the episode's total turn cap at the check. */
+  totalCap?: number;
   /** PD-917: on a `robot_handoff`, the SDK error the session ended with AFTER handing off (e.g. it
    *  hit the turn ceiling while writing its run memory). The hand-off stands. */
   lateError?: string;

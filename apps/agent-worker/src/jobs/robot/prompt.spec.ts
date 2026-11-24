@@ -6,7 +6,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildTaskPrompt,
-  checkpointExtraTurnsError,
   robotSystemPrompt,
   VERIFY_OK_MARKER,
   SCM_JSON,
@@ -199,14 +198,3 @@ describe('buildTaskPrompt — checkpoint Continue (PD-737)', () => {
   });
 });
 
-describe('checkpointExtraTurnsError (PD-737)', () => {
-  it('accepts 1..200 integers and rejects (never clamps) anything else', () => {
-    expect(checkpointExtraTurnsError(1)).toBeNull();
-    expect(checkpointExtraTurnsError(50)).toBeNull();
-    expect(checkpointExtraTurnsError(200)).toBeNull();
-    expect(checkpointExtraTurnsError(201)).toMatch(/at most 200/);
-    expect(checkpointExtraTurnsError(0)).toMatch(/at least 1/);
-    expect(checkpointExtraTurnsError(2.5)).toMatch(/integer/);
-    expect(checkpointExtraTurnsError('50')).toMatch(/integer/);
-  });
-});

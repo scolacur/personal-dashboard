@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-114](DECISIONS/D-114-a-checkpoint-is-a-progress-check-progressing-runs-continue-on-their-own.md)** — A checkpoint is a progress check: a run that is making progress continues on its own, and only a stalled one waits for Steve
 - **[D-111](DECISIONS/D-111-the-robot-adopts-an-idle-session-pr-the-evaluator-sent-back.md)** — The Robot adopts an idle session PR the Evaluator sent back, and reworks it on Steve's branch
 - **[D-110](DECISIONS/D-110-refine-estimates-maxturns-in-both-directions-against-a-fixed-scale-with-a-floor.md)** — Refine estimates `maxTurns` in both directions, against a fixed scale with a floor
 - **[D-109](DECISIONS/D-109-path-guard-gates-every-author-again-now-that-any-pr-can-auto-merge.md)** — The path-guard gates every author again, Steve included, now that any PR can auto-merge

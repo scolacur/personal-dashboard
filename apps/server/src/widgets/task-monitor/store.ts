@@ -2673,16 +2673,17 @@ export function resetRobotRuns(
   return getTicket(db, ticketId);
 }
 
-export type CheckpointChoice = { kind: 'continue'; extraTurns: number } | { kind: 'restart' };
+export type CheckpointChoice = { kind: 'continue' } | { kind: 'restart' };
 
 export type CheckpointDecisionResult =
   | { ok: true; ticket: AgentTicket }
   | { ok: false; reason: 'not_found' | 'not_checkpoint' };
 
 /**
- * D-094/PD-737 — Steve's answer to a checkpoint. Records `robot_checkpoint_continue` (with the
- * validated `extraTurns`) or `robot_checkpoint_restart` and re-queues the ticket; the loop reads the
- * event at its next dispatch (`checkpointDecision` in the agent-worker) to decide how the run starts.
+ * D-094/PD-737 — Steve's answer to a checkpoint. Records `robot_checkpoint_continue` or
+ * `robot_checkpoint_restart` and re-queues the ticket; the loop reads the event at its next dispatch
+ * (`dispatchStart` in the agent-worker) to decide how the run starts. Either one begins a new episode
+ * for PD-964's progress check and total cap (D-114).
  *
  * Only a ticket parked in `checkpoint` may be answered — anything else is refused, so a stale modal
  * cannot turn a Continue into an arbitrary re-dispatch. Unlike Reset/Unstick this writes no
@@ -2699,7 +2700,7 @@ export function decideCheckpoint(
   if (ticket.agentState !== 'checkpoint' || ticket.status !== 'queue') return { ok: false, reason: 'not_checkpoint' };
   const apply = db.transaction(() => {
     if (choice.kind === 'continue') {
-      logEvent(db, ticketId, ROBOT_EVENT.checkpointContinue, { extraTurns: choice.extraTurns, reason: 'continued by human' });
+      logEvent(db, ticketId, ROBOT_EVENT.checkpointContinue, { reason: 'continued by human' });
     } else {
       logEvent(db, ticketId, ROBOT_EVENT.checkpointRestart, { reason: 'restarted by human' });
     }

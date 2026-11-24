@@ -12,9 +12,21 @@ import {
 import { checkDbLockedFromCoder } from './privilege';
 import { ensureWorktree, pruneWorktrees, removeWorktree, worktreeDirFor, type Worktree } from './workspace';
 import { pushWip, deleteWipRef, restoreWip, type WipRef, type WipRestore } from './wip';
-import { runRobotSession, runStatusReport, type RobotSessionResult, type StatusReportResult } from './session';
-import { checkpointDecision, reportFromTail } from './checkpoint';
-import type { ResumeContext } from '@dashboard/shared';
+import { appendTail, runRobotSession, runStatusReport, type RobotSessionResult, type SessionSegment, type StatusReportResult } from './session';
+import { currentEpisode, dispatchStart, firstWindow, reportFromTail } from './checkpoint';
+import {
+  checkTripwires,
+  gitTreeSnapshotter,
+  latestPlan,
+  outcomeFrom,
+  runProgressJudge,
+  verifyFailureSignature,
+  type JudgeInput,
+  type JudgeResult,
+  type ProgressCheckOutcome,
+  type TreeSnapshotter,
+} from './progress';
+import { progressCheckLine, type ResumeContext, type RobotEventDetail } from '@dashboard/shared';
 import {
   ensureRunsTable,
   startRun,
@@ -22,6 +34,7 @@ import {
   failedRunsForTicket,
   hashBody,
   updateRunProgress,
+  updateRunAllowance,
   ticketsWithTerminalWipRef,
   clearWipRef,
 } from './runs';
@@ -50,6 +63,10 @@ import { pollInReviewPrs, defaultPrFetcher, type PrFetcher } from './pr-state';
 import { checkRework } from './rework-guard';
 import { defaultHandoffStarted, defaultHasCommit, watchForSupersession, type Supersession } from './supersede';
 import { runPrStatusUpdate } from './pr-status';
+
+/** PD-964: why a run parked at a progress check — the fields a `robot_checkpoint` and the checkpoint
+ *  card need to say whether it was a tripwire, the judge, or the total cap. */
+type ProgressCheckDetail = Pick<RobotEventDetail, 'progress' | 'checkedBy' | 'tripwire' | 'window' | 'turnsSoFar' | 'totalCap' | 'reason'>;
 
 // Re-exported for existing importers (robot.spec.ts) now that these leaf helpers live in board.ts.
 export { setAgentState, branchFor };
@@ -114,7 +131,14 @@ export interface RobotDeps {
     /** PD-784/D-104: aborts the session on a graceful stop. The default (real) session wires it to
      *  the SDK; an injected session may trigger `shutdown.request()` to simulate a SIGTERM. */
     abort?: AbortController,
+    /** PD-964: which window this is — a later window resumes the first window's session. */
+    segment?: SessionSegment,
   ) => Promise<RobotSessionResult>;
+  /** PD-964: the progress judge. Injectable so tests never call a model. Must not throw. */
+  judge?: (config: AgentWorkerConfig, input: JudgeInput) => Promise<JudgeResult>;
+  /** PD-964: working-tree fingerprints for the no-change tripwire and the judge's diff. Injectable so
+   *  tests never shell out to git. */
+  snapshotter?: (wt: Worktree) => TreeSnapshotter;
   /** PD-784/D-104: the live worker's in-flight run registry. Persisted across cycles by the loop
    *  owner (`startRobotJob`); a fresh one per call otherwise. Shared with `reconcileStalledRuns` so
    *  orphans are reclaimed by ownership, not age. */
@@ -229,7 +253,9 @@ export async function processRobotQueue(
   // record a decision without anything else going red.
   const doRun =
     deps.runSession ??
-    ((c, cand, w, resume, onProgress, abort) => runRobotSession(c, cand, w, resume, undefined, onProgress, db, abort));
+    ((c, cand, w, resume, onProgress, abort, segment) => runRobotSession(c, cand, w, resume, undefined, onProgress, db, abort, segment));
+  const doJudge = deps.judge ?? ((c, input) => runProgressJudge(c, input));
+  const doSnapshotter = deps.snapshotter ?? ((w) => gitTreeSnapshotter(w.dir));
   const policy = faultPolicy(config);
 
   // PD-784/D-104: the ownership registry (persisted across cycles by the loop owner) and the
@@ -372,9 +398,16 @@ export async function processRobotQueue(
       logger.info({ ticketId: candidate.id, reason: guard.reason }, 'robot: rework skipped — PR head moved since the review');
       continue;
     }
-    // D-094/PD-737: did Steve answer a checkpoint? Read BEFORE the dispatched event below, which is
-    // what consumes it. Continue → start from the saved work with more turns; Restart → clean main.
-    const checkpoint = checkpointDecision(db, candidate.id);
+    // D-094/PD-737, PD-964 (D-114): how this run starts — a Continue or Restart Steve chose, the loop's
+    // own retry of a run a transient fault cut short (resume its work, keep its budget), or fresh.
+    // Read BEFORE the run row below exists, since the newest run is what tells a retry apart.
+    const start = dispatchStart(db, candidate.id);
+    // PD-964: the episode's turns so far, across retries — the total cap and the window both count
+    // from here.
+    const episode = currentEpisode(db, candidate.id);
+    const windowTurns = config.robot.checkpointWindowTurns;
+    const totalCap = config.robot.checkpointTotalTurns;
+    const first = firstWindow(episode.turnsUsed, windowTurns, totalCap);
     // PD-913 (D-111): a session PR the Robot adopted is reworked on Steve's branch, not robot/t<id>,
     // and the prompt is told whose branch it is.
     const adopted = adoptedFrom(db, candidate.id);
@@ -388,17 +421,34 @@ export async function processRobotQueue(
         : undefined;
 
     const branch = adopted?.branch ?? branchFor(candidate);
+
+    // PD-964: a retry of a run that was cut short AT the total cap has no turns left to run. Park it
+    // as the cap would have, without spending a session.
+    if (first.turns <= 0) {
+      const detail = { checkedBy: 'total_cap' as const, progress: 'progressing' as const, window: first.index, turnsSoFar: episode.turnsUsed, totalCap };
+      const reason = progressCheckLine(detail);
+      setAgentState(db, candidate.id, 'checkpoint', now());
+      logMilestone(
+        db,
+        candidate.id,
+        ROBOT_EVENT.checkpoint,
+        { ...detail, reason, report: reportFromTail(undefined, 'the episode was already at its total turn cap when the retry came up'), reportFallback: true },
+        now(),
+      );
+      notifyAwaitingHuman(db, candidate.id, 'Robot reached its total turn cap', `${reason}. Its work is saved — choose Continue or Restart.`, now());
+      logger.info({ ticketId: candidate.id, turnsSoFar: episode.turnsUsed, totalCap }, 'robot: episode already at the total cap → checkpoint');
+      continue;
+    }
+
     // PD-406: snapshot the body this run runs against so a later max-turns fault can tell a futile
     // unchanged-body retry from a re-scoped one.
     const bodyHash = hashBody(candidate.body);
     setAgentState(db, candidate.id, 'working', now());
-    // PD-432: record the ceiling this run actually runs under, so the run is self-describing and
-    // the board's N/M indicator reads the real denominator rather than the shared constant.
-    // D-094/PD-737: a Continue's `extraTurns` IS this run's ceiling (turns per run before the next
-    // checkpoint — D-094 amends D-066), overriding the ticket's own override for this one run.
-    const effectiveMaxTurns =
-      checkpoint?.kind === 'continue' ? checkpoint.extraTurns : (candidate.maxTurns ?? config.robot.maxTurns);
-    // The session reads its ceiling off the candidate, so hand it one carrying the effective value.
+    // PD-432, PD-964: the run row's `max_turns` is where its current window ends — its next progress
+    // check — moved forward each time it passes one (`updateRunAllowance`). The ticket's own
+    // `max_turns` and `ROBOT_MAX_TURNS` no longer bound a run (D-114).
+    const effectiveMaxTurns = first.turns;
+    // The session reads its window length off the candidate; each window gets its own copy.
     const runCandidate: RobotCandidate = { ...candidate, maxTurns: effectiveMaxTurns };
     const runId = startRun(
       db,
@@ -414,7 +464,15 @@ export async function processRobotQueue(
       db,
       candidate.id,
       ROBOT_EVENT.dispatched,
-      { branch, maxTurns: effectiveMaxTurns, ...(checkpoint ? { reason: `checkpoint ${checkpoint.kind}` } : {}) },
+      {
+        branch,
+        maxTurns: effectiveMaxTurns,
+        window: first.index,
+        turnsSoFar: episode.turnsUsed,
+        totalCap,
+        ...(start.kind === 'continue' || start.kind === 'restart' ? { reason: `checkpoint ${start.kind}` } : {}),
+        ...(start.kind === 'retry' ? { reason: `retry — resuming the episode at ${episode.turnsUsed} turns` } : {}),
+      },
       now(),
     );
 
@@ -518,6 +576,9 @@ export async function processRobotQueue(
     };
 
     let worktree: Worktree | undefined;
+    // PD-964: the tree fingerprinter for this run's progress checks, and the check that parked it.
+    let snapshotter: TreeSnapshotter | undefined;
+    let check: ProgressCheckDetail | null = null;
     // PD-719: only a hand-off (the work is on GitHub) deletes the clone. A park, a fault or a
     // no-verify keeps it, so the commits survive into the next dispatch of this ticket.
     let handedOff = false;
@@ -605,12 +666,17 @@ export async function processRobotQueue(
     };
 
     /**
-     * D-094/PD-737: the run reached its turn ceiling. Not a fault: get a status report from the same
+     * D-094/PD-737, PD-964 (D-114): the run stopped at a progress check — a tripwire, a judge verdict
+     * other than `progressing`, or the total cap. Not a fault: get a status report from the same
      * session, save the work, park `checkpoint` for Steve's Continue / Restart. Burns no retry (a
      * `checkpoint` run is not a `no-verify`/`error` row, so `failedRunsForTicket` never counts it) and
      * never feeds the circuit breaker. The clone is kept, as for any non-hand-off exit (PD-719).
      */
-    const handleCheckpoint = async (result: RobotSessionResult, metrics: { turns?: number; tokens?: number; outputTail?: string }): Promise<void> => {
+    const handleCheckpoint = async (
+      result: RobotSessionResult,
+      metrics: { turns?: number; tokens?: number; outputTail?: string },
+      check: ProgressCheckDetail,
+    ): Promise<void> => {
       let report: string;
       let reportFallback = false;
       if (shutdown.requested) {
@@ -635,7 +701,7 @@ export async function processRobotQueue(
         }
       }
       const wip = await preserveWip();
-      const turnsLabel = `${metrics.turns ?? '?'}/${effectiveMaxTurns}`;
+      const why = progressCheckLine(check);
       finishRun(
         db,
         runId,
@@ -643,7 +709,7 @@ export async function processRobotQueue(
           status: 'checkpoint',
           sessionId: result.sessionId,
           error: result.error,
-          faultReason: `reached the turn ceiling (${turnsLabel})`,
+          faultReason: why,
           statusReport: report,
           wipRef: wip?.ref ?? null,
           wipSha: wip?.sha ?? null,
@@ -657,11 +723,11 @@ export async function processRobotQueue(
         candidate.id,
         ROBOT_EVENT.checkpoint,
         {
-          reason: `reached the turn ceiling (${turnsLabel})`,
+          ...check,
+          reason: why,
           report,
           reportFallback,
           ...(metrics.turns !== undefined ? { turns: metrics.turns } : {}),
-          maxTurns: effectiveMaxTurns,
           ...(wip ? { wipRef: wip.ref, wipSha: wip.sha } : {}),
         },
         now(),
@@ -669,31 +735,34 @@ export async function processRobotQueue(
       notifyAwaitingHuman(
         db,
         candidate.id,
-        'Robot reached its turn ceiling',
-        `Used ${turnsLabel} turns. Its work is saved — choose Continue or Restart.\n\n${report.slice(0, 400)}`,
+        check.checkedBy === 'total_cap' ? 'Robot reached its total turn cap' : 'Robot stopped at a progress check',
+        `${why}. Its work is saved — choose Continue or Restart.\n\n${report.slice(0, 400)}`,
         now(),
       );
-      logger.info({ ticketId: candidate.id, turns: metrics.turns, reportFallback, wip: wip?.ref }, 'robot: turn ceiling → checkpoint (no fault, no retry burned)');
+      logger.info({ ticketId: candidate.id, turns: metrics.turns, why, reportFallback, wip: wip?.ref }, 'robot: progress check → checkpoint (no fault, no retry burned)');
     };
 
     try {
       // D-094/PD-737: Restart means a clean start, so the clone this ticket kept (PD-719) goes first —
       // otherwise reuse would carry the checkpointed run's commits into the "fresh" run. The WIP ref
       // is kept (D-094 §4).
-      if (checkpoint?.kind === 'restart') {
+      if (start.kind === 'restart') {
         await doRemove(config, { dir: worktreeDirFor(config, branch), branch });
       }
       worktree = await doEnsure(config, branch);
       ownership.attachWorktree(runId, worktree); // PD-784: so a graceful stop can reach it for WIP
-      if (checkpoint?.kind === 'continue') {
-        let restore: WipRestore;
-        try {
-          restore = await doRestoreWip(config, worktree, candidate.id);
-        } catch (err) {
-          logger.warn({ err, ticketId: candidate.id }, 'robot: Continue WIP restore raised — running from the tree as prepared');
-          restore = { restored: false, rebased: false };
+      if (start.kind === 'continue' || start.kind === 'retry') {
+        // PD-964: a retry resumes the interrupted run's own saved work — only when it saved some, so
+        // a WIP ref left from before a Restart can never come back on its own.
+        let restore: WipRestore = { restored: false, rebased: false };
+        if (start.kind === 'continue' || start.restoreWip) {
+          try {
+            restore = await doRestoreWip(config, worktree, candidate.id);
+          } catch (err) {
+            logger.warn({ err, ticketId: candidate.id, start: start.kind }, 'robot: WIP restore raised — running from the tree as prepared');
+          }
         }
-        resumeCtx = { ...(resumeCtx ?? {}), checkpoint: { report: checkpoint.report, ...restore } };
+        resumeCtx = { ...(resumeCtx ?? {}), checkpoint: { why: start.kind, report: start.report, ...restore } };
       }
       // PD-926: while a rework runs, stop it if its PR moves on (supersede.ts).
       if (guard.action === 'dispatch' && guard.rework && config.robot.supersedeCheckMs > 0) {
@@ -712,20 +781,124 @@ export async function processRobotQueue(
           },
         });
       }
-      // PD-230: persist live turn progress so the board shows a working run closing on the cap.
-      // The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only reports.
-      // PD-784/D-104: the same callback resets the run's hung-session clock in the ownership registry.
-      const result = await doRun(
-        config,
-        runCandidate,
-        worktree,
-        resumeCtx,
-        (turns, tokens) => {
-          updateRunProgress(db, runId, turns, tokens);
-          ownership.progress(runId, now());
-        },
-        abort,
-      );
+      // PD-964 (D-114): the run proceeds in windows. Each window is one stretch of the SAME session
+      // (the first starts it, later ones resume it), and at each window's end the progress check
+      // decides: one more window, or park. A window that ends any other way (hand-off, ask_human, an
+      // error, a voluntary stop, an abort) ends the run as before.
+      const wt = worktree;
+      snapshotter = doSnapshotter(wt);
+      let treeBefore = await snapshotter.snapshot();
+      let previousVerifyFailure: string | null = null;
+      let windowIndex = first.index;
+      let windowLength = first.turns;
+      /** Run-wide totals across windows; the judge's own usage is folded in (it counts, D-064). */
+      let runTurns = 0;
+      let runTokens = 0;
+      let sessionId: string | undefined;
+      let tail = '';
+      let plan: string | null = null;
+      let segment: RobotSessionResult;
+      for (;;) {
+        const offsetTurns = runTurns;
+        const offsetTokens = runTokens;
+        segment = await doRun(
+          config,
+          { ...runCandidate, maxTurns: windowLength },
+          wt,
+          resumeCtx,
+          // PD-230: persist live turn progress so the board shows a working run closing on its
+          // check. The LOOP owns this write (the coding uid is DB-blind, D-039) — the session only
+          // reports. PD-784/D-104: the same callback resets the run's hung-session clock.
+          (turns, tokens) => {
+            updateRunProgress(db, runId, offsetTurns + turns, tokens !== undefined ? offsetTokens + tokens : undefined);
+            ownership.progress(runId, now());
+          },
+          abort,
+          sessionId ? { resumeSessionId: sessionId, turnOffset: offsetTurns } : { turnOffset: offsetTurns },
+        );
+        runTurns += segment.turns ?? 0;
+        runTokens += segment.tokens ?? 0;
+        sessionId = segment.sessionId ?? sessionId;
+        if (segment.outputTail) tail = appendTail(tail, segment.outputTail);
+        plan = latestPlan(segment.transcript ?? []) ?? plan;
+
+        // Only a window that ran out of turns reaches a progress check.
+        const atWindowEnd = !segment.ok && isTurnCeiling(segment.error) && !segment.askHuman && !(segment.verifyOk && segment.prNumber !== undefined);
+        if (!atWindowEnd || abort.signal.aborted) break;
+
+        const turnsSoFar = episode.turnsUsed + runTurns;
+        const base = { window: windowIndex, turnsSoFar, totalCap };
+        if (turnsSoFar >= totalCap) {
+          // The cap stops a run whatever the judge would say — and says that it was the cap.
+          check = { ...base, checkedBy: 'total_cap', progress: 'progressing' };
+          logMilestone(db, candidate.id, ROBOT_EVENT.progressCheck, { ...check, reason: progressCheckLine(check) }, now());
+          break;
+        }
+        const treeAfter = await snapshotter.snapshot();
+        const transcript = segment.transcript ?? [];
+        const verifyFailure = verifyFailureSignature(transcript);
+        const hit = checkTripwires({
+          transcript,
+          repeatLimit: config.robot.checkpointRepeatLimit,
+          treeBefore,
+          treeAfter,
+          verifyFailure,
+          previousVerifyFailure,
+        });
+        let judge: JudgeResult | null = null;
+        if (!hit) {
+          const diff = treeBefore && treeAfter ? await snapshotter.diff(treeBefore, treeAfter) : null;
+          try {
+            judge = await doJudge(config, { title: candidate.title, body: candidate.body, plan, diff, transcript, window: windowIndex, turnsSoFar });
+          } catch (err) {
+            judge = { verdict: 'error', reason: `the judge call raised: ${err instanceof Error ? err.message : String(err)}`, turns: 0, tokens: 0 };
+          }
+        }
+        const outcome: ProgressCheckOutcome = outcomeFrom(hit, judge);
+        runTurns += outcome.judgeTurns;
+        runTokens += outcome.judgeTokens;
+        updateRunProgress(db, runId, runTurns, runTokens);
+        const turnsAfterCheck = episode.turnsUsed + runTurns;
+        check = {
+          window: windowIndex,
+          turnsSoFar: turnsAfterCheck,
+          totalCap,
+          checkedBy: outcome.checkedBy,
+          progress: outcome.verdict,
+          ...(outcome.tripwire ? { tripwire: outcome.tripwire } : {}),
+          reason: outcome.reason,
+        };
+        logMilestone(db, candidate.id, ROBOT_EVENT.progressCheck, check, now());
+        logger.info({ ticketId: candidate.id, ...check }, `robot: progress check — ${progressCheckLine(check)}`);
+        if (!outcome.proceed) break;
+        // A graceful stop landed during the check: don't open another window. The stop path below
+        // closes the run as an interrupt, and the retry resumes it (D-114 §6).
+        if (abort.signal.aborted) break;
+        if (!sessionId) {
+          check = { ...check, progress: 'error', checkedBy: 'judge', reason: 'the session id was not captured, so the run cannot be resumed for another window' };
+          break;
+        }
+        windowLength = Math.min(windowTurns, totalCap - turnsAfterCheck);
+        if (windowLength <= 0) {
+          check = { window: windowIndex, turnsSoFar: turnsAfterCheck, totalCap, checkedBy: 'total_cap', progress: 'progressing' };
+          break;
+        }
+        // Passed: one more window, re-checked at its end.
+        check = null;
+        windowIndex += 1;
+        treeBefore = treeAfter;
+        previousVerifyFailure = verifyFailure;
+        updateRunAllowance(db, runId, runTurns + windowLength);
+      }
+      // A window cut short with no result message (an abort) reports no turns: leave them undefined so
+      // finishRun keeps the live count `updateRunProgress` wrote — the retry's episode total reads it.
+      const result: RobotSessionResult = {
+        ...segment,
+        sessionId,
+        turns: segment.turns === undefined ? undefined : runTurns,
+        tokens: segment.tokens === undefined ? undefined : runTokens,
+        outputTail: tail || undefined,
+      };
       // Spread into finishRun on every terminal path, so the captured tail (PD-426) lands on the
       // run row before the `finally` below removes the worktree.
       // PD-918: the PR the run opened, if any, recorded on the run row whatever the outcome.
@@ -781,8 +954,13 @@ export async function processRobotQueue(
         }
         logger.info({ ticketId: candidate.id, branch, prUrl }, 'robot: handed off PR');
       } else if (!result.ok && isTurnCeiling(result.error)) {
-        // D-094/PD-737: the turn ceiling is a checkpoint, not a failure — never `handleFailure`.
-        await handleCheckpoint(result, metrics);
+        // D-094/PD-737, PD-964: a window that ended at its turn limit and did not pass the progress
+        // check is a checkpoint, not a failure — never `handleFailure`.
+        await handleCheckpoint(
+          result,
+          metrics,
+          check ?? { checkedBy: 'judge', progress: 'error', window: first.index, turnsSoFar: episode.turnsUsed + (result.turns ?? 0), totalCap, reason: 'the run stopped at its window end without a progress check' },
+        );
       } else if (result.ok && !result.verifyOk) {
         // D-046 gate: the session ended without a green verify — withhold the red PR. The WIP is NOT
         // lost: preserve it to robot-wip/t<id> (PD-737/T898) before the clone could be reused/pruned,
@@ -807,6 +985,7 @@ export async function processRobotQueue(
       }
     } finally {
       stopWatch();
+      snapshotter?.dispose();
       ownership.end(runId); // PD-784: the run is terminal — the live process no longer owns it.
       if (worktree && handedOff) {
         // The work is on GitHub as a PR now, so the WIP ref is superseded — delete it (best-effort)

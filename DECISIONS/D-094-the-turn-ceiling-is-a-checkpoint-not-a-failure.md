@@ -31,8 +31,14 @@ holds an output tail, not a status.
      report in its prompt.
    - **Restart.** It dispatches a new run from a clean `main`, the PD-340 default, without the
      report. The saved work is kept until the ticket completes, in case it's wanted.
+   > **Amended by [[D-114]] (PD-964, Checkpoint auto-continues a progressing run), 2026-11-24:** the
+   > checkpoint is now a progress check every `CHECKPOINT_WINDOW_TURNS` turns. A progressing run
+   > continues on its own; only a stalled, drifting or hallucinating one (or one at the total cap)
+   > parks here. Continue no longer takes "+N turns": it starts a fresh episode.
 5. **There is no total cap across Continues.** A human presses the button every time, and the run
    history shows the running total of turns, which is the information that judgement needs.
+   > **Amended by [[D-114]], 2026-11-24:** reversed. There is a total cap of `CHECKPOINT_TOTAL_TURNS`
+   > (default 200) per episode, because a human no longer presses every Continue.
 6. **Only the ceiling gets this treatment.** Crashes, stalls and other faults keep their existing
    retry-then-park behaviour ([[D-055]]). A crashed session usually cannot report, and the existing
    logic for those cases works.
@@ -55,6 +61,8 @@ holds an output tail, not a status.
   self-report leaves nothing. The loop-driven follow-up works whatever the agent was doing.
 - **Automatic resume from the WIP on retry.** It removes the human decision that is the point of the
   change, and it re-poisons retries with a broken tree.
+  > **Superseded by [[D-114]], 2026-11-24,** for a progressing run (it continues the same session) and
+  > for a transient-fault retry (it resumes that run's own saved work).
 - **Simply raising the default ceiling.** It moves the cliff without giving any information when the
   run goes off it, and it is the outcome [[D-066]] warns against. Decomposing oversized tickets is
   still preferred.
