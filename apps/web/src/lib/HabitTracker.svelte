@@ -417,7 +417,7 @@
 </script>
 
 {#snippet todayPanel()}
-  <div class="today-panel">
+  <div class="today-panel" class:compact>
     {#if showYesterdayBanner}
       <div class="yesterday-banner">
         <button type="button" class="yesterday-link" onclick={openYesterday}>
