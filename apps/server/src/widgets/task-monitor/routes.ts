@@ -18,6 +18,8 @@ import {
 import {
   HUMAN_REPLY_MARKER,
   parseAutoQueueMode,
+  approveSuggestionError,
+  type ApproveSuggestionEdits,
 } from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import { getTicketAutoQueueEligibility, listBacklogAutoQueueEligibility } from './auto-queue';
@@ -95,6 +97,11 @@ import { getActiveAgents } from './active-agents';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 import { listAwaitingVisual, recordVisualReview } from './visual-review';
+import {
+  approveTicketSuggestion,
+  listTicketSuggestions,
+  rejectTicketSuggestion,
+} from './ticket-suggestions';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -834,6 +841,67 @@ export function registerRoutes(
             .send({ error: 'this ticket is not waiting for a visual check', code: 'NOT_WAITING' });
     }
     return reply.status(201).send({ eventId: result.eventId });
+  });
+
+  // PD-979 (D-116): Ticket Suggestions — the Evaluator's leftover non-blocking findings at the
+  // round cap, which Steve approves / rejects / modifies in the Decisions inbox. Pending first,
+  // then recently decided; `count` is the pending total the Decisions badge adds.
+  app.get(`${base}/ticket-suggestions`, async () => listTicketSuggestions(db));
+
+  app.post(`${base}/ticket-suggestions/:id/approve`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    // Modify: optional edits over the proposed title / body / epic. An omitted field keeps the
+    // proposal; a supplied one overrides it (`resolvedApproval`).
+    const edits: ApproveSuggestionEdits = {};
+    if (body.title !== undefined) edits.title = body.title as string;
+    if (body.body !== undefined) edits.body = body.body as string;
+    if (body.epicId !== undefined) edits.epicId = body.epicId as number | null;
+    const editsFail = approveSuggestionError(edits);
+    if (editsFail) return reply.status(400).send({ error: editsFail.message, code: editsFail.code });
+    try {
+      const result = approveTicketSuggestion(db, id, edits);
+      if (!result.ok) {
+        if (result.reason === 'not_found')
+          return reply.status(404).send({ error: 'suggestion not found', code: 'NOT_FOUND' });
+        if (result.reason === 'epic_required')
+          return reply.status(400).send({
+            error: 'Approving needs an Epic: supply `epicId`, or the suggestion must carry one (D-080).',
+            code: 'EPIC_REQUIRED',
+          });
+        return reply
+          .status(409)
+          .send({ error: 'this suggestion was already decided', code: 'ALREADY_DECIDED' });
+      }
+      return reply.status(201).send(result.suggestion);
+    } catch (e) {
+      if (e instanceof EpicGuardError) return sendEpicError(reply, e);
+      if (e instanceof ValidationError)
+        return reply.status(400).send({ error: e.message, code: e.code });
+      throw e;
+    }
+  });
+
+  app.post(`${base}/ticket-suggestions/:id/reject`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id))
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (body.reason !== undefined && body.reason !== null && typeof body.reason !== 'string') {
+      return reply.status(400).send({ error: 'reason must be a string', code: 'INVALID_BODY' });
+    }
+    const reason = typeof body.reason === 'string' ? body.reason : null;
+    const result = rejectTicketSuggestion(db, id, reason);
+    if (!result.ok) {
+      return result.reason === 'not_found'
+        ? reply.status(404).send({ error: 'suggestion not found', code: 'NOT_FOUND' })
+        : reply
+            .status(409)
+            .send({ error: 'this suggestion was already decided', code: 'ALREADY_DECIDED' });
+    }
+    return result.suggestion;
   });
 
   // PD-748: switch an Epic in or out of the Refine backfill; its members inherit it.
