@@ -28,6 +28,7 @@ function makeTicket(overrides: Partial<AgentTicket> = {}): AgentTicket {
     epicId: null,
     ready: false,
     readyBypassed: false,
+    closeReason: null,
     archivedAt: null,
     createdAt: 0,
     updatedAt: 0,

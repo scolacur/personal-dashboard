@@ -65,6 +65,12 @@ describe('approveRefine — supersedes closes members (PD-931)', () => {
     // The member is closed, carries a refine_superseded event naming the Epic, and its own proposal
     // is no longer actionable.
     expect(getTicket(db, member.id)?.status).toBe('closed');
+    // PD-888: the close records WHY (superseded), marks the member refined (it went through Refine),
+    // and points `closedInto` at the superseding Epic.
+    const closedMember = getTicket(db, member.id)!;
+    expect(closedMember.closeReason).toBe('superseded');
+    expect(closedMember.refined).toBe(true);
+    expect(closedMember.closedInto).toEqual([{ displayId: epic.displayId, title: 'epic' }]);
     const sup = supersededEvents(db, member.id);
     expect(sup).toHaveLength(1);
     expect((sup[0].detail as { by?: string }).by).toBe(epic.displayId);

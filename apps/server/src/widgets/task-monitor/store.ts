@@ -6,6 +6,8 @@ import type {
   NeedsHumanTicket,
   AgentTicket,
   AwaitingRefineItem,
+  CloseReason,
+  ClosedIntoRef,
   CreateProjectInput,
   CreateTicketInput,
   LineageRef,
@@ -90,6 +92,7 @@ interface TicketRow {
   is_epic: number;
   epic_id: number | null;
   auto_queue_excluded: number;
+  close_reason: string | null;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -162,6 +165,8 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
     autoQueueExcluded: row.auto_queue_excluded === 1,
+    // PD-888: why the system closed this ticket (null for a plain/manual close or an open ticket).
+    closeReason: (row.close_reason as CloseReason | null) ?? null,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -341,6 +346,65 @@ function membersWithOpenRobotPr(db: Database.Database, epicId: number): Set<numb
   return open;
 }
 
+/** True if the ticket has an outgoing `duplicates` relation (it is the dupe of another ticket). */
+function hasOutgoingDuplicate(db: Database.Database, ticketId: number): boolean {
+  return (
+    db
+      .prepare("SELECT 1 FROM agent_ticket_relations WHERE from_ticket_id = ? AND type = 'duplicates'")
+      .get(ticketId) !== undefined
+  );
+}
+
+/**
+ * PD-888: the successor ticket(s) each closed-with-a-reason ticket points to, resolved in TWO
+ * batched queries (never one per ticket). Keyed by ticket id; a ticket absent from the map has no
+ * successors. Pass `ticketId` to scope it to one ticket (the `getTicket` path).
+ *
+ * - `split` / `duplicate`: the outgoing relation whose type matches the reason → its `to` ticket.
+ * - `superseded`: the superseding ticket(s), recorded on the `refine_superseded` event as a display
+ *   id (PD-931/PD-932). A `by` that is a bare numeric id (a superseding parent with no displayId)
+ *   won't resolve a row — the reason still shows, just without a successor link.
+ */
+function closedIntoByTicket(db: Database.Database, ticketId?: number): Map<number, ClosedIntoRef[]> {
+  const out = new Map<number, ClosedIntoRef[]>();
+  const push = (id: number, ref: ClosedIntoRef): void => {
+    const list = out.get(id);
+    if (list) list.push(ref);
+    else out.set(id, [ref]);
+  };
+  const scope = ticketId === undefined;
+  type SuccRow = { src_id: number; display_id: string | null; title: string };
+
+  const relSql = `
+    SELECT src.id AS src_id, t.display_id AS display_id, t.title AS title
+      FROM agent_ticket_relations r
+      JOIN agent_tickets src ON src.id = r.from_ticket_id
+      JOIN agent_tickets t ON t.id = r.to_ticket_id
+     WHERE src.status = 'closed'
+       AND ((r.type = 'split' AND src.close_reason = 'split')
+         OR (r.type = 'duplicates' AND src.close_reason = 'duplicate'))
+       ${scope ? '' : 'AND src.id = ?'}
+     ORDER BY t.id ASC`;
+  const relStmt = db.prepare(relSql);
+  const relRows = (scope ? relStmt.all() : relStmt.all(ticketId)) as SuccRow[];
+  for (const r of relRows) push(r.src_id, { displayId: r.display_id, title: r.title });
+
+  const supSql = `
+    SELECT e.ticket_id AS src_id, t.display_id AS display_id, t.title AS title
+      FROM agent_ticket_events e
+      JOIN agent_tickets src ON src.id = e.ticket_id
+      JOIN agent_tickets t ON t.display_id = json_extract(e.detail, '$.by')
+     WHERE e.type = 'refine_superseded'
+       AND src.close_reason = 'superseded'
+       ${scope ? '' : 'AND e.ticket_id = ?'}
+     ORDER BY t.id ASC`;
+  const supStmt = db.prepare(supSql);
+  const supRows = (scope ? supStmt.all() : supStmt.all(ticketId)) as SuccRow[];
+  for (const r of supRows) push(r.src_id, { displayId: r.display_id, title: r.title });
+
+  return out;
+}
+
 export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
@@ -360,14 +424,24 @@ export function listTickets(db: Database.Database): AgentTicket[] {
     )
     .all() as TicketRow[];
   const turns = latestRunTurns(db);
-  return rows.map((row) => rowToTicket(row, turns.get(row.id) ?? null));
+  const closedInto = closedIntoByTicket(db);
+  return rows.map((row) => {
+    const ticket = rowToTicket(row, turns.get(row.id) ?? null);
+    const succ = closedInto.get(row.id);
+    if (succ) ticket.closedInto = succ;
+    return ticket;
+  });
 }
 
 export function getTicket(db: Database.Database, id: number): AgentTicket | null {
   const row = db
     .prepare(`SELECT t.*, ${LATEST_REFINE_TYPE_SELECT} FROM agent_tickets t WHERE t.id = ?`)
     .get(id) as TicketRow | undefined;
-  return row ? rowToTicket(row, latestRunTurns(db, id).get(id) ?? null) : null;
+  if (!row) return null;
+  const ticket = rowToTicket(row, latestRunTurns(db, id).get(id) ?? null);
+  const succ = closedIntoByTicket(db, id).get(id);
+  if (succ) ticket.closedInto = succ;
+  return ticket;
 }
 
 /** Allocate the next per-project display id (e.g. 'PD-7'), bumping the project's counter. */
@@ -652,6 +726,28 @@ export function updateTicket(
     next.agentState = null;
   }
 
+  // PD-888: record WHY a ticket closed, so a split / superseded / duplicate close is
+  // distinguishable from an abandoned one (both otherwise read `closed`, `refined: false`). Only
+  // meaningful on `closed`:
+  //   - an explicit server-internal `patch.closeReason` (the approveRefine split/supersede paths) wins;
+  //   - else an outgoing `duplicates` relation marks it `'duplicate'`;
+  //   - else a plain/manual close leaves it null.
+  // Any non-closed status — including a reopen or `completed` — clears it (so reopening a ticket
+  // clears the reason). A ticket already closed and staying closed keeps its reason unless the
+  // patch overrides it. The routes never forward `closeReason`, so a client cannot set it.
+  if (next.status !== 'closed') {
+    next.closeReason = null;
+  } else if (existing.status !== 'closed') {
+    next.closeReason =
+      patch.closeReason !== undefined
+        ? patch.closeReason
+        : hasOutgoingDuplicate(db, id)
+          ? 'duplicate'
+          : null;
+  } else {
+    next.closeReason = patch.closeReason !== undefined ? patch.closeReason : existing.closeReason;
+  }
+
   // PD-467: a ticket parked `stuck`/`needs-human` keeps that `agent_state` forever, and the loop's
   // selection gates on `agent_state IS NULL OR 'queued'` — so re-queueing a parked ticket from the
   // board produced a card that looked perfectly normal in the Queue and could NEVER dispatch, with
@@ -708,7 +804,7 @@ export function updateTicket(
     }
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, close_reason = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -728,6 +824,7 @@ export function updateTicket(
       next.isEpic ? 1 : 0,
       next.epicId,
       next.autoQueueExcluded ? 1 : 0,
+      next.closeReason,
       next.updatedAt,
       id,
     );
@@ -2296,11 +2393,16 @@ export function approveRefine(
     // so re-superseding is a no-op rather than a double-close or duplicate event.
     for (const m of supersededMembers) {
       if (m.alreadyClosed) continue;
-      updateTicket(db, m.id, { status: 'closed' });
+      // PD-888: a superseded member went through Refine — record WHY it closed and mark it refined,
+      // so it reads as "superseded into <successor>" rather than an abandoned `refined: false` row.
+      updateTicket(db, m.id, { status: 'closed', closeReason: 'superseded', refined: true });
       logEvent(db, m.id, REFINE_PROPOSAL_EVENT.superseded, { by: parent.displayId ?? String(parent.id) });
     }
     // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
-    if (!populate) updateTicket(db, ticketId, { status: 'closed' });
+    // PD-888: the split parent was decomposed through Refine — record `closeReason: 'split'` and mark
+    // it refined. `refined: false` is exactly what made a split parent look untouched; its successors
+    // are the `split` children linked above, surfaced via `closedInto`.
+    if (!populate) updateTicket(db, ticketId, { status: 'closed', closeReason: 'split', refined: true });
     // PD-634: a Populate rewrites the Epic's description and marks it refined — both halves of D-089's
     // claim, on evidence Steve read in one panel. **This must run LAST.** Every `createTicket` above
     // fires `invalidateEpicRefinement`, so marking first would be undone by the next child. Plain

@@ -2559,3 +2559,121 @@ describe('body edit on a refined ticket (D-097)', () => {
     expect(getTicket(db, t.id)!.body).toBe('proposed new body');
   });
 });
+
+describe('close reason + successors (PD-888)', () => {
+  let db: Database.Database;
+  let pd: number;
+  beforeEach(() => {
+    db = freshDb();
+    pd = projectId(db, 'personal-dashboard');
+  });
+
+  it('a decompose records closeReason=split, marks the parent refined, and lists the children in closedInto', () => {
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [
+        { title: 'child one', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' },
+        { title: 'child two', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' },
+      ],
+    });
+    expect(approveRefine(db, parent.id).ok).toBe(true);
+
+    const closed = getTicket(db, parent.id)!;
+    expect(closed.status).toBe('closed');
+    expect(closed.closeReason).toBe('split');
+    expect(closed.refined).toBe(true);
+    expect(closed.closedInto?.map((c) => c.title).sort()).toEqual(['child one', 'child two']);
+
+    // closedInto is present on the list payload too (not only the single-get).
+    const fromList = listTickets(db).find((t) => t.id === parent.id)!;
+    expect(fromList.closeReason).toBe('split');
+    expect(fromList.closedInto?.map((c) => c.title).sort()).toEqual(['child one', 'child two']);
+  });
+
+  it('a manual close leaves closeReason null, and reopening a split parent clears the reason', () => {
+    const manual = createTicket(db, { title: 'abandoned', status: 'backlog', projectId: pd });
+    updateTicket(db, manual.id, { status: 'closed' });
+    expect(getTicket(db, manual.id)!.closeReason).toBeNull();
+
+    const parent = createTicket(db, { title: 'big', status: 'backlog', projectId: pd });
+    seedProposal(db, parent.id, {
+      mode: 'decompose',
+      children: [{ title: 'only child', body: ROBOT_BODY, status: 'backlog', assignee: 'robot' }],
+    });
+    expect(approveRefine(db, parent.id).ok).toBe(true);
+    expect(getTicket(db, parent.id)!.closeReason).toBe('split');
+
+    updateTicket(db, parent.id, { status: 'backlog' });
+    const reopened = getTicket(db, parent.id)!;
+    expect(reopened.closeReason).toBeNull();
+    expect(reopened.closedInto ?? []).toEqual([]);
+  });
+
+  it('closing a ticket with an outgoing duplicates relation records closeReason=duplicate (not refined)', () => {
+    const dupe = createTicket(db, { title: 'the dupe', status: 'backlog', projectId: pd });
+    const target = createTicket(db, { title: 'the original', status: 'backlog', projectId: pd });
+    addRelation(db, dupe.id, target.id, 'duplicates');
+    updateTicket(db, dupe.id, { status: 'closed' });
+
+    const closed = getTicket(db, dupe.id)!;
+    expect(closed.closeReason).toBe('duplicate');
+    expect(closed.refined).toBe(false);
+    expect(closed.closedInto).toEqual([{ displayId: target.displayId, title: 'the original' }]);
+  });
+});
+
+describe('PD-888 close_reason backfill migration', () => {
+  it('backfills split / superseded / duplicate reasons on existing closed rows, and re-running changes nothing', () => {
+    const db = freshDb();
+    const pd = projectId(db, 'personal-dashboard');
+
+    // A PD-455-shaped split parent → two children (the real motivating case).
+    const parent = createTicket(db, { title: 'PD-455 split the board', status: 'backlog', projectId: pd });
+    const childA = createTicket(db, { title: 'tabs', status: 'backlog', projectId: pd });
+    const childB = createTicket(db, { title: 'stripe', status: 'backlog', projectId: pd });
+    addRelation(db, parent.id, childA.id, 'split');
+    addRelation(db, parent.id, childB.id, 'split');
+
+    // A superseded member carrying a refine_superseded event naming its Epic.
+    const superseded = createTicket(db, { title: 'old member', status: 'backlog', projectId: pd });
+    const epic = createTicket(db, { title: 'the epic', isEpic: true, projectId: pd });
+    db.prepare(
+      "INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, 'refine_superseded', ?, 0)",
+    ).run(superseded.id, JSON.stringify({ by: epic.displayId }));
+
+    // A duplicate (closed with an outgoing duplicates relation).
+    const dupe = createTicket(db, { title: 'dup', status: 'backlog', projectId: pd });
+    const original = createTicket(db, { title: 'original', status: 'backlog', projectId: pd });
+    addRelation(db, dupe.id, original.id, 'duplicates');
+
+    // Put every reasoned ticket into the legacy state the migration must heal: closed, no reason,
+    // not refined.
+    for (const id of [parent.id, superseded.id, dupe.id]) {
+      db.prepare("UPDATE agent_tickets SET status = 'closed', close_reason = NULL, refined = 0 WHERE id = ?").run(id);
+    }
+
+    const rerun = () => {
+      db.prepare("DELETE FROM _migrations WHERE id = 'agent_tickets_add_close_reason'").run();
+      bootstrapSchema(db);
+    };
+    rerun();
+
+    const get = (id: number) => getTicket(db, id)!;
+    expect(get(parent.id).closeReason).toBe('split');
+    expect(get(parent.id).refined).toBe(true);
+    expect(get(parent.id).closedInto?.map((c) => c.title).sort()).toEqual(['stripe', 'tabs']);
+    expect(get(superseded.id).closeReason).toBe('superseded');
+    expect(get(superseded.id).refined).toBe(true);
+    expect(get(superseded.id).closedInto).toEqual([{ displayId: epic.displayId, title: 'the epic' }]);
+    expect(get(dupe.id).closeReason).toBe('duplicate');
+    expect(get(dupe.id).refined).toBe(false); // a duplicate was never refined into successors
+    expect(get(dupe.id).closedInto).toEqual([{ displayId: original.displayId, title: 'original' }]);
+
+    // Idempotent: re-running the migration changes no close_reason / refined value.
+    const snap = () => listTickets(db).map((t) => ({ id: t.id, closeReason: t.closeReason, refined: t.refined }));
+    const before = snap();
+    rerun();
+    expect(snap()).toEqual(before);
+  });
+});
