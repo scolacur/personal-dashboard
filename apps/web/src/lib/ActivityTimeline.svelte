@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { TicketEvent, RobotEventDetail } from '@dashboard/shared';
-  import { REFINE_BACKFILL_EXCLUDED_EVENT, ROBOT_EVENT, evaluatorVerdictLine, progressCheckLine } from '@dashboard/shared';
+  import {
+    REFINE_BACKFILL_EXCLUDED_EVENT,
+    ROBOT_EVENT,
+    TICKET_SUGGESTION_EVENT,
+    evaluatorVerdictLine,
+    progressCheckLine,
+  } from '@dashboard/shared';
   import { fetchTicketEvents } from '../routes/devops/api';
   import Collapsible from './Collapsible.svelte';
 
@@ -83,6 +89,12 @@
         return '▶️';
       case ROBOT_EVENT.checkpointRestart:
         return '🔁';
+      case TICKET_SUGGESTION_EVENT.filed:
+        return '💡';
+      case TICKET_SUGGESTION_EVENT.approved:
+        return '✅';
+      case TICKET_SUGGESTION_EVENT.rejected:
+        return '🚫';
       case 'created':
         return '✨';
       case 'status_changed':
@@ -97,7 +109,12 @@
   // A human-readable line per event. Robot milestones carry a RobotEventDetail; the generic
   // server events carry their own small shapes (from/to, etc.).
   function describe(e: TicketEvent): string {
-    const d = (e.detail ?? {}) as RobotEventDetail & { from?: string; to?: string; spawnedDisplayId?: string };
+    const d = (e.detail ?? {}) as RobotEventDetail & {
+      from?: string;
+      to?: string;
+      spawnedDisplayId?: string;
+      createdTicketDisplayId?: string;
+    };
     switch (e.type) {
       case ROBOT_EVENT.dispatched:
         return `Robot dispatched${d.branch ? ` on ${d.branch}` : ''}`;
@@ -146,6 +163,13 @@
         return 'You chose Continue';
       case ROBOT_EVENT.checkpointRestart:
         return 'You chose Restart';
+      // PD-979 (D-116): the Ticket Suggestion lifecycle, recorded on the source ticket.
+      case TICKET_SUGGESTION_EVENT.filed:
+        return `Ticket suggestion filed from PR #${d.prNumber ?? '?'}${d.findings ? ` (${d.findings} finding${d.findings === 1 ? '' : 's'})` : ''}`;
+      case TICKET_SUGGESTION_EVENT.approved:
+        return `Ticket suggestion approved → ${d.createdTicketDisplayId ?? 'new ticket'}`;
+      case TICKET_SUGGESTION_EVENT.rejected:
+        return `Ticket suggestion rejected${d.reason ? `: ${d.reason}` : ''}`;
       case 'created':
         return 'Ticket created';
       case 'status_changed':
@@ -179,6 +203,12 @@
             <span class="ev-text">{describe(e)}</span>
             {#if e.type === ROBOT_EVENT.handoff && (e.detail as RobotEventDetail)?.prUrl}
               <a class="ev-link" href={(e.detail as RobotEventDetail).prUrl} target="_blank" rel="noreferrer">view PR</a>
+            {/if}
+            {#if e.type === TICKET_SUGGESTION_EVENT.approved && (e.detail as { createdTicketDisplayId?: string })?.createdTicketDisplayId}
+              <!-- PD-979 (D-116): link to the ticket the approved suggestion created. -->
+              <a class="ev-link" href="/devops/tickets/{(e.detail as { createdTicketDisplayId?: string }).createdTicketDisplayId}">
+                {(e.detail as { createdTicketDisplayId?: string }).createdTicketDisplayId}
+              </a>
             {/if}
             {#if e.type === ROBOT_EVENT.visualCaptured && (e.detail as RobotEventDetail)?.shots?.length}
               <!-- PD-773: thumbnails of each capture, opening the full image. -->
