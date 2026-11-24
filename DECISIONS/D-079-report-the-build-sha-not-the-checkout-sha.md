@@ -37,6 +37,9 @@ when the two differ, and reports **unknown** when the image carries no stamp.
   Watchtower/GHCR auto-update path (only the web app is), so `robot-refresh` *is* the deploy. The
   build arg belongs where the build happens. An unstamped local `docker build` still works and
   simply reports unknown.
+  *(Superseded by [[D-116]]: the worker now auto-deploys from GHCR. `deploy.yml` stamps BUILD_SHA,
+  and `robot-rebuild` stamps it on the emergency local path. The rule "the build arg belongs where
+  the build happens" still holds.)*
 
 **Implications:** `worker_heartbeat` gains a `build_sha` column (worker-owned DDL and the server's
 `schema.ts` migration, which must stay in step). `WorkerHeartbeat.sha` → `checkoutSha` + `buildSha`,

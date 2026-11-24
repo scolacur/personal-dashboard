@@ -14,12 +14,24 @@ PR merged to main
   ├─ ci.yml ............. runs `npm run verify` on the PR (build/typecheck/lint/test)   [cloud]
   │
   └─ deploy.yml ......... builds docker/Dockerfile, pushes ghcr.io/scolacur/            [cloud]
-                          personal-dashboard:latest + :<sha>
+        │                 personal-dashboard:latest + :<sha>
+        │                     │
+        │                     ▼
+        │   Watchtower (scope `none`) polls GHCR every 5 min, sees a new :latest digest,
+        │   pulls it, and recreates the `app` container in place.                       [NAS]
+        │
+        └─ (only if the merge touched the worker's build inputs) builds
+           ops/agent-worker/Dockerfile, pushes ghcr.io/scolacur/
+           personal-dashboard-agent-worker:latest + :<sha>                              [cloud]
                               │
                               ▼
-        Watchtower on the NAS polls GHCR every 5 min, sees a new :latest digest,
-        pulls it, and recreates the `app` container in place.                           [NAS]
+            agent-worker-watchtower (scope `agent-worker`) runs the deploy-drain
+            pre-update hook in the worker. Exit 75 means a Robot run is in flight:
+            skip and retry next poll. Exit 0: recreate the worker.                      [NAS]
 ```
+
+The two Watchtowers are **scoped** so neither touches the other's containers (D-116). The worker's
+stack, hook and runbook live in `ops/agent-worker/` (README → "Redeploy after a code change").
 
 The NAS **never builds** — it only pulls a prebuilt image. This keeps the heavy
 multi-stage build off the weak Synology CPU (the boundless-resource risk in TODO.md).
@@ -48,10 +60,14 @@ a few runs prove the `verify` job name is stable.
 
 ## CD half — one-time NAS setup 🧑
 
-> **Prerequisite that does not exist yet:** the app has never been deployed to the NAS
-> (only the agent runtime has). Watchtower auto-*updates* a running container — there must
-> first be one. Steps 1-4 below ARE that first deploy; after them, every future merge is
-> hands-off.
+> **Status: done and live.** The app pipeline (merge → `deploy.yml` → GHCR → Watchtower) has run end
+> to end on the NAS. These steps are the record of that first deploy, and the runbook for bringing
+> the app up on a new host (the Mac Mini, PD-787). Watchtower only auto-*updates* a running
+> container, so a new host still needs Steps 1–4 once.
+>
+> **The app's Watchtower is scoped `none`** (`WATCHTOWER_SCOPE=none`, PD-816). On a host that also
+> runs the agent-worker stack, bring this one up (or rescope it) **before** the worker's Watchtower.
+> An unscoped instance removes every other Watchtower.
 
 ### Step 0 — Confirm the GHCR package is reachable 🤖/🧑
 
@@ -132,7 +148,7 @@ hands-off** — merge a PR, walk away.
 - **Roll back:** pin `app.image` to a known-good `:<sha>` tag in
   `docker-compose.nas.yml`, `compose up -d` again. (Watchtower only floats `:latest`.)
 - **Pause auto-deploy:** stop the `watchtower` container; `app` keeps running the
-  current image.
+  current image. (For the worker, stop `agent-worker-watchtower` instead.)
 - **Manual deploy without a merge:** Actions tab → deploy → Run workflow
   (`workflow_dispatch`), then `docker-compose ... pull && up -d` on the NAS (or wait for
   Watchtower's poll).

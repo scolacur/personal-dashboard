@@ -77,11 +77,52 @@ jobs:
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
 
-  # The agent-worker (Robot loop / Refine / Audit host) image — first slice of auto-deploying
-  # the worker (PD-802). Publishing it changes nothing on the host yet: no Watchtower pulls it
-  # until the sibling wiring ticket lands. The worker Dockerfile bakes NO secrets (they arrive
+  # Did this push touch anything that goes into the agent-worker image? (PD-816)
+  #
+  # A dedicated Watchtower on the host recreates the worker whenever :latest moves, and every
+  # recreate drains: it holds new Robot dispatch until in-flight runs finish. BUILD_SHA changes the
+  # image digest on EVERY build, so publishing unconditionally would drain + recreate the worker on
+  # every merge, web-only ones included. So the worker publishes only when its inputs change. The
+  # inputs are listed once, in ops/agent-worker/build-inputs.txt, which the worker's heartbeat also
+  # reads. That lets the dashboard tell "behind main" apart from "main moved on without touching
+  # the worker".
+  #
+  # No third-party paths-filter action: a plain `git diff` over the pushed range. Manual dispatch,
+  # or a range that can't be resolved, publishes. When unsure, deploy; the drain protects runs.
+  agent-worker-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      worker: ${{ steps.diff.outputs.worker }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Diff the pushed range against the worker's inputs
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "push" ] || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "worker=true" >> "$GITHUB_OUTPUT"; echo "publish: $EVENT / range unresolvable"; exit 0
+          fi
+          mapfile -t INPUTS < <(grep -vE '^[[:space:]]*(#|$)' ops/agent-worker/build-inputs.txt)
+          CHANGED=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" -- "${INPUTS[@]}")
+          if [ -n "$CHANGED" ]; then
+            echo "worker=true" >> "$GITHUB_OUTPUT"; printf 'publish — worker inputs changed:\n%s\n' "$CHANGED"
+          else
+            echo "worker=false" >> "$GITHUB_OUTPUT"; echo "skip — no worker inputs changed"
+          fi
+
+  # The agent-worker (Robot loop / Refine / Audit host) image (PD-802). The dedicated, scoped
+  # Watchtower in ops/agent-worker/docker-compose.egress.yml pulls it and recreates the worker behind
+  # the deploy-drain pre-update hook (PD-816). The worker Dockerfile bakes NO secrets (they arrive
   # via env_file at runtime), so the resulting GHCR package is safe to be public.
   build-and-push-agent-worker:
+    needs: agent-worker-changed
+    if: needs.agent-worker-changed.outputs.worker == 'true'
     runs-on: ubuntu-latest
     env:
       # ghcr.io/<owner>/<repo>-agent-worker, lowercased (GHCR rejects upper-case paths).
@@ -100,7 +141,7 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Two tags: :latest (what the Watchtower will watch) and :<short-sha> (immutable, so a
+      # Two tags: :latest (what the worker's Watchtower watches) and :<short-sha> (immutable, so a
       # bad worker deploy can be pinned/rolled back to a known-good sha in compose).
       - name: Compute tags
         id: tags

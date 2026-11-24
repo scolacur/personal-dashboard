@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { loadConfig, type AgentWorkerConfig } from './shared/config';
 import { ensureRunsTable } from './jobs/robot/runs';
 import { activeDeployHold, activeMaintenanceHold, ensureRobotStateTable, takeDeployHold, takeMaintenanceHold } from './jobs/robot/state';
-import { EX_TEMPFAIL, releaseDeployHoldOnStartup, runDeployDrain } from './deploy-hold';
+import { EX_TEMPFAIL, releaseDeployHoldOnStartup, runDeployDrain, runDeployDrainFailClosed } from './deploy-hold';
 
 const NOW = 1_000_000;
 const config: AgentWorkerConfig = loadConfig({} as NodeJS.ProcessEnv);
@@ -63,6 +63,37 @@ describe('deploy drain (PD-802, D-105)', () => {
     runDeployDrain(db, config, NOW);
     expect(activeDeployHold(db, NOW + STALL - 1)).not.toBeNull();
     expect(activeDeployHold(db, NOW + STALL)).toBeNull(); // self-clears at the deadline
+  });
+});
+
+describe('runDeployDrainFailClosed (PD-816)', () => {
+  // Watchtower only skips an update on exit 75; any other non-zero code is logged and the recreate
+  // proceeds. So every failure must come back as 75, never surface as a throw (→ exit 1).
+
+  it('passes the drain result through when nothing fails', () => {
+    const db = makeDb();
+    expect(runDeployDrainFailClosed(() => ({ db, config }), NOW)).toBe(0);
+    expect(db.open).toBe(false); // closed afterwards
+  });
+
+  it('defers (75) when a run is in flight, same as the raw drain', () => {
+    const db = makeDb();
+    addInFlight(db, 7);
+    expect(runDeployDrainFailClosed(() => ({ db, config }), NOW)).toBe(EX_TEMPFAIL);
+  });
+
+  it('returns 75 when opening the DB or loading config throws', () => {
+    expect(
+      runDeployDrainFailClosed(() => {
+        throw new Error('SQLITE_BUSY: database is locked');
+      }, NOW),
+    ).toBe(EX_TEMPFAIL);
+  });
+
+  it('returns 75 when the drain itself throws (e.g. a schema it cannot read)', () => {
+    const db = new Database(':memory:'); // no agent_runs / agent_tickets → inFlightRunCount throws
+    expect(runDeployDrainFailClosed(() => ({ db, config }), NOW)).toBe(EX_TEMPFAIL);
+    expect(db.open).toBe(false);
   });
 });
 

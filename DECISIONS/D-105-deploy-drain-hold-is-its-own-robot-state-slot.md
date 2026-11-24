@@ -1,5 +1,8 @@
 # D-105: The deploy-drain hold is its own `robot_state` slot, not a reason on the maintenance hold (PD-802)
 
+> **Amended by [[D-116]]:** exit 75 is the ONLY code that stops a Watchtower update. Any other
+> non-zero code is logged and the recreate proceeds, so the drain now fails closed (every error exits 75).
+
 **Decision:** the deploy drain (`apps/agent-worker/src/deploy-drain.ts`) holds dispatch through a
 **dedicated `robot_state` key** — `deploy_hold`, with its own `takeDeployHold` /
 `releaseDeployHold` / `activeDeployHold` in `apps/agent-worker/src/jobs/robot/state.ts` — rather than
