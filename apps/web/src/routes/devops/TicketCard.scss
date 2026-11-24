@@ -94,6 +94,29 @@
   line-height: 1.4;
 }
 
+// PD-955: the Coder code-area chip — a quiet, neutral pill so it reads as metadata, not a status.
+.area-chip {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 0 var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  white-space: nowrap;
+
+  &.inherited {
+    font-style: italic;
+  }
+}
+
+.area-from {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
 .card-top-right {
   display: inline-flex;
   align-items: center;

@@ -1199,6 +1199,7 @@
 {#snippet memberCardSnippet(m: AgentTicket, drag: { dragging: boolean; onDragStart: (e: DragEvent) => void; onDragEnd: () => void })}
   <MemberCard
     ticket={m}
+    epic={ticket!}
     dragging={drag.dragging}
     onDragStart={drag.onDragStart}
     onDragEnd={drag.onDragEnd}

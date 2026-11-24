@@ -54,6 +54,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+// PD-955: the Epic's default code-area chip. Quiet, neutral — metadata, not a status.
+.area-chip {
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 var(--space-xs);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
 // D-115: queued members under a Backlog Epic. Informational, like the count beside it.
 .epic-queued {
   font-size: var(--font-size-xs);

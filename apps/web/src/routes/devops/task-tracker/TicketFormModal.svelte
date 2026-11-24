@@ -9,6 +9,7 @@
     ROBOT_MAX_TURNS_LIMIT,
     TICKET_KINDS,
     TICKET_KIND_LABELS,
+    CODER_AREAS,
   } from '@dashboard/shared';
   import Modal from '$lib/Modal.svelte';
   import Button from '$lib/Button.svelte';
@@ -164,6 +165,24 @@
         </select>
       </label>
     {/if}
+    <!-- PD-955 (PD-880): the Coder code-area. On an Epic it is the default its members inherit; on a
+         Ticket it is an override, defaulting to "inherit from Epic". -->
+    <label>
+      <span>Code area</span>
+      <select bind:value={form.coderArea}>
+        <option value={null}>{form.isEpic ? '— None' : 'Inherit from Epic'}</option>
+        {#each CODER_AREAS as a (a.id)}
+          <option value={a.id}>{a.label} — {a.description}</option>
+        {/each}
+      </select>
+      <small class="field-note">
+        {#if form.isEpic}
+          Members inherit this unless they set their own.
+        {:else}
+          Which Coder subtype runs this. Leave on “Inherit from Epic” unless it differs.
+        {/if}
+      </small>
+    </label>
     <label>
       <span>Turn ceiling</span>
       <input

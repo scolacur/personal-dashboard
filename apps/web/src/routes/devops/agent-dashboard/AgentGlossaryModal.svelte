@@ -53,6 +53,17 @@
       Reasoning: {active.profile.decisions.join(', ')} — see <code>DECISIONS.md</code>.
     </p>
 
+    {#if active.areas}
+      <!-- PD-955: the Coder code-area subtypes (PD-880). A ticket runs under one; an Epic sets the
+           default its members inherit. -->
+      <h4 class="agent-heading">Code areas</h4>
+      <ul class="area-list">
+        {#each active.areas as area (area.id)}
+          <li><code>{area.label}</code><span>{area.description}</span></li>
+        {/each}
+      </ul>
+    {/if}
+
     <h4 class="agent-heading">Prompts</h4>
     <p class="agent-prompt-intro">
       Rendered from the same code the worker runs, with placeholders for anything that varies per

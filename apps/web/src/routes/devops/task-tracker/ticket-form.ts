@@ -1,4 +1,4 @@
-import type { AgentTicket, TicketAssignee, TicketKind, TicketPriority, TicketStatus } from '@dashboard/shared';
+import type { AgentTicket, CoderArea, TicketAssignee, TicketKind, TicketPriority, TicketStatus } from '@dashboard/shared';
 import { ROBOT_MAX_TURNS_LIMIT } from '@dashboard/shared';
 
 /**
@@ -37,6 +37,9 @@ export interface TicketFormState {
   maxTurns: string;
   /** PD-896: bug / feature / chore; null = unclassified. Not offered on an Epic. */
   kind: TicketKind | null;
+  /** PD-955 (PD-880): the Coder code-area. On a Ticket, null means "inherit from Epic"; on an Epic,
+   *  null means "— None" (members then fall back to `general`). */
+  coderArea: CoderArea | null;
   projectId: number | null;
 }
 
@@ -53,6 +56,7 @@ export function emptyTicketForm(status: TicketStatus, projectId: number | null):
     newEpic: null,
     maxTurns: '',
     kind: null,
+    coderArea: null,
     projectId,
   };
 }
@@ -70,6 +74,7 @@ export function ticketToForm(ticket: AgentTicket, fallbackProjectId: number | nu
     newEpic: null,
     maxTurns: ticket.maxTurns === null ? '' : String(ticket.maxTurns),
     kind: ticket.kind,
+    coderArea: ticket.coderArea,
     projectId: ticket.projectId ?? fallbackProjectId,
   };
 }

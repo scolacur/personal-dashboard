@@ -1,6 +1,7 @@
 import {
   AGENT_PROFILES,
   AGENT_TYPES,
+  CODER_AREAS,
   ROBOT_MAX_TURNS_DEFAULT,
   REFINE_TURN_ESTIMATE_FLOOR,
   SAMPLE_CONTEXT_PACK,
@@ -38,9 +39,18 @@ export interface PromptSection {
   text: string;
 }
 
+/** One Coder code-area (PD-880), as the glossary lists it under the Coder. */
+export interface CoderAreaEntry {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface AgentGlossaryView {
   profile: AgentProfile;
   sections: PromptSection[];
+  /** PD-955: the Coder code-area subtypes (PD-880), listed only under the Coder (robot) tab. */
+  areas?: readonly CoderAreaEntry[];
 }
 
 /** Placeholders the glossary substitutes for per-run values, listed so the reader knows which
@@ -100,7 +110,8 @@ export function resumeBlockOnly(): string {
 
 export function agentGlossaryView(id: AgentType): AgentGlossaryView {
   const profile = AGENT_PROFILES[id];
-  if (id === 'robot') return { profile, sections: robotSections() };
+  // PD-955: the Coder runs under a code-area subtype (PD-880); list them under its tab.
+  if (id === 'robot') return { profile, sections: robotSections(), areas: CODER_AREAS };
   if (id === 'refine') {
     return {
       profile,
