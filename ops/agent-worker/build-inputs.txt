@@ -1,0 +1,18 @@
+# The agent-worker image's build inputs: every path whose change can change the image (PD-816, D-116).
+# ONE list, read by two consumers:
+#   - .github/workflows/deploy.yml (`agent-worker-changed`) publishes the worker image only when
+#     the pushed range touched one of these. Every publish triggers a drained recreate on the host.
+#   - apps/agent-worker/src/heartbeat.ts reports `build_current`: whether anything here changed
+#     between the running image's BUILD_SHA and the grounding checkout's HEAD. That keeps the
+#     dashboard from calling the worker "behind main" after a web-only merge that didn't publish it.
+# Keep it in step with what ops/agent-worker/Dockerfile COPYs. Paths are git pathspecs from the
+# repo root, one per line. Blank lines and `#` comments are ignored.
+package.json
+package-lock.json
+tsconfig.base.json
+.dockerignore
+packages/shared
+apps/agent-worker
+ops/agent-worker/Dockerfile
+ops/agent-worker/build-inputs.txt
+.github/workflows/deploy.yml

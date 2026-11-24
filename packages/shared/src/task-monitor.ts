@@ -2093,6 +2093,13 @@ export interface WorkerHeartbeat {
    * which the UI reports as unknown rather than falling back to a number that means something else.
    */
   buildSha: string | null;
+  /**
+   * PD-816: did any of the image's build inputs change between `buildSha` and `checkoutSha`? The
+   * worker image publishes only on worker-affecting merges, so after a web-only merge the shas
+   * differ and the worker is still current. `true` = no input changed (current); `false` = one did
+   * (behind); `null` = the worker can't tell, and only exact sha equality counts as current.
+   */
+  buildCurrent: boolean | null;
   /** Model the worker's jobs run on; null if unknown. */
   model: string | null;
 }
@@ -2293,6 +2300,10 @@ export interface ActiveAgent {
   maxTurns: number | null;
   tokens: number | null;
   model: string | null;
+  /** The code-area (PD-880) the agent is working under, for the "Smith-<area> #<runId>" label
+   *  (PD-955). Set for a Robot run (the ticket's `effectiveCoderArea`, resolved against its Epic);
+   *  null for an Evaluator or Auditor, which do not carry an area. */
+  coderArea: CoderArea | null;
   /** A short kind-specific line: evaluator "round 2 · PR #481", audit its scope. */
   detail: string | null;
 }
@@ -2358,11 +2369,13 @@ export type RobotRunStatus = 'running' | 'handed-off' | 'no-verify' | 'ask-human
 export type WorkerVersionState = 'current' | 'stale' | 'unknown';
 
 export function workerVersionState(
-  w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'>,
+  w: Pick<WorkerHeartbeat, 'buildSha' | 'checkoutSha'> & { buildCurrent?: boolean | null },
 ): WorkerVersionState {
   if (!w.buildSha) return 'unknown';
   if (!w.checkoutSha) return 'unknown';
-  return w.buildSha === w.checkoutSha ? 'current' : 'stale';
+  if (w.buildSha === w.checkoutSha) return 'current';
+  // PD-816: main moved on without touching the worker's build inputs, so there was nothing to deploy.
+  return w.buildCurrent === true ? 'current' : 'stale';
 }
 
 /** The fault taxonomy a failed run is classified into (C2/PD-343). */

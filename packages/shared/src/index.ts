@@ -38,7 +38,7 @@ export {
   isSentinelTitle,
   pendingRename,
 } from './id-tracker';
-export type { PageWidget, PageWidgetMap } from './shell';
+export type { PageWidget, PageWidgetMap, WidgetUsage } from './shell';
 export type { JobRunStatus, JobRunSummary, JobRun } from './jobs';
 export {
   JOB_RUN_STATUSES,

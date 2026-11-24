@@ -638,6 +638,34 @@ describe('startRefine + refineState (D-044, PD-268)', () => {
     expect(startRefine(db, 9999)).toEqual({ ok: false, reason: 'not_found' });
   });
 
+  describe('after a ticket joins a refined Epic (PD-996)', () => {
+    const kickoffText = (r: ReturnType<typeof startRefine>) => (r.ok ? (r.event.detail as { text: string }).text : null);
+
+    it('kicks off a delta check naming the Epic and the new member, not the Epic body', () => {
+      const epic = createTicket(db, { title: '[Epic] Big thing', body: 'THE WHOLE EPIC BODY', projectId: pd, isEpic: true });
+      const member = createTicket(db, { title: 'New slice', projectId: pd, epicId: epic.id });
+      const text = kickoffText(startRefine(db, epic.id, { addedMemberId: member.id }));
+      expect(text).toContain(`${epic.displayId} ([Epic] Big thing)`);
+      expect(text).toContain(`${member.displayId} (New slice)`);
+      expect(text).toContain('already refined');
+      expect(text).not.toContain('THE WHOLE EPIC BODY');
+    });
+
+    it('appends to an Epic that already has a thread instead of refusing', () => {
+      const epic = createTicket(db, { title: '[Epic] E', projectId: pd, isEpic: true });
+      const member = createTicket(db, { title: 'm', projectId: pd, epicId: epic.id });
+      expect(startRefine(db, epic.id).ok).toBe(true);
+      expect(startRefine(db, epic.id).ok).toBe(false); // the plain button still refuses a second start
+      expect(startRefine(db, epic.id, { addedMemberId: member.id }).ok).toBe(true);
+      expect(listTicketEvents(db, epic.id).filter((e) => e.type === 'refine_human')).toHaveLength(2);
+    });
+
+    it('returns not_found for an unknown member', () => {
+      const epic = createTicket(db, { title: '[Epic] E', projectId: pd, isEpic: true });
+      expect(startRefine(db, epic.id, { addedMemberId: 9999 })).toEqual({ ok: false, reason: 'not_found' });
+    });
+  });
+
   it('derives refineState: null → refining (after start) → awaiting-human (after agent turn)', () => {
     const t = createTicket(db, { title: 'x', projectId: pd });
     expect(getTicket(db, t.id)?.refineState).toBeNull();

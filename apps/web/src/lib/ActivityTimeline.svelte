@@ -163,7 +163,7 @@
         return 'You chose Continue';
       case ROBOT_EVENT.checkpointRestart:
         return 'You chose Restart';
-      // PD-979 (D-116): the Ticket Suggestion lifecycle, recorded on the source ticket.
+      // PD-979 (D-119): the Ticket Suggestion lifecycle, recorded on the source ticket.
       case TICKET_SUGGESTION_EVENT.filed:
         return `Ticket suggestion filed from PR #${d.prNumber ?? '?'}${d.findings ? ` (${d.findings} finding${d.findings === 1 ? '' : 's'})` : ''}`;
       case TICKET_SUGGESTION_EVENT.approved:
@@ -205,7 +205,7 @@
               <a class="ev-link" href={(e.detail as RobotEventDetail).prUrl} target="_blank" rel="noreferrer">view PR</a>
             {/if}
             {#if e.type === TICKET_SUGGESTION_EVENT.approved && (e.detail as { createdTicketDisplayId?: string })?.createdTicketDisplayId}
-              <!-- PD-979 (D-116): link to the ticket the approved suggestion created. -->
+              <!-- PD-979 (D-119): link to the ticket the approved suggestion created. -->
               <a class="ev-link" href="/devops/tickets/{(e.detail as { createdTicketDisplayId?: string }).createdTicketDisplayId}">
                 {(e.detail as { createdTicketDisplayId?: string }).createdTicketDisplayId}
               </a>

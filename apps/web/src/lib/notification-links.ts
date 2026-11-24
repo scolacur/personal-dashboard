@@ -14,7 +14,7 @@ export function decisionsAnchor(displayId: string): string {
   return `t-${displayId}`;
 }
 
-/** The anchor of a ticket suggestion in the Decisions inbox (PD-979, D-116). Keyed by the source
+/** The anchor of a ticket suggestion in the Decisions inbox (PD-979, D-119). Keyed by the source
  *  ticket's display id — one PR, one suggestion, so this is unique in practice. */
 export function suggestionAnchor(displayId: string): string {
   return `sug-${displayId}`;

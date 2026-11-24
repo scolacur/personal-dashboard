@@ -164,7 +164,7 @@ export function bootstrapSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_notifications_unread
       ON agent_notifications (read_at, created_at);
 
-    -- Ticket Suggestions (PD-979, D-116): the Evaluator's leftover non-blocking findings at the
+    -- Ticket Suggestions (PD-979, D-119): the Evaluator's leftover non-blocking findings at the
     -- revise round cap become a suggestion Steve approves / rejects / modifies in the Decisions
     -- inbox. One suggestion per PR (dedup on repo+pr_number while pending — see the store); approving
     -- creates a real backlog ticket through the ordinary create path. Brand-new table, so
@@ -205,7 +205,10 @@ export function bootstrapSchema(db: Database.Database): void {
       -- The commit the running image was BUILT from — what the worker RUNS (PD-528).
       -- Null on an image built before the build-arg existed; the UI says so rather than guessing.
       build_sha   TEXT,
-      model       TEXT
+      model       TEXT,
+      -- PD-816: 1 when no worker build input changed between build_sha and sha, so the worker is
+      -- current even though main moved on. 0 when one did. NULL when the worker can't tell.
+      build_current INTEGER
     );
   `);
 
@@ -226,6 +229,11 @@ export function bootstrapSchema(db: Database.Database): void {
   // seeing.
   migrate(db, 'worker_heartbeat_add_build_sha', (d) => {
     addColumn(d, 'worker_heartbeat', 'build_sha', 'TEXT');
+  });
+  // PD-816: the worker image now publishes only on worker-affecting merges, so build_sha trails
+  // main after a web-only merge without being behind. The worker reports which case it's in.
+  migrate(db, 'worker_heartbeat_add_build_current', (d) => {
+    addColumn(d, 'worker_heartbeat', 'build_current', 'INTEGER');
   });
   // PD-910: live turn/token counts for the Audit agent's tile on the Agent Dashboard. The worker
   // writes these; it tolerates their absence, so either side can deploy first.

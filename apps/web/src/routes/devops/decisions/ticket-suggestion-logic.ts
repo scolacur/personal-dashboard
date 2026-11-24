@@ -1,4 +1,4 @@
-// Pure helpers for the Ticket Suggestions section of the Decisions inbox (PD-979, D-116). Kept out
+// Pure helpers for the Ticket Suggestions section of the Decisions inbox (PD-979, D-119). Kept out
 // of the card component so they are unit-testable (apps/web's vitest cannot import .svelte).
 
 import type { ApproveSuggestionEdits, TicketSuggestion } from '@dashboard/shared';

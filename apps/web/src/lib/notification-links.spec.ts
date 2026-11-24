@@ -19,7 +19,7 @@ describe('notificationHref (PD-746)', () => {
     expect(notificationHref({ kind: 'agent_awaiting_human', title: 'x', ticketDisplayId: 'PD-7' })).toBe('/devops/tickets/PD-7?needs-you');
   });
 
-  it('sends a ticket-suggestion notification to the Decisions inbox, anchored at the source ticket (D-116)', () => {
+  it('sends a ticket-suggestion notification to the Decisions inbox, anchored at the source ticket (D-119)', () => {
     expect(
       notificationHref({ kind: 'agent_ticket_suggestion', title: 'Ticket suggestion: PR #42 (PD-7)', ticketDisplayId: 'PD-7' }),
     ).toBe('/devops/decisions#sug-PD-7');

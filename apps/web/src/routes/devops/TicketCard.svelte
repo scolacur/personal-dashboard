@@ -13,6 +13,7 @@
   import Button from '$lib/Button.svelte';
   import { projectIdColor } from './api';
   import { RELATION_ACTIONS, type RelationAction, type RelationBadges } from './relation-logic';
+  import { coderAreaChip } from './coder-area';
 
   let {
     ticket,
@@ -137,6 +138,10 @@
     return `${epic.priority ?? 'No priority'} — set on ${epic.displayId ?? epic.title}. Re-prioritise the Epic to change it.`;
   });
 
+  // PD-955 (PD-880): the Coder code-area this ticket would run under — its own override, else the
+  // Epic's default, else `general`. Marked "(from Epic)" when inherited.
+  const areaChip = $derived(coderAreaChip(ticket, epic));
+
   async function setAssignee(select: HTMLSelectElement) {
     const assignee = (select.value || null) as TicketAssignee | null;
     if (ticket.assignee === assignee) return;
@@ -172,6 +177,12 @@
         <!-- PD-896: icon + word, so a bug never rests on colour alone. -->
         <span class="kind-bug" title="Bug"><Bug size={12} aria-hidden="true" />Bug</span>
       {/if}
+      <!-- PD-955: the Coder code-area (PD-880) this ticket would run under. -->
+      <span
+        class="area-chip"
+        class:inherited={areaChip.inherited}
+        title={areaChip.inherited ? `Code area: ${areaChip.label} (inherited from its Epic)` : `Code area: ${areaChip.label}`}
+      >{areaChip.label}{#if areaChip.inherited}<span class="area-from"> (from Epic)</span>{/if}</span>
     </div>
     <span class="card-top-right">
       {#if ticket.githubIssueUrl}

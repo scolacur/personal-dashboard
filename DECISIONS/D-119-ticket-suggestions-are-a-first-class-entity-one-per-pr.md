@@ -1,4 +1,4 @@
-# D-116: Ticket Suggestions are a first-class entity, bundled one-per-PR, approved into a real ticket (PD-979)
+# D-119: Ticket Suggestions are a first-class entity, bundled one-per-PR, approved into a real ticket (PD-979)
 
 **Date:** 2026-11-24 · **Ticket:** PD-979 · **Related:** [[D-076]] (the Evaluator), [[D-080]] (the Epic is the unit of priority/dispatch), [[D-044]] (Refine proposals), [[D-040]] (Notification Center)
 

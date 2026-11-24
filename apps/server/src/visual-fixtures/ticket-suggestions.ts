@@ -3,7 +3,7 @@ import { createTicket } from '../widgets/task-monitor/store';
 import { fileTicketSuggestion } from '../widgets/task-monitor/ticket-suggestions';
 
 /**
- * Ticket Suggestions fixture (PD-979, D-116): one pending suggestion so the Decisions inbox's
+ * Ticket Suggestions fixture (PD-979, D-119): one pending suggestion so the Decisions inbox's
  * "Ticket suggestions" section renders a card in the screenshots instead of an empty state.
  *
  * Self-contained: it creates its own Epic + source Ticket (both backlog, no Robot state) so it

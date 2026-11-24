@@ -48,6 +48,18 @@
   }
 }
 
+// PD-955: the running Coder's identity, "Smith-board #212".
+.coder-name {
+  margin: 0;
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: var(--tint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .speech-head {
   display: flex;
   align-items: baseline;

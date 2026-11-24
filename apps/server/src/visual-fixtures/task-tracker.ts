@@ -25,14 +25,18 @@ export function seedTaskTracker(db: Database.Database): void {
     'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
   );
 
-  const epic = createTicket(db, { title: 'Habit Tracker — metrics and calendar', projectId: pd, isEpic: true, priority: 'P1' });
+  // PD-955: an Epic with a default code-area (its members inherit it) so the area chips have both an
+  // inherited value and — on the override below — an own value to photograph.
+  const epic = createTicket(db, { title: 'Habit Tracker — metrics and calendar', projectId: pd, isEpic: true, priority: 'P1', coderArea: 'widgets' });
 
   const t = (title: string, extra: Partial<CreateTicketInput> = {}) =>
     createTicket(db, { title, projectId: pd, priority: 'P2', ...extra });
 
   // Backlog: an unrefined idea, a refined Robot ticket, and one waiting on Steve's Refine answer.
   t('Export habit history as CSV');
-  const refinedRobot = t('Weekly summary card on Today', { assignee: 'robot', epicId: epic.id });
+  // PD-955: an own-area override (not inherited), so the board shows a plain area chip beside the
+  // inherited "(from Epic)" ones on its sibling members.
+  const refinedRobot = t('Weekly summary card on Today', { assignee: 'robot', epicId: epic.id, coderArea: 'board' });
   updateTicket(db, refinedRobot.id, { refined: true });
   const awaitingRefine = t('Reminders for habits not done by evening', { epicId: epic.id });
   refineAsks.run(

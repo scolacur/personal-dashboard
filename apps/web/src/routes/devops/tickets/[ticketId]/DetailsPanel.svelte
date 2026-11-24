@@ -16,6 +16,7 @@
   import { portal } from '$lib/portal';
   import * as api from '../../api';
   import { isStatusLocked } from '../../board-logic';
+  import { coderAreaChip } from '../../coder-area';
   import { resolveUnrefineChoice } from '../../refine-prompt';
   import { joinsEpic, joinWriteOpts, planEpicJoin, unrefinedToast, type EpicJoinChoice, type EpicJoinPlan } from '../../epic-join';
   import EpicJoinModal from '../../EpicJoinModal.svelte';
@@ -83,6 +84,10 @@
     ticket.refined ? '✓ Refined' : ticket.refineState ? REFINE_STATE_LABELS[ticket.refineState] : 'Not started',
   );
 
+  // PD-955 (PD-880): the Coder code-area this ticket would run under. On an Epic it is the Epic's own
+  // default; on a Ticket it resolves its own override, then its Epic's default, then `general`.
+  const areaChip = $derived(coderAreaChip(ticket, ticket.isEpic ? null : parentEpic));
+
   // ── Edit modal ──
   let formOpen = $state(false);
   // Filled from the ticket each time the modal opens (openEdit), so it never edits a stale copy.
@@ -135,7 +140,8 @@
       return;
     }
     try {
-      await api.startRefine(plan.epic.id);
+      // PD-996: a delta check on this ticket joining, not a from-scratch re-refine of the Epic.
+      await api.startRefine(plan.epic.id, { addedMemberId: ticket.id });
     } catch (e) {
       // Most likely a session is already open on the Epic: the move stands, and going there is
       // still the right next step.
@@ -185,6 +191,7 @@
           epicId,
           maxTurns,
           kind: form.isEpic ? null : form.kind,
+          coderArea: form.coderArea,
           // An agent-controlled ticket's status is not ours to send.
           ...(locked ? {} : { status: form.status }),
           ...(refinedChoice !== undefined ? { refined: refinedChoice } : {}),
@@ -239,6 +246,18 @@
       <dd>{ticket.kind ? TICKET_KIND_LABELS[ticket.kind] : 'Unclassified'}</dd>
     </div>
   {/if}
+  <!-- PD-955: the Coder code-area (PD-880). On an Epic this is the default its members inherit. -->
+  <div>
+    <dt>{ticket.isEpic ? 'Default code area' : 'Code area'}</dt>
+    <dd>
+      <span class="area-chip">{areaChip.label}</span>
+      {#if areaChip.inherited && parentEpic}
+        <a class="inherited-from" href="/devops/tickets/{parentEpic.displayId}" title="Inherited from its Epic — set it there or override it here"
+          >from {parentEpic.displayId}</a
+        >
+      {/if}
+    </dd>
+  </div>
   <div>
     <dt>Lane</dt>
     <dd title={ticket.isEpic && memberCount > 0 ? "An Epic's lane is derived from its members" : undefined}>

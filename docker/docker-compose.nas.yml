@@ -27,8 +27,8 @@ services:
     restart: unless-stopped
     labels:
       # Opt THIS container into Watchtower (with WATCHTOWER_LABEL_ENABLE below,
-      # only labelled containers are watched — so Watchtower never touches the
-      # agent-worker / robot-loop containers).
+      # only labelled containers are watched). No scope label means scope `none`,
+      # which is this Watchtower's scope (see below).
       - 'com.centurylinklabs.watchtower.enable=true'
 
   watchtower:
@@ -45,3 +45,10 @@ services:
       - WATCHTOWER_CLEANUP=true # delete the old image after a successful update
       - WATCHTOWER_POLL_INTERVAL=300 # check GHCR every 5 min
       - WATCHTOWER_INCLUDE_RESTARTING=true
+      # PD-816: the agent-worker stack runs its OWN Watchtower (scope `agent-worker`, with the
+      # drain hook) on this same Docker daemon. Scope `none` = only containers with no scope label
+      # (or an empty or `none` one). This instance then ignores the worker, whose labels opt it in
+      # but carry scope=agent-worker. It also stops this instance removing the other Watchtower:
+      # an UNSCOPED Watchtower removes every other instance, scoped ones included. Rescope this one
+      # BEFORE starting the worker's (ops/agent-worker/README.md).
+      - WATCHTOWER_SCOPE=none

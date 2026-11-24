@@ -24,6 +24,7 @@ function workerSeen(lastSeen: number, worker = 'agent-worker'): WorkerHeartbeat 
     pid: 123,
     checkoutSha: 'abc1234',
     buildSha: 'abc1234',
+    buildCurrent: null,
     model: 'claude',
   };
 }

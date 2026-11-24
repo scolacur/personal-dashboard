@@ -21,6 +21,21 @@ describe('workerVersionState', () => {
     expect(workerVersionState({ buildSha: null, checkoutSha: 'abc1234' })).toBe('unknown');
   });
 
+  it('is current when main moved on without touching the worker build inputs (PD-816)', () => {
+    // The worker image publishes only on worker-affecting merges, so a web-only merge leaves the
+    // shas different with nothing to deploy.
+    expect(workerVersionState({ buildSha: '41cdc4d', checkoutSha: '3a29bf8', buildCurrent: true })).toBe('current');
+  });
+
+  it('stays stale when a build input changed, or when the worker cannot tell (PD-816)', () => {
+    expect(workerVersionState({ buildSha: '41cdc4d', checkoutSha: '3a29bf8', buildCurrent: false })).toBe('stale');
+    expect(workerVersionState({ buildSha: '41cdc4d', checkoutSha: '3a29bf8', buildCurrent: null })).toBe('stale');
+  });
+
+  it('never lets buildCurrent override an unknown build sha', () => {
+    expect(workerVersionState({ buildSha: null, checkoutSha: '3a29bf8', buildCurrent: true })).toBe('unknown');
+  });
+
   it('is unknown when the checkout sha is unreadable, rather than guessing', () => {
     expect(workerVersionState({ buildSha: 'abc1234', checkoutSha: null })).toBe('unknown');
     expect(workerVersionState({ buildSha: null, checkoutSha: null })).toBe('unknown');

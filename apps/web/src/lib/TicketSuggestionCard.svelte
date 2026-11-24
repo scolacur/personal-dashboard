@@ -9,7 +9,7 @@
   } from '../routes/devops/decisions/ticket-suggestion-logic';
 
   /**
-   * One Ticket Suggestion in the Decisions inbox (PD-979, D-116): the Evaluator's leftover
+   * One Ticket Suggestion in the Decisions inbox (PD-979, D-119): the Evaluator's leftover
    * non-blocking findings bundled from a PR that shipped at the round cap. Steve approves (creates a
    * real backlog ticket under the chosen Epic), rejects (optionally with a reason), or modifies the
    * title / body / Epic before approving. `onDecided` fires after a successful decision — the card

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { WidgetEmbed } from './widgets';
   import WidgetTicketButton from './WidgetTicketButton.svelte';
+  import { recordWidgetUse } from './widget-usage.svelte';
 
   let {
     widgetId,
@@ -42,6 +43,14 @@
 
   let flipped = $state(false);
 
+  // Touching a card counts as using the widget, so Home can show what you actually use
+  // (PD-751, Home shows recently used widgets). Not while arranging — a drag is moving the card,
+  // not using it. Home itself and the throttle are handled inside `recordWidgetUse`.
+  function noteUse() {
+    if (arranging || !widgetId) return;
+    recordWidgetUse(widgetId, window.location.pathname);
+  }
+
   function flip() {
     flipped = !flipped;
   }
@@ -70,6 +79,8 @@
   ondragover={arranging ? onDragOver : undefined}
   ondrop={arranging ? onDrop : undefined}
   ondragend={arranging ? onDragEnd : undefined}
+  onpointerdown={noteUse}
+  onfocusin={noteUse}
 >
   {#if embed && EmbedComponent}
     <div class="widget-card-header">

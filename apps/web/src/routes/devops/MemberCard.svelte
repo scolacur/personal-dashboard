@@ -8,6 +8,7 @@
     memberAssigneeHint,
     refinementBadge,
   } from './epic-members';
+  import { coderAreaChip } from './coder-area';
 
   /**
    * An Epic member as a board card (PD-554).
@@ -24,12 +25,15 @@
    */
   let {
     ticket,
+    epic,
     dragging,
     onDragStart,
     onDragEnd,
     onAssignee,
   }: {
     ticket: AgentTicket;
+    /** The Epic this member belongs to, for attributing its inherited code-area (PD-955). */
+    epic: AgentTicket;
     dragging: boolean;
     onDragStart: (e: DragEvent) => void;
     onDragEnd: () => void;
@@ -37,6 +41,8 @@
   } = $props();
 
   const editable = $derived(canEditMember(ticket));
+  // PD-955: the member's effective code-area (PD-880), marked "(from Epic)" when inherited.
+  const areaChip = $derived(coderAreaChip(ticket, epic));
 </script>
 
 <article
@@ -69,6 +75,12 @@
         <option value={a ?? ''}>{assigneeGlyph(a)}</option>
       {/each}
     </select>
+    <!-- PD-955: the member's effective code-area. -->
+    <span
+      class="area-chip"
+      class:inherited={areaChip.inherited}
+      title={areaChip.inherited ? `Code area: ${areaChip.label} (inherited from its Epic)` : `Code area: ${areaChip.label}`}
+    >{areaChip.label}{#if areaChip.inherited}<span class="area-from"> (from Epic)</span>{/if}</span>
     {#if refinementBadge(ticket)}
       {@const badge = refinementBadge(ticket)!}
       <span class={badge.cls} title={badge.title}>{badge.text}</span>

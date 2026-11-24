@@ -25,7 +25,7 @@
   // message after it leaves the server list (approving records a review that drops it), so he sees
   // the merge is coming rather than the card vanishing as if nothing happened.
   let merging = $state<Map<number, { message: string; displayId: string | null; title: string }>>(new Map());
-  // PD-979 (D-116): the Evaluator's leftover findings, bundled per PR into a Ticket Suggestion.
+  // PD-979 (D-119): the Evaluator's leftover findings, bundled per PR into a Ticket Suggestion.
   let suggestions = $state<TicketSuggestion[]>([]);
   let epics = $state<AgentTicket[]>([]);
   // Suggestions decided from this page, by id, with the message to show in their place until the

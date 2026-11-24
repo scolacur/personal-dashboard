@@ -9,7 +9,7 @@ export const decisionsCount = writable(0);
 /** Re-fetch the count and publish it. Best-effort: a failed poll keeps the last known count. */
 export async function refreshDecisionsCount(): Promise<void> {
   try {
-    // PD-773: visual checks wait on Steve too, so they count toward the same badge. PD-979 (D-116):
+    // PD-773: visual checks wait on Steve too, so they count toward the same badge. PD-979 (D-119):
     // pending ticket suggestions do as well.
     const [refine, visual, suggestions] = await Promise.all([
       fetchAwaitingRefine(),

@@ -97,6 +97,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # PD-999: dispatch deploy.yml after a merge (see deploy_after_merge below).
+  actions: write
 
 # One in-flight merge attempt per PR (or per commit SHA when the PR number is unknown).
 concurrency:
@@ -166,11 +168,27 @@ jobs:
           # 2026-11-20: #447 merged, #449 was refused and nothing re-fired, so it sat CLEAN and
           # unmerged). A fresh attempt after main settles is the whole fix. Any other refusal is
           # branch protection speaking, and is returned as-is.
+          # PD-999: a merge made with GITHUB_TOKEN creates a push that starts NO workflows (GitHub's
+          # anti-recursion rule), so deploy.yml never ran for this bridge's merges: the app and the
+          # agent-worker stayed on the last human-merged build (#566, #567 on 2026-11-24).
+          # workflow_dispatch IS allowed from GITHUB_TOKEN, so dispatch the deploy explicitly. It decides
+          # for itself whether the worker image needs publishing (it diffs against the published image),
+          # so a burst of merges can't skip a worker change even when concurrency cancels a pending run.
+          # A failed dispatch is logged and does not fail the merge. The next merge's dispatch covers it.
+          deploy_after_merge() {
+            if gh workflow run deploy.yml --repo "$REPO" --ref "${{ github.event.repository.default_branch }}"; then
+              echo "Dispatched deploy.yml for the merge of PR #$1."
+            else
+              echo "::warning::PR #$1 merged, but dispatching deploy.yml failed. Run it by hand (Actions → deploy → Run workflow)."
+            fi
+          }
+
           merge_pr() {
             local pr="$1" out attempt
             for attempt in 1 2 3 4; do
               if out=$(gh pr merge "$pr" --repo "$REPO" --squash 2>&1); then
                 [ -n "$out" ] && echo "$out"
+                deploy_after_merge "$pr"
                 return 0
               fi
               echo "$out"

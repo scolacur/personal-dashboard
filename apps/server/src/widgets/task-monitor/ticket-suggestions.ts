@@ -14,7 +14,7 @@ import {
 import { createNotification, createTicket, getTicket, recordTicketEvent } from './store';
 
 /**
- * Ticket Suggestions store (PD-979, D-116).
+ * Ticket Suggestions store (PD-979, D-119).
  *
  * The Evaluator's leftover non-blocking findings at the revise round cap become one suggestion per
  * PR, which Steve approves / rejects / modifies in the Decisions inbox. Filing is done through
