@@ -164,6 +164,9 @@
 
   /** Open Log › By Day scrolled to yesterday (the PD-725 deep link). Works from the card and the page. */
   function openYesterday() {
+    // On the page a repeat click leaves the URL unchanged, so the deep-link effect wouldn't re-fire;
+    // switch the tab directly too (PD-971). From the card, `goto` navigates to the page.
+    if (!compact) tab = 'log';
     void goto(`/widgets/habit-tracker?view=day&day=${yesterday}`, { keepFocus: true, noScroll: true });
   }
 

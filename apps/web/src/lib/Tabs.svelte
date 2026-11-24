@@ -43,13 +43,20 @@
     localStorage.setItem(PREFIX + storeKey, id);
   }
 
-  // Restore on mount. Validated against the current tabs, so renaming or removing a tab can't
-  // strand someone on a panel that no longer exists.
-  $effect(() => {
+  // Restore once, synchronously at init. Validated against the current tabs, so renaming or
+  // removing a tab can't strand someone on a panel that no longer exists.
+  //
+  // Not an `$effect`: an effect that reads `active` re-runs on every *programmatic* change too and
+  // snaps the selection back to the saved tab — which silently undid deep links such as the Habit
+  // Tracker's yesterday banner setting `tab = 'log'` (PD-971). Restoring at init also runs before
+  // the parent's effects, so a deep link applied in an effect wins over the saved tab.
+  // Init-time read is intentional — a function keeps Svelte from flagging it as a stale capture.
+  function restoreSaved(): void {
     if (!storeKey || typeof localStorage === 'undefined') return;
     const saved = localStorage.getItem(PREFIX + storeKey);
     if (saved && saved !== active && tabs.some((t) => t.id === saved)) active = saved;
-  });
+  }
+  restoreSaved();
 
   let barEl = $state<HTMLDivElement | null>(null);
 
