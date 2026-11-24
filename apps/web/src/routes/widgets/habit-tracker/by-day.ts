@@ -1,5 +1,7 @@
 import {
   addHabitDays,
+  HABIT_MONTH_FULL_NAMES,
+  habitWeekday,
   isDue,
   parseChoiceValue,
   type HabitChoiceOption,
@@ -162,4 +164,43 @@ export function applyCompletionWrite(
 ): HabitCompletion[] {
   const rest = completions.filter((c) => !(c.itemId === itemId && c.day === day));
   return done ? [...rest, { itemId, day, completedAt: now }] : rest;
+}
+
+/** Weekday letters for the By Day footer row, Monday first (the habit week). R = Thursday. */
+export const WEEKDAY_LETTERS = ['M', 'T', 'W', 'R', 'F', 'Sa', 'Su'] as const;
+
+/** The weekday letter for a habit day (`YYYY-MM-DD`), from `WEEKDAY_LETTERS`. */
+export function weekdayLetter(day: string): string {
+  return WEEKDAY_LETTERS[habitWeekday(day)];
+}
+
+/**
+ * One calendar month's run of consecutive columns in the By Day grid. Distinct from shared
+ * `habitMonthSpans`, which spans habit-week rows of the By Habit calendar, not single days.
+ */
+export interface DayMonthSpan {
+  /** `YYYY-MM`, unique per span. */
+  key: string;
+  /** e.g. "November 2026". */
+  label: string;
+  /** Index into `days` of the span's first day. */
+  start: number;
+  /** Number of days in the span. */
+  length: number;
+}
+
+/** Group consecutive habit days (oldest first) into calendar-month spans for the month header row. */
+export function monthSpans(days: string[]): DayMonthSpan[] {
+  const spans: DayMonthSpan[] = [];
+  days.forEach((day, i) => {
+    const key = day.slice(0, 7);
+    const last = spans[spans.length - 1];
+    if (last && last.key === key) {
+      last.length++;
+      return;
+    }
+    const [y, m] = key.split('-').map(Number);
+    spans.push({ key, label: `${HABIT_MONTH_FULL_NAMES[m - 1]} ${y}`, start: i, length: 1 });
+  });
+  return spans;
 }

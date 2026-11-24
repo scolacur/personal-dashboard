@@ -13,7 +13,9 @@ import {
   buildMetricValueMap,
   formatMetricCell,
   habitDaysBetween,
+  monthSpans,
   setDayShortcut,
+  weekdayLetter,
 } from './by-day';
 import type { PendingHabitWrite } from './queue';
 
@@ -162,5 +164,28 @@ describe('applyCompletionWrite', () => {
     const twice = applyCompletionWrite(base, 1, '2026-11-20', true, 5);
     expect(twice.filter((c) => c.itemId === 1 && c.day === '2026-11-20')).toHaveLength(1);
     expect(applyCompletionWrite(base, 3, '2026-11-20', false)).toEqual(base);
+  });
+});
+
+describe('weekdayLetter', () => {
+  it('maps a habit day to its Monday-first letter, R for Thursday', () => {
+    // 2026-11-23 is a Monday.
+    const week = ['23', '24', '25', '26', '27', '28', '29'].map((d) => weekdayLetter(`2026-11-${d}`));
+    expect(week).toEqual(['M', 'T', 'W', 'R', 'F', 'Sa', 'Su']);
+  });
+});
+
+describe('monthSpans', () => {
+  it('groups consecutive days into month spans across a seam and a year boundary', () => {
+    const days = habitDaysBetween('2025-12-30', '2026-02-02');
+    expect(monthSpans(days)).toEqual([
+      { key: '2025-12', label: 'December 2025', start: 0, length: 2 },
+      { key: '2026-01', label: 'January 2026', start: 2, length: 31 },
+      { key: '2026-02', label: 'February 2026', start: 33, length: 2 },
+    ]);
+  });
+
+  it('returns no spans for no days', () => {
+    expect(monthSpans([])).toEqual([]);
   });
 });

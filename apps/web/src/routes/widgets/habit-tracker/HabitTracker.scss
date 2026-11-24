@@ -1,7 +1,25 @@
+/*
+ * The page spans the content column; the tab bar and the Daily Log / Config panels keep a 640px
+ * measure, while History widens so the By Day grid shows more days on desktop.
+ */
 .habit-tracker-page {
   padding: var(--space-md);
-  max-width: 640px;
-  margin: 0 auto;
+
+  :global(.tabs-bar),
+  .panel-narrow {
+    max-width: 640px;
+    width: 100%;
+    margin-inline: auto;
+  }
+
+  :global(.tabs-root) {
+    min-width: 0;
+  }
+}
+
+.panel-wide {
+  max-width: 1400px;
+  margin-inline: auto;
 }
 
 /* Live count of writes queued offline, shown under Today on both the card and the page. */

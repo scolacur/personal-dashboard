@@ -235,6 +235,12 @@ export const PER_AREA_CONCURRENCY = 1;
  *
  * Tolerates a pre-run table (worker booted before `agent_runs` exists) → an empty map, so a cold
  * boot never throws here; it just sees no area as busy yet.
+ *
+ * **A `running` row on a terminal or archived ticket is not counted.** It cannot be a live Coder, so
+ * it is an orphan that never got its terminal status. The stalled-run watchdog will never reclaim it
+ * either, because it only looks at tickets the Robot still holds. Counting it would mark its area busy
+ * forever. On 2026-11-24 a July run row (PD-380, completed long before) held `general` busy, and
+ * every unset-area ticket stopped dispatching the moment this cap went live.
  */
 export function runningCoderAreas(db: Database.Database): Map<CoderArea, number> {
   const counts = new Map<CoderArea, number>();
@@ -245,7 +251,9 @@ export function runningCoderAreas(db: Database.Database): Map<CoderArea, number>
            FROM agent_runs r
            JOIN agent_tickets t ON t.id = r.ticket_id
            LEFT JOIN agent_tickets e ON e.id = t.epic_id
-          WHERE r.status = 'running'`,
+          WHERE r.status = 'running'
+            AND t.archived_at IS NULL
+            AND t.status NOT IN ('completed', 'closed')`,
       )
       .all() as { coder_area: string | null; epic_coder_area: string | null }[];
     for (const r of rows) {

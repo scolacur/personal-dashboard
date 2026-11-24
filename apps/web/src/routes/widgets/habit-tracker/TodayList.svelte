@@ -248,7 +248,7 @@
       {#if !isToday}
         Nothing was due this day.
       {:else}
-        {compact ? 'Nothing due today.' : 'Nothing due today — add or schedule a habit on the Habits tab.'}
+        {compact ? 'Nothing due today.' : 'Nothing due today — add or schedule a habit on the Config tab.'}
       {/if}
     </li>
   {/if}

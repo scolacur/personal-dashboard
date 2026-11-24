@@ -264,7 +264,7 @@
   </div>
 
   {#if options.active.length === 0 && options.archived.length === 0}
-    <p class="empty">No habits yet — add one on the Habits tab.</p>
+    <p class="empty">No habits yet — add one on the Config tab.</p>
   {:else if selected}
     <div class="scroller" bind:this={scroller} onscroll={onScroll}>
       <div class="calendar" role="grid" aria-label={`${selected.name} calendar`}>
