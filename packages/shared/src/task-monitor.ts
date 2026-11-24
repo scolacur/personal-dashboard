@@ -422,6 +422,27 @@ export interface CreateProjectInput {
   color?: string | null;
 }
 
+/**
+ * Why a ticket was closed (PD-888), when the system closed it rather than a human. `null` means a
+ * plain/manual close or an open ticket. Distinguishes a ticket that was SPLIT or SUPERSEDED (which
+ * went through Refine and has successors) from one that was simply abandoned — the two read
+ * identically (`closed`, `refined: false`) without it.
+ *
+ * - `split`      — a Refine decompose closed the parent into its children (the `split` relations).
+ * - `superseded` — a decompose/Populate `supersedes` replaced this member (PD-931/PD-932).
+ * - `duplicate`  — closed with an outgoing `duplicates` relation (the dupe of another ticket).
+ */
+export type CloseReason = 'split' | 'superseded' | 'duplicate';
+
+export const CLOSE_REASONS: readonly CloseReason[] = ['split', 'superseded', 'duplicate'] as const;
+
+/** A successor a closed ticket points to (PD-888). The ticket(s) its work moved into — the
+ *  split children, the duplicate target, or the superseding ticket(s). */
+export interface ClosedIntoRef {
+  displayId: string | null;
+  title: string;
+}
+
 export interface AgentTicket {
   id: number;
   /** Human-facing per-project id, e.g. 'PD-7'. Null only for legacy rows. */
@@ -507,6 +528,14 @@ export interface AgentTicket {
    *  promoter (an `auto_queued` event newer than any manual `status_changed`), not by hand. Drives
    *  the card's "auto-queued" badge. Server-derived, read-only; absent reads as false. */
   autoQueued?: boolean;
+  /** PD-888: why the system closed this ticket (`split` | `superseded` | `duplicate`), or `null` for
+   *  a plain/manual close or an open ticket. Set only by the system close paths; a manual close
+   *  leaves it null, and reopening clears it. */
+  closeReason: CloseReason | null;
+  /** PD-888: the successor ticket(s) a closed, reasoned ticket points to — the split children, the
+   *  duplicate target, or the superseding ticket(s). Server-derived (batched), read-only; present
+   *  only on the list/get payloads (absent on create/update returns). Absent/empty = none. */
+  closedInto?: ClosedIntoRef[];
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -599,6 +628,11 @@ export interface UpdateTicketInput {
   githubIssueUrl?: string | null;
   /** Mark the ticket refined (D-044, PD-268). Omit to leave unchanged. */
   refined?: boolean;
+  /** PD-888: SERVER-INTERNAL — set the close reason when the system closes a ticket (the
+   *  `approveRefine` split/supersede paths). Deliberately NOT forwarded by the routes, so a client
+   *  cannot set it: a manual close leaves it null. Only honoured when the patch enters `closed`;
+   *  leaving `closed` clears the reason regardless. Omit to leave the store to derive it. */
+  closeReason?: CloseReason | null;
   /** Set when a human queued a not-Ready robot ticket via the confirm modal (D-058, PD-399);
    *  defaults false. Omit to leave unchanged. `ready` is NOT client-settable (server-computed
    *  from the body), so it is deliberately absent here. */
