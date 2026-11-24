@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { latestActionableProposal, type TicketEvent } from '@dashboard/shared';
 
 /**
  * Read-only board tools for the Refine agent (PD-433).
@@ -42,6 +43,16 @@ export interface TicketSummary {
   epic: string | null;
 }
 
+/**
+ * An Epic member row (PD-930). Adds `hasActionableProposal`: whether this member has a Refine
+ * commit proposal still awaiting a decision. The flag lets the agent see what it might duplicate
+ * when it Populates an Epic — the PD-837/PD-847 collision behind PD-876 — so it can supersede or
+ * leave such a member alone instead of silently overlapping it.
+ */
+export interface EpicMemberSummary extends TicketSummary {
+  hasActionableProposal: boolean;
+}
+
 interface Row {
   id: number;
   display_id: string | null;
@@ -81,6 +92,34 @@ const summary = (r: Row): TicketSummary => ({
 
 const clampLimit = (n: number | undefined, max: number, dflt: number) =>
   Math.max(1, Math.min(max, Math.floor(n ?? dflt)));
+
+interface EventRow {
+  id: number;
+  ticket_id: number;
+  type: string;
+  detail: string | null;
+  created_at: number;
+}
+
+/** A member's activity log, oldest first — the input `latestActionableProposal` reads (PD-930).
+ *  Mirrors the server's `rowToTicketEvent` detail parsing; stays read-only via the `read` guard. */
+function ticketEvents(db: Database.Database, ticketId: number): TicketEvent[] {
+  const rows = read(
+    db,
+    'SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events WHERE ticket_id = ? ORDER BY created_at ASC, id ASC',
+  ).all(ticketId) as EventRow[];
+  return rows.map((row) => {
+    let detail: unknown = null;
+    if (row.detail != null) {
+      try {
+        detail = JSON.parse(row.detail);
+      } catch {
+        detail = row.detail;
+      }
+    }
+    return { id: row.id, ticketId: row.ticket_id, type: row.type, detail, createdAt: row.created_at };
+  });
+}
 
 /**
  * Tickets whose title or body contains EVERY word of `query` (case-insensitive), title matches first.
@@ -181,7 +220,7 @@ export function listRelations(db: Database.Database, displayId: string): Relatio
 export function listEpicMembers(
   db: Database.Database,
   displayId: string,
-): { epic: TicketSummary; members: TicketSummary[]; truncated: boolean } | null {
+): { epic: TicketSummary; members: EpicMemberSummary[]; truncated: boolean } | null {
   const e = read(db, `${SELECT} WHERE t.display_id = ? AND t.archived_at IS NULL`).get(displayId.toUpperCase()) as
     | Row
     | undefined;
@@ -192,7 +231,15 @@ export function listEpicMembers(
       ORDER BY CASE WHEN t.status IN ('completed', 'closed') THEN 1 ELSE 0 END, t.sort_order, t.id
       LIMIT ?`,
   ).all(e.id, MEMBERS_LIMIT_MAX + 1) as Row[];
-  return { epic: summary(e), members: rows.slice(0, MEMBERS_LIMIT_MAX).map(summary), truncated: rows.length > MEMBERS_LIMIT_MAX };
+  const members = rows.slice(0, MEMBERS_LIMIT_MAX).map(
+    (r): EpicMemberSummary => ({
+      ...summary(r),
+      // Reuse the shared predicate so this stays correct when the supersede slice adds
+      // `refine_superseded` to the terminating set (PD-930).
+      hasActionableProposal: latestActionableProposal(ticketEvents(db, r.id)) !== null,
+    }),
+  );
+  return { epic: summary(e), members, truncated: rows.length > MEMBERS_LIMIT_MAX };
 }
 
 const json = (v: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(v) }] });
@@ -243,7 +290,13 @@ export function buildBoardTools(db: Database.Database) {
     ),
     tool(
       'list_epic_members',
-      `List an Epic's member tickets, compact, open first (at most ${MEMBERS_LIMIT_MAX}). Use it to see the siblings before populating or splitting under an Epic.`,
+      [
+        `List an Epic's member tickets, compact, open first (at most ${MEMBERS_LIMIT_MAX}). Use it to`,
+        'see the siblings before populating or splitting under an Epic. Each member carries',
+        '`hasActionableProposal`: when true it already has its own Refine proposal awaiting a',
+        'decision. Consult it BEFORE populating — prefer to supersede (or leave alone) such a member',
+        'rather than silently proposing work that overlaps it.',
+      ].join(' '),
       { displayId: ID },
       async ({ displayId }) => {
         const r = listEpicMembers(db, displayId);

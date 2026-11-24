@@ -19,7 +19,18 @@ function add(id: number, displayId: string, title: string, over: Partial<{ body:
   ).run(id, displayId, title, over.body ?? '', over.status ?? 'backlog', over.isEpic ? 1 : 0, over.refined ? 1 : 0, over.epic ?? null, over.archived ? 1 : null, id);
 }
 
+let eventSeq = 0;
+function addEvent(ticketId: number, type: string, detail?: unknown) {
+  db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+    ticketId,
+    type,
+    detail === undefined ? null : JSON.stringify(detail),
+    ++eventSeq,
+  );
+}
+
 beforeEach(() => {
+  eventSeq = 0;
   db = new Database(':memory:');
   db.exec(`
     CREATE TABLE agent_tickets (id INTEGER PRIMARY KEY, display_id TEXT, title TEXT NOT NULL, body TEXT, status TEXT NOT NULL,
@@ -27,6 +38,8 @@ beforeEach(() => {
       epic_id INTEGER, archived_at INTEGER, sort_order REAL NOT NULL DEFAULT 0);
     CREATE TABLE agent_ticket_relations (id INTEGER PRIMARY KEY, from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL,
       type TEXT NOT NULL, origin TEXT NOT NULL DEFAULT 'agent', created_at INTEGER NOT NULL);
+    CREATE TABLE agent_ticket_events (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL, type TEXT NOT NULL,
+      detail TEXT, created_at INTEGER NOT NULL);
   `);
   add(1, 'PD-609', '[Epic] Robot loop hardening', { isEpic: true, refined: true });
   add(2, 'PD-350', 'Karpathy memory wiki', { body: 'Persist a wiki of what the agents learn.', epic: 1 });
@@ -87,6 +100,19 @@ describe('getTicket / listRelations / listEpicMembers (PD-433)', () => {
   it("lists an Epic's members and refuses a non-Epic", () => {
     expect(listEpicMembers(db, 'PD-609')?.members.map((m) => m.displayId)).toEqual(['PD-350', 'PD-433']);
     expect(listEpicMembers(db, 'PD-350')).toBeNull();
+  });
+
+  it('marks which members have an actionable proposal pending (PD-930)', () => {
+    // PD-350: a proposal still awaiting a decision → actionable.
+    addEvent(2, 'refine_proposal', { mode: 'refine_in_place', body: 'rewritten' });
+    // PD-433: a proposal that was already committed → not actionable.
+    addEvent(3, 'refine_proposal', { mode: 'refine_in_place', body: 'x' });
+    addEvent(3, 'refine_committed');
+    const members = listEpicMembers(db, 'PD-609')?.members ?? [];
+    expect(members.map((m) => [m.displayId, m.hasActionableProposal])).toEqual([
+      ['PD-350', true],
+      ['PD-433', false],
+    ]);
   });
 });
 
