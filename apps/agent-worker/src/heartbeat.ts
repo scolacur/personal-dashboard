@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from './shared/config';
 import { logger } from './shared/logger';
@@ -15,8 +17,8 @@ const WORKER_NAME = 'agent-worker';
 const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
- * The commit the RUNNING IMAGE was built from (PD-528) — baked in at `docker build` time by
- * `robot-refresh` via `--build-arg BUILD_SHA=...`.
+ * The commit the RUNNING IMAGE was built from (PD-528) — baked in at `docker build` time via
+ * `--build-arg BUILD_SHA=...` (deploy.yml on GHCR; `robot-rebuild` on the emergency local path).
  *
  * This is the worker's actual version, and it is the one a human needs: the checkout sha below
  * tracks `main` continuously, so it looks current even when the process has been running week-old
@@ -41,6 +43,40 @@ function currentSha(config: AgentWorkerConfig): string | null {
   }
 }
 
+/** The image's build inputs (PD-816), from the grounding checkout's `ops/agent-worker/build-inputs.txt`. */
+export function parseBuildInputs(text: string): string[] {
+  return text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '' && !l.startsWith('#'));
+}
+
+/**
+ * Is the running image current even though `main` has moved past its BUILD_SHA? (PD-816, D-116)
+ *
+ * The worker image is published only when one of its build inputs changes, so after a web-only
+ * merge BUILD_SHA trails `main` and the worker is still up to date. True when nothing in
+ * `build-inputs.txt` differs between BUILD_SHA and the checkout's HEAD. False when something does,
+ * which means the worker really is behind. Null when we cannot tell (no build sha, no checkout,
+ * a sha the checkout doesn't have yet). The UI then falls back to comparing the shas, and never
+ * reports "current" without evidence.
+ */
+export function buildIsCurrent(checkoutDir: string, build: string | null): boolean | null {
+  if (!build) return null;
+  try {
+    const inputs = parseBuildInputs(readFileSync(path.join(checkoutDir, 'ops/agent-worker/build-inputs.txt'), 'utf8'));
+    if (inputs.length === 0) return null;
+    execFileSync('git', ['-C', checkoutDir, 'diff', '--quiet', build, 'HEAD', '--', ...inputs], {
+      stdio: 'ignore',
+      timeout: 5_000,
+    });
+    return true; // exit 0: no build input changed
+  } catch (err) {
+    // `git diff --quiet` exits 1 when there ARE differences; anything else is "cannot tell".
+    return (err as { status?: number }).status === 1 ? false : null;
+  }
+}
+
 export function startHeartbeat(db: Database.Database, config: AgentWorkerConfig): void {
   // The web server owns this table's schema, but the worker can boot first against a
   // fresh shared volume. Defensive CREATE — keep this DDL in sync with schema.ts.
@@ -52,21 +88,30 @@ export function startHeartbeat(db: Database.Database, config: AgentWorkerConfig)
       pid         INTEGER,
       sha         TEXT,
       build_sha   TEXT,
-      model       TEXT
+      model       TEXT,
+      build_current INTEGER
     );
   `);
+  // PD-816: an existing table predates build_current. The server migrates it too; adding it here
+  // as well lets either side deploy first (ALTER ADD COLUMN is additive and idempotent behind this
+  // check).
+  const cols = db.prepare('PRAGMA table_info(worker_heartbeat)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'build_current')) {
+    db.exec('ALTER TABLE worker_heartbeat ADD COLUMN build_current INTEGER');
+  }
 
   const startedAt = Date.now();
   const upsert = db.prepare(
-    `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, build_sha, model)
-     VALUES (@worker, @startedAt, @lastSeen, @pid, @sha, @buildSha, @model)
+    `INSERT INTO worker_heartbeat (worker, started_at, last_seen, pid, sha, build_sha, model, build_current)
+     VALUES (@worker, @startedAt, @lastSeen, @pid, @sha, @buildSha, @model, @buildCurrent)
      ON CONFLICT(worker) DO UPDATE SET
        started_at = excluded.started_at,
        last_seen  = excluded.last_seen,
        pid        = excluded.pid,
        sha        = excluded.sha,
        build_sha  = excluded.build_sha,
-       model      = excluded.model`,
+       model      = excluded.model,
+       build_current = excluded.build_current`,
   );
 
   const beat = (): void => {
@@ -79,6 +124,7 @@ export function startHeartbeat(db: Database.Database, config: AgentWorkerConfig)
         sha: currentSha(config),
         buildSha: buildSha(),
         model: config.model,
+        buildCurrent: ((c) => (c === null ? null : c ? 1 : 0))(buildIsCurrent(config.checkoutDir, buildSha())),
       });
     } catch (err) {
       logger.warn({ err }, 'heartbeat write failed');

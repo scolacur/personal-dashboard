@@ -2485,6 +2485,8 @@ interface WorkerHeartbeatRow {
   /** The commit the running image was built from (PD-528); null on a pre-build-arg image. */
   build_sha: string | null;
   model: string | null;
+  /** PD-816: 1/0/NULL — no build input changed since build_sha / one did / unknown. */
+  build_current?: number | null;
 }
 
 /** Count active (non-archived) tickets by Robot loop `agent_state`. Only states that
@@ -2860,6 +2862,7 @@ export function listWorkerHeartbeats(db: Database.Database): WorkerHeartbeat[] {
     pid: r.pid,
     checkoutSha: r.sha,
     buildSha: r.build_sha ?? null,
+    buildCurrent: r.build_current == null ? null : r.build_current === 1,
     model: r.model,
   }));
 }

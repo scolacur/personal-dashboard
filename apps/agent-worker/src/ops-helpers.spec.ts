@@ -61,8 +61,14 @@ describe('the helpers point at the real deployment', () => {
   it('uses the container and compose file that ops/agent-worker actually defines', () => {
     const compose = readFileSync(path.join(ROOT, 'ops/agent-worker/docker-compose.egress.yml'), 'utf8');
     expect(compose).toContain('container_name: agent-worker');
-    expect(compose).toContain('image: agent-worker-dashboard');
     expect(ALIASES).toContain('ops/agent-worker/docker-compose.egress.yml');
+  });
+
+  it('runs the GHCR image, overridable only by the emergency local build (PD-816)', () => {
+    const compose = readFileSync(path.join(ROOT, 'ops/agent-worker/docker-compose.egress.yml'), 'utf8');
+    expect(compose).toContain('image: ${AGENT_WORKER_IMAGE:-ghcr.io/scolacur/personal-dashboard-agent-worker:latest}');
+    // robot-rebuild must pass the override through sudo, which drops the caller's environment.
+    expect(ALIASES).toMatch(/sudo env AGENT_WORKER_IMAGE="\$PD_IMAGE" docker-compose/);
   });
 
   it('stamps the build sha into the image, so the dashboard reports a real version', () => {
@@ -75,6 +81,50 @@ describe('the helpers point at the real deployment', () => {
   it('hits the task-monitor API base, not the renamed one that 404s', () => {
     expect(ALIASES).toContain('/api/widgets/task-monitor');
     expect(ALIASES).not.toContain('/api/widgets/agent-dashboard');
+  });
+});
+
+describe('the worker auto-deploy wiring (PD-816)', () => {
+  const egress = readFileSync(path.join(ROOT, 'ops/agent-worker/docker-compose.egress.yml'), 'utf8');
+  const nas = readFileSync(path.join(ROOT, 'docker/docker-compose.nas.yml'), 'utf8');
+  const service = (yml: string, name: string) => {
+    const start = yml.indexOf(`\n  ${name}:\n`);
+    expect(start, `service ${name} missing`).toBeGreaterThan(-1);
+    const next = yml.slice(start + 1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+    return next === -1 ? yml.slice(start) : yml.slice(start, start + 1 + next);
+  };
+
+  it("the worker opts into its own scope, and the drain hook points at a file the build emits", () => {
+    const worker = service(egress, 'agent-worker');
+    expect(worker).toContain('com.centurylinklabs.watchtower.enable=true');
+    expect(worker).toContain('com.centurylinklabs.watchtower.scope=agent-worker');
+    const hook = worker.match(/lifecycle\.pre-update=node \/app\/(apps\/agent-worker\/dist\/[a-z-]+)\.js/);
+    expect(hook, 'pre-update hook label').not.toBeNull();
+    const build = readFileSync(path.join(ROOT, 'apps/agent-worker/build.mjs'), 'utf8');
+    expect(build).toContain(`'src/${path.basename(hook![1])}.ts'`);
+  });
+
+  it('the squid sidecar is NOT watched', () => {
+    expect(service(egress, 'agent-worker-proxy')).not.toContain('watchtower');
+  });
+
+  it("the worker's Watchtower is scoped, runs hooks, and outwaits the SIGTERM drain", () => {
+    const wt = service(egress, 'agent-worker-watchtower');
+    for (const want of [
+      'WATCHTOWER_SCOPE=agent-worker',
+      'com.centurylinklabs.watchtower.scope=agent-worker',
+      'WATCHTOWER_LABEL_ENABLE=true',
+      'WATCHTOWER_LIFECYCLE_HOOKS=true',
+      'WATCHTOWER_TIMEOUT=30s',
+      '/var/run/docker.sock:/var/run/docker.sock',
+    ]) expect(wt).toContain(want);
+    expect(wt).toMatch(/networks: \[egress_out\]/);
+  });
+
+  it("the app's Watchtower is scoped `none`, so it skips the worker and leaves the other instance alone", () => {
+    const wt = service(nas, 'watchtower');
+    expect(wt).toContain('WATCHTOWER_SCOPE=none');
+    expect(wt).not.toContain('LIFECYCLE_HOOKS');
   });
 });
 

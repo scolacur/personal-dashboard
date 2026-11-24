@@ -12,7 +12,9 @@
 >   mount, so the choice is runtime-independent. Trade-off: PD-190's off-box backup shipper must reach
 >   *into* the VM for `data/backups/` rather than grab a plain macOS file.
 > - **The agent-worker is built on-host** (deliberately NOT on GHCR/Watchtower — [[D-044]]), so the Mini
->   needs the build toolchain, and step 3 must **reproduce the uid-split**: loop runs as root (owns
+>   needs the build toolchain. *(Superseded by [[D-116]]: the worker is now a GHCR pull with its own
+>   scoped Watchtower, so no build toolchain is needed. The uid-split requirement below still holds.)*
+>   Step 3 must **reproduce the uid-split**: loop runs as root (owns
 >   `dashboard.db`), the coding session is dropped to uid `1500`, DB `chmod 660`. There is **no separate
 >   `.sortie.db`** (the worker shares the web app's `dashboard.db`) and **no quota-refund cron** (the C2
 >   fault-tier replaced Sortie's `max_sessions` economics; `ops/sortie/` was removed in C7).

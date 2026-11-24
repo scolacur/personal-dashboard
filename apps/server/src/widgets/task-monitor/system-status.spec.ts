@@ -109,8 +109,20 @@ describe('listWorkerHeartbeats', () => {
       // advertise a fresh version.
       checkoutSha: 'abc123',
       buildSha: 'def456',
+      buildCurrent: null,
       model: 'claude-opus-4-8',
     });
+  });
+
+  it('maps build_current 1/0/NULL to true/false/null (PD-816)', () => {
+    const db = freshDb();
+    const ins = db.prepare(
+      `INSERT INTO worker_heartbeat (worker, started_at, last_seen, sha, build_sha, build_current) VALUES (?, 1, ?, 'a', 'b', ?)`,
+    );
+    ins.run('w1', 3, 1);
+    ins.run('w0', 2, 0);
+    ins.run('wn', 1, null);
+    expect(listWorkerHeartbeats(db).map((h) => h.buildCurrent)).toEqual([true, false, null]);
   });
 
   it('reports a pre-PD-528 image as buildSha null rather than borrowing the checkout sha', () => {
