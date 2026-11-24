@@ -1,0 +1,179 @@
+/* Calendar geometry mirrors the Habit Tracker's By Habit view (copied, not imported — PROJECT.md §5). */
+.by-drug {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+
+  .picker-label {
+    font-size: var(--font-size-xs);
+    color: var(--muted);
+  }
+
+  select {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: var(--font-size-sm);
+    min-width: 12rem;
+  }
+}
+
+.stats {
+  display: flex;
+  gap: var(--space-lg);
+  margin: 0;
+
+  flex-wrap: wrap;
+  row-gap: var(--space-sm);
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    dt {
+      font-size: var(--font-size-xs);
+      color: var(--muted);
+    }
+
+    dd {
+      margin: 0;
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.scroller {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: 3.75rem repeat(7, minmax(1.75rem, 1fr));
+  gap: 3px;
+  padding: var(--space-sm);
+}
+
+.weekday {
+  grid-row: 1;
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+  padding-bottom: var(--space-xs);
+}
+
+/* Left gutter: a month name with a line spanning the rows that hold its days. */
+.month {
+  grid-column: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--muted);
+
+  .month-name {
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .month-year {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .month-line {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    background: var(--border);
+    border-radius: 1px;
+  }
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-height: 1.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+
+  .day-num {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-size: 0.6rem;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.6;
+  }
+
+  .count {
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &:hover:not(.future) {
+    border-color: var(--text);
+  }
+
+  &.open {
+    outline: 2px solid var(--text);
+    outline-offset: 1px;
+  }
+
+  &.future {
+    background: transparent;
+    border-color: transparent;
+    cursor: default;
+  }
+}
+
+.day-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--space-sm) var(--space-md);
+
+  h3 {
+    margin: 0 0 var(--space-xs);
+    font-size: var(--font-size-sm);
+  }
+}

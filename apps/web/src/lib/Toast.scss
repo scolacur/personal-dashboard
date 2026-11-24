@@ -28,3 +28,33 @@
 .toast.error {
   border-color: var(--status-stuck);
 }
+
+/* An action toast ("Logged Weed · Undo", PD-975 — Drug log widget): message and button on one row.
+   The toast itself stays click-through (`pointer-events: none` above); only the button catches taps. */
+.toast.has-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding-right: var(--space-sm);
+}
+
+.toast-action {
+  pointer-events: auto;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
