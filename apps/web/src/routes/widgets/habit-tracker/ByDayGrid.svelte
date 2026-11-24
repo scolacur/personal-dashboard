@@ -26,7 +26,9 @@
     buildMetricValueMap,
     formatMetricCell,
     habitDaysBetween,
+    monthSpans,
     setDayShortcut,
+    weekdayLetter,
     type DayRow,
   } from './by-day';
   import type { PendingHabitWrite } from './queue';
@@ -142,6 +144,8 @@
   const days = $derived(habitDaysBetween(loadedFrom, today)); // oldest first
   // Days as rows (flipped) show today at the top → newest first.
   const rowDays = $derived(flipped ? [...days].reverse() : days);
+  // Days-as-columns only: the month header row above the day numbers (one cell per month span).
+  const months = $derived(monthSpans(days));
 
   const allIds = $derived(new Set(items.map((i) => i.id)));
   const schedulesByItem = $derived(groupSchedulesByItem(schedules));
@@ -174,11 +178,16 @@
     return formatMetricCell(value, metricTypeOf.get(itemId) ?? null, metricOptions.get(itemId) ?? []);
   }
 
-  // Short column/row header for a day: the day-of-month, with the month prefixed on its first day.
+  // Day-as-row header (flipped): the day-of-month, with the month prefixed on its first day. Days as
+  // columns show just the number — the month row above them carries the month.
   function dayHeaderLabel(day: string): string {
     const [, m, d] = day.split('-').map(Number);
     const dayNum = String(d);
     return d === 1 || day === loadedFrom ? `${HABIT_MONTH_NAMES[m - 1]} ${dayNum}` : dayNum;
+  }
+
+  function dayNumber(day: string): string {
+    return String(Number(day.slice(8)));
   }
 
   // ── Cell interactions (all via the shared outbox) ─────────────
@@ -270,6 +279,23 @@
     }
   }
 
+  /**
+   * A wide screen can fit the whole loaded window without overflowing, and lazy loading only fires
+   * on scroll — so keep pulling older chunks until the grid scrolls (or history runs out).
+   */
+  async function fillViewport(): Promise<void> {
+    while (scroller && canLoadMore && !loadingMore) {
+      const overflows = flipped
+        ? scroller.scrollHeight > scroller.clientHeight
+        : scroller.scrollWidth > scroller.clientWidth;
+      if (overflows) return;
+      const before = loadedFrom;
+      await loadOlder();
+      await tick();
+      if (loadedFrom === before) return; // fetch failed; the next scroll retries
+    }
+  }
+
   // Position at the focus day (the deep-linked day when loaded, else today) once loaded, and again
   // whenever the orientation flips. Keyed so it fires once per (orientation, focus) pair.
   let positionedKey = $state<string | null>(null);
@@ -279,7 +305,9 @@
     const key = `${flipped}:${focus}`;
     if (positionedKey === key) return;
     positionedKey = key;
-    void tick().then(() => scrollToDay(focus));
+    void tick()
+      .then(fillViewport)
+      .then(() => scrollToDay(focus));
   });
 </script>
 
@@ -294,7 +322,7 @@
   {#if loading}
     <p class="empty">Loading history…</p>
   {:else if rows.length === 0}
-    <p class="empty">No habits yet — add one on the Habits tab.</p>
+    <p class="empty">No habits yet — add one on the Config tab.</p>
   {:else}
     <div
       class="scroller"
@@ -324,6 +352,7 @@
           {#each rowDays as day, r (day)}
             <div class="row-head day" class:today={day === today} style={`grid-row:${r + 2};grid-column:1`} role="rowheader" use:dayRef={day}>
               {dayHeaderLabel(day)}
+              <span class="dow">{weekdayLetter(day)}</span>
             </div>
             {#each rows as row, c (row.item.id)}
               {@render cell(row, day, r + 2, c + 2)}
@@ -336,12 +365,31 @@
           class="grid"
           role="grid"
           aria-label="Habit history by day"
-          style={`grid-template-columns: var(--namecol) repeat(${days.length}, minmax(2.25rem, 1fr));`}
+          style={`grid-template-columns: var(--namecol) repeat(${days.length}, var(--day-track));`}
         >
-          <div class="corner" style="grid-row:1;grid-column:1"></div>
+          <!-- Row 1: month names, each label sticky-centred until its month's seam pushes it out. -->
+          <div class="corner" style="grid-row:1 / 3;grid-column:1"></div>
+          {#each months as m, i (m.key)}
+            <div
+              class="month-head"
+              class:seam={i > 0}
+              style={`grid-row:1;grid-column:${m.start + 2} / span ${m.length}`}
+              aria-hidden="true"
+            >
+              <span class="month-label">{m.label}</span>
+            </div>
+          {/each}
+          <!-- Row 2: day numbers. -->
           {#each days as day, c (day)}
-            <div class="col-head day" class:today={day === today} style={`grid-row:1;grid-column:${c + 2}`} role="columnheader" use:dayRef={day}>
-              {dayHeaderLabel(day)}
+            <div
+              class="col-head day"
+              class:today={day === today}
+              style={`grid-row:2;grid-column:${c + 2}`}
+              role="columnheader"
+              aria-label={day}
+              use:dayRef={day}
+            >
+              {dayNumber(day)}
             </div>
           {/each}
 
@@ -349,7 +397,7 @@
             <div
               class="row-head name-cell"
               class:metric={row.isMetric}
-              style={`grid-row:${r + 2};grid-column:1;padding-left:calc(var(--space-sm) + ${row.depth} * var(--space-md))`}
+              style={`grid-row:${r + 3};grid-column:1;padding-left:calc(var(--space-sm) + ${row.depth} * var(--space-md))`}
               role="rowheader"
             >
               {#if onOpenItem}
@@ -359,8 +407,21 @@
               {/if}
             </div>
             {#each days as day, c (day)}
-              {@render cell(row, day, r + 2, c + 2)}
+              {@render cell(row, day, r + 3, c + 2)}
             {/each}
+          {/each}
+
+          <!-- Last row: weekday letters under each day. -->
+          <div class="weekday-corner" style={`grid-row:${rows.length + 3};grid-column:1`}></div>
+          {#each days as day, c (day)}
+            <div
+              class="weekday"
+              class:today={day === today}
+              style={`grid-row:${rows.length + 3};grid-column:${c + 2}`}
+              aria-hidden="true"
+            >
+              {weekdayLetter(day)}
+            </div>
           {/each}
         </div>
       {/if}

@@ -3,3 +3,8 @@
   flex-direction: column;
   gap: var(--space-md);
 }
+
+/* The view switch keeps its natural width rather than stretching across the wide History pane. */
+.log-view > :global(.segmented) {
+  align-self: flex-start;
+}

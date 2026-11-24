@@ -163,3 +163,56 @@ export function applyCompletionWrite(
   const rest = completions.filter((c) => !(c.itemId === itemId && c.day === day));
   return done ? [...rest, { itemId, day, completedAt: now }] : rest;
 }
+
+/** Weekday letters for the By Day footer row, Monday first (the habit week). R = Thursday. */
+export const WEEKDAY_LETTERS = ['M', 'T', 'W', 'R', 'F', 'Sa', 'Su'] as const;
+
+const FULL_MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+] as const;
+
+/** The weekday letter for a habit day (`YYYY-MM-DD`), from `WEEKDAY_LETTERS`. */
+export function weekdayLetter(day: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  const sundayFirst = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return WEEKDAY_LETTERS[(sundayFirst + 6) % 7];
+}
+
+/** One calendar month's run of consecutive columns in the By Day grid. */
+export interface MonthSpan {
+  /** `YYYY-MM`, unique per span. */
+  key: string;
+  /** e.g. "November 2026". */
+  label: string;
+  /** Index into `days` of the span's first day. */
+  start: number;
+  /** Number of days in the span. */
+  length: number;
+}
+
+/** Group consecutive habit days (oldest first) into calendar-month spans for the month header row. */
+export function monthSpans(days: string[]): MonthSpan[] {
+  const spans: MonthSpan[] = [];
+  days.forEach((day, i) => {
+    const key = day.slice(0, 7);
+    const last = spans[spans.length - 1];
+    if (last && last.key === key) {
+      last.length++;
+      return;
+    }
+    const [y, m] = key.split('-').map(Number);
+    spans.push({ key, label: `${FULL_MONTH_NAMES[m - 1]} ${y}`, start: i, length: 1 });
+  });
+  return spans;
+}
