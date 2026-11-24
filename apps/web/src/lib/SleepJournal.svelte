@@ -51,6 +51,9 @@
   let tags = $state<string[]>([...SLEEP_DEFAULT_TAGS]);
   let entries = $state<SleepEntry[]>([]);
   let pending = $state<PendingNight[]>([]);
+  // The "N pending sync" line reads the outbox's delayed-visible signal, so a save that syncs
+  // normally never flashes it (PD-778). `pending` stays the raw queue, for the list.
+  let visiblePending = $state<PendingNight[]>([]);
   let today = $state(todayWakeDate());
 
   let draft = $state<NightDraft>(blankDraft(null));
@@ -63,6 +66,7 @@
     send: createEntry,
     isRejected: (e) => e instanceof RejectedError,
     onChange: (list) => (pending = list),
+    onVisibleChange: (list) => (visiblePending = list),
     onSent: (sent) => mergeEntries(sent),
     onRejected: (_night, message) => toast.show(`A night was refused: ${message}`, 'error', 6000),
   });
@@ -204,8 +208,8 @@
 
     <button type="button" class="save" onclick={submit}>Save</button>
 
-    {#if pending.length > 0}
-      <p class="pending" role="status">{pending.length} pending sync</p>
+    {#if visiblePending.length > 0}
+      <p class="pending" role="status">{visiblePending.length} pending sync</p>
     {/if}
   </div>
 {/snippet}
