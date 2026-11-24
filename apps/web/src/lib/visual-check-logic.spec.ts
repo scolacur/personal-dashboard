@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { VisualCaptureState } from '@dashboard/shared';
-import { askedBy, captureNotice, rejectBlocked, shotsByRoute, stepFailureLines, waitedFor, type Shot } from './visual-check-logic';
+import {
+  approveLabel,
+  approvedMergingMessage,
+  askedBy,
+  captureNotice,
+  rejectBlocked,
+  shotsByRoute,
+  stepFailureLines,
+  waitedFor,
+  type Shot,
+} from './visual-check-logic';
 
 const shot = (route: string, viewport: string, scheme: string): Shot => ({ route, viewport, scheme, file: `${route}-${viewport}-${scheme}.png`, url: '/x' });
 
@@ -44,6 +54,20 @@ describe('visual check logic (PD-773)', () => {
 
   it('names who asked, once each', () => {
     expect(askedBy({ reasons: [{ by: 'robot', reason: 'a' }, { by: 'evaluator', reason: 'b' }, { by: 'robot', reason: 'c' }] })).toBe('the Robot and the Evaluator');
+  });
+});
+
+describe('approve label (PD-795)', () => {
+  it('says it will merge when approving is the last gate', () => {
+    expect(approveLabel({ mergesOnApprove: true })).toBe('Looks right, merge PR');
+  });
+
+  it('stays neutral when approving only opens review-gate', () => {
+    expect(approveLabel({ mergesOnApprove: false })).toBe('Looks right');
+  });
+
+  it('names the PR in the post-approve message', () => {
+    expect(approvedMergingMessage({ prNumber: 537 })).toBe('Approved, auto-merge will merge #537 once checks pass');
   });
 });
 

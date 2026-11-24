@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AwaitingVisualItem } from '@dashboard/shared';
-  import { askedBy, captureNotice, rejectBlocked, shotsByRoute, stepFailureLines } from './visual-check-logic';
+  import { approveLabel, askedBy, captureNotice, rejectBlocked, shotsByRoute, stepFailureLines } from './visual-check-logic';
 
   /**
    * One Robot PR waiting for Steve's visual check (PD-773): what was asked, the screenshots, and
@@ -74,7 +74,7 @@
   <label class="vc-note-label" for="vc-note-{item.ticketId}">What to change (needed to request changes)</label>
   <textarea id="vc-note-{item.ticketId}" class="vc-note" rows="2" bind:value={note} disabled={busy}></textarea>
   <div class="vc-actions">
-    <button class="vc-approve" onclick={() => decide(true)} disabled={busy}>Looks right</button>
+    <button class="vc-approve" onclick={() => decide(true)} disabled={busy}>{approveLabel(item)}</button>
     <button class="vc-reject" onclick={() => decide(false)} disabled={busy || blocked !== null} title={blocked ?? ''}>Request changes</button>
   </div>
   {#if error}<p class="vc-error" role="alert">{error}</p>{/if}

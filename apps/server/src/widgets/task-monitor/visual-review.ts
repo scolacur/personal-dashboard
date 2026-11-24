@@ -38,6 +38,36 @@ const prFromUrl = (url: string | undefined): number | null => {
   return m ? Number(m[1]) : null;
 };
 
+/**
+ * The server's mirror of the two GitHub repo variables that switch auto-merge on (PD-795):
+ * `AUTO_MERGE_ROBOT` for `robot/*` PRs, `AUTO_MERGE_ALL` for every other PR, each on only when set
+ * to exactly `on` (the same rule `.github/workflows/robot-auto-merge.yml` applies). The server
+ * cannot read a repo variable, so these env vars MUST be kept in sync with the repo variables of the
+ * same name by hand — if they drift, the Approve button's "merge PR" wording is the only thing that
+ * is wrong; the merge itself is still decided by the workflow.
+ */
+export function autoMergeOn(isRobotPr: boolean, env: NodeJS.ProcessEnv = process.env): boolean {
+  return (isRobotPr ? env.AUTO_MERGE_ROBOT : env.AUTO_MERGE_ALL) === 'on';
+}
+
+/**
+ * Whether the Evaluator has shipped the PR's current head (PD-795), from the `robot_evaluated`
+ * timeline events after the review boundary. Mirrors the worker's "ship from every lens" review-gate
+ * rule (D-101) using only what the server can see: the latest verdict per lens for this head is
+ * `ship`, and at least one lens produced a verdict. Events arrive in `created_at, id` order, so the
+ * last one seen for a lens is its latest.
+ */
+export function evaluatorShipped(events: Ev[], prNumber: number, boundary: number): boolean {
+  const shipByLens = new Map<string, boolean>();
+  for (const e of events) {
+    if (e.type !== ROBOT_EVENT.evaluated || e.created_at <= boundary) continue;
+    const d = parse(e);
+    if (d.prNumber !== prNumber) continue;
+    shipByLens.set(d.lens ?? 'code', d.verdict === 'ship');
+  }
+  return shipByLens.size > 0 && [...shipByLens.values()].every((ship) => ship);
+}
+
 interface TicketRow {
   id: number;
   display_id: string | null;
@@ -86,7 +116,7 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
   const events = db
     .prepare(
       `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
-        WHERE ticket_id = ? AND type IN (?, ?, ?, ?, ?) ORDER BY created_at, id`,
+        WHERE ticket_id = ? AND type IN (?, ?, ?, ?, ?, ?) ORDER BY created_at, id`,
     )
     .all(
       t.id,
@@ -95,6 +125,7 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
       ROBOT_EVENT.visualReviewRequested,
       ROBOT_EVENT.visualReviewed,
       ROBOT_EVENT.visualCaptured,
+      ROBOT_EVENT.evaluated,
     ) as Ev[];
   const handoffs = events.filter((e) => e.type === ROBOT_EVENT.handoff);
   const last = handoffs[handoffs.length - 1];
@@ -123,6 +154,7 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
     capturedAt: latestCapture ? latestCapture.created_at : null,
     requestedAt: requests[requests.length - 1].created_at,
     capture: captureStateFor(db, prNumber, boundary, now),
+    mergesOnApprove: evaluatorShipped(events, prNumber, boundary) && autoMergeOn(true),
   };
 }
 
@@ -135,9 +167,16 @@ function pendingForSession(db: Database.Database, t: TicketRow, now: number): Aw
   const events = db
     .prepare(
       `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
-        WHERE ticket_id = ? AND type IN (?, ?, ?, ?) ORDER BY created_at, id`,
+        WHERE ticket_id = ? AND type IN (?, ?, ?, ?, ?) ORDER BY created_at, id`,
     )
-    .all(t.id, ROBOT_EVENT.evaluating, ROBOT_EVENT.visualReviewRequested, ROBOT_EVENT.visualReviewed, ROBOT_EVENT.visualCaptured) as Ev[];
+    .all(
+      t.id,
+      ROBOT_EVENT.evaluating,
+      ROBOT_EVENT.visualReviewRequested,
+      ROBOT_EVENT.visualReviewed,
+      ROBOT_EVENT.visualCaptured,
+      ROBOT_EVENT.evaluated,
+    ) as Ev[];
   const allRequests = events.filter((e) => e.type === ROBOT_EVENT.visualReviewRequested);
   const prNumber = allRequests.length > 0 ? (parse(allRequests[allRequests.length - 1]).prNumber ?? null) : null;
   if (prNumber === null) return null;
@@ -160,6 +199,7 @@ function pendingForSession(db: Database.Database, t: TicketRow, now: number): Aw
     capturedAt: latestCapture ? latestCapture.created_at : null,
     requestedAt: requests[requests.length - 1].created_at,
     capture: captureStateFor(db, prNumber, boundary, now),
+    mergesOnApprove: evaluatorShipped(events, prNumber, boundary) && autoMergeOn(false),
   };
 }
 

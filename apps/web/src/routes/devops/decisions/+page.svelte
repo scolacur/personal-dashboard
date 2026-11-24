@@ -6,6 +6,7 @@
   import { applyMarkdown } from '$lib/markdown';
   import RefineQuestionForm from '$lib/RefineQuestionForm.svelte';
   import RefineProposalCard from '$lib/RefineProposalCard.svelte';
+  import { approvedMergingMessage } from '$lib/visual-check-logic';
   import { decisionsAnchor, visualAnchor } from '$lib/notification-links';
   import { refreshDecisionsCount } from '$lib/decisions-store';
   import { fetchAwaitingRefine, fetchAwaitingVisual, postRefineAnswers, postVisualReview } from '../api';
@@ -19,6 +20,10 @@
   // otherwise ready to merge.
   let visual = $state<AwaitingVisualItem[]>([]);
   let decidedVisual = $state<Set<number>>(new Set());
+  // PD-795: a check Steve just approved that will auto-merge. Kept visible with its post-approve
+  // message after it leaves the server list (approving records a review that drops it), so he sees
+  // the merge is coming rather than the card vanishing as if nothing happened.
+  let merging = $state<Map<number, { message: string; displayId: string | null; title: string }>>(new Map());
   let loading = $state(true);
   let error = $state<string | null>(null);
   // Turns answered from this page. A sent round collapses at once; it leaves the list when the next
@@ -57,6 +62,9 @@
   async function decideVisual(item: AwaitingVisualItem, approved: boolean, note: string) {
     await postVisualReview(item.ticketId, approved, note); // throws → the card shows the error
     decidedVisual = new Set([...decidedVisual, item.ticketId]);
+    if (approved && item.mergesOnApprove) {
+      merging = new Map([...merging, [item.ticketId, { message: approvedMergingMessage(item), displayId: item.displayId, title: item.title }]]);
+    }
     void refreshDecisionsCount();
   }
 
@@ -74,6 +82,7 @@
 
   const open = $derived(items.filter((i) => !sent.has(i.eventId) && !decided.has(i.eventId)));
   const openVisual = $derived(visual.filter((v) => !decidedVisual.has(v.ticketId)));
+  const mergingList = $derived([...merging.entries()].map(([ticketId, m]) => ({ ticketId, ...m })));
   const sentItems = $derived(items.filter((i) => sent.has(i.eventId)));
   const decidedItems = $derived(items.filter((i) => decided.has(i.eventId)));
 </script>
@@ -92,10 +101,10 @@
     <p class="decisions-empty">Loading…</p>
   {:else if error}
     <p class="decisions-error" role="alert">Could not load decisions: {error}</p>
-  {:else if open.length === 0 && sentItems.length === 0 && decidedItems.length === 0 && openVisual.length === 0}
+  {:else if open.length === 0 && sentItems.length === 0 && decidedItems.length === 0 && openVisual.length === 0 && mergingList.length === 0}
     <p class="decisions-empty">Nothing is waiting on you. New questions appear here as Refine agents ask them.</p>
   {:else}
-    {#if openVisual.length > 0}
+    {#if openVisual.length > 0 || mergingList.length > 0}
       <h2 class="decisions-section">Visual checks</h2>
       <ol class="decisions-list">
         {#each openVisual as v (v.ticketId)}
@@ -109,6 +118,17 @@
               <span class="decision-meta"><span class="decision-age">asked {askedAgo(v.requestedAt, nowTs)}</span></span>
             </header>
             <VisualCheck item={v} onDecide={(approved, note) => decideVisual(v, approved, note)} />
+          </li>
+        {/each}
+        {#each mergingList as m (m.ticketId)}
+          <li class="decision">
+            <header class="decision-head">
+              <a class="decision-ticket" href="/devops/tickets/{m.displayId ?? m.ticketId}">
+                <span class="decision-id">{m.displayId}</span>
+                <span class="decision-name">{m.title}</span>
+              </a>
+            </header>
+            <p class="decision-merging" role="status">{m.message}</p>
           </li>
         {/each}
       </ol>

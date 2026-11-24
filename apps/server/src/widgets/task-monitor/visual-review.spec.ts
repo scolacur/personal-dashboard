@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { captureStateFor, listAwaitingVisual, recordVisualReview } from './visual-review';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { autoMergeOn, captureStateFor, evaluatorShipped, listAwaitingVisual, recordVisualReview } from './visual-review';
 
 let db: Database.Database;
 const event = (type: string, detail: object, at: number, ticket = 1) =>
@@ -141,5 +141,83 @@ describe('visual review on session PRs (PD-915)', () => {
     expect(listAwaitingVisual(db).filter((i) => i.ticketId === 2)).toEqual([]);
     db.exec("UPDATE agent_tickets SET status = 'queue', assignee = 'robot', agent_state = 'working' WHERE id = 2");
     expect(listAwaitingVisual(db).filter((i) => i.ticketId === 2)).toEqual([]);
+  });
+});
+
+describe('auto-merge switch mirror (PD-795)', () => {
+  it('reads AUTO_MERGE_ROBOT for robot PRs and AUTO_MERGE_ALL for the rest, exactly "on"', () => {
+    expect(autoMergeOn(true, { AUTO_MERGE_ROBOT: 'on' })).toBe(true);
+    expect(autoMergeOn(true, { AUTO_MERGE_ROBOT: 'off' })).toBe(false);
+    expect(autoMergeOn(true, { AUTO_MERGE_ROBOT: 'true' })).toBe(false); // only exactly "on"
+    expect(autoMergeOn(true, {})).toBe(false);
+    expect(autoMergeOn(false, { AUTO_MERGE_ALL: 'on' })).toBe(true);
+    expect(autoMergeOn(false, { AUTO_MERGE_ROBOT: 'on' })).toBe(false); // the robot switch does not cover non-robot PRs
+  });
+});
+
+describe('evaluator ship for the current head (PD-795)', () => {
+  const ev = (type: string, detail: object, at: number, id: number) => ({ id, ticket_id: 1, type, detail: JSON.stringify(detail), created_at: at });
+
+  it('is a ship only when the latest verdict on every lens after the boundary is ship', () => {
+    const events = [
+      ev('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'ship' }, 200, 1),
+      ev('robot_evaluated', { prNumber: 314, lens: 'security', verdict: 'ship' }, 210, 2),
+    ];
+    expect(evaluatorShipped(events, 314, 100)).toBe(true);
+  });
+
+  it('is false when any lens revises', () => {
+    const events = [
+      ev('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'ship' }, 200, 1),
+      ev('robot_evaluated', { prNumber: 314, lens: 'security', verdict: 'revise' }, 210, 2),
+    ];
+    expect(evaluatorShipped(events, 314, 100)).toBe(false);
+  });
+
+  it('takes the latest verdict per lens (a later ship overrides an earlier revise)', () => {
+    const events = [
+      ev('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'revise' }, 200, 1),
+      ev('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'ship' }, 220, 2),
+    ];
+    expect(evaluatorShipped(events, 314, 100)).toBe(true);
+  });
+
+  it('ignores verdicts at or before the boundary, and for other PRs', () => {
+    const events = [
+      ev('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'ship' }, 100, 1), // at boundary
+      ev('robot_evaluated', { prNumber: 999, lens: 'code', verdict: 'ship' }, 200, 2), // other PR
+    ];
+    expect(evaluatorShipped(events, 314, 100)).toBe(false);
+  });
+
+  it('is false when the Evaluator has produced no verdict for this head', () => {
+    expect(evaluatorShipped([], 314, 100)).toBe(false);
+  });
+});
+
+describe('mergesOnApprove on the awaiting list (PD-795)', () => {
+  afterEach(() => {
+    delete process.env.AUTO_MERGE_ROBOT;
+    delete process.env.AUTO_MERGE_ALL;
+  });
+
+  it('is true for a shipped robot PR when AUTO_MERGE_ROBOT is on', () => {
+    process.env.AUTO_MERGE_ROBOT = 'on';
+    event('robot_visual_review_requested', { prNumber: 314, by: 'robot', reason: 'look' }, 110);
+    event('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'ship' }, 120);
+    expect(listAwaitingVisual(db)[0].mergesOnApprove).toBe(true);
+  });
+
+  it('is false when the switch is off, even if shipped', () => {
+    event('robot_visual_review_requested', { prNumber: 314, by: 'robot', reason: 'look' }, 110);
+    event('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'ship' }, 120);
+    expect(listAwaitingVisual(db)[0].mergesOnApprove).toBe(false);
+  });
+
+  it('is false when the switch is on but there is no ship verdict', () => {
+    process.env.AUTO_MERGE_ROBOT = 'on';
+    event('robot_visual_review_requested', { prNumber: 314, by: 'robot', reason: 'look' }, 110);
+    event('robot_evaluated', { prNumber: 314, lens: 'code', verdict: 'revise' }, 120);
+    expect(listAwaitingVisual(db)[0].mergesOnApprove).toBe(false);
   });
 });

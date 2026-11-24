@@ -46,6 +46,20 @@ export function rejectBlocked(note: string): string | null {
   return note.trim() === '' ? 'Say what to change; the Robot reworks from your note.' : null;
 }
 
+/**
+ * The approve button's label (PD-795). When approving is the last gate before the PR merges — the
+ * Evaluator shipped this head and the auto-merge switch is on (`mergesOnApprove`) — it says so, so a
+ * click never merges code silently. Otherwise approving only opens review-gate, so it stays neutral.
+ */
+export function approveLabel(item: Pick<AwaitingVisualItem, 'mergesOnApprove'>): string {
+  return item.mergesOnApprove ? 'Looks right, merge PR' : 'Looks right';
+}
+
+/** What the card says after Steve approves a check that merges on approval, until the PR merges (PD-795). */
+export function approvedMergingMessage(item: Pick<AwaitingVisualItem, 'prNumber'>): string {
+  return `Approved, auto-merge will merge #${item.prNumber} once checks pass`;
+}
+
 /** "the Robot" / "the Evaluator" asked, with what to look at. */
 export function askedBy(item: Pick<AwaitingVisualItem, 'reasons'>): string {
   const who = [...new Set(item.reasons.map((r) => (r.by === 'evaluator' ? 'the Evaluator' : 'the Robot')))];

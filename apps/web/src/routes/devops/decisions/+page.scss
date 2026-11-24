@@ -122,6 +122,12 @@
   }
 }
 
+.decision-merging {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--status-done);
+}
+
 .decisions-sent {
   list-style: none;
   margin: var(--space-lg) 0 0;

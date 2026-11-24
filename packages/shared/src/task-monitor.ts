@@ -1437,6 +1437,10 @@ export interface AwaitingVisualItem {
   requestedAt: number;
   /** PD-794: what actually happened with capture for the PR's current head. */
   capture: VisualCaptureState;
+  /** PD-795: approving this check is the last gate before the PR merges — the Evaluator has shipped
+   *  the current head AND the matching auto-merge switch is on — so the Approve button says it will
+   *  merge. False means approving only opens review-gate; a human still merges. */
+  mergesOnApprove: boolean;
 }
 
 /**
