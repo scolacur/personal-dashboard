@@ -178,6 +178,29 @@
   }
 }
 
+// PD-940: closure label ("Split into …" / "Superseded by …" / "Duplicate of …") on a reasoned
+// close. It is a span wrapping per-successor links, so it does not use the shared `&:hover` colour
+// swap of a whole-badge anchor.
+.rel-closure {
+  flex-wrap: wrap;
+  gap: 2px;
+  cursor: default;
+
+  .rel-closure-ref {
+    color: var(--accent-2);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .rel-closure-sep,
+  .rel-closure-more {
+    color: var(--muted);
+  }
+}
+
 // Readiness badges (D-058, PD-399): "not ready" (soft) / "⚠ bypassed" (honest override).
 .card-readiness {
   display: flex;

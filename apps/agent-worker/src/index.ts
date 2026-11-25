@@ -8,6 +8,7 @@ import { startAuditJob } from './jobs/audit';
 import { startRobotJob, type RobotLoopHandle } from './jobs/robot';
 import { startEvaluatorJob } from './jobs/evaluate';
 import { startConflictJob } from './jobs/conflicts';
+import { startRetestJob } from './jobs/retest';
 import { startVisualJob } from './jobs/visual';
 import { startSzzJob } from './jobs/szz';
 import { startMaintenanceCoordinator } from './jobs/maintenance';
@@ -56,6 +57,7 @@ async function main(): Promise<void> {
   const robot = startRobotJob(db, config);
   startEvaluatorJob(db, config);
   startConflictJob(db, config);
+  startRetestJob(db, config);
   startVisualJob(db, config);
   startSzzJob(db, config);
   startMaintenanceCoordinator(db, config);

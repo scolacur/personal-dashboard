@@ -51,6 +51,9 @@ export interface AgentWorkerConfig {
   evaluator: EvaluatorConfig;
   /** PD-774 (D-099): the mechanical merge-conflict resolver. Off by default: it pushes to PR branches. */
   conflictResolver: { enabled: boolean; intervalMs: number };
+  /** PD-942: once main goes green, re-test PRs whose `verify` failed on the red main (draft → ready).
+   *  On by default (RETEST_ENABLED=0 turns it off): it never pushes. Needs `robot.writeToken`. */
+  retest: { enabled: boolean; intervalMs: number };
   /** PD-916: SZZ — blame each fixed bug back to the PR that introduced it. Read-only and model-free,
    *  so on by default (SZZ_ENABLED=0 turns it off). Keeps its own FULL clone at `historyDir`: the
    *  grounding checkout is `--depth 1`, and blame needs history. */
@@ -382,6 +385,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AgentWorkerCon
     conflictResolver: {
       enabled: env.CONFLICT_RESOLVER_ENABLED === '1' || env.CONFLICT_RESOLVER_ENABLED === 'true',
       intervalMs: Number(env.CONFLICT_RESOLVER_INTERVAL_MS ?? 5 * 60_000),
+    },
+    retest: {
+      enabled: env.RETEST_ENABLED !== '0' && env.RETEST_ENABLED !== 'false',
+      intervalMs: Number(env.RETEST_INTERVAL_MS ?? 5 * 60_000),
     },
     szz: {
       enabled: env.SZZ_ENABLED !== '0' && env.SZZ_ENABLED !== 'false',

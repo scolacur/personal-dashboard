@@ -787,6 +787,13 @@ export function registerRoutes(
             .status(409)
             .send({ error: 'there is no open question round to answer', code: 'NO_OPEN_ROUND' });
         }
+        if (result.reason === 'round_stale') {
+          // PD-889: the round went stale because a ticket it cited changed; the agent is re-grounding.
+          return reply.status(409).send({
+            error: 'this question round is stale — a ticket it relied on has changed, and the Refine agent is re-grounding it',
+            code: 'ROUND_STALE',
+          });
+        }
         return reply.status(400).send({
           error: 'message' in result ? result.message : 'invalid answers',
           code: 'INVALID_ANSWERS',

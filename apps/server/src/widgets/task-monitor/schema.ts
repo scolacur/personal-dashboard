@@ -36,6 +36,10 @@ export function bootstrapSchema(db: Database.Database): void {
       run_id          INTEGER NOT NULL REFERENCES audit_run(id) ON DELETE CASCADE,
       project_id      INTEGER,
       ticket_id       INTEGER,
+      -- Relation findings (PD-828): the other end + the relation type. NULL on a single-ticket
+      -- finding. Direction (D-051): ticket_id is the relation from-side, target_ticket_id the to-side.
+      target_ticket_id INTEGER,
+      relation_type   TEXT,                                -- blocks|relates|duplicates (relation findings)
       type            TEXT    NOT NULL,                    -- recommendation bucket
       recommendation  TEXT,
       reason          TEXT,
@@ -216,6 +220,14 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'audit_run_add_turns_tokens', (d) => {
     addColumn(d, 'audit_run', 'turns', 'INTEGER');
     addColumn(d, 'audit_run', 'tokens', 'INTEGER');
+  });
+  // PD-828: relation findings (link / unlink / duplicate). The audit now reads relations as truth
+  // and may flag a new/stale link; a relation finding carries its other end + type. Both nullable
+  // (NULL on a single-ticket finding), so every pre-existing finding back-fills cleanly. Advisory
+  // only — the apply path that would write a relation is Child B (PD-287-blocked).
+  migrate(db, 'audit_finding_add_relation_columns', (d) => {
+    addColumn(d, 'audit_finding', 'target_ticket_id', 'INTEGER');
+    addColumn(d, 'audit_finding', 'relation_type', 'TEXT');
   });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');
