@@ -38,6 +38,13 @@ function freshDb(): Database.Database {
   return db;
 }
 
+// A DB whose audit_finding already carries the PD-285 fingerprint column (post-migration shape).
+function freshDbWithFingerprint(): Database.Database {
+  const d = freshDb();
+  d.exec('ALTER TABLE audit_finding ADD COLUMN fingerprint TEXT');
+  return d;
+}
+
 function requestRun(db: Database.Database): number {
   const r = db
     .prepare("INSERT INTO audit_run (status, created_at) VALUES ('requested', ?)")
@@ -165,6 +172,108 @@ describe('runAuditPass', () => {
     const run = claimNextRun(db) ?? { id: requestRun(db), scope: null };
     const runAgent = async () => ({ ok: false, text: 'Credit balance is too low' });
     await expect(runAuditPass(db, config, run, { runAgent, buildContext: noContext })).rejects.toThrow(/audit agent turn failed/);
+  });
+});
+
+// ── PD-285: cross-run reconciliation (sticky decisions + suppression) ─────────
+
+describe('runAuditPass — cross-run reconciliation (PD-285)', () => {
+  function seed(d: Database.Database): void {
+    d.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    d.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+    d.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (11, 'PD-11', 'B', 'backlog', 1)").run();
+  }
+  const agentEmitting = (text: string) => async () => ({ ok: true, text });
+  // Run one full pass and return the resulting run id (it finishes 'done').
+  async function pass(d: Database.Database, text: string): Promise<number> {
+    const id = requestRun(d);
+    const run = claimNextRun(d)!;
+    await runAuditPass(d, config, run, { runAgent: agentEmitting(text), buildContext: noContext });
+    return id;
+  }
+  const findingsFor = (d: Database.Database, runId: number) =>
+    d.prepare('SELECT ticket_id, type, decision, fingerprint FROM audit_finding WHERE run_id = ? ORDER BY ticket_id').all(runId) as {
+      ticket_id: number;
+      type: string;
+      decision: string;
+      fingerprint: string | null;
+    }[];
+
+  it('writes a fingerprint and carries an accepted decision forward on an identical re-run (Done-When #2)', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+    const text = '[{"displayId":"PD-10","type":"archive","evidence":"superseded","proposedChange":"archive it"}]';
+
+    const run1 = await pass(d, text);
+    const f1 = findingsFor(d, run1);
+    expect(f1).toHaveLength(1);
+    expect(f1[0].decision).toBe('undecided');
+    expect(f1[0].fingerprint).toMatch(/^[0-9a-f]{64}$/); // fingerprint was persisted
+
+    // Human accepts it.
+    d.prepare("UPDATE audit_finding SET decision = 'accepted' WHERE run_id = ?").run(run1);
+
+    const run2 = await pass(d, text);
+    const f2 = findingsFor(d, run2);
+    expect(f2).toHaveLength(1);
+    expect(f2[0].decision).toBe('accepted'); // carried forward
+    expect(f2[0].fingerprint).toBe(f1[0].fingerprint); // identical inputs → identical fingerprint
+  });
+
+  it('keeps a rejected finding suppressed (rejected) across an identical re-run', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+    const text = '[{"displayId":"PD-10","type":"archive","evidence":"stale","proposedChange":"close"}]';
+
+    const run1 = await pass(d, text);
+    d.prepare("UPDATE audit_finding SET decision = 'rejected' WHERE run_id = ?").run(run1);
+
+    const run2 = await pass(d, text);
+    expect(findingsFor(d, run2)[0].decision).toBe('rejected');
+  });
+
+  it('resurfaces a rejected finding (resets to undecided) only when the fingerprint changes (Done-When #3)', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+
+    const run1 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"OLD reason","proposedChange":"close"}]');
+    d.prepare("UPDATE audit_finding SET decision = 'rejected' WHERE run_id = ?").run(run1);
+
+    // Same ticket + type, but the evidence moved → changed fingerprint → resurfaces.
+    const run2 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"NEW reason","proposedChange":"close"}]');
+    const f2 = findingsFor(d, run2);
+    expect(f2[0].decision).toBe('undecided');
+    expect(f2[0].fingerprint).not.toBeNull();
+  });
+
+  it('does not carry a finding present last run but absent this run (closed-by-omission, Done-When #4)', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+
+    const run1 = await pass(
+      d,
+      '[{"displayId":"PD-10","type":"archive","evidence":"e10"},{"displayId":"PD-11","type":"update","evidence":"e11"}]',
+    );
+    d.prepare("UPDATE audit_finding SET decision = 'accepted' WHERE run_id = ?").run(run1);
+
+    // This run only re-raises PD-10; PD-11 is gone.
+    const run2 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"e10"}]');
+    const f2 = findingsFor(d, run2);
+    expect(f2).toHaveLength(1);
+    expect(f2[0].ticket_id).toBe(10);
+    expect(f2[0].decision).toBe('accepted');
+  });
+
+  it('tolerates a DB with no fingerprint column (worker deployed before the migration, Done-When #5)', async () => {
+    const d = freshDb(); // no fingerprint column
+    seed(d);
+    const run1 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"e"}]');
+    const f1 = d.prepare('SELECT decision FROM audit_finding WHERE run_id = ?').all(run1) as { decision: string }[];
+    expect(f1).toHaveLength(1);
+    expect(f1[0].decision).toBe('undecided');
+    // And a second pass still runs without a prior-findings crash.
+    const run2 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"e"}]');
+    expect(d.prepare('SELECT status FROM audit_run WHERE id = ?').get(run2)).toEqual({ status: 'done' });
   });
 });
 

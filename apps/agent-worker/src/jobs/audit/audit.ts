@@ -7,6 +7,7 @@ import {
   finishRun,
   firstProjectWithActiveTickets,
   getAuditableTickets,
+  getPriorFindings,
   getRelationsForTickets,
   insertFinding,
   recordAuditRunUsage,
@@ -16,6 +17,7 @@ import {
   type ClaimedRun,
 } from './audit-db';
 import { runAuditTurn, type AuditProgress } from './audit-agent';
+import { findingFingerprint, reconcileDecisions, type CurrentFinding } from './reconcile';
 
 // Single-ticket recommendation buckets the audit agent may emit (D-045). 'keep' = no action needed;
 // it's recorded so a re-run can show the ticket was reviewed and deliberately left alone.
@@ -196,8 +198,25 @@ export async function runAuditPass(
   }
 
   const raw = parseAuditFindings(reply.text);
+
   const buckets: Record<string, number> = {};
   let persisted = 0;
+
+  // Resolve + fingerprint every single-ticket finding we can tie to an audited ticket, THEN
+  // reconcile the whole set against the prior run (PD-285). Reconciliation is batch, not per-row:
+  // it keys on (ticket_id, type), so it needs the current run's full set before deciding
+  // carry-forward. Relation findings (PD-828) are not reconciled here — their match key is
+  // (from, to, relation_type), deferred to PD-288 — so they are persisted inline as before.
+  interface Resolved {
+    ticketId: number;
+    type: string;
+    recommendation: string | null;
+    reason: string | null;
+    evidence: string | null;
+    proposedChange: string | null;
+    fingerprint: string;
+  }
+  const resolved: Resolved[] = [];
   for (const f of raw) {
     // Resolve the ticket the finding is about; drop findings we can't tie to an audited ticket.
     const ticketId =
@@ -237,18 +256,46 @@ export async function runAuditPass(
     }
 
     const type = (FINDING_TYPES as readonly string[]).includes(f.type ?? '') ? (f.type as string) : 'update';
-    insertFinding(db, {
-      runId: run.id,
-      projectId: project.id,
+    const evidence = f.evidence ?? null;
+    const proposedChange = f.proposedChange ?? null;
+    resolved.push({
       ticketId,
       type,
       recommendation: f.recommendation ?? null,
       reason: f.reason ?? null,
-      evidence: f.evidence ?? null,
+      evidence,
+      proposedChange,
+      fingerprint: findingFingerprint({ type, evidence, proposedChange }),
     });
-    buckets[type] = (buckets[type] ?? 0) + 1;
-    persisted += 1;
   }
+
+  // Carry-forward decisions from the most recent prior `done` run for this project (PD-285): an
+  // unchanged fingerprint keeps accepted/rejected; a changed one (or no prior) → undecided. A prior
+  // finding with no current match is absent here = closed-by-omission.
+  const prior = getPriorFindings(db, project.id);
+  const current: CurrentFinding[] = resolved.map((r) => ({
+    ticketId: r.ticketId,
+    type: r.type,
+    fingerprint: r.fingerprint,
+  }));
+  const decisions = reconcileDecisions(prior, current);
+
+  resolved.forEach((r, i) => {
+    insertFinding(db, {
+      runId: run.id,
+      projectId: project.id,
+      ticketId: r.ticketId,
+      type: r.type,
+      recommendation: r.recommendation,
+      reason: r.reason,
+      evidence: r.evidence,
+      proposedChange: r.proposedChange,
+      fingerprint: r.fingerprint,
+      decision: decisions[i],
+    });
+    buckets[r.type] = (buckets[r.type] ?? 0) + 1;
+    persisted += 1;
+  });
 
   const counts: AuditRunCounts = { projects: 1, tickets: tickets.length, findings: persisted, ...buckets };
   finishRun(db, run.id, 'done', { counts, model: config.model });

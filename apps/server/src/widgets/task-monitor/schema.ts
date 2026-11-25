@@ -46,6 +46,7 @@ export function bootstrapSchema(db: Database.Database): void {
       evidence        TEXT,
       proposed_change TEXT,
       confidence      TEXT,                                -- high|medium|low (PD-284); nullable here
+      fingerprint     TEXT,                                -- PD-285: stable hash for cross-run carry-forward; nullable
       decision        TEXT    NOT NULL DEFAULT 'undecided',-- undecided|accepted|rejected|other
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
@@ -228,6 +229,13 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'audit_finding_add_relation_columns', (d) => {
     addColumn(d, 'audit_finding', 'target_ticket_id', 'INTEGER');
     addColumn(d, 'audit_finding', 'relation_type', 'TEXT');
+  });
+  // PD-285: cross-run reconciliation fingerprint on findings. Nullable, no back-fill — old rows
+  // simply have no prior match (so they reset to 'undecided' next run, which is correct). The worker
+  // writes it and tolerates its absence, so either side can deploy first. No-op on a fresh DB where
+  // the CREATE above already included the column.
+  migrate(db, 'audit_finding_add_fingerprint', (d) => {
+    addColumn(d, 'audit_finding', 'fingerprint', 'TEXT');
   });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');
