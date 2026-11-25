@@ -482,6 +482,25 @@ export async function runEvaluatePass(
   // PD-913 / PD-915: the session-PR passes that spend no agent turns run BEFORE the budget gate, for
   // the same reason as the visual decisions above: a spent review budget must not stop an idle revised
   // PR being handed to the Robot, an adoption being given back, or a merged PR completing its ticket.
+  // PD-1007: list the open PRs once, before the budget gate, and record what was seen (open, head,
+  // Steve's approval) so the Decisions inbox can tell an escalated PR that is still open from one
+  // that merged, closed or was approved, without the server calling GitHub. The adoption pass and
+  // the all-PRs review below reuse this listing.
+  let passDeps: EvaluatePassDeps = deps;
+  if (config.evaluator.allPrs) {
+    try {
+      const { defaultOtherPrLister } = await import('./all-prs');
+      const { recordOpenPrs } = await import('./open-prs');
+      const lister = (deps as { listPrs?: import('./all-prs').OtherPrLister }).listPrs ?? defaultOtherPrLister(config);
+      const open = await lister(config.githubRepo);
+      if (open) {
+        recordOpenPrs(db, open, { botLogin: config.robot.botName, maxRounds: config.evaluator.maxRounds }, now);
+        passDeps = { ...deps, listPrs: async () => open } as EvaluatePassDeps;
+      }
+    } catch (err) {
+      logger.error({ err }, 'evaluator: recording the open-PR snapshot threw — continuing');
+    }
+  }
   if (config.evaluator.allPrs) {
     try {
       const { completeMergedSessionTickets } = await import('./session-merges');
@@ -491,7 +510,7 @@ export async function runEvaluatePass(
     }
     try {
       const { runAdoptionPass } = await import('./adopt-pass');
-      await runAdoptionPass(db, config, now, deps);
+      await runAdoptionPass(db, config, now, passDeps);
     } catch (err) {
       logger.error({ err }, 'evaluator: adoption pass threw — continuing');
     }
@@ -532,7 +551,7 @@ export async function runEvaluatePass(
   if (config.evaluator.allPrs) {
     try {
       const { evaluateNextOtherPr } = await import('./all-prs');
-      const verdict = await evaluateNextOtherPr(db, config, now, deps);
+      const verdict = await evaluateNextOtherPr(db, config, now, passDeps);
       if (verdict) evaluated++;
     } catch (err) {
       logger.error({ err }, 'evaluator: non-Robot PR review threw — continuing');

@@ -2,6 +2,7 @@ import type {
   AgentProject,
   AwaitingRefineItem,
   AwaitingVisualItem,
+  AwaitingEscalationItem,
   RefineAnswerSet,
   AgentRun,
   AgentTicket,
@@ -334,6 +335,13 @@ export async function fetchAwaitingVisual(): Promise<{ items: AwaitingVisualItem
   const res = await fetch('/api/widgets/task-monitor/visual-review/awaiting');
   if (!res.ok) return parseError(res);
   return res.json() as Promise<{ items: AwaitingVisualItem[]; count: number }>;
+}
+
+/** Open PRs the Evaluator handed back to Steve (PD-1007): escalate, round cap or no verdict. */
+export async function fetchAwaitingEscalation(): Promise<{ items: AwaitingEscalationItem[]; count: number }> {
+  const res = await fetch('/api/widgets/task-monitor/awaiting-escalation');
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ items: AwaitingEscalationItem[]; count: number }>;
 }
 
 /** Steve's visual verdict on a ticket's PR (PD-773). A rejection needs a note. Throws on 4xx. */

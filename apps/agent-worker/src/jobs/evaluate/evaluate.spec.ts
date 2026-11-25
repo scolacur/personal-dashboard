@@ -226,6 +226,21 @@ describe('budget separation — the premise of the ticket', () => {
     expect(listMerged).toHaveBeenCalled();
     expect(agent).not.toHaveBeenCalled();
   });
+  it('records the open-PR snapshot before the budget gate, listing once per pass (PD-1007)', async () => {
+    await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 200);
+    const pr = {
+      number: 571, title: 't', body: '', headRefName: 'pd-1-x', headRefOid: 'a'.repeat(40), baseRefName: 'main',
+      isCrossRepository: false, isDraft: false, labels: [], files: [],
+      reviews: [{ author: { login: 'scolacur' }, authorAssociation: 'OWNER', state: 'APPROVED', body: '', submittedAt: '2026-11-24T00:00:00Z' }],
+    };
+    const listPrs = vi.fn(async () => [pr]);
+    const listMerged = vi.fn(async () => []);
+    await runEvaluatePass(db, config({ budgetTurns: 1, intervalMs: 0, allPrs: true, adopt: true }), 300, { runAgent: fakeAgent(shipReply), listPrs, listMerged } as never);
+    expect(listPrs).toHaveBeenCalledTimes(1);
+    const row = db.prepare("SELECT value, updated_at FROM robot_state WHERE key = 'evaluator_open_prs'").get() as { value: string; updated_at: number };
+    expect(row.updated_at).toBe(300);
+    expect(JSON.parse(row.value)).toEqual({ maxRounds: config().evaluator.maxRounds, prs: [{ number: 571, headSha: 'a'.repeat(40), approved: true }] });
+  });
 });
 
 describe('runEvaluatePass — gating', () => {
