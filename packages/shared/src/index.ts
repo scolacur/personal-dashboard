@@ -313,6 +313,7 @@ export {
   ORIENTATION_EXCLUSIONS,
   refineSystemPrompt,
   auditSystemPrompt,
+  auditVerifySystemPrompt,
   AGENT_TYPES,
   AGENT_PROFILES,
   SAMPLE_TASK_PROMPT_INPUT,

@@ -2118,13 +2118,22 @@ export interface AuditRunCounts {
 }
 
 /** One audit pass. Created `requested` (by the weekly cron or POST), claimed to `running`
- *  by the worker, then `done`/`error`. `scope` describes what was audited (e.g. `single:PD`). */
+ *  by the worker, then `done`/`error`. `scope` describes what was audited (e.g. `single:PD`).
+ *  Token/cost totals (PD-284) are summed across every agent turn of the run — the per-project
+ *  fan-out turns plus the pooled verify turn — and written on finish. `costUsd` is the SDK's
+ *  Claude-priced `total_cost_usd`; it may be wrong when a non-Claude model runs the audit (we use
+ *  the SDK figure deliberately rather than maintain a price table). All null before the first run
+ *  that writes them, or on a DB whose columns predate the migration. */
 export interface AuditRun {
   id: number;
   status: AuditRunStatus;
   scope: string | null;
   model: string | null;
   counts: AuditRunCounts | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  costUsd: number | null;
   startedAt: number | null;
   finishedAt: number | null;
   createdAt: number;

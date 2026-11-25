@@ -9,7 +9,7 @@ import {
   getRelationsForTickets,
   projectByKey,
 } from './audit-db';
-import { parseAuditFindings, runAuditPass, singleScopeKey } from './audit';
+import { parseAuditFindings, parseVerifyVerdicts, runAuditPass, singleScopeKey } from './audit';
 
 // Minimal slice of the shared dashboard schema the audit job touches.
 function freshDb(): Database.Database {
@@ -50,6 +50,21 @@ function freshDb(): Database.Database {
 function freshDbWithFingerprint(): Database.Database {
   const d = freshDb();
   d.exec('ALTER TABLE audit_finding ADD COLUMN fingerprint TEXT');
+  return d;
+}
+
+// A DB whose audit_run carries the PD-910 live columns and the PD-284 token/cost columns
+// (the fully-migrated shape).
+function freshDbWithCost(): Database.Database {
+  const d = freshDbWithFingerprint();
+  d.exec(
+    'ALTER TABLE audit_run ADD COLUMN turns INTEGER;' +
+      'ALTER TABLE audit_run ADD COLUMN tokens INTEGER;' +
+      'ALTER TABLE audit_run ADD COLUMN input_tokens INTEGER;' +
+      'ALTER TABLE audit_run ADD COLUMN output_tokens INTEGER;' +
+      'ALTER TABLE audit_run ADD COLUMN total_tokens INTEGER;' +
+      'ALTER TABLE audit_run ADD COLUMN cost_usd REAL;',
+  );
   return d;
 }
 
@@ -571,8 +586,10 @@ describe('runAuditPass — fan-out (PD-284)', () => {
       prompts.push(prompt);
       return { ok: true, text: '[{"displayId":"CORE-20","type":"update","confidence":"low"}]' };
     };
+    // Isolate the fan-out prompt count from the pooled verify turn (PD-284): verify upholds all.
+    const runVerify = async () => ({ ok: true, text: '[]' });
 
-    const counts = await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    const counts = await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
 
     expect(counts).toMatchObject({ projects: 1, findings: 1 });
     expect(prompts).toHaveLength(1);
@@ -639,5 +656,227 @@ describe('runAuditPass — live turns and tokens (PD-910)', () => {
 
     expect(counts).toMatchObject({ projects: 1, findings: 0 });
     expect((db.prepare('SELECT status FROM audit_run WHERE id = ?').get(id) as { status: string }).status).toBe('done');
+  });
+});
+
+// ── PD-284: adversarial verify stage ──────────────────────────────────────────
+
+describe('parseVerifyVerdicts', () => {
+  it('parses a bare verdict array', () => {
+    expect(parseVerifyVerdicts('[{"index":0,"verdict":"drop"}]')).toEqual([{ index: 0, verdict: 'drop' }]);
+  });
+  it('parses a fenced ```json block amid prose', () => {
+    const v = parseVerifyVerdicts('Reviewed:\n```json\n[{"index":1,"verdict":"downgrade","confidence":"low"}]\n```');
+    expect(v[0]).toMatchObject({ index: 1, verdict: 'downgrade', confidence: 'low' });
+  });
+  it('returns [] on unparseable text', () => {
+    expect(parseVerifyVerdicts('nothing here')).toEqual([]);
+  });
+});
+
+describe('runAuditPass — adversarial verify stage (PD-284)', () => {
+  function seed(): void {
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'Defensible', 'backlog', 1)").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (11, 'PD-11', 'False positive', 'backlog', 1)").run();
+  }
+  const findingsFor = (runId: number) =>
+    db.prepare('SELECT ticket_id, type, confidence FROM audit_finding WHERE run_id = ? ORDER BY ticket_id').all(runId) as {
+      ticket_id: number;
+      type: string;
+      confidence: string | null;
+    }[];
+
+  it('drops an injected false-positive finding; survivors only are persisted (Done-When #2)', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    // The fan-out proposes two findings; the second (PD-11) is the injected false positive.
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"archive","confidence":"high","evidence":"MEMORY confirms superseded"},{"displayId":"PD-11","type":"complete","confidence":"high","evidence":"none really"}]',
+    });
+    // Verify sees two candidates (indexes 0, 1) and drops the indefensible one.
+    const runVerify = async () => ({ ok: true, text: '[{"index":0,"verdict":"uphold"},{"index":1,"verdict":"drop"}]' });
+
+    const counts = await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    // Only the defensible finding survives — the dropped one was never written.
+    expect(counts).toMatchObject({ projects: 1, findings: 1, archive: 1 });
+    expect(counts.complete).toBeUndefined();
+    expect(findingsFor(id)).toEqual([{ ticket_id: 10, type: 'archive', confidence: 'high' }]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM audit_finding WHERE ticket_id = 11').get()).toEqual({ n: 0 });
+  });
+
+  it('downgrades (never raises) a finding whose evidence is weaker than its claimed confidence', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"archive","confidence":"high","evidence":"thin"},{"displayId":"PD-11","type":"update","confidence":"low","evidence":"ok"}]',
+    });
+    // PD-10 high → low (downgrade); PD-11 low → high is a RAISE and must be ignored.
+    const runVerify = async () => ({
+      ok: true,
+      text: '[{"index":0,"verdict":"downgrade","confidence":"low"},{"index":1,"verdict":"downgrade","confidence":"high"}]',
+    });
+
+    await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    expect(findingsFor(id)).toEqual([
+      { ticket_id: 10, type: 'archive', confidence: 'low' }, // lowered
+      { ticket_id: 11, type: 'update', confidence: 'low' }, // raise ignored — stays low
+    ]);
+  });
+
+  it('runs verify exactly once, pooled across all projects\' non-keep findings (Done-When #4)', async () => {
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (2, 'Core', 'CORE')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (20, 'CORE-20', 'B', 'backlog', 2)").run();
+    const id = requestRun(db); // full sweep
+    const run = claimNextRun(db)!;
+    const runAgent = async (_c: unknown, _s: string, prompt: string) => {
+      if (prompt.includes('Personal Dashboard')) return { ok: true, text: '[{"displayId":"PD-10","type":"archive"}]' };
+      if (prompt.includes('Core')) return { ok: true, text: '[{"displayId":"CORE-20","type":"update"}]' };
+      return { ok: true, text: '[]' };
+    };
+    let verifyCalls = 0;
+    let verifyPromptSeen = '';
+    const runVerify = async (_c: unknown, _s: string, prompt: string) => {
+      verifyCalls += 1;
+      verifyPromptSeen = prompt;
+      return { ok: true, text: '[]' };
+    };
+
+    const counts = await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    expect(verifyCalls).toBe(1); // pooled — one turn for the whole run
+    // The single verify prompt carries both projects' candidates.
+    expect(verifyPromptSeen).toContain('PD-10');
+    expect(verifyPromptSeen).toContain('CORE-20');
+    expect(counts).toMatchObject({ projects: 2, findings: 2 });
+    expect(findingsFor(id)).toEqual([
+      { ticket_id: 10, type: 'archive', confidence: null },
+      { ticket_id: 20, type: 'update', confidence: null },
+    ]);
+  });
+
+  it('skips verify entirely when every finding is a keep (no verify turn)', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({ ok: true, text: '[{"displayId":"PD-10","type":"keep"}]' });
+    let verifyCalls = 0;
+    const runVerify = async () => {
+      verifyCalls += 1;
+      return { ok: true, text: '[]' };
+    };
+
+    const counts = await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    expect(verifyCalls).toBe(0); // nothing to challenge
+    expect(counts).toMatchObject({ projects: 1, findings: 1, keep: 1 });
+    expect(findingsFor(id)).toEqual([{ ticket_id: 10, type: 'keep', confidence: null }]);
+  });
+
+  it('fails open — a verify error keeps every candidate rather than discarding the signal', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"archive"},{"displayId":"PD-11","type":"update"}]',
+    });
+    const runVerify = async () => {
+      throw new Error('verify agent crashed');
+    };
+
+    const counts = await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    expect(counts).toMatchObject({ projects: 1, findings: 2 });
+    expect(findingsFor(id).map((f) => f.ticket_id)).toEqual([10, 11]);
+  });
+});
+
+// ── PD-284: per-run token + cost metadata ─────────────────────────────────────
+
+describe('runAuditPass — token + cost metadata (PD-284)', () => {
+  function seedTwoProjects(): void {
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (2, 'Core', 'CORE')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (20, 'CORE-20', 'B', 'backlog', 2)").run();
+  }
+  const runRow = (id: number) =>
+    db
+      .prepare('SELECT model, input_tokens, output_tokens, total_tokens, cost_usd FROM audit_run WHERE id = ?')
+      .get(id) as {
+      model: string | null;
+      input_tokens: number | null;
+      output_tokens: number | null;
+      total_tokens: number | null;
+      cost_usd: number | null;
+    };
+
+  it('sums usage across the fan-out turns and the verify turn, and stamps the model (Done-When #3)', async () => {
+    const d = freshDbWithCost();
+    db = d;
+    seedTwoProjects();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    // Each project turn reports usage; so does the one verify turn.
+    const runAgent = async (_c: unknown, _s: string, prompt: string) => {
+      const n = prompt.includes('Core') ? 2 : 1;
+      return {
+        ok: true,
+        text: prompt.includes('Core')
+          ? '[{"displayId":"CORE-20","type":"update"}]'
+          : '[{"displayId":"PD-10","type":"archive"}]',
+        turns: n,
+        tokens: 100 * n,
+        usage: { inputTokens: 100 * n, outputTokens: 10 * n, totalTokens: 110 * n, costUsd: 0.01 * n },
+      };
+    };
+    const runVerify = async () => ({
+      ok: true,
+      text: '[]',
+      turns: 1,
+      tokens: 50,
+      usage: { inputTokens: 40, outputTokens: 10, totalTokens: 50, costUsd: 0.005 },
+    });
+
+    await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    const row = runRow(id);
+    expect(row.model).toBe('claude-opus-4-8');
+    // PD (in=100,out=10,cost=.01) + Core (in=200,out=20,cost=.02) + verify (in=40,out=10,cost=.005).
+    expect(row.input_tokens).toBe(340);
+    expect(row.output_tokens).toBe(40);
+    expect(row.total_tokens).toBe(380);
+    expect(row.cost_usd).toBeCloseTo(0.035, 6);
+  });
+
+  it('still closes the run when audit_run has no cost columns (worker deployed before the migration)', async () => {
+    // Plain freshDb — no input_tokens/cost_usd columns.
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'PD', 'PD')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"archive"}]',
+      usage: { inputTokens: 5, outputTokens: 1, totalTokens: 6, costUsd: 0.001 },
+    });
+    const runVerify = async () => ({ ok: true, text: '[]' });
+
+    const counts = await runAuditPass(db, config, run, { runAgent, runVerify, buildContext: noContext });
+
+    expect(counts).toMatchObject({ projects: 1, findings: 1 });
+    expect(db.prepare('SELECT status, model FROM audit_run WHERE id = ?').get(id)).toEqual({
+      status: 'done',
+      model: 'claude-opus-4-8',
+    });
   });
 });

@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-122](DECISIONS/D-122-audit-verify-stage-is-one-pooled-fail-open-drop-downgrade-pass.md)** — The Ticket Audit's verify stage is one pooled, fail-open, drop/downgrade-only pass over deferred findings
 - **[D-120](DECISIONS/D-120-audit-relation-finding-targets-resolve-against-audited-set-plus-relation-far-ends.md)** — Audit relation-finding targets resolve against the audited set plus existing relation far-ends
 - **[D-116](DECISIONS/D-116-the-agent-worker-auto-deploys-from-ghcr-through-its-own-scoped-watchtower-drained.md)** — The agent-worker auto-deploys from GHCR through its own scoped Watchtower, drained by a fail-closed pre-update hook (PD-816; supersedes the "worker NOT on GHCR/Watchtower" line)
 - **[D-115](DECISIONS/D-115-an-epics-lane-is-its-own-status-queued-members-do-not-move-it.md)** — An Epic's lane is its own status; queued members do not move it (PD-968; amends D-080)

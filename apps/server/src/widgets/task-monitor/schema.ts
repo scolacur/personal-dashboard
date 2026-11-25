@@ -230,6 +230,17 @@ export function bootstrapSchema(db: Database.Database): void {
     addColumn(d, 'audit_run', 'turns', 'INTEGER');
     addColumn(d, 'audit_run', 'tokens', 'INTEGER');
   });
+  // PD-284: authoritative token + cost totals summed across a run's agent turns (the per-project
+  // fan-out plus the pooled verify turn), written on finish. Distinct from the PD-910 live `tokens`
+  // approximation above: these come from each turn's result-message `usage` + `total_cost_usd`.
+  // `cost_usd` is REAL (fractional dollars); the token columns are INTEGER. The worker tolerates
+  // their absence (recordAuditRunCost no-ops pre-migration), so either side can deploy first.
+  migrate(db, 'audit_run_add_cost_metadata', (d) => {
+    addColumn(d, 'audit_run', 'input_tokens', 'INTEGER');
+    addColumn(d, 'audit_run', 'output_tokens', 'INTEGER');
+    addColumn(d, 'audit_run', 'total_tokens', 'INTEGER');
+    addColumn(d, 'audit_run', 'cost_usd', 'REAL');
+  });
   // PD-828: relation findings (link / unlink / duplicate). The audit now reads relations as truth
   // and may flag a new/stale link; a relation finding carries its other end + type. Both nullable
   // (NULL on a single-ticket finding), so every pre-existing finding back-fills cleanly. Advisory
