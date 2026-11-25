@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { page } from '$app/state';
-  import type { AwaitingRefineItem, AwaitingVisualItem, RefineAnswerSet } from '@dashboard/shared';
+  import type { AwaitingEscalationItem, AwaitingRefineItem, AwaitingVisualItem, RefineAnswerSet } from '@dashboard/shared';
   import VisualCheck from '$lib/VisualCheck.svelte';
   import { applyMarkdown } from '$lib/markdown';
   import RefineQuestionForm from '$lib/RefineQuestionForm.svelte';
@@ -9,8 +9,16 @@
   import { approvedMergingMessage } from '$lib/visual-check-logic';
   import { decisionsAnchor, visualAnchor } from '$lib/notification-links';
   import { refreshDecisionsCount } from '$lib/decisions-store';
-  import { fetchAwaitingRefine, fetchAwaitingVisual, postRefineAnswers, postVisualReview } from '../api';
-  import { askedAgo, decisionKind } from './decisions-logic';
+  import { fetchAwaitingEscalation, fetchAwaitingRefine, fetchAwaitingVisual, postRefineAnswers, postVisualReview } from '../api';
+  import {
+    askedAgo,
+    decisionKind,
+    ESCALATION_DECISION_KIND,
+    escalationHeading,
+    escalationLensesToShow,
+    escalationReasonDetail,
+    escalationReasonLabel,
+  } from './decisions-logic';
 
   // The Decisions inbox (PD-746, D-096 §7): every Refine session waiting on Steve, answerable
   // inline, so many tickets' questions can be cleared in one sitting. Highest priority first, then
@@ -20,6 +28,8 @@
   // otherwise ready to merge.
   let visual = $state<AwaitingVisualItem[]>([]);
   let decidedVisual = $state<Set<number>>(new Set());
+  // PD-1007: open PRs the Evaluator handed back to Steve. Read-only here: approve or rework on GitHub.
+  let escalations = $state<AwaitingEscalationItem[]>([]);
   // PD-795: a check Steve just approved that will auto-merge. Kept visible with its post-approve
   // message after it leaves the server list (approving records a review that drops it), so he sees
   // the merge is coming rather than the card vanishing as if nothing happened.
@@ -36,9 +46,14 @@
 
   async function load() {
     try {
-      const [res, vis] = await Promise.all([fetchAwaitingRefine(), fetchAwaitingVisual().catch(() => ({ items: [], count: 0 }))]);
+      const [res, vis, esc] = await Promise.all([
+        fetchAwaitingRefine(),
+        fetchAwaitingVisual().catch(() => ({ items: [], count: 0 })),
+        fetchAwaitingEscalation().catch(() => ({ items: [], count: 0 })),
+      ]);
       items = res.items;
       visual = vis.items;
+      escalations = esc.items;
       error = null;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -93,15 +108,15 @@
     <a class="decisions-back" href="/devops">← Dev Ops</a>
   </header>
   <p class="decisions-sub">
-    Everything waiting on you: Robot PRs held for your visual check, then every Refine session,
-    highest priority first. Answer here and the agent picks it up on its next turn.
+    Everything waiting on you: Robot PRs held for your visual check, PRs the Evaluator handed back
+    to you, then every Refine session, highest priority first. Answer here and the agent picks it up on its next turn.
   </p>
 
   {#if loading}
     <p class="decisions-empty">Loading…</p>
   {:else if error}
     <p class="decisions-error" role="alert">Could not load decisions: {error}</p>
-  {:else if open.length === 0 && sentItems.length === 0 && decidedItems.length === 0 && openVisual.length === 0 && mergingList.length === 0}
+  {:else if open.length === 0 && sentItems.length === 0 && decidedItems.length === 0 && openVisual.length === 0 && mergingList.length === 0 && escalations.length === 0}
     <p class="decisions-empty">Nothing is waiting on you. New questions appear here as Refine agents ask them.</p>
   {:else}
     {#if openVisual.length > 0 || mergingList.length > 0}
@@ -132,7 +147,60 @@
           </li>
         {/each}
       </ol>
-      {#if open.length > 0 || sentItems.length > 0 || decidedItems.length > 0}<h2 class="decisions-section">Refine questions</h2>{/if}
+    {/if}
+    {#if escalations.length > 0}
+      <h2 class="decisions-section" data-decision-kind={ESCALATION_DECISION_KIND}>Escalations</h2>
+      <ol class="decisions-list" data-decision-kind={ESCALATION_DECISION_KIND}>
+        {#each escalations as e (e.prNumber)}
+          {@const heading = escalationHeading(e)}
+          <li class="decision decision-escalation" id="pr-{e.prNumber}">
+            <header class="decision-head">
+              {#if e.ticket}
+                <a class="decision-ticket" href="/devops/tickets/{e.ticket.displayId ?? e.ticket.id}">
+                  <span class="decision-id">{heading.id}</span>
+                  <span class="decision-name">{heading.title}</span>
+                </a>
+              {:else}
+                <span class="decision-ticket">
+                  <span class="decision-id">{heading.id}</span>
+                  <span class="decision-name">{heading.title}</span>
+                </span>
+              {/if}
+              <span class="decision-meta">
+                <span class="escalation-chip escalation-chip--{e.reason}">{escalationReasonLabel(e.reason)}</span>
+                <span>PR #{e.prNumber}</span>
+                <span class="decision-age">escalated {askedAgo(e.escalatedAt, nowTs)}</span>
+              </span>
+            </header>
+            <p class="escalation-detail">{escalationReasonDetail(e)}</p>
+            {#each escalationLensesToShow(e.lenses) as l (l.lens)}
+              <div class="escalation-lens">
+                {#if e.lenses.length > 1}<h3 class="escalation-lens-name">{l.lens} review</h3>{/if}
+                {#if l.summary}<p class="escalation-summary">{l.summary}</p>{/if}
+                {#if l.blockingFindings.length > 0}
+                  <ul class="escalation-findings">
+                    {#each l.blockingFindings as f, i (i)}
+                      <li>
+                        <span class="escalation-finding-kind">{f.kind}</span>
+                        {#if f.where}<code class="escalation-finding-where">{f.where}</code>{/if}
+                        <span class="escalation-finding-what">{f.what}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/each}
+            {#if e.prUrl}
+              <div class="escalation-actions">
+                <a class="escalation-open" href={e.prUrl} target="_blank" rel="noopener noreferrer">Open PR</a>
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ol>
+    {/if}
+    {#if (openVisual.length > 0 || mergingList.length > 0 || escalations.length > 0) && (open.length > 0 || sentItems.length > 0 || decidedItems.length > 0)}
+      <h2 class="decisions-section">Refine questions</h2>
     {/if}
     {#if open.length === 0 && (sentItems.length > 0 || decidedItems.length > 0)}
       <p class="decisions-empty">All answered. Nothing else is waiting on you.</p>

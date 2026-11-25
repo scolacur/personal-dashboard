@@ -95,6 +95,7 @@ import { getActiveAgents } from './active-agents';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 import { listAwaitingVisual, recordVisualReview } from './visual-review';
+import { listAwaitingEscalation } from './escalations';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -807,6 +808,13 @@ export function registerRoutes(
   // `count` is what the nav badge shows; it is cheap enough to poll.
   app.get(`${base}/refine/awaiting`, async () => {
     const items = listAwaitingRefine(db);
+    return { items, count: items.length };
+  });
+
+  // PD-1007: open PRs the Evaluator handed back to Steve (escalate, round cap, no verdict). Read-only
+  // from the DB and the worker's open-PR snapshot; never calls GitHub.
+  app.get(`${base}/awaiting-escalation`, async () => {
+    const items = listAwaitingEscalation(db);
     return { items, count: items.length };
   });
 

@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { askedAgo, decisionKind } from './decisions-logic';
+import {
+  askedAgo,
+  decisionKind,
+  ESCALATION_DECISION_KIND,
+  escalationHeading,
+  escalationLensesToShow,
+  escalationReasonDetail,
+  escalationReasonLabel,
+} from './decisions-logic';
 
 describe('askedAgo (PD-746)', () => {
   const now = 1_000_000_000_000;
@@ -23,5 +31,49 @@ describe('decisionKind (PD-843)', () => {
     expect(decisionKind({ proposal, round: null })).toBe('proposal');
     expect(decisionKind({ proposal: null, round })).toBe('round');
     expect(decisionKind({ proposal: null, round: null })).toBe('reply');
+  });
+});
+
+describe('escalation helpers (PD-1007)', () => {
+  const lens = (l: 'code' | 'security', verdict: 'escalate' | 'revise' | 'ship' | null, summary = '', findings = 0) => ({
+    lens: l,
+    verdict,
+    summary,
+    blockingFindings: Array.from({ length: findings }, () => ({ kind: 'ac-unmet' as const, where: 'a.ts:1', what: 'x' })),
+  });
+
+  it('has its own decision kind', () => {
+    expect(ESCALATION_DECISION_KIND).toBe('escalation');
+  });
+
+  it('labels each reason for the chip', () => {
+    expect(escalationReasonLabel('escalate')).toBe('Escalated');
+    expect(escalationReasonLabel('round-cap')).toBe('Round cap');
+    expect(escalationReasonLabel('no-verdict')).toBe('No verdict');
+  });
+
+  it('explains each reason, naming the lens behind it', () => {
+    expect(escalationReasonDetail({ reason: 'escalate', round: 1, lenses: [lens('code', 'ship'), lens('security', 'escalate')] })).toBe(
+      'The security review escalated it in round 1.',
+    );
+    expect(escalationReasonDetail({ reason: 'round-cap', round: 2, lenses: [lens('code', 'revise')] })).toBe(
+      'Changes were still requested at the round cap (round 2).',
+    );
+    expect(escalationReasonDetail({ reason: 'no-verdict', round: 1, lenses: [lens('code', 'ship'), lens('security', null)] })).toBe(
+      'The security review produced no verdict after its one retry.',
+    );
+  });
+
+  it('heads the card with the ticket, or the PR when there is none', () => {
+    expect(escalationHeading({ prNumber: 570, ticket: { id: 2, displayId: 'PD-2', title: 'T' } })).toEqual({ id: 'PD-2', title: 'T' });
+    expect(escalationHeading({ prNumber: 570, ticket: null })).toEqual({ id: 'PR #570', title: 'No linked ticket' });
+  });
+
+  it('shows only lenses with a summary or blocking findings', () => {
+    const shown = escalationLensesToShow([lens('code', 'escalate', 'Why'), lens('security', null), lens('security', 'revise', '', 1)]);
+    expect(shown.map((l) => [l.lens, l.verdict])).toEqual([
+      ['code', 'escalate'],
+      ['security', 'revise'],
+    ]);
   });
 });

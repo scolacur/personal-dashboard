@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { escalationsIsEmpty, seedEscalations } from './escalations';
 import { habitTrackerIsEmpty, seedHabitTracker } from './habit-tracker';
 import { seedTaskTracker, taskTrackerIsEmpty } from './task-tracker';
 
@@ -27,6 +28,8 @@ export interface VisualFixture {
 export const VISUAL_FIXTURES: VisualFixture[] = [
   { name: 'habit-tracker', isEmpty: habitTrackerIsEmpty, seed: seedHabitTracker },
   { name: 'task-tracker', isEmpty: taskTrackerIsEmpty, seed: (db) => seedTaskTracker(db) },
+  // PD-1007: after the task tracker, so its tickets are not counted as the board's being non-empty.
+  { name: 'escalations', isEmpty: escalationsIsEmpty, seed: seedEscalations },
 ];
 
 /** Seed every fixture whose tables are empty. Returns the names seeded. Each runs in a transaction. */

@@ -2,7 +2,7 @@
 // Shared between the server (DB + API) and the web (Kanban UI).
 
 // Type-only, and one-directional: `agent-prompts.ts` imports nothing, so this cannot cycle.
-import type { EvaluatorVerdict } from './agent-prompts';
+import type { EvaluatorFinding, EvaluatorLens, EvaluatorVerdict } from './agent-prompts';
 import type { RefineAnswerSet, RefineQuestionRound } from './refine-questions';
 
 // Who the ticket is assigned to. 'steve' = human owner; 'robot' = the Robot loop.
@@ -1564,6 +1564,53 @@ export type VisualCaptureState =
   | { kind: 'failed'; reason: string }
   | { kind: 'skipped'; reason: string }
   | { kind: 'unknown'; lastSeen: number | null };
+
+/**
+ * Why the Evaluator handed a PR back to Steve (PD-1007): the three "needs Steve" failures of the
+ * worker's `gateForOutcome`.
+ *  - `escalate`: a lens returned `escalate`.
+ *  - `round-cap`: still `revise` at the round cap (`EVALUATOR_MAX_ROUNDS`).
+ *  - `no-verdict`: a lens produced no usable verdict after its one retry.
+ */
+export type EscalationReason = 'escalate' | 'round-cap' | 'no-verdict';
+
+/** One lens's part in an escalation: its latest verdict this cycle (null = no verdict), summary and
+ *  blocking findings. */
+export interface EscalationLensReport {
+  lens: EvaluatorLens;
+  verdict: EvaluatorVerdict | null;
+  summary: string;
+  blockingFindings: Pick<EvaluatorFinding, 'kind' | 'where' | 'what'>[];
+}
+
+/** An open PR the Evaluator handed back to Steve (PD-1007), for the Decisions inbox. */
+export interface AwaitingEscalationItem {
+  prNumber: number;
+  prUrl: string | null;
+  /** The linked ticket, when there is one (a session PR may have none). */
+  ticket: { id: number; displayId: string | null; title: string } | null;
+  /** A Robot hand-off (`robot`) or a session PR reviewed per head (`session`). */
+  path: 'robot' | 'session';
+  reason: EscalationReason;
+  round: number;
+  /** Per lens, in lens order. */
+  lenses: EscalationLensReport[];
+  /** When the last settling Evaluator run of the cycle finished. */
+  escalatedAt: number;
+}
+
+/**
+ * The `robot_state` key the worker writes on each Evaluator pass with the open PRs it listed
+ * (PD-1007), so the server can tell an open, unapproved PR from a merged, closed or approved one
+ * without calling GitHub. Value: JSON {@link OpenPrsSnapshot}; `updated_at` is when it was listed.
+ */
+export const OPEN_PRS_SNAPSHOT_KEY = 'evaluator_open_prs';
+
+export interface OpenPrsSnapshot {
+  /** The worker's `EVALUATOR_MAX_ROUNDS`, so the server reads the round cap the worker enforces. */
+  maxRounds: number;
+  prs: { number: number; headSha: string; approved: boolean }[];
+}
 
 /** The `robot_state` key the worker writes on every visual-job tick: '1' when capture is on, '0' off. */
 export const VISUAL_CAPTURE_ENABLED_KEY = 'visual_capture_enabled';

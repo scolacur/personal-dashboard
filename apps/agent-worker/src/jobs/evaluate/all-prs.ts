@@ -82,6 +82,8 @@ export interface OtherPr {
   isDraft: boolean;
   labels: { name: string }[];
   files: { path: string }[];
+  /** PD-1007: read only to record whether Steve has approved (the open-PR snapshot). */
+  reviews?: { author?: { login?: string } | null; authorAssociation?: string; state?: string; body?: string; submittedAt?: string }[];
 }
 
 export type OtherPrLister = (repo: string) => Promise<OtherPr[] | null>;
@@ -248,7 +250,7 @@ export function defaultOtherPrLister(config: AgentWorkerConfig): OtherPrLister {
         'gh',
         [
           'pr', 'list', '--repo', repo, '--state', 'open', '--limit', '50', '--json',
-          'number,title,body,headRefName,headRefOid,baseRefName,isCrossRepository,isDraft,labels,files',
+          'number,title,body,headRefName,headRefOid,baseRefName,isCrossRepository,isDraft,labels,files,reviews',
         ],
         { env: ghEnv(config, config.githubReadToken), maxBuffer: 16 * 1024 * 1024 },
       );

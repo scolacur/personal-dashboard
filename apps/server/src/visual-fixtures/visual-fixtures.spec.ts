@@ -4,6 +4,7 @@ import { bootstrapHabitsSchema, createItem, getTodayView } from '../lib/habits';
 import { autoQueueEligibility } from '@dashboard/shared';
 import { bootstrapSchema } from '../widgets/task-monitor/schema';
 import { listTickets } from '../widgets/task-monitor/store';
+import { listAwaitingEscalation } from '../widgets/task-monitor/escalations';
 import { seedVisualFixtures, seedVisualFixturesFromEnv, VISUAL_FIXTURES, type VisualFixture } from './index';
 
 /** A database bootstrapped the way the server boots one, with nothing in it yet. */
@@ -35,6 +36,17 @@ describe('visual fixtures (PD-798)', () => {
     expect(today.metrics.some((m) => m.value === null)).toBe(true);
     expect(today.metrics.some((m) => m.value !== null)).toBe(true);
     expect(today.metrics.find((m) => m.item.metricType === 'choice')!.options.length).toBeGreaterThan(1);
+  });
+
+  it('give the Decisions page one escalation of each reason (PD-1007)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const items = listAwaitingEscalation(db);
+    expect(items.map((i) => i.reason).sort()).toEqual(['escalate', 'no-verdict', 'round-cap']);
+    expect(items.find((i) => i.reason === 'escalate')!.path).toBe('robot');
+    expect(items.find((i) => i.reason === 'no-verdict')!.ticket).toBeNull();
+    expect(items.every((i) => i.prUrl !== null)).toBe(true);
+    expect(items.find((i) => i.reason === 'round-cap')!.lenses[0].blockingFindings).toHaveLength(2);
   });
 
   it('give the Task Tracker every lane and every Robot state the board draws', () => {
@@ -86,7 +98,7 @@ describe('visual fixtures (PD-798)', () => {
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);
-    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker']);
+    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'escalations']);
     expect(getTodayView(db, NOW).rows.map((r) => r.item.name)).toEqual(['A real habit']);
     expect(seedVisualFixtures(db, NOW)).toEqual([]); // and a second boot is a no-op
   });
