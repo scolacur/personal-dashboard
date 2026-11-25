@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { HOLD_CADENCE_MS, HOLD_WINDOW_MS } from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
+import { effectiveConfig } from '../../shared/effective-config';
 import { tick, type CoordinatorConfig, type CoordinatorDeps, type MaintenanceJobRunner } from './coordinator';
 import { holdsTablesReady } from './holds-db';
 import { inFlightRunCount } from './in-flight';
@@ -63,7 +64,9 @@ export function startMaintenanceCoordinator(db: Database.Database, config: Agent
       // The web process owns the schema. If the worker booted first, wait rather than racing it
       // over who defines the columns.
       if (!holdsTablesReady(db)) return;
-      await tick(db, coordinatorConfig, deps);
+      // PD-1006 (D-121): the drain bound follows a live ROBOT_STALL_THRESHOLD_MS override.
+      const drainTimeoutMs = effectiveConfig(db, config).robot.stallThresholdMs;
+      await tick(db, { ...coordinatorConfig, drainTimeoutMs }, deps);
     })()
       .catch((err) => logger.error({ err }, 'maintenance: coordinator tick failed'))
       .finally(() => {

@@ -1,0 +1,205 @@
+// The Dev Ops Configuration page (PD-1006). Tokens only — see global.scss. Mirrors the Decisions page frame.
+
+.configure-page {
+  padding: var(--space-lg) var(--space-md);
+  max-width: 960px;
+}
+
+.configure-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.configure-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+}
+
+.configure-back {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+
+  &:hover {
+    color: var(--text);
+  }
+}
+
+.configure-sub {
+  margin: var(--space-xs) 0 var(--space-md);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  max-width: 70ch;
+}
+
+.configure-note {
+  margin: 0 0 var(--space-md);
+  color: var(--status-warn);
+  font-size: var(--font-size-sm);
+}
+
+.configure-empty {
+  color: var(--muted);
+}
+
+.configure-error,
+.setting-error {
+  color: var(--status-stuck);
+}
+
+.configure-section {
+  margin: var(--space-lg) 0 var(--space-sm);
+  font-size: var(--font-size-lg);
+}
+
+.configure-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.setting {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-xs) var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--surface);
+
+  // An override in force: the accent edge marks it as different from the env file.
+  &.overridden {
+    border-left-color: var(--accent);
+  }
+
+  @media (max-width: 720px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.setting-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.setting-label {
+  font-weight: 600;
+}
+
+.setting-key {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.setting-badge {
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius);
+  font-size: var(--font-size-xs);
+  color: var(--status-done);
+  border: 1px solid currentColor;
+
+  &.restart {
+    color: var(--status-warn);
+  }
+
+  &.server {
+    color: var(--muted);
+  }
+}
+
+.setting-desc {
+  margin: var(--space-xs) 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.setting-values {
+  display: flex;
+  gap: var(--space-lg);
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: var(--font-size-sm);
+
+  dt {
+    color: var(--muted);
+    font-size: var(--font-size-xs);
+  }
+
+  dd {
+    margin: 0;
+  }
+}
+
+.setting-effective {
+  font-weight: 600;
+}
+
+.setting-diff {
+  margin-left: var(--space-xs);
+  color: var(--accent);
+  font-weight: 400;
+  font-size: var(--font-size-xs);
+}
+
+.setting-pending {
+  margin-left: var(--space-xs);
+  color: var(--status-warn);
+  font-weight: 400;
+  font-size: var(--font-size-xs);
+}
+
+.setting-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  align-self: center;
+}
+
+.setting-input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+
+  input {
+    width: 7rem;
+    padding: var(--space-xs) var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+
+    &[aria-invalid='true'] {
+      border-color: var(--status-stuck);
+    }
+  }
+}
+
+.setting-unit {
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.setting-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

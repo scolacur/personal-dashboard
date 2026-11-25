@@ -81,7 +81,7 @@ export function runAutoQueueTick(db: Database.Database, now: number = Date.now()
     return s;
   }
 
-  const limits = autoQueueLimits();
+  const limits = autoQueueLimits(db);
   const queueDepthLimit = robotConcurrency(db) * limits.queueDepthFactor;
   const baseDepth = countDispatchableRobotTickets(db);
   const baseReview = countRobotInReview(db); // static across the tick — promoting doesn't add reviews

@@ -13,6 +13,7 @@ import { startSzzJob } from './jobs/szz';
 import { startMaintenanceCoordinator } from './jobs/maintenance';
 import { releaseDeployHoldOnStartup } from './deploy-hold';
 import { startHeartbeat } from './heartbeat';
+import { publishWorkerConfigBoot, startupConfig } from './shared/effective-config';
 
 /**
  * agent-worker entrypoint (D-044 scaffold → D-045 multi-job host). Boots the long-lived
@@ -29,18 +30,26 @@ import { startHeartbeat } from './heartbeat';
  * DECISION_CONSOLIDATION_JOB_ENABLED).
  */
 async function main(): Promise<void> {
-  const config = loadConfig();
-  logger.info({ model: config.model, repo: config.githubRepo }, 'agent-worker starting');
+  // The env-only config: each tunable's boot default (D-121).
+  const bootConfig = loadConfig();
+  logger.info({ model: bootConfig.model, repo: bootConfig.githubRepo }, 'agent-worker starting');
 
-  installProxy(config);
-  await ensureCheckout(config);
+  installProxy(bootConfig);
+  await ensureCheckout(bootConfig);
+
+  // Fail fast if the shared dashboard DB isn't mounted where we expect.
+  const db = openDb(bootConfig);
+  db.prepare('SELECT 1').get();
+
+  // PD-1006 (D-121): restart-only overrides (poll intervals) are taken once, here; live ones are
+  // re-read by each pass via `effectiveConfig`. Then publish what we booted with, so
+  // /devops/configure can show the env value beside the override — the web process can't read our env.
+  const config = startupConfig(db, bootConfig);
+  publishWorkerConfigBoot(db, bootConfig, config);
+
   setInterval(() => {
     void pullLatest(config);
   }, config.pullIntervalMs);
-
-  // Fail fast if the shared dashboard DB isn't mounted where we expect.
-  const db = openDb(config);
-  db.prepare('SELECT 1').get();
 
   // Release a deploy hold a Watchtower pre-update drain left behind (PD-802, D-105): a recreate just
   // swapped this container, and dispatch must resume now that the new process is up. Only the deploy

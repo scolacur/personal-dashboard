@@ -214,6 +214,41 @@ describe('budget separation — the premise of the ticket', () => {
     const paused = db.prepare("SELECT value FROM robot_state WHERE key = 'dispatch_paused'").get();
     expect(paused).toBeUndefined();
   });
+  // PD-1006 (D-121): the 2026-11-24 stall. The Evaluator hit EVALUATOR_BUDGET_TURNS and stopped
+  // reviewing; the fix needed an env edit and a restart. A /devops/configure override must change the
+  // budget verdict on the very next pass, in both directions, and clearing it must fall back to env.
+  it('the budget verdict reads a DB override of EVALUATOR_BUDGET_TURNS on the next pass, no restart', async () => {
+    db.exec('CREATE TABLE config_overrides (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+    const setOverride = (v: string | null) => {
+      db.prepare("DELETE FROM config_overrides WHERE key = 'EVALUATOR_BUDGET_TURNS'").run();
+      if (v !== null) db.prepare("INSERT INTO config_overrides (key, value, updated_at) VALUES ('EVALUATOR_BUDGET_TURNS', ?, 1)").run(v);
+    };
+    // Pre-spend 4 turns; the boot (env) ceiling of 1 is breached.
+    await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 200);
+    const boot = config({ budgetTurns: 1 });
+
+    const blocked = fakeAgent(shipReply);
+    expect(await runEvaluatePass(db, boot, 300, { runAgent: blocked, fetchDiff: async () => 'd' })).toBe(0);
+    expect(blocked).not.toHaveBeenCalled();
+
+    // Raise it from the page: the same boot config, the next pass reviews. (A new hand-off so the PR
+    // is not already settled for this cycle.)
+    setOverride('1500');
+    const runId = startRun(db, { ticketId: 1, issueNumber: 220, branch: 'robot/220' }, 250);
+    finishRun(db, runId, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 260);
+    const raised = fakeAgent(shipReply);
+    await runEvaluatePass(db, boot, 400, { runAgent: raised, fetchDiff: async () => 'd' });
+    expect(raised).toHaveBeenCalled();
+
+    // Reset: the override is cleared and the env ceiling of 1 applies again.
+    setOverride(null);
+    const afterReset = fakeAgent(shipReply);
+    const runId2 = startRun(db, { ticketId: 1, issueNumber: 220, branch: 'robot/220' }, 450);
+    finishRun(db, runId2, { status: 'handed-off', prUrl: 'https://github.com/scolacur/personal-dashboard/pull/314' }, 460);
+    expect(await runEvaluatePass(db, boot, 500, { runAgent: afterReset, fetchDiff: async () => 'd' })).toBe(0);
+    expect(afterReset).not.toHaveBeenCalled();
+  });
+
   it('a breached budget still runs the turn-free session-PR passes: adoption and merge completion (PD-913, PD-915)', async () => {
     await evaluateOnePr(db, config(), TARGET, { runAgent: fakeAgent(shipReply), fetchDiff: async () => 'd' }, 200);
     const listPrs = vi.fn(async () => []);

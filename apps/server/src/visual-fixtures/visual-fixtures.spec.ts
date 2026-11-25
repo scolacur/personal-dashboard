@@ -4,6 +4,7 @@ import { bootstrapHabitsSchema, createItem, getTodayView } from '../lib/habits';
 import { autoQueueEligibility } from '@dashboard/shared';
 import { bootstrapSchema } from '../widgets/task-monitor/schema';
 import { listTickets } from '../widgets/task-monitor/store';
+import { getWorkerConfig } from '../widgets/task-monitor/worker-config';
 import { seedVisualFixtures, seedVisualFixturesFromEnv, VISUAL_FIXTURES, type VisualFixture } from './index';
 
 /** A database bootstrapped the way the server boots one, with nothing in it yet. */
@@ -35,6 +36,15 @@ describe('visual fixtures (PD-798)', () => {
     expect(today.metrics.some((m) => m.value === null)).toBe(true);
     expect(today.metrics.some((m) => m.value !== null)).toBe(true);
     expect(today.metrics.find((m) => m.item.metricType === 'choice')!.options.length).toBeGreaterThan(1);
+  });
+
+  it('give /devops/configure an env value, a live override and a pending restart-only override (PD-1006)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const { entries, workerBootAt } = getWorkerConfig(db, {});
+    expect(workerBootAt).not.toBeNull();
+    expect(entries.find((e) => e.key === 'EVALUATOR_BUDGET_TURNS')).toMatchObject({ boot: 1500, bootSource: 'env', override: 2000 });
+    expect(entries.find((e) => e.key === 'SZZ_INTERVAL_MS')).toMatchObject({ live: false, pendingRestart: true });
   });
 
   it('give the Task Tracker every lane and every Robot state the board draws', () => {
@@ -86,7 +96,7 @@ describe('visual fixtures (PD-798)', () => {
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);
-    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker']);
+    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'worker-config']);
     expect(getTodayView(db, NOW).rows.map((r) => r.item.name)).toEqual(['A real habit']);
     expect(seedVisualFixtures(db, NOW)).toEqual([]); // and a second boot is a no-op
   });

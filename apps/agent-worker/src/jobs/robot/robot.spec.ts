@@ -628,6 +628,17 @@ describe('processRobotQueue', () => {
     expect(JSON.parse(row.value)).toMatchObject({ turns: 400, tokens: 900 });
   });
 
+  // PD-1006 (D-121): a DB override beats the env ceiling on the very next cycle — no restart.
+  it('enforces and publishes a /devops/configure override of ROBOT_BUDGET_TURNS on the next cycle', async () => {
+    addQueued(db, 1);
+    spend(db, 450, 1000);
+    db.exec('CREATE TABLE IF NOT EXISTS config_overrides (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)');
+    db.prepare("INSERT INTO config_overrides (key, value, updated_at) VALUES ('ROBOT_BUDGET_TURNS', '400', 1)").run();
+    expect(await processRobotQueue(db, cfg({ ROBOT_BUDGET_TURNS: '500' }), deps())).toBe(0);
+    const row = db.prepare("SELECT value FROM robot_state WHERE key = 'budget_policy'").get() as { value: string };
+    expect(JSON.parse(row.value)).toMatchObject({ turns: 400 });
+  });
+
   // ── PD-719: the clone outlives a run that did not push ───────────────────────
 
   /** Deps that record which clones were removed, around a given session result. */

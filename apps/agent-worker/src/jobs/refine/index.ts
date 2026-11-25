@@ -4,6 +4,7 @@ import { logger } from '../../shared/logger';
 import { processPendingRefines, RefineBackoff, WarmSessions } from './refine';
 import { ensureRobotStateTable } from '../robot/state';
 import { runAutostart } from './autostart';
+import { effectiveConfig } from '../../shared/effective-config';
 
 /**
  * Start the Refine job (D-044, PD-267/PD-268). Polls the shared DB for pending Refine
@@ -29,14 +30,16 @@ export function startRefineJob(db: Database.Database, config: AgentWorkerConfig)
   setInterval(() => {
     if (running) return;
     running = true;
+    // PD-1006 (D-121): the open cap and per-reply turn ceiling are live — re-read each cycle.
+    const cycle = effectiveConfig(db, config);
     // PD-747: start at most one new session first, so its kickoff is answered this same cycle.
     // A scheduler error is logged and never stops the turn processing behind it.
     try {
-      runAutostart(db, { ...config.refineAutostart, repo: config.githubRepo }, Date.now());
+      runAutostart(db, { ...cycle.refineAutostart, repo: cycle.githubRepo }, Date.now());
     } catch (err) {
       logger.error({ err }, 'refine: auto-start cycle failed');
     }
-    void processPendingRefines(db, config, { sessions, backoff })
+    void processPendingRefines(db, cycle, { sessions, backoff })
       .catch((err) => logger.error({ err }, 'refine: poll cycle failed'))
       .finally(() => {
         running = false;

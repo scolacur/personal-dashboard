@@ -171,6 +171,17 @@ export function bootstrapSchema(db: Database.Database): void {
     -- without talking to it directly. The agent-worker also CREATEs this table defensively
     -- in case it boots before the server has ever bootstrapped the shared DB; that DDL
     -- must match this one. Brand-new table, so CREATE IF NOT EXISTS needs no migrate step.
+    -- DB overrides for the agent-worker's (and the auto-queue's) tunables (PD-1006, D-121). One row
+    -- per overridden setting; the env var stays the boot default and a row here wins. Keys are env
+    -- names from the shared WORKER_SETTINGS registry. \`value\` is TEXT so PD-511's boolean toggles
+    -- share this table. The worker only READS it (and tolerates it missing). Brand-new table, so
+    -- CREATE IF NOT EXISTS needs no migrate step.
+    CREATE TABLE IF NOT EXISTS config_overrides (
+      key        TEXT    PRIMARY KEY,
+      value      TEXT    NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS worker_heartbeat (
       worker      TEXT    PRIMARY KEY,
       started_at  INTEGER NOT NULL,

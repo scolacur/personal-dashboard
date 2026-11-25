@@ -11,6 +11,7 @@ import { inReviewPrTargets } from '../robot/pr-state';
 import { adoptedPrNumbers } from '../evaluate/adoption';
 import { readStateNumber, writeState } from '../robot/state';
 import { commentResolved, resolveConflicts, type ResolveOutcome, type ResolveTarget } from './resolve';
+import { effectiveConfig } from '../../shared/effective-config';
 
 const run = promisify(execFile);
 
@@ -130,10 +131,11 @@ export function nextConflictedPr(
 
 export async function runConflictPass(
   db: Database.Database,
-  config: AgentWorkerConfig,
+  baseConfig: AgentWorkerConfig,
   now: number = Date.now(),
   deps: ConflictPassDeps = {},
 ): Promise<ResolveOutcome['kind'] | null> {
+  const config = effectiveConfig(db, baseConfig); // PD-1006 (D-121): live interval override
   if (!config.conflictResolver.enabled) return null;
   if (now - readStateNumber(db, LAST_KEY) < config.conflictResolver.intervalMs) return null;
   writeState(db, LAST_KEY, String(now), now);

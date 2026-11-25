@@ -13,6 +13,7 @@ import { readStateNumber, writeState } from '../robot/state';
 import { captureVisuals, type CaptureDeps, type CaptureOutcome } from './capture';
 import { captureTargets, touchesWeb, type CaptureTarget } from './routes';
 import { captureFailedComment, ensureVisualCapturesTable, headSettled, noUiChangeComment, recordCapture, type Commenter } from './status';
+import { effectiveConfig } from '../../shared/effective-config';
 
 export { ensureVisualCapturesTable };
 
@@ -141,10 +142,11 @@ export function ticketLabel(db: Database.Database, ticketId: number): string {
 
 export async function runVisualPass(
   db: Database.Database,
-  config: AgentWorkerConfig,
+  baseConfig: AgentWorkerConfig,
   now: number = Date.now(),
   deps: VisualPassDeps = {},
 ): Promise<CaptureOutcome['kind'] | null> {
+  const config = effectiveConfig(db, baseConfig); // PD-1006 (D-121): live interval override
   if (!config.visual.enabled) return null;
   if (now - readStateNumber(db, LAST_KEY) < config.visual.intervalMs) return null;
   writeState(db, LAST_KEY, String(now), now);

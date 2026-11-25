@@ -18,6 +18,8 @@ import {
 import {
   HUMAN_REPLY_MARKER,
   parseAutoQueueMode,
+  validateWorkerSettingValue,
+  workerSettingDef,
 } from '@dashboard/shared';
 import { fileSurfaceTicket, fromLegacyWidgetBody } from './surface-tickets';
 import { getTicketAutoQueueEligibility, listBacklogAutoQueueEligibility } from './auto-queue';
@@ -95,6 +97,7 @@ import { getActiveAgents } from './active-agents';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
 import { GITHUB_WRITE_TOKEN_ENV, closeIssueNotPlanned, postIssueComment } from './github-sync';
 import { listAwaitingVisual, recordVisualReview } from './visual-review';
+import { clearConfigOverride, getWorkerConfig, setConfigOverride } from './worker-config';
 
 function isPriority(v: unknown): v is TicketPriority {
   return typeof v === 'string' && (TICKET_PRIORITIES as readonly string[]).includes(v);
@@ -1114,6 +1117,35 @@ export function registerRoutes(
     // PD-747: the Refine auto-start scheduler — open sessions against the cap, the queue, what holds it.
     refineAutostart: getRefineAutostartStatus(db),
   }));
+
+  // ── Worker config (PD-1006, D-121) — /devops/configure ─────────────────────────
+  // Each registry tunable's boot (env/default) value, DB override and effective value. Writes are
+  // validated against the shared registry (type + bounds); a key outside the registry is a 404, so
+  // nothing but a registry setting can ever be stored or returned.
+  app.get(`${base}/worker-config`, async () => getWorkerConfig(db));
+
+  app.put(`${base}/worker-config/:key`, async (request, reply) => {
+    const { key } = request.params as { key: string };
+    const def = workerSettingDef(key);
+    if (!def) return reply.status(404).send({ error: `Unknown setting ${key}.`, code: 'UNKNOWN_SETTING' });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    if (!('value' in body)) {
+      return reply.status(400).send({ error: `${key} needs a value.`, code: 'INVALID_VALUE' });
+    }
+    const v = validateWorkerSettingValue(def, body.value);
+    if (!v.ok) return reply.status(400).send({ error: v.reason, code: 'INVALID_VALUE' });
+    setConfigOverride(db, key, String(v.value));
+    return getWorkerConfig(db).entries.find((e) => e.key === key);
+  });
+
+  app.delete(`${base}/worker-config/:key`, async (request, reply) => {
+    const { key } = request.params as { key: string };
+    if (!workerSettingDef(key)) {
+      return reply.status(404).send({ error: `Unknown setting ${key}.`, code: 'UNKNOWN_SETTING' });
+    }
+    clearConfigOverride(db, key);
+    return getWorkerConfig(db).entries.find((e) => e.key === key);
+  });
 
   // ── Velocity (Epic PD-895) — cross-ticket aggregates for /devops/velocity ─────
   // Optional query: ?projectId=<n>&from=<unix ms>&to=<unix ms>. Read-only.

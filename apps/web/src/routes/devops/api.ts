@@ -18,6 +18,8 @@ import type {
   TicketRelation,
   UpdateTicketInput,
   SurfaceTicketInput,
+  WorkerConfigEntry,
+  WorkerConfigResponse,
 } from '@dashboard/shared';
 
 export function projectIdColor(project: AgentProject | undefined | null): string {
@@ -230,6 +232,35 @@ export async function fetchSystemStatus(): Promise<SystemStatus> {
   const res = await fetch('/api/widgets/task-monitor/system-status');
   if (!res.ok) return parseError(res);
   return res.json() as Promise<SystemStatus>;
+}
+
+// ── Worker config (PD-1006, D-121) — /devops/configure ──
+
+const WORKER_CONFIG = '/api/widgets/task-monitor/worker-config';
+
+/** Every tunable with its env/default value, override and effective value. */
+export async function fetchWorkerConfig(): Promise<WorkerConfigResponse> {
+  const res = await fetch(WORKER_CONFIG);
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<WorkerConfigResponse>;
+}
+
+/** Set an override. A 400 throws an ApiError carrying the server's reason, which the row shows. */
+export async function saveWorkerSetting(key: string, value: number): Promise<WorkerConfigEntry> {
+  const res = await fetch(`${WORKER_CONFIG}/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<WorkerConfigEntry>;
+}
+
+/** Clear an override: the setting falls back to its env/default value. */
+export async function resetWorkerSetting(key: string): Promise<WorkerConfigEntry> {
+  const res = await fetch(`${WORKER_CONFIG}/${encodeURIComponent(key)}`, { method: 'DELETE' });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<WorkerConfigEntry>;
 }
 
 // ── Robot remediation (C4/PD-345) — plain DB writes the loop honors on its next poll. ──

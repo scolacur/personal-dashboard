@@ -1,5 +1,6 @@
 import { loadConfig } from './shared/config';
 import { openDb } from './shared/db';
+import { fullyEffectiveConfig } from './shared/effective-config';
 import { logger } from './shared/logger';
 import { EX_TEMPFAIL, runDeployDrainFailClosed } from './deploy-hold';
 
@@ -18,8 +19,10 @@ import { EX_TEMPFAIL, runDeployDrainFailClosed } from './deploy-hold';
 if (require.main === module) {
   try {
     const code = runDeployDrainFailClosed(() => {
-      const config = loadConfig();
-      return { db: openDb(config), config };
+      const boot = loadConfig();
+      const db = openDb(boot);
+      // PD-1006 (D-121): the drain's hold bound honours a ROBOT_STALL_THRESHOLD_MS override.
+      return { db, config: fullyEffectiveConfig(db, boot) };
     });
     process.exit(code);
   } catch (err) {

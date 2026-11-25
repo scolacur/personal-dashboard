@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { dbPathFor } from '../../shared/config';
+import { effectiveConfig } from '../../shared/effective-config';
 import { logger } from '../../shared/logger';
 import {
   areaBusySkips,
@@ -163,9 +164,12 @@ export interface RobotDeps {
  */
 export async function processRobotQueue(
   db: Database.Database,
-  config: AgentWorkerConfig,
+  baseConfig: AgentWorkerConfig,
   deps: RobotDeps = {},
 ): Promise<number> {
+  // PD-1006 (D-121): every live tunable (budget, caps, checkpoint windows, backoff) is re-read from
+  // the DB overrides each cycle, so a change on /devops/configure applies on the next pass.
+  const config = effectiveConfig(db, baseConfig);
   if (!config.robot.dispatchEnabled) return 0;
 
   // Fail-closed guard: never dispatch a Robot if dashboard.db isn't actually locked away from

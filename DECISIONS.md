@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-121](DECISIONS/D-121-a-db-override-beats-env-for-worker-tunables.md)** — A DB override beats the env var for worker tunables; the env var stays the boot default (PD-1006)
 - **[D-116](DECISIONS/D-116-the-agent-worker-auto-deploys-from-ghcr-through-its-own-scoped-watchtower-drained.md)** — The agent-worker auto-deploys from GHCR through its own scoped Watchtower, drained by a fail-closed pre-update hook (PD-816; supersedes the "worker NOT on GHCR/Watchtower" line)
 - **[D-115](DECISIONS/D-115-an-epics-lane-is-its-own-status-queued-members-do-not-move-it.md)** — An Epic's lane is its own status; queued members do not move it (PD-968; amends D-080)
 - **[D-114](DECISIONS/D-114-a-checkpoint-is-a-progress-check-progressing-runs-continue-on-their-own.md)** — A checkpoint is a progress check: a run that is making progress continues on its own, and only a stalled one waits for Steve

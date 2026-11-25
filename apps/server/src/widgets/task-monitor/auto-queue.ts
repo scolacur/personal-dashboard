@@ -31,6 +31,7 @@ import {
   unresolvedBlockers,
 } from './store';
 import { getMaintenanceHoldStatus } from '../../lib/maintenance-holds';
+import { serverSetting } from './worker-config';
 
 // Auto-queue eligibility + capacity (D-103, PD-808).
 //
@@ -185,24 +186,18 @@ function capacityRow(
   return { id, label: def.label, description: def.description, current, limit, met, ...(met ? {} : { reason }) };
 }
 
-/** A non-negative integer env var, falling back to `def` for anything missing or malformed. */
-function envInt(name: string, def: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') return def;
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : def;
-}
-
 /**
  * The promoter's capacity limits, env-configurable with the D-103 §4 defaults (PD-811). Read on
  * every capacity computation so the board, the checklist and the promoter all enforce the same
- * numbers — the shared `AUTO_QUEUE_*` constants are the defaults, the env vars the overrides.
+ * numbers — the shared `AUTO_QUEUE_*` constants are the defaults, the env vars the boot overrides,
+ * and (PD-1006, D-121) a `config_overrides` row set on /devops/configure beats both. Without a `db`
+ * only env/default apply.
  */
-export function autoQueueLimits(): { queueDepthFactor: number; reviewWip: number; epicInFlight: number } {
+export function autoQueueLimits(db?: Database.Database): { queueDepthFactor: number; reviewWip: number; epicInFlight: number } {
   return {
-    queueDepthFactor: envInt('AUTO_QUEUE_QUEUE_DEPTH_FACTOR', AUTO_QUEUE_QUEUE_DEPTH_FACTOR),
-    reviewWip: envInt('AUTO_QUEUE_REVIEW_WIP_LIMIT', AUTO_QUEUE_REVIEW_WIP_LIMIT),
-    epicInFlight: envInt('AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT', AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT),
+    queueDepthFactor: serverSetting(db, 'AUTO_QUEUE_QUEUE_DEPTH_FACTOR', AUTO_QUEUE_QUEUE_DEPTH_FACTOR),
+    reviewWip: serverSetting(db, 'AUTO_QUEUE_REVIEW_WIP_LIMIT', AUTO_QUEUE_REVIEW_WIP_LIMIT),
+    epicInFlight: serverSetting(db, 'AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT', AUTO_QUEUE_EPIC_IN_FLIGHT_LIMIT),
   };
 }
 
@@ -256,7 +251,7 @@ export function computeAutoQueueCapacity(
   epicId: number | null,
   now: number = Date.now(),
 ): AutoQueueCapacity {
-  const limits = autoQueueLimits();
+  const limits = autoQueueLimits(db);
   return buildAutoQueueCapacity({
     queueDepthCurrent: countDispatchableRobotTickets(db),
     queueDepthLimit: robotConcurrency(db) * limits.queueDepthFactor,

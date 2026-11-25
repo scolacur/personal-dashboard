@@ -48,6 +48,7 @@ import {
   type HeadShaFetcher,
   type StatusPoster,
 } from './review-gate';
+import { effectiveConfig } from '../../shared/effective-config';
 
 const run = promisify(execFile);
 
@@ -453,10 +454,13 @@ function notifySecretFound(
  */
 export async function runEvaluatePass(
   db: Database.Database,
-  config: AgentWorkerConfig,
+  baseConfig: AgentWorkerConfig,
   now: number = Date.now(),
   deps: EvaluatePassDeps = {},
 ): Promise<number> {
+  // PD-1006 (D-121): the budget, round cap and adopt-idle time are read from the DB overrides on
+  // every pass, so raising EVALUATOR_BUDGET_TURNS on /devops/configure un-sticks reviews with no restart.
+  const config = effectiveConfig(db, baseConfig);
   if (!config.evaluator.enabled) return 0;
 
   const last = readStateNumber(db, EVAL_POLL_LAST);

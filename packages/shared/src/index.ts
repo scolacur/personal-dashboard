@@ -573,3 +573,23 @@ export {
   DRUG_LOG_FALLBACK_DAY_SETTINGS,
   normalizeDrugLabel,
 } from './drug-log';
+export type {
+  WorkerSettingUnit,
+  WorkerSettingGroup,
+  WorkerSettingDef,
+  WorkerConfigBootEntry,
+  WorkerConfigBootSnapshot,
+  WorkerSettingValidation,
+  WorkerSettingSource,
+  WorkerConfigEntry,
+  WorkerConfigResponse,
+} from './worker-config';
+export {
+  WORKER_SETTINGS,
+  WORKER_SETTING_GROUPS,
+  WORKER_CONFIG_BOOT_KEY,
+  CONFIG_OVERRIDES_TABLE,
+  workerSettingDef,
+  validateWorkerSettingValue,
+  resolveWorkerSetting,
+} from './worker-config';

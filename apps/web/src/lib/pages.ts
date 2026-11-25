@@ -81,6 +81,7 @@ export const pages: PageMeta[] = [
       { id: 'do-task-tracker', title: 'Task Tracker', route: '/devops/task-tracker' },
       { id: 'do-decisions', title: 'Decisions', route: '/devops/decisions', badge: 'decisions' },
       { id: 'do-velocity', title: 'Velocity', route: '/devops/velocity' },
+      { id: 'do-configure', title: 'Configuration', route: '/devops/configure' },
     ],
   },
 ];
