@@ -49,7 +49,8 @@ export const RECURRING_JOBS: RecurringJob[] = [
   {
     id: 'ticket-audit',
     name: 'Ticket Audit',
-    description: 'Autonomous advisory sweep of the backlog (D-045).',
+    description:
+      'Autonomous advisory sweep of the backlog — each run is a full re-sweep, not cumulative (D-045).',
     schedule: '0 5 * * 1', // AUDIT_SCHEDULE — weekly, Monday 05:00
     kind: 'audit',
     reportRoute: '/devops/reports/ticket-audit',

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
-import { latestActionableProposal, type TicketEvent } from '@dashboard/shared';
+import { latestActionableProposal, type CloseReason, type ClosedIntoRef, type TicketEvent } from '@dashboard/shared';
 
 /**
  * Read-only board tools for the Refine agent (PD-433).
@@ -41,6 +41,13 @@ export interface TicketSummary {
   isEpic: boolean;
   refined: boolean;
   epic: string | null;
+  /** PD-888: why the system closed it (`split` | `superseded` | `duplicate`), or null for a
+   *  plain/manual close or an open ticket. Lets a Refine agent tell a split/superseded ticket
+   *  (which has successors) apart from an abandoned one. */
+  closeReason: CloseReason | null;
+  /** PD-888: the successor ticket(s) a closed, reasoned ticket points to — so the agent sees
+   *  "split into PD-874, PD-875" without a second lookup. Empty when there are none. */
+  closedInto: ClosedIntoRef[];
 }
 
 /**
@@ -63,6 +70,7 @@ interface Row {
   assignee: string | null;
   is_epic: number;
   refined: number;
+  close_reason: string | null;
   epic_display_id: string | null;
   epic_title?: string | null;
 }
@@ -75,11 +83,40 @@ export function read(db: Database.Database, sql: string) {
 
 const SELECT = `
   SELECT t.id, t.display_id, t.title, t.body, t.status, t.priority, t.assignee, t.is_epic, t.refined,
-         e.display_id AS epic_display_id, e.title AS epic_title
+         t.close_reason, e.display_id AS epic_display_id, e.title AS epic_title
     FROM agent_tickets t
     LEFT JOIN agent_tickets e ON e.id = t.epic_id`;
 
-const summary = (r: Row): TicketSummary => ({
+/**
+ * PD-888: a closed ticket's successor(s), resolved the same way the server store does (two scoped
+ * reads, read-only). `split` / `duplicate` follow the outgoing relation; `superseded` follows the
+ * `refine_superseded` event's `by` display id. Result sets here are server-capped, so this per-row
+ * read is not an N+1 concern. Empty unless the ticket is closed with a matching reason.
+ */
+function closedIntoFor(db: Database.Database, id: number, closeReason: string | null): ClosedIntoRef[] {
+  if (closeReason === 'split' || closeReason === 'duplicate') {
+    const relType = closeReason === 'split' ? 'split' : 'duplicates';
+    const rows = read(
+      db,
+      `SELECT t.display_id AS display_id, t.title AS title
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.to_ticket_id
+        WHERE r.from_ticket_id = ? AND r.type = ? ORDER BY t.id ASC`,
+    ).all(id, relType) as { display_id: string | null; title: string }[];
+    return rows.map((r) => ({ displayId: r.display_id, title: r.title }));
+  }
+  if (closeReason === 'superseded') {
+    const rows = read(
+      db,
+      `SELECT t.display_id AS display_id, t.title AS title
+         FROM agent_ticket_events e JOIN agent_tickets t ON t.display_id = json_extract(e.detail, '$.by')
+        WHERE e.ticket_id = ? AND e.type = 'refine_superseded' ORDER BY t.id ASC`,
+    ).all(id) as { display_id: string | null; title: string }[];
+    return rows.map((r) => ({ displayId: r.display_id, title: r.title }));
+  }
+  return [];
+}
+
+const summary = (db: Database.Database, r: Row): TicketSummary => ({
   displayId: r.display_id,
   title: r.title,
   status: r.status,
@@ -88,6 +125,8 @@ const summary = (r: Row): TicketSummary => ({
   isEpic: r.is_epic === 1,
   refined: r.refined === 1,
   epic: r.epic_display_id,
+  closeReason: (r.close_reason as CloseReason | null) ?? null,
+  closedInto: r.status === 'closed' ? closedIntoFor(db, r.id, r.close_reason) : [],
 });
 
 const clampLimit = (n: number | undefined, max: number, dflt: number) =>
@@ -161,7 +200,7 @@ export function searchTickets(
     db,
     `${SELECT} WHERE ${where.join(' AND ')} ORDER BY ${titleHit} DESC, t.id DESC LIMIT ?`,
   ).all(...params, ...titleParams, limit + 1) as Row[];
-  return { results: rows.slice(0, limit).map(summary), truncated: rows.length > limit };
+  return { results: rows.slice(0, limit).map((r) => summary(db, r)), truncated: rows.length > limit };
 }
 
 /** One ticket with its body (truncated), its Epic, and its relation count. Null when not found. */
@@ -179,7 +218,7 @@ export function getTicket(
     'SELECT COUNT(*) AS n FROM agent_ticket_relations WHERE from_ticket_id = ? OR to_ticket_id = ?',
   ).get(r.id, r.id) as { n: number };
   return {
-    ...summary(r),
+    ...summary(db, r),
     body: body.slice(0, BODY_CHARS_MAX),
     bodyTruncated: body.length > BODY_CHARS_MAX,
     epicTitle: r.epic_title ?? null,
@@ -212,7 +251,7 @@ export function listRelations(db: Database.Database, displayId: string): Relatio
   const byId = read(db, `${SELECT} WHERE t.id = ?`);
   return rows.flatMap((r) => {
     const o = byId.get(r.other_id) as Row | undefined;
-    return o ? [{ type: r.type, direction: r.direction, other: summary(o) }] : [];
+    return o ? [{ type: r.type, direction: r.direction, other: summary(db, o) }] : [];
   });
 }
 
@@ -233,13 +272,13 @@ export function listEpicMembers(
   ).all(e.id, MEMBERS_LIMIT_MAX + 1) as Row[];
   const members = rows.slice(0, MEMBERS_LIMIT_MAX).map(
     (r): EpicMemberSummary => ({
-      ...summary(r),
+      ...summary(db, r),
       // Reuse the shared predicate so this stays correct when the supersede slice adds
       // `refine_superseded` to the terminating set (PD-930).
       hasActionableProposal: latestActionableProposal(ticketEvents(db, r.id)) !== null,
     }),
   );
-  return { epic: summary(e), members, truncated: rows.length > MEMBERS_LIMIT_MAX };
+  return { epic: summary(db, e), members, truncated: rows.length > MEMBERS_LIMIT_MAX };
 }
 
 const json = (v: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(v) }] });

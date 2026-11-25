@@ -38,6 +38,7 @@ function t(overrides: Partial<AgentTicket> = {}): AgentTicket {
     epicId: 10,
     ready: true,
     readyBypassed: false,
+    closeReason: null,
     archivedAt: null,
     createdAt: 0,
     updatedAt: 0,

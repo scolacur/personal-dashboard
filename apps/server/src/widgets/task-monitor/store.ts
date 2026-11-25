@@ -6,6 +6,8 @@ import type {
   NeedsHumanTicket,
   AgentTicket,
   AwaitingRefineItem,
+  CloseReason,
+  ClosedIntoRef,
   CreateProjectInput,
   CreateTicketInput,
   LineageRef,
@@ -14,6 +16,7 @@ import type {
   RefineAutostartStatus,
   RefineCommitMode,
   RefineInvalidationCause,
+  RefineRoundStaleDetail,
   RefineQuestionRound,
   EpicDerivedLane,
   EpicSummary,
@@ -52,6 +55,7 @@ import {
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
+  REFINE_ROUND_STALE_EVENT,
   REFINE_STATE_EVENT,
   REFINE_AUTOSTART_STATUS_KEY,
   REFINE_BACKFILL_EXCLUDED_EVENT,
@@ -94,6 +98,7 @@ interface TicketRow {
   is_epic: number;
   epic_id: number | null;
   auto_queue_excluded: number;
+  close_reason: string | null;
   archived_at: number | null;
   created_at: number;
   updated_at: number;
@@ -167,6 +172,8 @@ function rowToTicket(row: TicketRow, agentTurns: number | null = null): AgentTic
     isEpic: row.is_epic === 1,
     epicId: row.epic_id,
     autoQueueExcluded: row.auto_queue_excluded === 1,
+    // PD-888: why the system closed this ticket (null for a plain/manual close or an open ticket).
+    closeReason: (row.close_reason as CloseReason | null) ?? null,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -346,6 +353,65 @@ function membersWithOpenRobotPr(db: Database.Database, epicId: number): Set<numb
   return open;
 }
 
+/** True if the ticket has an outgoing `duplicates` relation (it is the dupe of another ticket). */
+function hasOutgoingDuplicate(db: Database.Database, ticketId: number): boolean {
+  return (
+    db
+      .prepare("SELECT 1 FROM agent_ticket_relations WHERE from_ticket_id = ? AND type = 'duplicates'")
+      .get(ticketId) !== undefined
+  );
+}
+
+/**
+ * PD-888: the successor ticket(s) each closed-with-a-reason ticket points to, resolved in TWO
+ * batched queries (never one per ticket). Keyed by ticket id; a ticket absent from the map has no
+ * successors. Pass `ticketId` to scope it to one ticket (the `getTicket` path).
+ *
+ * - `split` / `duplicate`: the outgoing relation whose type matches the reason → its `to` ticket.
+ * - `superseded`: the superseding ticket(s), recorded on the `refine_superseded` event as a display
+ *   id (PD-931/PD-932). A `by` that is a bare numeric id (a superseding parent with no displayId)
+ *   won't resolve a row — the reason still shows, just without a successor link.
+ */
+function closedIntoByTicket(db: Database.Database, ticketId?: number): Map<number, ClosedIntoRef[]> {
+  const out = new Map<number, ClosedIntoRef[]>();
+  const push = (id: number, ref: ClosedIntoRef): void => {
+    const list = out.get(id);
+    if (list) list.push(ref);
+    else out.set(id, [ref]);
+  };
+  const scope = ticketId === undefined;
+  type SuccRow = { src_id: number; display_id: string | null; title: string };
+
+  const relSql = `
+    SELECT src.id AS src_id, t.display_id AS display_id, t.title AS title
+      FROM agent_ticket_relations r
+      JOIN agent_tickets src ON src.id = r.from_ticket_id
+      JOIN agent_tickets t ON t.id = r.to_ticket_id
+     WHERE src.status = 'closed'
+       AND ((r.type = 'split' AND src.close_reason = 'split')
+         OR (r.type = 'duplicates' AND src.close_reason = 'duplicate'))
+       ${scope ? '' : 'AND src.id = ?'}
+     ORDER BY t.id ASC`;
+  const relStmt = db.prepare(relSql);
+  const relRows = (scope ? relStmt.all() : relStmt.all(ticketId)) as SuccRow[];
+  for (const r of relRows) push(r.src_id, { displayId: r.display_id, title: r.title });
+
+  const supSql = `
+    SELECT e.ticket_id AS src_id, t.display_id AS display_id, t.title AS title
+      FROM agent_ticket_events e
+      JOIN agent_tickets src ON src.id = e.ticket_id
+      JOIN agent_tickets t ON t.display_id = json_extract(e.detail, '$.by')
+     WHERE e.type = 'refine_superseded'
+       AND src.close_reason = 'superseded'
+       ${scope ? '' : 'AND e.ticket_id = ?'}
+     ORDER BY t.id ASC`;
+  const supStmt = db.prepare(supSql);
+  const supRows = (scope ? supStmt.all() : supStmt.all(ticketId)) as SuccRow[];
+  for (const r of supRows) push(r.src_id, { displayId: r.display_id, title: r.title });
+
+  return out;
+}
+
 export function listTickets(db: Database.Database): AgentTicket[] {
   const rows = db
     .prepare(
@@ -365,14 +431,24 @@ export function listTickets(db: Database.Database): AgentTicket[] {
     )
     .all() as TicketRow[];
   const turns = latestRunTurns(db);
-  return rows.map((row) => rowToTicket(row, turns.get(row.id) ?? null));
+  const closedInto = closedIntoByTicket(db);
+  return rows.map((row) => {
+    const ticket = rowToTicket(row, turns.get(row.id) ?? null);
+    const succ = closedInto.get(row.id);
+    if (succ) ticket.closedInto = succ;
+    return ticket;
+  });
 }
 
 export function getTicket(db: Database.Database, id: number): AgentTicket | null {
   const row = db
     .prepare(`SELECT t.*, ${LATEST_REFINE_TYPE_SELECT} FROM agent_tickets t WHERE t.id = ?`)
     .get(id) as TicketRow | undefined;
-  return row ? rowToTicket(row, latestRunTurns(db, id).get(id) ?? null) : null;
+  if (!row) return null;
+  const ticket = rowToTicket(row, latestRunTurns(db, id).get(id) ?? null);
+  const succ = closedIntoByTicket(db, id).get(id);
+  if (succ) ticket.closedInto = succ;
+  return ticket;
 }
 
 /** Allocate the next per-project display id (e.g. 'PD-7'), bumping the project's counter. */
@@ -674,6 +750,28 @@ export function updateTicket(
     next.agentState = null;
   }
 
+  // PD-888: record WHY a ticket closed, so a split / superseded / duplicate close is
+  // distinguishable from an abandoned one (both otherwise read `closed`, `refined: false`). Only
+  // meaningful on `closed`:
+  //   - an explicit server-internal `patch.closeReason` (the approveRefine split/supersede paths) wins;
+  //   - else an outgoing `duplicates` relation marks it `'duplicate'`;
+  //   - else a plain/manual close leaves it null.
+  // Any non-closed status — including a reopen or `completed` — clears it (so reopening a ticket
+  // clears the reason). A ticket already closed and staying closed keeps its reason unless the
+  // patch overrides it. The routes never forward `closeReason`, so a client cannot set it.
+  if (next.status !== 'closed') {
+    next.closeReason = null;
+  } else if (existing.status !== 'closed') {
+    next.closeReason =
+      patch.closeReason !== undefined
+        ? patch.closeReason
+        : hasOutgoingDuplicate(db, id)
+          ? 'duplicate'
+          : null;
+  } else {
+    next.closeReason = patch.closeReason !== undefined ? patch.closeReason : existing.closeReason;
+  }
+
   // PD-467: a ticket parked `stuck`/`needs-human` keeps that `agent_state` forever, and the loop's
   // selection gates on `agent_state IS NULL OR 'queued'` — so re-queueing a parked ticket from the
   // board produced a card that looked perfectly normal in the Queue and could NEVER dispatch, with
@@ -730,7 +828,7 @@ export function updateTicket(
     }
     db.prepare(
       `UPDATE agent_tickets
-       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, coder_area = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, updated_at = ?
+       SET title = ?, body = ?, status = ?, priority = ?, sort_order = ?, project_id = ?, assignee = ?, github_issue_number = ?, github_issue_url = ?, refined = ?, ready = ?, ready_bypassed = ?, max_turns = ?, kind = ?, coder_area = ?, is_epic = ?, epic_id = ?, auto_queue_excluded = ?, close_reason = ?, updated_at = ?
        WHERE id = ?`,
     ).run(
       next.title,
@@ -751,6 +849,7 @@ export function updateTicket(
       next.isEpic ? 1 : 0,
       next.epicId,
       next.autoQueueExcluded ? 1 : 0,
+      next.closeReason,
       next.updatedAt,
       id,
     );
@@ -913,6 +1012,31 @@ export function updateTicket(
         epicId: existing.epicId ?? undefined,
       });
       logEvent(db, id, 'recurred', { spawnedId: spawned.id, spawnedDisplayId: spawned.displayId });
+    }
+
+    // PD-889: this change may invalidate OTHER Refine sessions' open rounds / pending proposals that
+    // cited this ticket. Terminal (incl. split/superseded/duplicate via closeReason), an Epic move,
+    // and a body rewrite are the triggers; a priority/queue/assignee change is not. One trigger per
+    // call (terminal beats epic-move beats body); the fan-out itself debounces per affected session.
+    let staleTrigger: StaleTrigger | null = null;
+    if (enteringTerminal) {
+      staleTrigger =
+        next.status === 'completed'
+          ? 'completed'
+          : next.closeReason === 'split'
+            ? 'split'
+            : next.closeReason === 'superseded'
+              ? 'superseded'
+              : next.closeReason === 'duplicate'
+                ? 'duplicate'
+                : 'closed';
+    } else if (next.epicId !== existing.epicId) {
+      staleTrigger = 'epic_move';
+    } else if (bodyChanged) {
+      staleTrigger = 'body';
+    }
+    if (staleTrigger) {
+      staleRefineDependents(db, { id, displayId: existing.displayId }, staleTrigger, next.updatedAt);
     }
   });
   apply();
@@ -1498,6 +1622,119 @@ export function listTicketEvents(db: Database.Database, ticketId: number): Ticke
   return rows.map(rowToTicketEvent);
 }
 
+// ── Stale Refine rounds / proposals (PD-889) ─────────────────────────────────
+// An open question round, or a pending proposal, is written against the board as it was when the
+// agent asked. If a ticket it relied on changes before Steve acts, the round/proposal can be
+// quietly wrong. `dependsOn` (recorded at ask time by the worker) is the set of ticket ids a round
+// or proposal relies on; when one of them changes in a `StaleTrigger` way, each affected session
+// gets one `refine_round_stale` turn, which closes the round (a late answer is refused `ROUND_STALE`),
+// terminates the proposal, and makes the worker re-ground the session.
+
+type StaleTrigger = RefineRoundStaleDetail['change'];
+
+/** Parse the `dependsOn` number array off an event's stored detail JSON; `[]` when absent/malformed. */
+function dependsOnOf(detailJson: string | null | undefined): number[] {
+  if (!detailJson) return [];
+  try {
+    const d = JSON.parse(detailJson) as { dependsOn?: unknown };
+    return Array.isArray(d.dependsOn) ? d.dependsOn.filter((n): n is number => typeof n === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The agent-facing message a `refine_round_stale` turn carries (PD-889). */
+function staleMessage(
+  changed: { id: number; displayId: string | null },
+  trigger: StaleTrigger,
+  invalidates: RefineRoundStaleDetail['invalidates'],
+): string {
+  const ref = changed.displayId ?? `ticket ${changed.id}`;
+  const what: Record<StaleTrigger, string> = {
+    completed: 'has been completed',
+    closed: 'has been closed',
+    split: 'has been split into child tickets',
+    superseded: 'has been superseded by other tickets',
+    duplicate: 'has been closed as a duplicate',
+    body: 'has had its description rewritten',
+    epic_move: 'has been moved to a different Epic',
+  };
+  const subject =
+    invalidates === 'both'
+      ? 'An open question round and a pending proposal you made'
+      : invalidates === 'round'
+        ? 'An open question round you asked'
+        : 'A pending proposal you made';
+  return (
+    `${subject} depended on ${ref}, which ${what[trigger]} since. ` +
+    `Re-read ${ref} and the other tickets this session depends on, then post a revised question ` +
+    `round, withdraw any question that is now moot, or propose directly against the current state.`
+  );
+}
+
+/**
+ * PD-889: a ticket changed in a way (`trigger`) that can invalidate another session's open question
+ * round or pending proposal. For every OTHER ticket whose CURRENT open round or actionable proposal
+ * lists `changed.id` in its `dependsOn`, append exactly one `refine_round_stale` turn to it.
+ *
+ * Debounce is automatic: a stale turn is a Refine-state event and terminates both the open round
+ * (`openQuestionRound` → null) and the proposal (`latestActionableProposal` → null), so a second
+ * change in quick succession finds nothing to stale and appends nothing.
+ *
+ * Called inside `updateTicket`'s transaction, so detection + appends are atomic with the change.
+ */
+function staleRefineDependents(
+  db: Database.Database,
+  changed: { id: number; displayId: string | null },
+  trigger: StaleTrigger,
+  now: number,
+): void {
+  // Candidate sessions: any ticket with a round/proposal event that EVER cited this ticket. The
+  // per-candidate check below confirms the session's CURRENT open round/proposal still cites it (a
+  // newer round that dropped the id, or a session already staled, is filtered out there).
+  const candidates = db
+    .prepare(
+      `SELECT DISTINCT ticket_id FROM agent_ticket_events
+        WHERE type IN (?, ?)
+          AND ticket_id != ?
+          AND detail IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM json_each(json_extract(detail, '$.dependsOn')) je WHERE je.value = ?
+          )`,
+    )
+    .all(REFINE_EVENT_TYPE.agent, REFINE_PROPOSAL_EVENT.proposal, changed.id, changed.id) as {
+    ticket_id: number;
+  }[];
+
+  const insert = db.prepare(
+    'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+  );
+  for (const { ticket_id: sessionId } of candidates) {
+    const open = openQuestionRound(db, sessionId);
+    let roundStale = false;
+    if (open) {
+      const row = db
+        .prepare('SELECT detail FROM agent_ticket_events WHERE id = ?')
+        .get(open.eventId) as { detail: string | null } | undefined;
+      roundStale = dependsOnOf(row?.detail).includes(changed.id);
+    }
+    const proposal = latestActionableProposal(listTicketEvents(db, sessionId));
+    const propStale = proposal ? (proposal.proposal.dependsOn ?? []).includes(changed.id) : false;
+    if (!roundStale && !propStale) continue;
+
+    const invalidates: RefineRoundStaleDetail['invalidates'] =
+      roundStale && propStale ? 'both' : roundStale ? 'round' : 'proposal';
+    const detail: RefineRoundStaleDetail = {
+      text: staleMessage(changed, trigger, invalidates),
+      changedTicketId: changed.id,
+      changedDisplayId: changed.displayId,
+      change: trigger,
+      invalidates,
+    };
+    insert.run(sessionId, REFINE_ROUND_STALE_EVENT, JSON.stringify(detail), now);
+  }
+}
+
 /** Outcome of a startRefine attempt: the kickoff event, or a reason it didn't start. */
 export type StartRefineResult =
   | { ok: true; event: TicketEvent }
@@ -1681,8 +1918,22 @@ export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] 
 
 export type StructuredRefineReplyResult =
   | { ok: true; event: TicketEvent }
-  | { ok: false; reason: 'not_found' | 'no_open_round' }
+  | { ok: false; reason: 'not_found' | 'no_open_round' | 'round_stale' }
   | { ok: false; reason: 'invalid'; message: string };
+
+/** PD-889: true when a ticket's newest Refine-state event is a stale turn — i.e. the round went
+ *  stale (a cited ticket changed) rather than there simply being no open round. Lets the reply
+ *  route tell Steve *why* with a distinct `ROUND_STALE` 409. */
+export function newestRefineStateIsStale(db: Database.Database, ticketId: number): boolean {
+  const newest = db
+    .prepare(
+      `SELECT type FROM agent_ticket_events
+        WHERE ticket_id = ? AND type IN (${REFINE_STATE_EVENT_TYPES.map(() => '?').join(', ')})
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(ticketId, ...REFINE_STATE_EVENT_TYPES) as { type: string } | undefined;
+  return newest?.type === REFINE_ROUND_STALE_EVENT;
+}
 
 /**
  * The question round Steve can answer right now (PD-744): the newest Refine turn is an agent turn
@@ -1724,7 +1975,10 @@ export function appendStructuredRefineReply(
 ): StructuredRefineReplyResult {
   if (getTicket(db, ticketId) === null) return { ok: false, reason: 'not_found' };
   const open = openQuestionRound(db, ticketId);
-  if (!open) return { ok: false, reason: 'no_open_round' };
+  if (!open) {
+    // PD-889: distinguish "the round went stale" from "there is no open round", so the UI can say why.
+    return { ok: false, reason: newestRefineStateIsStale(db, ticketId) ? 'round_stale' : 'no_open_round' };
+  }
   const invalid = validateAnswerSet(open.round, set);
   if (invalid) return { ok: false, reason: 'invalid', message: invalid };
   const answers: RefineAnswerSet = {
@@ -2372,11 +2626,16 @@ export function approveRefine(
     // so re-superseding is a no-op rather than a double-close or duplicate event.
     for (const m of supersededMembers) {
       if (m.alreadyClosed) continue;
-      updateTicket(db, m.id, { status: 'closed' });
+      // PD-888: a superseded member went through Refine — record WHY it closed and mark it refined,
+      // so it reads as "superseded into <successor>" rather than an abandoned `refined: false` row.
+      updateTicket(db, m.id, { status: 'closed', closeReason: 'superseded', refined: true });
       logEvent(db, m.id, REFINE_PROPOSAL_EVENT.superseded, { by: parent.displayId ?? String(parent.id) });
     }
     // Only a decompose closes the parent (D-036); Populate leaves the Epic open.
-    if (!populate) updateTicket(db, ticketId, { status: 'closed' });
+    // PD-888: the split parent was decomposed through Refine — record `closeReason: 'split'` and mark
+    // it refined. `refined: false` is exactly what made a split parent look untouched; its successors
+    // are the `split` children linked above, surfaced via `closedInto`.
+    if (!populate) updateTicket(db, ticketId, { status: 'closed', closeReason: 'split', refined: true });
     // PD-634: a Populate rewrites the Epic's description and marks it refined — both halves of D-089's
     // claim, on evidence Steve read in one panel. **This must run LAST.** Every `createTicket` above
     // fires `invalidateEpicRefinement`, so marking first would be undone by the next child. Plain

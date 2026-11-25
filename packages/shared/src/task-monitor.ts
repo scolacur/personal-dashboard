@@ -3,6 +3,7 @@
 
 // Type-only, and one-directional: `agent-prompts.ts` imports nothing, so this cannot cycle.
 import type { EvaluatorVerdict } from './agent-prompts';
+import { citedIds } from './refine-questions';
 import type { RefineAnswerSet, RefineQuestionRound } from './refine-questions';
 
 // Who the ticket is assigned to. 'steve' = human owner; 'robot' = the Robot loop.
@@ -422,6 +423,27 @@ export interface CreateProjectInput {
   color?: string | null;
 }
 
+/**
+ * Why a ticket was closed (PD-888), when the system closed it rather than a human. `null` means a
+ * plain/manual close or an open ticket. Distinguishes a ticket that was SPLIT or SUPERSEDED (which
+ * went through Refine and has successors) from one that was simply abandoned — the two read
+ * identically (`closed`, `refined: false`) without it.
+ *
+ * - `split`      — a Refine decompose closed the parent into its children (the `split` relations).
+ * - `superseded` — a decompose/Populate `supersedes` replaced this member (PD-931/PD-932).
+ * - `duplicate`  — closed with an outgoing `duplicates` relation (the dupe of another ticket).
+ */
+export type CloseReason = 'split' | 'superseded' | 'duplicate';
+
+export const CLOSE_REASONS: readonly CloseReason[] = ['split', 'superseded', 'duplicate'] as const;
+
+/** A successor a closed ticket points to (PD-888). The ticket(s) its work moved into — the
+ *  split children, the duplicate target, or the superseding ticket(s). */
+export interface ClosedIntoRef {
+  displayId: string | null;
+  title: string;
+}
+
 export interface AgentTicket {
   id: number;
   /** Human-facing per-project id, e.g. 'PD-7'. Null only for legacy rows. */
@@ -507,6 +529,14 @@ export interface AgentTicket {
    *  promoter (an `auto_queued` event newer than any manual `status_changed`), not by hand. Drives
    *  the card's "auto-queued" badge. Server-derived, read-only; absent reads as false. */
   autoQueued?: boolean;
+  /** PD-888: why the system closed this ticket (`split` | `superseded` | `duplicate`), or `null` for
+   *  a plain/manual close or an open ticket. Set only by the system close paths; a manual close
+   *  leaves it null, and reopening clears it. */
+  closeReason: CloseReason | null;
+  /** PD-888: the successor ticket(s) a closed, reasoned ticket points to — the split children, the
+   *  duplicate target, or the superseding ticket(s). Server-derived (batched), read-only; present
+   *  only on the list/get payloads (absent on create/update returns). Absent/empty = none. */
+  closedInto?: ClosedIntoRef[];
   /** Soft-delete timestamp; null = active. */
   archivedAt: number | null;
   createdAt: number;
@@ -599,6 +629,11 @@ export interface UpdateTicketInput {
   githubIssueUrl?: string | null;
   /** Mark the ticket refined (D-044, PD-268). Omit to leave unchanged. */
   refined?: boolean;
+  /** PD-888: SERVER-INTERNAL — set the close reason when the system closes a ticket (the
+   *  `approveRefine` split/supersede paths). Deliberately NOT forwarded by the routes, so a client
+   *  cannot set it: a manual close leaves it null. Only honoured when the patch enters `closed`;
+   *  leaving `closed` clears the reason regardless. Omit to leave the store to derive it. */
+  closeReason?: CloseReason | null;
   /** Set when a human queued a not-Ready robot ticket via the confirm modal (D-058, PD-399);
    *  defaults false. Omit to leave unchanged. `ready` is NOT client-settable (server-computed
    *  from the body), so it is deliberately absent here. */
@@ -1615,6 +1650,10 @@ export interface RefineDetail {
   /** PD-744: on a refine_human turn, the structured answers Steve sent; `text` holds their
    *  rendering, which is what the agent reads. */
   answers?: RefineAnswerSet;
+  /** PD-889: on a refine_agent turn that asked a `round`, the ticket ids the round depends on —
+   *  every ticket cited in the round, plus the ticket's own relations and Epic at ask time. When
+   *  one of these changes (closes, is split, body rewritten, …), the round is marked stale. */
+  dependsOn?: number[];
 }
 
 /** A single Refine turn, projected from a refine_* `TicketEvent` for the thread UI. */
@@ -1657,10 +1696,35 @@ export const REFINE_SESSION_END_TYPES: readonly string[] = [
   REFINE_PARKED_EVENT,
 ];
 
-/** Every event type that decides a ticket's Refine state: the two turn types plus the ends. */
+/**
+ * A round or proposal was invalidated because a ticket it cited changed (PD-889). Appended to the
+ * cited-dependency's *session* (the ticket being refined), and — because it is a Refine-state event
+ * and so becomes the newest one — it makes `openQuestionRound` return null (a late answer is refused
+ * with `ROUND_STALE`), terminates the pending proposal in `latestActionableProposal`, and reads as
+ * `refining` so the worker re-grounds the session. Detail is a `RefineRoundStaleDetail`.
+ */
+export const REFINE_ROUND_STALE_EVENT = 'refine_round_stale';
+
+/** What a `refine_round_stale` event records: the cited ticket that changed, how, and which of the
+ *  session's open round / pending proposal it invalidated (PD-889). `text` is the agent-facing
+ *  message the worker resumes the session with. */
+export interface RefineRoundStaleDetail {
+  text: string;
+  /** The cited ticket that changed. */
+  changedTicketId: number;
+  changedDisplayId: string | null;
+  /** How it changed — the trigger that fired. */
+  change: 'completed' | 'closed' | 'split' | 'superseded' | 'duplicate' | 'body' | 'epic_move';
+  /** Which of this session's artefacts went stale. */
+  invalidates: 'round' | 'proposal' | 'both';
+}
+
+/** Every event type that decides a ticket's Refine state: the two turn types, the ends, and a
+ *  stale turn (PD-889). A stale turn is newest-wins like the others, so it closes any open round. */
 export const REFINE_STATE_EVENT_TYPES: readonly string[] = [
   REFINE_EVENT_TYPE.human,
   REFINE_EVENT_TYPE.agent,
+  REFINE_ROUND_STALE_EVENT,
   ...REFINE_SESSION_END_TYPES,
 ];
 
@@ -1673,6 +1737,9 @@ export function refineStateFromLatestType(
 ): RefineState | null {
   if (latestRefineType === REFINE_EVENT_TYPE.agent) return 'awaiting-human';
   if (latestRefineType === REFINE_EVENT_TYPE.human) return 'refining';
+  // PD-889: a stale turn means the agent must re-ground and re-ask/-propose — the agent is about to
+  // work, exactly like Steve's turn being newest, so the session reads `refining` (not awaiting).
+  if (latestRefineType === REFINE_ROUND_STALE_EVENT) return 'refining';
   return null;
 }
 
@@ -1956,6 +2023,21 @@ export interface RefineProposal {
   supersedes?: string[];
   /** Short why, shown in the approval panel. */
   rationale?: string;
+  /** PD-889: the ticket ids this proposal depends on — every ticket cited in the proposal (bodies,
+   *  rationale, `supersedes`), plus the target's own relations and Epic at propose time. Written by
+   *  the worker when it persists the proposal; when one of these changes the proposal is marked
+   *  stale and stops being actionable. Not set by the agent. */
+  dependsOn?: number[];
+}
+
+/** Every display id a proposal cites — child titles and bodies, the (Populate/in-place) body, the
+ *  rationale, and `supersedes` (PD-889). De-duplicated, uppercased. Sibling relations are addressed
+ *  by child index, not id, so they contribute nothing. */
+export function proposalCitedIds(proposal: RefineProposal): string[] {
+  const parts: string[] = [proposal.body ?? '', proposal.rationale ?? ''];
+  for (const c of proposal.children ?? []) parts.push(c.title ?? '', c.body ?? '');
+  for (const s of proposal.supersedes ?? []) parts.push(s);
+  return citedIds(parts.join('\n'));
 }
 
 /**
@@ -1973,9 +2055,12 @@ export function latestActionableProposal(
     if (
       e.type === REFINE_PROPOSAL_EVENT.committed ||
       e.type === REFINE_PROPOSAL_EVENT.rejected ||
-      e.type === REFINE_PROPOSAL_EVENT.superseded
+      e.type === REFINE_PROPOSAL_EVENT.superseded ||
+      // PD-889: a stale turn after the proposal retires it — a ticket it cited changed, so it must
+      // no longer be approvable until the agent re-proposes against the new state.
+      e.type === REFINE_ROUND_STALE_EVENT
     ) {
-      return null; // newest lifecycle event is a decision/supersede → nothing pending
+      return null; // newest lifecycle event is a decision/supersede/stale → nothing pending
     }
     if (e.type === REFINE_PROPOSAL_EVENT.proposal) {
       return { eventId: e.id, proposal: (e.detail ?? {}) as RefineProposal };
@@ -2050,8 +2135,16 @@ export interface AuditFinding {
   runId: number;
   projectId: number | null;
   ticketId: number | null;
-  /** Recommendation bucket: 'archive' | 'complete' | 'reprioritize' | 'update' | 'keep' | … */
+  /** Recommendation bucket: single-ticket ('archive' | 'complete' | 'reprioritize' | 'update' |
+   *  'keep') or relation ('link' | 'unlink' | 'duplicate', PD-828). */
   type: string;
+  /** Relation findings (PD-828): the other end of the relation. `ticketId` is the relation `from`
+   *  side, `targetTicketId` the `to` side (D-051) — so `blocks` = subject blocks target, and
+   *  `duplicate` = subject (the duplicate) → target (the canonical). NULL on a single-ticket finding. */
+  targetTicketId: number | null;
+  /** Relation findings (PD-828): the relation type the finding concerns. NULL on a single-ticket
+   *  finding. */
+  relationType: RelationType | null;
   recommendation: string | null;
   reason: string | null;
   evidence: string | null;

@@ -89,6 +89,32 @@ export function findBareIds(text: string): string[] {
   return bare;
 }
 
+/**
+ * Every id-shaped token in `text` (e.g. `PD-433`, `D-091`), uppercased and de-duplicated (PD-889).
+ *
+ * Unlike `findBareIds`, titling is irrelevant here: this is the raw set of ids a piece of Refine
+ * text *mentions*, which the caller resolves against the board and silently drops anything that is
+ * not a live ticket (a decision id, another project's id, a typo). Used to record what tickets an
+ * open round or a pending proposal depends on, so a change to one of them can mark it stale.
+ */
+export function citedIds(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(ID_PATTERN)) out.add(m[0].toUpperCase());
+  return [...out];
+}
+
+/** Every display id a question round cites anywhere — question text, `why`, option labels and
+ *  descriptions, and assumption text and `source` (PD-889). De-duplicated, uppercased. */
+export function roundCitedIds(round: RefineQuestionRound): string[] {
+  const parts: string[] = [];
+  for (const q of round.questions ?? []) {
+    parts.push(q.question ?? '', q.why ?? '');
+    for (const o of q.options ?? []) parts.push(o.label ?? '', o.description ?? '');
+  }
+  for (const a of round.assumptions ?? []) parts.push(a.text ?? '', a.source ?? '');
+  return citedIds(parts.join('\n'));
+}
+
 function nonEmpty(v: unknown): v is string {
   return typeof v === 'string' && v.trim() !== '';
 }
