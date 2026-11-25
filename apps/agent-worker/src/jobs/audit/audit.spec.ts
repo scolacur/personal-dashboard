@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
-import { claimNextRun, firstProjectWithActiveTickets, getAuditableTickets, notifyAuditComplete } from './audit-db';
+import {
+  claimNextRun,
+  firstProjectWithActiveTickets,
+  getAuditableTickets,
+  getRelationsForTickets,
+  notifyAuditComplete,
+} from './audit-db';
 import { parseAuditFindings, runAuditPass } from './audit';
 
 // Minimal slice of the shared dashboard schema the audit job touches.
@@ -17,12 +23,19 @@ function freshDb(): Database.Database {
       status TEXT NOT NULL DEFAULT 'backlog', priority TEXT NOT NULL DEFAULT 'none',
       project_id INTEGER, archived_at INTEGER
     );
+    CREATE TABLE agent_ticket_relations (
+      id INTEGER PRIMARY KEY,
+      from_ticket_id INTEGER NOT NULL, to_ticket_id INTEGER NOT NULL,
+      type TEXT NOT NULL DEFAULT 'blocks', origin TEXT NOT NULL DEFAULT 'agent',
+      created_at INTEGER NOT NULL
+    );
     CREATE TABLE audit_run (
       id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'requested', scope TEXT,
       model TEXT, counts TEXT, started_at INTEGER, finished_at INTEGER, created_at INTEGER NOT NULL
     );
     CREATE TABLE audit_finding (
       id INTEGER PRIMARY KEY, run_id INTEGER NOT NULL, project_id INTEGER, ticket_id INTEGER,
+      target_ticket_id INTEGER, relation_type TEXT,
       type TEXT NOT NULL, recommendation TEXT, reason TEXT, evidence TEXT, proposed_change TEXT,
       confidence TEXT, decision TEXT NOT NULL DEFAULT 'undecided',
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -33,6 +46,13 @@ function freshDb(): Database.Database {
     );
   `);
   return db;
+}
+
+// A DB whose audit_finding already carries the PD-285 fingerprint column (post-migration shape).
+function freshDbWithFingerprint(): Database.Database {
+  const d = freshDb();
+  d.exec('ALTER TABLE audit_finding ADD COLUMN fingerprint TEXT');
+  return d;
 }
 
 function requestRun(db: Database.Database): number {
@@ -250,6 +270,245 @@ describe('notifyAuditComplete (PD-851)', () => {
       .prepare("SELECT kind, ticket_id FROM agent_notifications WHERE kind = 'audit_complete'")
       .get() as { kind: string; ticket_id: number | null };
     expect(row).toEqual({ kind: 'audit_complete', ticket_id: null });
+  });
+});
+
+// ── PD-285: cross-run reconciliation (sticky decisions + suppression) ─────────
+
+describe('runAuditPass — cross-run reconciliation (PD-285)', () => {
+  function seed(d: Database.Database): void {
+    d.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    d.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+    d.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (11, 'PD-11', 'B', 'backlog', 1)").run();
+  }
+  const agentEmitting = (text: string) => async () => ({ ok: true, text });
+  // Run one full pass and return the resulting run id (it finishes 'done').
+  async function pass(d: Database.Database, text: string): Promise<number> {
+    const id = requestRun(d);
+    const run = claimNextRun(d)!;
+    await runAuditPass(d, config, run, { runAgent: agentEmitting(text), buildContext: noContext });
+    return id;
+  }
+  const findingsFor = (d: Database.Database, runId: number) =>
+    d.prepare('SELECT ticket_id, type, decision, fingerprint FROM audit_finding WHERE run_id = ? ORDER BY ticket_id').all(runId) as {
+      ticket_id: number;
+      type: string;
+      decision: string;
+      fingerprint: string | null;
+    }[];
+
+  it('writes a fingerprint and carries an accepted decision forward on an identical re-run (Done-When #2)', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+    const text = '[{"displayId":"PD-10","type":"archive","evidence":"superseded","proposedChange":"archive it"}]';
+
+    const run1 = await pass(d, text);
+    const f1 = findingsFor(d, run1);
+    expect(f1).toHaveLength(1);
+    expect(f1[0].decision).toBe('undecided');
+    expect(f1[0].fingerprint).toMatch(/^[0-9a-f]{64}$/); // fingerprint was persisted
+
+    // Human accepts it.
+    d.prepare("UPDATE audit_finding SET decision = 'accepted' WHERE run_id = ?").run(run1);
+
+    const run2 = await pass(d, text);
+    const f2 = findingsFor(d, run2);
+    expect(f2).toHaveLength(1);
+    expect(f2[0].decision).toBe('accepted'); // carried forward
+    expect(f2[0].fingerprint).toBe(f1[0].fingerprint); // identical inputs → identical fingerprint
+  });
+
+  it('keeps a rejected finding suppressed (rejected) across an identical re-run', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+    const text = '[{"displayId":"PD-10","type":"archive","evidence":"stale","proposedChange":"close"}]';
+
+    const run1 = await pass(d, text);
+    d.prepare("UPDATE audit_finding SET decision = 'rejected' WHERE run_id = ?").run(run1);
+
+    const run2 = await pass(d, text);
+    expect(findingsFor(d, run2)[0].decision).toBe('rejected');
+  });
+
+  it('resurfaces a rejected finding (resets to undecided) only when the fingerprint changes (Done-When #3)', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+
+    const run1 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"OLD reason","proposedChange":"close"}]');
+    d.prepare("UPDATE audit_finding SET decision = 'rejected' WHERE run_id = ?").run(run1);
+
+    // Same ticket + type, but the evidence moved → changed fingerprint → resurfaces.
+    const run2 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"NEW reason","proposedChange":"close"}]');
+    const f2 = findingsFor(d, run2);
+    expect(f2[0].decision).toBe('undecided');
+    expect(f2[0].fingerprint).not.toBeNull();
+  });
+
+  it('does not carry a finding present last run but absent this run (closed-by-omission, Done-When #4)', async () => {
+    const d = freshDbWithFingerprint();
+    seed(d);
+
+    const run1 = await pass(
+      d,
+      '[{"displayId":"PD-10","type":"archive","evidence":"e10"},{"displayId":"PD-11","type":"update","evidence":"e11"}]',
+    );
+    d.prepare("UPDATE audit_finding SET decision = 'accepted' WHERE run_id = ?").run(run1);
+
+    // This run only re-raises PD-10; PD-11 is gone.
+    const run2 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"e10"}]');
+    const f2 = findingsFor(d, run2);
+    expect(f2).toHaveLength(1);
+    expect(f2[0].ticket_id).toBe(10);
+    expect(f2[0].decision).toBe('accepted');
+  });
+
+  it('tolerates a DB with no fingerprint column (worker deployed before the migration, Done-When #5)', async () => {
+    const d = freshDb(); // no fingerprint column
+    seed(d);
+    const run1 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"e"}]');
+    const f1 = d.prepare('SELECT decision FROM audit_finding WHERE run_id = ?').all(run1) as { decision: string }[];
+    expect(f1).toHaveLength(1);
+    expect(f1[0].decision).toBe('undecided');
+    // And a second pass still runs without a prior-findings crash.
+    const run2 = await pass(d, '[{"displayId":"PD-10","type":"archive","evidence":"e"}]');
+    expect(d.prepare('SELECT status FROM audit_run WHERE id = ?').get(run2)).toEqual({ status: 'done' });
+  });
+});
+
+// ── PD-828: relations as truth + relation findings ───────────────────────────
+
+describe('getRelationsForTickets', () => {
+  function seedTickets(): void {
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'P', 'PD')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'A', 'backlog', 1)").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (11, 'PD-11', 'B', 'backlog', 1)").run();
+  }
+  function rel(from: number, to: number, type: string): void {
+    db.prepare(
+      "INSERT INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (?, ?, ?, ?)",
+    ).run(from, to, type, Date.now());
+  }
+
+  it('resolves both the from and to ends relative to each audited subject', () => {
+    seedTickets();
+    rel(10, 11, 'blocks');
+    const rels = getRelationsForTickets(db, [10, 11]);
+    expect(rels).toContainEqual(
+      expect.objectContaining({ subjectId: 10, otherId: 11, type: 'blocks', direction: 'from' }),
+    );
+    expect(rels).toContainEqual(
+      expect.objectContaining({ subjectId: 11, otherId: 10, type: 'blocks', direction: 'to' }),
+    );
+  });
+
+  it('returns [] for no ticket ids', () => {
+    expect(getRelationsForTickets(db, [])).toEqual([]);
+  });
+});
+
+describe('runAuditPass — relation findings (PD-828)', () => {
+  function seed(): void {
+    db.prepare("INSERT INTO agent_projects (id, name, key) VALUES (1, 'Personal Dashboard', 'PD')").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (10, 'PD-10', 'Dup', 'backlog', 1)").run();
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id) VALUES (11, 'PD-11', 'Canon', 'backlog', 1)").run();
+  }
+  const findingsOf = (runId: number) =>
+    db
+      .prepare('SELECT ticket_id, target_ticket_id, relation_type, type FROM audit_finding WHERE run_id = ?')
+      .all(runId) as { ticket_id: number; target_ticket_id: number | null; relation_type: string | null; type: string }[];
+
+  it('persists a duplicate finding with its target + relation type resolved (Done-When #3)', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"duplicate","target":"PD-11","reason":"same ask"}]',
+    });
+    const counts = await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(counts).toMatchObject({ findings: 1, duplicate: 1 });
+    expect(findingsOf(id)).toEqual([
+      { ticket_id: 10, target_ticket_id: 11, relation_type: 'duplicates', type: 'duplicate' },
+    ]);
+  });
+
+  it('persists a link finding with the proposed relates/blocks type', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"link","target":"PD-11","relationType":"blocks"}]',
+    });
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(findingsOf(id)).toEqual([
+      { ticket_id: 10, target_ticket_id: 11, relation_type: 'blocks', type: 'link' },
+    ]);
+  });
+
+  it('drops a relation finding whose target cannot be resolved (Done-When #3)', async () => {
+    seed();
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"link","target":"PD-999","relationType":"relates"}]',
+    });
+    const counts = await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(counts.findings).toBe(0);
+    expect(findingsOf(id)).toEqual([]);
+  });
+
+  it('does not re-emit a link that already exists (Done-When #2)', async () => {
+    seed();
+    db.prepare(
+      "INSERT INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (10, 11, 'relates', ?)",
+    ).run(Date.now());
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    // Agent re-proposes the existing relates link in the reverse direction — still de-duped.
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-11","type":"link","target":"PD-10","relationType":"relates"}]',
+    });
+    const counts = await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(counts.findings).toBe(0);
+    expect(findingsOf(id)).toEqual([]);
+  });
+
+  it('injects existing relations into the agent prompt (Done-When #2)', async () => {
+    seed();
+    db.prepare(
+      "INSERT INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (10, 11, 'blocks', ?)",
+    ).run(Date.now());
+    requestRun(db);
+    const run = claimNextRun(db)!;
+    let seenPrompt = '';
+    const runAgent = async (_c: unknown, _s: string, prompt: string) => {
+      seenPrompt = prompt;
+      return { ok: true, text: '[]' };
+    };
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(seenPrompt).toContain('relation: PD-10 blocks PD-11');
+  });
+
+  it('resolves an unlink target that is an archived ticket outside the audit surface', async () => {
+    seed();
+    // PD-12 is archived → not in the audit surface, but it is the far end of an existing relation.
+    db.prepare("INSERT INTO agent_tickets (id, display_id, title, status, project_id, archived_at) VALUES (12, 'PD-12', 'Gone', 'closed', 1, 123)").run();
+    db.prepare(
+      "INSERT INTO agent_ticket_relations (from_ticket_id, to_ticket_id, type, created_at) VALUES (10, 12, 'relates', ?)",
+    ).run(Date.now());
+    const id = requestRun(db);
+    const run = claimNextRun(db)!;
+    const runAgent = async () => ({
+      ok: true,
+      text: '[{"displayId":"PD-10","type":"unlink","target":"PD-12","relationType":"relates","reason":"stale"}]',
+    });
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(findingsOf(id)).toEqual([
+      { ticket_id: 10, target_ticket_id: 12, relation_type: 'relates', type: 'unlink' },
+    ]);
   });
 });
 

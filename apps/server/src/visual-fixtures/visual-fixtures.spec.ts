@@ -41,7 +41,7 @@ describe('visual fixtures (PD-798)', () => {
     const db = freshDb();
     seedVisualFixtures(db, NOW);
     const tickets = listTickets(db);
-    expect(new Set(tickets.map((t) => t.status))).toEqual(new Set(['backlog', 'queue', 'completed']));
+    expect(new Set(tickets.map((t) => t.status))).toEqual(new Set(['backlog', 'queue', 'completed', 'closed']));
     for (const state of ['queued', 'working', 'in-review', 'stuck', 'needs-human', 'awaiting-human']) {
       expect(tickets.some((t) => t.agentState === state)).toBe(true);
     }
@@ -73,6 +73,25 @@ describe('visual fixtures (PD-798)', () => {
     const autoQueued = tickets.filter((t) => t.autoQueued);
     expect(autoQueued).toHaveLength(1);
     expect(autoQueued[0].status).toBe('queue');
+  });
+
+  it('includes one closed ticket of each reason with its successors (PD-940/PD-888)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const tickets = listTickets(db);
+    const byReason = (reason: string) => tickets.find((t) => t.closeReason === reason)!;
+
+    const split = byReason('split');
+    expect(split.status).toBe('closed');
+    expect((split.closedInto ?? []).map((r) => r.displayId)).toHaveLength(2);
+
+    const superseded = byReason('superseded');
+    expect(superseded.status).toBe('closed');
+    expect((superseded.closedInto ?? [])).toHaveLength(1);
+
+    const duplicate = byReason('duplicate');
+    expect(duplicate.status).toBe('closed');
+    expect((duplicate.closedInto ?? [])).toHaveLength(1);
   });
 
   it('includes one auto-queue-EXCLUDED Epic so the D-103 marker shows (PD-808)', () => {

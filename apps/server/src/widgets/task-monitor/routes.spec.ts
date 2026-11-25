@@ -675,6 +675,46 @@ describe('ticket events + Refine reply (D-044, PD-267)', () => {
     expect(ok.json().detail.text).toContain('→ B: three tickets');
   });
 
+  it('PD-889: answering a stale round 409s with ROUND_STALE', async () => {
+    const { app, db } = freshSetup();
+    const id = await makeTicket(app, db, projectId(db, 'personal-dashboard'));
+    const round = {
+      questions: [
+        {
+          id: 'q1',
+          question: 'Which?',
+          why: 'It decides the split.',
+          options: [
+            { label: 'A', description: 'one' },
+            { label: 'B', description: 'three' },
+          ],
+          recommended: 0,
+        },
+      ],
+      assumptions: [],
+    };
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      'refine_agent',
+      JSON.stringify({ text: 'q', sessionId: 's', round }),
+      Date.now() - 2000,
+    );
+    // A cited ticket changed → the server appended a stale turn as the newest Refine-state event.
+    db.prepare('INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)').run(
+      id,
+      'refine_round_stale',
+      JSON.stringify({ text: 'PD-9 changed', changedTicketId: 9, changedDisplayId: 'PD-9', change: 'closed', invalidates: 'round' }),
+      Date.now() - 1000,
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: `${base}/tickets/${id}/refine-reply`,
+      payload: { answers: [{ questionId: 'q1', choice: 0 }] },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('ROUND_STALE');
+  });
+
   // PD-746: the Decisions inbox.
   it('GET /refine/awaiting returns the waiting sessions and their count', async () => {
     const { app, db } = freshSetup();

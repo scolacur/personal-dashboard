@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AuditFinding, AuditRun, AuditRunCounts } from '@dashboard/shared';
+import type { AuditFinding, AuditRun, AuditRunCounts, RelationType } from '@dashboard/shared';
 
 // Read/insert helpers for the Ticket Audit engine (D-045, PD-283). The web process owns
 // `requested`-run creation (cron + POST) and the read endpoints; the agent-worker owns the
@@ -22,12 +22,15 @@ interface AuditFindingRow {
   run_id: number;
   project_id: number | null;
   ticket_id: number | null;
+  target_ticket_id: number | null;
+  relation_type: string | null;
   type: string;
   recommendation: string | null;
   reason: string | null;
   evidence: string | null;
   proposed_change: string | null;
   confidence: string | null;
+  fingerprint: string | null;
   decision: string;
   created_at: number;
   updated_at: number;
@@ -52,12 +55,15 @@ function rowToFinding(r: AuditFindingRow): AuditFinding {
     runId: r.run_id,
     projectId: r.project_id,
     ticketId: r.ticket_id,
+    targetTicketId: r.target_ticket_id,
+    relationType: r.relation_type as RelationType | null,
     type: r.type,
     recommendation: r.recommendation,
     reason: r.reason,
     evidence: r.evidence,
     proposedChange: r.proposed_change,
     confidence: r.confidence,
+    fingerprint: r.fingerprint,
     decision: r.decision as AuditFinding['decision'],
     createdAt: r.created_at,
     updatedAt: r.updated_at,
