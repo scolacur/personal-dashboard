@@ -10,6 +10,7 @@ import { ensureEvaluatorRunsTable, finishEvaluatorRun, startEvaluatorRun } from 
 import { reconcileReviewGates } from './reconcile';
 import { STEVE_APPROVED_DESCRIPTION, type GateStatus, type StatusRead } from './review-gate';
 import { VISUAL_PENDING_DESCRIPTION } from '../visual/gate';
+import type { OtherPr } from './all-prs';
 
 /**
  * PD-1005 (Reconcile a lost review-gate post): a lost final review-gate post is repaired, a moved head
@@ -250,5 +251,54 @@ describe('reconciliation does not wait on the Evaluator budget', () => {
     expect(n).toBe(0);
     expect(agent).not.toHaveBeenCalled();
     expect(h.posts).toEqual([{ sha: SHA_A, status: { state: 'success', description: 'Evaluator: ship (round 1)' } }]);
+  });
+});
+
+describe('reconcileReviewGates — session PRs (the all-PRs path had the same gap)', () => {
+  const sessionPr = (over: Partial<OtherPr> = {}): OtherPr => ({
+    number: 600,
+    title: 'feat: a session change',
+    body: '',
+    headRefName: 'pd-1-thing',
+    headRefOid: SHA_B,
+    baseRefName: 'main',
+    isCrossRepository: false,
+    isDraft: false,
+    labels: [],
+    files: [{ path: 'apps/web/src/a.ts' }],
+    ...over,
+  });
+  /** Both lenses reviewed the session PR's head. */
+  function seedSession(verdict: EvaluatorVerdict, prNumber = 600, head = SHA_B): void {
+    for (const lens of ['code', 'security'] as EvaluatorLens[]) {
+      const id = startEvaluatorRun(db, { ticketId: 1, prNumber, round: 1, model: 'm', lens, headSha: head }, 200);
+      finishEvaluatorRun(db, id, { report: { verdict, summary: 's', findings: [] } }, 201);
+    }
+  }
+  const cfg = () => config({ allPrs: true, adopt: false });
+
+  it('repairs a lost ship post on a session PR head', async () => {
+    seedSession('ship');
+    const h = harness({ current: REVIEWING });
+    await reconcileReviewGates(db, cfg(), 300, { ...h.deps, listPrs: async () => [sessionPr()] });
+    expect(h.posts).toEqual([{ sha: SHA_B, status: { state: 'success', description: 'Evaluator: ship (round 1)' } }]);
+  });
+
+  it("leaves Steve's approval, a head not yet reviewed, and a PR the Robot path owns", async () => {
+    seedSession('ship');
+    const approved = harness({ current: { state: 'success', description: STEVE_APPROVED_DESCRIPTION } });
+    await reconcileReviewGates(db, cfg(), 300, { ...approved.deps, listPrs: async () => [sessionPr()] });
+    expect(approved.deps.postStatus).not.toHaveBeenCalled();
+
+    const unreviewed = harness({ current: null });
+    await reconcileReviewGates(db, cfg(), 300, { ...unreviewed.deps, listPrs: async () => [sessionPr({ headRefOid: 'c'.repeat(40) })] });
+    expect(unreviewed.deps.postStatus).not.toHaveBeenCalled();
+
+    // PR 576 is ticket 1's in-review Robot PR: the Robot-path reconciliation handles it, not this one.
+    db.prepare('DELETE FROM evaluator_runs').run();
+    seedSession('ship', TARGET.prNumber, SHA_A);
+    const owned = harness({ current: REVIEWING, head: null });
+    await reconcileReviewGates(db, cfg(), 300, { ...owned.deps, listPrs: async () => [sessionPr({ number: TARGET.prNumber, headRefOid: SHA_A })] });
+    expect(owned.deps.postStatus).not.toHaveBeenCalled();
   });
 });

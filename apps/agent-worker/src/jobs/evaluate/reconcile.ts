@@ -4,8 +4,11 @@ import type { AgentWorkerConfig } from '../../shared/config';
 import { logger } from '../../shared/logger';
 import { logMilestone } from '../robot/events';
 import { inReviewPrTargets } from '../robot/pr-state';
-import { displayIdFor, reviewBoundary, settledGate, type EvaluatePassDeps } from './evaluate';
-import { alreadyEvaluated, cycleReviewedHeads } from './evaluator-runs';
+import { sessionReviewBoundary } from '../visual/gate';
+import { adoptedPrNumbers } from './adoption';
+import { defaultOtherPrLister, linkedTickets, sessionHeadGate, skipReason, type AllPrsDeps } from './all-prs';
+import { combineReports, displayIdFor, reviewBoundary, settledGate } from './evaluate';
+import { alreadyEvaluated, cycleReviewedHeads, headEvaluated, latestLensReport, prRounds } from './evaluator-runs';
 import {
   defaultHeadShaFetcher,
   defaultStatusPoster,
@@ -41,13 +44,17 @@ import {
  * so the verdict is reposted there; with no status at all nothing ties the verdict to this head, and
  * it is reviewed again instead.
  *
+ * Session PRs (the all-PRs path) had the same gap: `headEvaluated` skips a reviewed head for good, so
+ * a lost post there stayed lost too. With `allPrs` on, {@link reconcileSessionGates} repairs those.
+ * A session PR's unit is its head, so a moved head is already a new review there.
+ *
  * With `REVIEW_GATE_TOKEN` unset there is no gate to reconcile, and the pass does nothing.
  */
 export async function reconcileReviewGates(
   db: Database.Database,
   config: AgentWorkerConfig,
   now: number,
-  deps: EvaluatePassDeps = {},
+  deps: AllPrsDeps = {},
 ): Promise<number> {
   if (!config.evaluator.reviewGateToken) return 0;
   const lenses: EvaluatorLens[] = config.evaluator.securityEnabled ? ['code', 'security'] : ['code'];
@@ -60,6 +67,7 @@ export async function reconcileReviewGates(
       logger.error({ err, ticketId: target.ticketId, prNumber: target.prNumber }, 'evaluator: review-gate reconciliation failed for a PR — continuing');
     }
   }
+  if (config.evaluator.allPrs) acted += await reconcileSessionGates(db, config, lenses, deps);
   return acted;
 }
 
@@ -69,7 +77,7 @@ async function reconcileOne(
   target: { ticketId: number; repo: string; prNumber: number },
   lenses: EvaluatorLens[],
   now: number,
-  deps: EvaluatePassDeps,
+  deps: AllPrsDeps,
 ): Promise<boolean> {
   const since = reviewBoundary(db, target.ticketId);
   // A cycle still owing a run is the review loop's job; it posts its own gate.
@@ -131,4 +139,56 @@ function headMoved(
     { ticketId: target.ticketId, prNumber: target.prNumber, reason },
     'evaluator: review-gate reconciliation — the head is not the reviewed one, reviewing it again',
   );
+}
+
+/**
+ * The same repair for session PRs: an open PR the all-PRs path owns, whose current head is fully
+ * reviewed, but whose `review-gate` is missing or still the "Evaluator reviewing" pending. Posts the
+ * gate `sessionHeadGate` derives from that head's runs, under the same rules as above.
+ */
+export async function reconcileSessionGates(
+  db: Database.Database,
+  config: AgentWorkerConfig,
+  lenses: EvaluatorLens[],
+  deps: AllPrsDeps = {},
+): Promise<number> {
+  const prs = await (deps.listPrs ?? defaultOtherPrLister(config))(config.githubRepo);
+  if (!prs) return 0;
+  const robotOwned = new Set([...inReviewPrTargets(db).map((t) => t.prNumber), ...adoptedPrNumbers(db)]);
+  let acted = 0;
+  for (const pr of prs) {
+    try {
+      if (skipReason(pr, robotOwned) !== null || !headEvaluated(db, pr.number, pr.headRefOid, lenses)) continue;
+      const read = await (deps.readStatus ?? defaultStatusReader(config))(config.githubRepo, pr.headRefOid);
+      if (!read.ok || isSteveApproval(read.current)) continue;
+      if (read.current !== null && !isReviewingStatus(read.current)) continue;
+
+      const select = { prNumber: pr.number, headSha: pr.headRefOid };
+      const combined = combineReports(lenses.map((l) => latestLensReport(db, select, l)));
+      const { status } = sessionHeadGate(db, config, pr, lenses, combined, prRounds(db, pr.number), (ticketId) =>
+        sessionReviewBoundary(db, ticketId, pr.number),
+      );
+      const posted = await (deps.postStatus ?? defaultStatusPoster(config))(
+        config.githubRepo,
+        pr.headRefOid,
+        status,
+        gateTargetUrl(config, linkedTickets(db, pr)[0]?.displayId ?? null),
+      );
+      logger.info(
+        {
+          prNumber: pr.number,
+          sha: pr.headRefOid,
+          state: status.state,
+          description: status.description,
+          reason: read.current === null ? 'no review-gate status on the head' : 'stale "Evaluator reviewing" status',
+          posted,
+        },
+        posted ? 'evaluator: session PR review-gate reconciled' : 'evaluator: session PR review-gate reconciliation post failed — retrying next pass',
+      );
+      if (posted) acted++;
+    } catch (err) {
+      logger.error({ err, prNumber: pr.number }, 'evaluator: session PR review-gate reconciliation failed — continuing');
+    }
+  }
+  return acted;
 }

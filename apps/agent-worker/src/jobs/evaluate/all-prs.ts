@@ -500,49 +500,24 @@ export async function evaluateNextOtherPr(
 
   // One decision from every lens (fresh this pass or folded). Any missing verdict means no pass.
   const combined = combineReports(lenses.map((l) => reports.get(l) ?? null));
-  // PD-884 x PD-914: a lens with no verdict on this head is either waiting on its one retry (the next
-  // pass re-runs only that lens, so the gate stays pending and Steve is not paged yet) or has used it
-  // (terminal: failure naming the lens, and the one needs-human notification).
-  // PD-913: a revise the Robot will pick up after the idle window needs no alert; say so instead.
-  const adoptAfterMin =
-    config.evaluator.adopt && adoptableTicket(db, pr.headRefName) ? Math.round(config.evaluator.adoptIdleMs / 60_000) : null;
-  const finalStates = lensStates(db, select);
-  const missing = lenses.filter((l) => (finalStates.get(l)?.verdictRuns ?? 0) === 0);
-  const exhausted = missing.filter((l) => (finalStates.get(l)?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS);
-  const retryPending = !combined && missing.length > 0 && exhausted.length === 0;
-  let status: GateStatus;
-  if (retryPending) {
-    status = { state: 'pending', description: `Evaluator: ${missing.join(' and ')} review produced no verdict; retrying once` };
-  } else if (!combined && exhausted.length > 0) {
-    status = gateForOutcome(null, round, config.evaluator.maxRounds, { lens: exhausted[0], retryUsed: true });
-    if (exhausted.length > 1) status = { ...status, description: status.description.replace(`${exhausted[0]} review`, `${exhausted.join(' and ')} reviews`) };
-  } else {
-    status = sessionGateFor(combined, round, config.evaluator.maxRounds, adoptAfterMin);
-  }
-
-  // PD-915: the visual-review gate, as on Robot PRs. It lives on the branch ticket; with no branch
-  // ticket there is nowhere to record the request or Steve's answer, so there is no gate. A ship
-  // waits at pending until he approves a decision made after this review started (`now`).
+  // PD-915: the Evaluator's ask for Steve's visual check, recorded on the branch ticket before the
+  // gate below reads it.
   const visualTicket = branchTicket(db, pr.headRefName);
   const visualAsk = [...reports.values()].find((r) => r?.visualReview)?.visualReview;
   if (visualAsk && visualTicket && !visualRequested(db, visualTicket.id, pr.number)) {
     logMilestone(db, visualTicket.id, ROBOT_EVENT.visualReviewRequested, { prNumber: pr.number, by: 'evaluator', reason: visualAsk }, now);
   }
-  let visualHold = false;
-  if (status.state === 'success' && config.visual.enabled && visualTicket) {
-    const vg = visualGate(db, visualTicket.id, pr.number, now);
-    if (vg === 'pending' || vg === 'rejected') {
-      visualHold = true;
-      status = { state: 'pending', description: VISUAL_PENDING_DESCRIPTION };
-      notify(
-        db,
-        'agent_visual_review',
-        visualTicket.id,
-        `${VISUAL_REVIEW_NOTIFICATION_PREFIX} PR #${pr.number} (${visualTicket.displayId})`,
-        'The Evaluator shipped it, and it was flagged for your visual check. Approve or request changes in Decisions.',
-        now,
-      );
-    }
+  // A ship waits at pending until he approves a decision made after this review started (`now`).
+  const { status, retryPending, adoptAfterMin, visualHold } = sessionHeadGate(db, config, pr, lenses, combined, round, () => now);
+  if (visualHold && visualTicket) {
+    notify(
+      db,
+      'agent_visual_review',
+      visualTicket.id,
+      `${VISUAL_REVIEW_NOTIFICATION_PREFIX} PR #${pr.number} (${visualTicket.displayId})`,
+      'The Evaluator shipped it, and it was flagged for your visual check. Approve or request changes in Decisions.',
+      now,
+    );
   }
 
   await (deps.comment ?? defaultPrCommenter(config))(
@@ -561,6 +536,56 @@ export async function evaluateNextOtherPr(
     'evaluator: reviewed a PR via the all-PRs path',
   );
   return combined;
+}
+
+/**
+ * The review-gate a session PR's head implies from its recorded runs. Shared by `evaluateNextOtherPr`
+ * and the gate reconciliation (PD-1005, Reconcile a lost review-gate post), so a repaired gate is
+ * exactly the one the review would have posted.
+ *
+ *  - PD-884 x PD-914: a lens with no verdict on this head is either waiting on its one retry (the next
+ *    pass re-runs only that lens, so the gate stays pending and Steve is not paged yet) or has used it
+ *    (terminal: failure naming the lens).
+ *  - PD-913: a revise the Robot will pick up after the idle window says so (`adoptAfterMin`).
+ *  - PD-915: the visual-review gate, as on Robot PRs. It lives on the branch ticket; with no branch
+ *    ticket there is nowhere to record the request or Steve's answer, so there is no gate. A ship waits
+ *    at pending until he approves a decision made after `visualSince(ticketId)`.
+ */
+export function sessionHeadGate(
+  db: Database.Database,
+  config: AgentWorkerConfig,
+  pr: Pick<OtherPr, 'number' | 'headRefName' | 'headRefOid'>,
+  lenses: EvaluatorLens[],
+  combined: EvaluatorReport | null,
+  round: number,
+  visualSince: (ticketId: number) => number,
+): { status: GateStatus; retryPending: boolean; adoptAfterMin: number | null; visualHold: boolean } {
+  const adoptAfterMin =
+    config.evaluator.adopt && adoptableTicket(db, pr.headRefName) ? Math.round(config.evaluator.adoptIdleMs / 60_000) : null;
+  const states = lensStates(db, { prNumber: pr.number, headSha: pr.headRefOid });
+  const missing = lenses.filter((l) => (states.get(l)?.verdictRuns ?? 0) === 0);
+  const exhausted = missing.filter((l) => (states.get(l)?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS);
+  const retryPending = !combined && missing.length > 0 && exhausted.length === 0;
+  let status: GateStatus;
+  if (retryPending) {
+    status = { state: 'pending', description: `Evaluator: ${missing.join(' and ')} review produced no verdict; retrying once` };
+  } else if (!combined && exhausted.length > 0) {
+    status = gateForOutcome(null, round, config.evaluator.maxRounds, { lens: exhausted[0], retryUsed: true });
+    if (exhausted.length > 1) status = { ...status, description: status.description.replace(`${exhausted[0]} review`, `${exhausted.join(' and ')} reviews`) };
+  } else {
+    status = sessionGateFor(combined, round, config.evaluator.maxRounds, adoptAfterMin);
+  }
+
+  const visualTicket = branchTicket(db, pr.headRefName);
+  let visualHold = false;
+  if (status.state === 'success' && config.visual.enabled && visualTicket) {
+    const vg = visualGate(db, visualTicket.id, pr.number, visualSince(visualTicket.id));
+    if (vg === 'pending' || vg === 'rejected') {
+      visualHold = true;
+      status = { state: 'pending', description: VISUAL_PENDING_DESCRIPTION };
+    }
+  }
+  return { status, retryPending, adoptAfterMin, visualHold };
 }
 
 /**
