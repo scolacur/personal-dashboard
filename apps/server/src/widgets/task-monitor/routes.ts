@@ -1,10 +1,12 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type Database from 'better-sqlite3';
 import {
+  FINDING_DECISIONS,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_ASSIGNEES,
   RELATION_TYPES,
+  type FindingDecision,
   type CoderArea,
   type CreateTicketInput,
   type RefineAnswerSet,
@@ -81,7 +83,14 @@ import {
   refinedChoiceGuardFailure,
   reopenGuardFailure,
 } from './ticket-guards';
-import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
+import {
+  getRun,
+  insertRequestedRunIfNone,
+  listFindings,
+  listRuns,
+  setFindingDecision,
+  FindingDecisionError,
+} from './audit-store';
 import { listRunsForTicket } from './runs-store';
 import {
   getBugReport,
@@ -1093,6 +1102,52 @@ export function registerRoutes(
   app.post(`${base}/audit/runs`, async (_request, reply) => {
     const { run, created } = insertRequestedRunIfNone(db, null);
     return reply.status(202).send({ run, created });
+  });
+
+  // Apply a human decision to a finding (PD-826). HUMAN-INITIATED field-writes only — Accepting an
+  // actionable finding performs the single corresponding ticket mutation (archive / complete /
+  // reprioritize) via the existing store fns; Rejecting records the human's reason. The agent never
+  // writes a ticket (D-045). `update` findings are the blocked sibling slice — rejected-only here.
+  app.post(`${base}/audit/findings/:id/decision`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    const body = (request.body ?? {}) as {
+      decision?: unknown;
+      reason?: unknown;
+      targetPriority?: unknown;
+    };
+    if (!(FINDING_DECISIONS as readonly string[]).includes(body.decision as string)) {
+      return reply.status(400).send({ error: 'invalid decision', code: 'INVALID_DECISION' });
+    }
+    const decision = body.decision as FindingDecision;
+    if (body.reason !== undefined && body.reason !== null && typeof body.reason !== 'string') {
+      return reply.status(400).send({ error: 'reason must be a string', code: 'INVALID_REASON' });
+    }
+    let targetPriority: TicketPriority | undefined;
+    if (body.targetPriority !== undefined && body.targetPriority !== null) {
+      if (!isPriority(body.targetPriority)) {
+        return reply
+          .status(400)
+          .send({ error: 'invalid targetPriority', code: 'INVALID_PRIORITY' });
+      }
+      targetPriority = body.targetPriority;
+    }
+    try {
+      const finding = setFindingDecision(db, id, {
+        decision,
+        reason: typeof body.reason === 'string' ? body.reason : null,
+        targetPriority,
+      });
+      return reply.status(200).send(finding);
+    } catch (e) {
+      if (e instanceof FindingDecisionError) {
+        const status = e.code === 'NOT_FOUND' ? 404 : 409;
+        return reply.status(status).send({ error: e.message, code: e.code });
+      }
+      throw e;
+    }
   });
 
   // ── System status (Site Status section) ──────────────────────────────────────

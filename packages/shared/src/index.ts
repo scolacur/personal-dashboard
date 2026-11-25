@@ -150,6 +150,7 @@ export type {
   AuditRunCounts,
   AuditRun,
   AuditFinding,
+  SetFindingDecisionInput,
   WorkerHeartbeat,
   WorkerVersionState,
   SystemStatus,

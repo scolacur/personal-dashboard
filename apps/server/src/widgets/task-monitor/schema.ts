@@ -43,6 +43,7 @@ export function bootstrapSchema(db: Database.Database): void {
       proposed_change TEXT,
       confidence      TEXT,                                -- high|medium|low (PD-284); nullable here
       decision        TEXT    NOT NULL DEFAULT 'undecided',-- undecided|accepted|rejected|other
+      decision_reason TEXT,                                -- human's optional reject reason (PD-826)
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
     );
@@ -216,6 +217,12 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'audit_run_add_turns_tokens', (d) => {
     addColumn(d, 'audit_run', 'turns', 'INTEGER');
     addColumn(d, 'audit_run', 'tokens', 'INTEGER');
+  });
+  // PD-826: the human's optional reject reason on a finding (apply mechanics). Nullable — only set
+  // when a finding is rejected with a note. Back-fills existing audit_finding tables (the CREATE
+  // above adds it only on a fresh DB).
+  migrate(db, 'audit_finding_add_decision_reason', (d) => {
+    addColumn(d, 'audit_finding', 'decision_reason', 'TEXT');
   });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');

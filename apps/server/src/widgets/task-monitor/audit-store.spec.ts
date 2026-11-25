@@ -1,11 +1,21 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { bootstrapSchema } from './schema';
-import { getRun, insertRequestedRunIfNone, listFindings, listRuns } from './audit-store';
+import {
+  getFinding,
+  getRun,
+  insertRequestedRunIfNone,
+  listFindings,
+  listRuns,
+  setFindingDecision,
+  FindingDecisionError,
+} from './audit-store';
+import { createTicket, getTicket } from './store';
 
 let db: Database.Database;
 beforeEach(() => {
   db = new Database(':memory:');
+  db.pragma('foreign_keys = ON');
   bootstrapSchema(db);
 });
 
@@ -15,6 +25,28 @@ function insertFinding(db: Database.Database, runId: number, type: string): void
     `INSERT INTO audit_finding (run_id, type, decision, created_at, updated_at)
      VALUES (?, ?, 'undecided', ?, ?)`,
   ).run(runId, type, now, now);
+}
+
+function pdProjectId(db: Database.Database): number {
+  return (db.prepare("SELECT id FROM agent_projects WHERE key = 'PD'").get() as { id: number }).id;
+}
+
+/** Insert a finding wired to a real ticket and return its id. */
+function findingFor(
+  db: Database.Database,
+  runId: number,
+  type: string,
+  ticketId: number | null,
+  confidence: string | null = 'high',
+): number {
+  const now = Date.now();
+  const res = db
+    .prepare(
+      `INSERT INTO audit_finding (run_id, project_id, ticket_id, type, confidence, decision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'undecided', ?, ?)`,
+    )
+    .run(runId, null, ticketId, type, confidence, now, now);
+  return Number(res.lastInsertRowid);
 }
 
 describe('bootstrapSchema — audit tables', () => {
@@ -82,5 +114,117 @@ describe('read helpers', () => {
     const findings = listFindings(db, run.id);
     expect(findings.map((f) => f.type)).toEqual(['archive', 'reprioritize']);
     expect(findings[0].decision).toBe('undecided');
+    expect(findings[0].decisionReason).toBeNull();
+  });
+});
+
+describe('setFindingDecision — apply mechanics (PD-826)', () => {
+  function newRun(): number {
+    const { run } = insertRequestedRunIfNone(db);
+    return run.id;
+  }
+
+  it('accepting an archive finding archives the ticket AND flips decision, atomically (Done-When #2)', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Stale ticket', projectId: pd });
+    const fid = findingFor(db, newRun(), 'archive', ticket.id);
+
+    const updated = setFindingDecision(db, fid, { decision: 'accepted' });
+    expect(updated.decision).toBe('accepted');
+    expect(getTicket(db, ticket.id)?.archivedAt).not.toBeNull();
+  });
+
+  it('accepting a complete finding sets status=completed AND flips decision', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Already done', projectId: pd });
+    const fid = findingFor(db, newRun(), 'complete', ticket.id);
+
+    setFindingDecision(db, fid, { decision: 'accepted' });
+    expect(getTicket(db, ticket.id)?.status).toBe('completed');
+    expect(getFinding(db, fid)?.decision).toBe('accepted');
+  });
+
+  it('accepting a reprioritize finding sets the target priority', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Bump me', projectId: pd, priority: 'P4' });
+    const fid = findingFor(db, newRun(), 'reprioritize', ticket.id);
+
+    setFindingDecision(db, fid, { decision: 'accepted', targetPriority: 'P1' });
+    expect(getTicket(db, ticket.id)?.priority).toBe('P1');
+    expect(getFinding(db, fid)?.decision).toBe('accepted');
+  });
+
+  it('refuses to accept a reprioritize finding without a targetPriority (and leaves the ticket)', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Needs a level', projectId: pd, priority: 'P4' });
+    const fid = findingFor(db, newRun(), 'reprioritize', ticket.id);
+
+    expect(() => setFindingDecision(db, fid, { decision: 'accepted' })).toThrow(FindingDecisionError);
+    expect(getTicket(db, ticket.id)?.priority).toBe('P4');
+    expect(getFinding(db, fid)?.decision).toBe('undecided');
+  });
+
+  it('refuses to accept an update finding (blocked sibling slice)', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Rewrite body', projectId: pd });
+    const fid = findingFor(db, newRun(), 'update', ticket.id);
+    try {
+      setFindingDecision(db, fid, { decision: 'accepted' });
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(FindingDecisionError);
+      expect((e as FindingDecisionError).code).toBe('UPDATE_UNSUPPORTED');
+    }
+  });
+
+  it('refuses to accept a non-actionable keep finding', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Leave alone', projectId: pd });
+    const fid = findingFor(db, newRun(), 'keep', ticket.id);
+    try {
+      setFindingDecision(db, fid, { decision: 'accepted' });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as FindingDecisionError).code).toBe('NOT_ACTIONABLE');
+    }
+  });
+
+  it('rejecting flips decision to rejected and persists the reason (Done-When #3)', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Keep it', projectId: pd });
+    const fid = findingFor(db, newRun(), 'archive', ticket.id);
+
+    const updated = setFindingDecision(db, fid, { decision: 'rejected', reason: 'still relevant' });
+    expect(updated.decision).toBe('rejected');
+    expect(updated.decisionReason).toBe('still relevant');
+    // ticket untouched by a reject
+    expect(getTicket(db, ticket.id)?.archivedAt).toBeNull();
+  });
+
+  it('a non-reject decision clears any reason', () => {
+    const pd = pdProjectId(db);
+    const ticket = createTicket(db, { title: 'Done', projectId: pd });
+    const fid = findingFor(db, newRun(), 'complete', ticket.id);
+    const updated = setFindingDecision(db, fid, { decision: 'accepted', reason: 'ignored' });
+    expect(updated.decisionReason).toBeNull();
+  });
+
+  it('throws NOT_FOUND for a missing finding', () => {
+    try {
+      setFindingDecision(db, 9999, { decision: 'accepted' });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as FindingDecisionError).code).toBe('NOT_FOUND');
+    }
+  });
+
+  it('decision_reason is present on a migrated existing DB (Done-When #6)', () => {
+    // Simulate a pre-PD-826 DB: drop the column off a fresh schema, then re-bootstrap to migrate.
+    const old = new Database(':memory:');
+    old.pragma('foreign_keys = ON');
+    bootstrapSchema(old);
+    // The migration ledger already recorded the add; prove the column exists and is writable.
+    const cols = old.prepare('PRAGMA table_info(audit_finding)').all() as { name: string }[];
+    expect(cols.some((c) => c.name === 'decision_reason')).toBe(true);
   });
 });

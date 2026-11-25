@@ -1,4 +1,5 @@
-import type { AuditFinding, AuditRun, AuditRunStatus } from '@dashboard/shared';
+import type { AuditFinding, AuditRun, AuditRunStatus, TicketPriority } from '@dashboard/shared';
+import { TICKET_PRIORITIES } from '@dashboard/shared';
 
 // Pure helpers for the Ticket Audit report surface (PD-286). No fetching, no DOM — shared by
 // the badge store, the report page, and the Recurring Jobs card so they agree on what "open",
@@ -21,6 +22,52 @@ export function isOpen(f: AuditFinding): boolean {
 /** Findings that count toward the nav badge and the report's "open" view: undecided AND actionable. */
 export function openActionableFindings(findings: AuditFinding[]): AuditFinding[] {
   return findings.filter((f) => isOpen(f) && isActionable(f));
+}
+
+// ── Apply mechanics (PD-826) ───────────────────────────────────────────────────
+// Recommendation buckets Accept can act on in this slice. `keep` is non-actionable; `update`
+// (UPDATE_DESCRIPTION diff-confirm) is the blocked sibling slice, so it stays reject-only.
+export const ACCEPT_SUPPORTED_TYPES: ReadonlySet<string> = new Set([
+  'archive',
+  'complete',
+  'reprioritize',
+]);
+
+/** Can this finding be Accepted at all in this slice? (actionable + a supported bucket) */
+export function canAccept(f: AuditFinding): boolean {
+  return ACCEPT_SUPPORTED_TYPES.has(f.type);
+}
+
+/** The confidence gate (PD-826): only a `high`-confidence finding may be accepted in one click.
+ *  `missing | low | medium` must be opened/reviewed first. */
+export function isHighConfidence(f: AuditFinding): boolean {
+  return f.confidence === 'high';
+}
+
+/** True when the finding must be opened before Accept is allowed (anything not `high`). */
+export function needsReviewBeforeAccept(f: AuditFinding): boolean {
+  return !isHighConfidence(f);
+}
+
+/** Pull a P-level out of the agent's recommendation to pre-fill the reprioritize selector, or null
+ *  when it names none clearly (first explicit P0–P5 token wins). */
+export function suggestedPriority(f: AuditFinding): TicketPriority | null {
+  const m = (f.recommendation ?? '').match(/\bP[0-5]\b/);
+  const found = m?.[0];
+  return found && (TICKET_PRIORITIES as readonly string[]).includes(found)
+    ? (found as TicketPriority)
+    : null;
+}
+
+/** Findings the "Apply accepted" batch control may one-click accept: undecided, high-confidence,
+ *  and archive/complete only (reprioritize/update need a value/diff, so they're excluded). */
+export function batchEligibleFindings(findings: AuditFinding[]): AuditFinding[] {
+  return findings.filter(
+    (f) =>
+      isOpen(f) &&
+      isHighConfidence(f) &&
+      (f.type === 'archive' || f.type === 'complete'),
+  );
 }
 
 function byIdDesc(runs: AuditRun[]): AuditRun[] {

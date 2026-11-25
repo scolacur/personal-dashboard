@@ -2090,8 +2090,19 @@ export interface AuditFinding {
   proposedChange: string | null;
   confidence: string | null;
   decision: FindingDecision;
+  /** The human's optional free-text reason when rejecting (PD-826). Distinct from the agent's
+   *  `reason` above — that explains the recommendation, this explains the human's call. */
+  decisionReason: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** Body of `POST /audit/findings/:id/decision` (PD-826). `reason` is persisted as the human's
+ *  `decisionReason` on a reject; `targetPriority` is required to accept a `reprioritize` finding. */
+export interface SetFindingDecisionInput {
+  decision: FindingDecision;
+  reason?: string | null;
+  targetPriority?: TicketPriority | null;
 }
 
 // ── System status (Site Status section) ──────────────────────────────────────

@@ -4,6 +4,7 @@ import { bootstrapHabitsSchema, createItem, getTodayView } from '../lib/habits';
 import { autoQueueEligibility } from '@dashboard/shared';
 import { bootstrapSchema } from '../widgets/task-monitor/schema';
 import { listTickets } from '../widgets/task-monitor/store';
+import { listFindings, listRuns } from '../widgets/task-monitor/audit-store';
 import { seedVisualFixtures, seedVisualFixturesFromEnv, VISUAL_FIXTURES, type VisualFixture } from './index';
 
 /** A database bootstrapped the way the server boots one, with nothing in it yet. */
@@ -83,10 +84,24 @@ describe('visual fixtures (PD-798)', () => {
     expect(excluded).toHaveLength(1);
   });
 
+  it('gives the Ticket Audit report a done run with a spread of findings (PD-826)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const done = listRuns(db).filter((r) => r.status === 'done');
+    expect(done).toHaveLength(1);
+    const findings = listFindings(db, done[0].id);
+    // both a high-confidence batch-eligible finding and a gated (low) one must render
+    expect(findings.some((f) => f.type === 'archive' && f.confidence === 'high')).toBe(true);
+    expect(findings.some((f) => f.confidence === 'low')).toBe(true);
+    expect(findings.some((f) => f.type === 'reprioritize')).toBe(true);
+    // every finding points at a real ticket so the report shows a title
+    expect(findings.every((f) => f.ticketId !== null)).toBe(true);
+  });
+
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);
-    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker']);
+    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'audit-report']);
     expect(getTodayView(db, NOW).rows.map((r) => r.item.name)).toEqual(['A real habit']);
     expect(seedVisualFixtures(db, NOW)).toEqual([]); // and a second boot is a no-op
   });

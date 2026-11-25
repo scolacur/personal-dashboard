@@ -119,6 +119,138 @@
   color: var(--muted);
 }
 
+.audit-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.batch-btn {
+  padding: var(--space-xs) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--accent-2);
+  color: #fff;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.batch-hint {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+}
+
+.batch-result {
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.audit-action-error {
+  margin: 0 0 var(--space-md);
+  color: var(--status-stuck);
+  font-size: var(--font-size-sm);
+}
+
+.finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.prio-select {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+
+  select {
+    padding: 0.1rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--font-size-xs);
+  }
+}
+
+.review-link {
+  color: var(--accent-2);
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+}
+
+.act-btn {
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.act-accept {
+  border-color: var(--status-done);
+  color: var(--status-done);
+}
+
+.act-reject {
+  border-color: var(--status-stuck);
+  color: var(--status-stuck);
+}
+
+.act-unsupported {
+  color: var(--muted);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+}
+
+.reject-reason {
+  flex: 1;
+  min-width: 14rem;
+  min-height: 2.2rem;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  resize: vertical;
+}
+
+.finding-decided {
+  margin-top: var(--space-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+
+  &[data-decision='accepted'] {
+    color: var(--status-done);
+  }
+
+  &[data-decision='rejected'] {
+    color: var(--status-stuck);
+    font-weight: 400;
+  }
+}
+
 .finding-proposed {
   margin-top: var(--space-sm);
   font-size: var(--font-size-sm);

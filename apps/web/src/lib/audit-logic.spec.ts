@@ -8,6 +8,11 @@ import {
   latestRun,
   isRunInFlight,
   groupByProjectAndBucket,
+  canAccept,
+  isHighConfidence,
+  needsReviewBeforeAccept,
+  suggestedPriority,
+  batchEligibleFindings,
 } from './audit-logic';
 
 function run(id: number, status: AuditRunStatus): AuditRun {
@@ -37,6 +42,7 @@ function finding(
     proposedChange: null,
     confidence: null,
     decision: 'undecided',
+    decisionReason: null,
     createdAt: 0,
     updatedAt: 0,
     ...over,
@@ -65,6 +71,43 @@ describe('actionable / open filters', () => {
       finding({ id: 4, type: 'update', decision: 'undecided' }), // keep
     ];
     expect(openActionableFindings(findings).map((f) => f.id)).toEqual([1, 4]);
+  });
+});
+
+describe('apply mechanics (PD-826)', () => {
+  it('canAccept allows archive/complete/reprioritize but not keep/update', () => {
+    expect(canAccept(finding({ id: 1, type: 'archive' }))).toBe(true);
+    expect(canAccept(finding({ id: 2, type: 'complete' }))).toBe(true);
+    expect(canAccept(finding({ id: 3, type: 'reprioritize' }))).toBe(true);
+    expect(canAccept(finding({ id: 4, type: 'update' }))).toBe(false);
+    expect(canAccept(finding({ id: 5, type: 'keep' }))).toBe(false);
+  });
+
+  it('only high confidence skips the review gate', () => {
+    expect(isHighConfidence(finding({ id: 1, confidence: 'high' }))).toBe(true);
+    expect(needsReviewBeforeAccept(finding({ id: 1, confidence: 'high' }))).toBe(false);
+    for (const c of ['medium', 'low', null]) {
+      expect(needsReviewBeforeAccept(finding({ id: 2, confidence: c }))).toBe(true);
+    }
+  });
+
+  it('suggestedPriority pulls a clear P-level out of the recommendation', () => {
+    expect(suggestedPriority(finding({ id: 1, recommendation: 'Raise to P1 — now a blocker' }))).toBe('P1');
+    expect(suggestedPriority(finding({ id: 2, recommendation: 'Drop to P5' }))).toBe('P5');
+    expect(suggestedPriority(finding({ id: 3, recommendation: 'Make it higher priority' }))).toBeNull();
+    expect(suggestedPriority(finding({ id: 4, recommendation: null }))).toBeNull();
+  });
+
+  it('batchEligibleFindings is undecided + high + archive/complete only', () => {
+    const findings = [
+      finding({ id: 1, type: 'archive', confidence: 'high', decision: 'undecided' }), // keep
+      finding({ id: 2, type: 'complete', confidence: 'high', decision: 'undecided' }), // keep
+      finding({ id: 3, type: 'reprioritize', confidence: 'high', decision: 'undecided' }), // drop: needs value
+      finding({ id: 4, type: 'archive', confidence: 'low', decision: 'undecided' }), // drop: gated
+      finding({ id: 5, type: 'archive', confidence: 'high', decision: 'accepted' }), // drop: decided
+      finding({ id: 6, type: 'update', confidence: 'high', decision: 'undecided' }), // drop: unsupported
+    ];
+    expect(batchEligibleFindings(findings).map((f) => f.id)).toEqual([1, 2]);
   });
 });
 

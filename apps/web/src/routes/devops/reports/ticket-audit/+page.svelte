@@ -53,8 +53,8 @@
     <div>
       <h1 class="report-title">Ticket Audit</h1>
       <p class="report-sub">
-        Advisory findings from the weekly backlog audit. Read-only here — Accept / Reject lands
-        with PD-287.
+        Advisory findings from the weekly backlog audit. Accept to apply the recommended change, or
+        Reject with an optional reason.
       </p>
     </div>
     <a class="report-board-link" href="/devops">← Dev Ops</a>
@@ -84,7 +84,7 @@
       {/if}
     </div>
 
-    <AuditReport {findings} {projects} {tickets} mode="open" />
+    <AuditReport {findings} {projects} {tickets} mode="open" onChanged={load} />
   {/if}
 
   {#if !loading && !error && runs.length > 0}

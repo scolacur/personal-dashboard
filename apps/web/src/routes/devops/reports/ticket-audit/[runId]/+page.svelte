@@ -66,7 +66,7 @@
       </span>
     </div>
 
-    <AuditReport {findings} {projects} {tickets} mode="all" />
+    <AuditReport {findings} {projects} {tickets} mode="all" onChanged={load} />
   {/if}
 </section>
 
