@@ -14,6 +14,7 @@
   import { projectIdColor } from './api';
   import { RELATION_ACTIONS, type RelationAction, type RelationBadges } from './relation-logic';
   import { coderAreaChip } from './coder-area';
+  import { closureLabel } from './closure-label';
 
   let {
     ticket,
@@ -142,6 +143,11 @@
   // Epic's default, else `general`. Marked "(from Epic)" when inherited.
   const areaChip = $derived(coderAreaChip(ticket, epic));
 
+  // PD-940 (web half of PD-888): when the system closed this ticket for a reason — split, superseded
+  // or duplicate — say so and link the successors, in place of the ambiguous split badge. Null for a
+  // plain/manual close, which keeps looking as it does today.
+  const closure = $derived(closureLabel(ticket));
+
   async function setAssignee(select: HTMLSelectElement) {
     const assignee = (select.value || null) as TicketAssignee | null;
     if (ticket.assignee === assignee) return;
@@ -226,7 +232,7 @@
     </span>
   </div>
   <p class="card-title">{ticket.title}</p>
-  {#if badges.blockedBy > 0 || badges.blocking > 0 || badges.split}
+  {#if badges.blockedBy > 0 || badges.blocking > 0 || closure || badges.split}
     <div class="card-relations">
       {#if badges.blockedBy > 0}
         <a class="rel-badge rel-blocked" href={detailHref} draggable="false" title="Blocked by {badges.blockedBy} unresolved ticket(s)">⛔ blocked by {badges.blockedBy}</a>
@@ -234,8 +240,22 @@
       {#if badges.blocking > 0}
         <a class="rel-badge rel-blocking" href={detailHref} draggable="false" title="Blocking {badges.blocking} unresolved ticket(s)">🚧 blocking {badges.blocking}</a>
       {/if}
-      {#if badges.split}
-        <a class="rel-badge rel-split" href={detailHref} draggable="false" title="Part of a split lineage">{badges.splitOrigin === 'agent' ? 'auto-split 🤖' : 'split'}</a>
+      {#if closure}
+        <!-- PD-940: the system closed this ticket for a reason. Say which and link each successor,
+             in place of the ambiguous split badge below. -->
+        <span class="rel-badge rel-closure rel-closure-{closure.reason}" title="{closure.cardText}">
+          {closure.verb}
+          {#if closure.shown.length > 0}
+            {#each closure.shown as s, i (s.displayId ?? i)}
+              {#if s.href}<a class="rel-closure-ref" href={s.href} draggable="false" title={s.title}>{s.displayId}</a>{:else}<span class="rel-closure-ref">{s.displayId ?? '?'}</span>{/if}{#if i < closure.shown.length - 1}<span class="rel-closure-sep">, </span>{/if}
+            {/each}
+            {#if closure.overflow > 0}<span class="rel-closure-more">, +{closure.overflow} more</span>{/if}
+          {/if}
+        </span>
+      {:else if badges.split}
+        <!-- A split ticket that was NOT itself closed by the split — i.e. a child (or an open parent).
+             Worded "part of split" so it can't be read as a closed parent's "Split into …" (PD-940). -->
+        <a class="rel-badge rel-split" href={detailHref} draggable="false" title="Part of a split lineage">{badges.splitOrigin === 'agent' ? 'auto-split 🤖' : 'part of split'}</a>
       {/if}
     </div>
   {/if}

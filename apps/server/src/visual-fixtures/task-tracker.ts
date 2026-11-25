@@ -1,6 +1,11 @@
 import type Database from 'better-sqlite3';
-import { AUTO_QUEUE_EVENT, REFINE_EVENT_TYPE, type CreateTicketInput } from '@dashboard/shared';
-import { createTicket, recordTicketEvent, updateTicket } from '../widgets/task-monitor/store';
+import {
+  AUTO_QUEUE_EVENT,
+  REFINE_EVENT_TYPE,
+  REFINE_PROPOSAL_EVENT,
+  type CreateTicketInput,
+} from '@dashboard/shared';
+import { addRelation, createTicket, recordTicketEvent, updateTicket } from '../widgets/task-monitor/store';
 
 /**
  * Task Tracker fixture (PD-798): a small board with every lane and every Robot state on it, so the
@@ -129,6 +134,30 @@ export function seedTaskTracker(db: Database.Database): void {
     priority: 'P1',
   });
   updateTicket(db, excludedEpic.id, { autoQueueExcluded: true });
+
+  // PD-940 (web half of PD-888): the three reasoned closes, so the "Split into …" / "Superseded
+  // by …" / "Duplicate of …" card badge and detail-page banner all have something to photograph,
+  // and so the OPEN split children show the "part of split" lineage badge on the board. These stay
+  // out of the demo Epic to avoid re-staling it; the closed parents land in the (default-hidden)
+  // Closed lane, while the children sit in Backlog.
+  const splitParent = t('Habit reminders (too large — decomposed)');
+  const childA = t('Habit reminders: schedule model', { assignee: 'robot' });
+  const childB = t('Habit reminders: evening delivery', { assignee: 'robot' });
+  addRelation(db, splitParent.id, childA.id, 'split', 'agent');
+  addRelation(db, splitParent.id, childB.id, 'split', 'agent');
+  updateTicket(db, splitParent.id, { status: 'closed', closeReason: 'split', refined: true });
+
+  const superseded = t('Metric design — first draft');
+  const superseding = t('Metric design — agreed approach');
+  updateTicket(db, superseded.id, { status: 'closed', closeReason: 'superseded', refined: true });
+  recordTicketEvent(db, superseded.id, REFINE_PROPOSAL_EVENT.superseded, {
+    by: superseding.displayId ?? String(superseding.id),
+  });
+
+  const duplicate = t('Add a CSV export (dupe)');
+  const original = t('Export habit history as CSV — tracking');
+  addRelation(db, duplicate.id, original.id, 'duplicates', 'human');
+  updateTicket(db, duplicate.id, { status: 'closed', closeReason: 'duplicate', refined: true });
 }
 
 export function taskTrackerIsEmpty(db: Database.Database): boolean {
