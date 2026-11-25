@@ -41,6 +41,46 @@ export interface AuditableTicket {
   priority: string;
 }
 
+/** A project the audit fan-out visits (PD-284). Minimal — the agent grounds against the repo. */
+export interface AuditProject {
+  id: number;
+  key: string | null;
+  name: string;
+}
+
+/**
+ * Every project the "all" fan-out should audit (PD-284, D-045): has at least one active
+ * (un-archived, backlog/prioritized/queue) ticket AND `audit_enabled = 1` (per-project pause).
+ * A disabled project is excluded here, so it never costs an agent turn (Done-When #4).
+ */
+export function auditableProjects(db: Database.Database): AuditProject[] {
+  return db
+    .prepare(
+      `SELECT p.id AS id, p.key AS key, p.name AS name
+         FROM agent_projects p
+        WHERE p.audit_enabled = 1
+          AND EXISTS (
+            SELECT 1 FROM agent_tickets t
+             WHERE t.project_id = p.id AND t.archived_at IS NULL
+               AND t.status IN ('backlog', 'prioritized', 'queue')
+          )
+        ORDER BY p.id ASC`,
+    )
+    .all() as AuditProject[];
+}
+
+/**
+ * The project a `single:<KEY>` scope targets (PD-284). An explicit single-project request
+ * overrides the `audit_enabled` pause — it's a deliberate human ask for THIS project — so this
+ * does not filter on the flag; the fan-out (`auditableProjects`) is what the pause governs.
+ */
+export function projectByKey(db: Database.Database, key: string): AuditProject | null {
+  const row = db
+    .prepare('SELECT id, key, name FROM agent_projects WHERE key = ?')
+    .get(key) as AuditProject | undefined;
+  return row ?? null;
+}
+
 /** The project the tracer-bullet run audits: the lowest-id project with active tickets. */
 export function firstProjectWithActiveTickets(
   db: Database.Database,
@@ -150,18 +190,25 @@ export function recordAuditRunUsage(db: Database.Database, id: number, usage: { 
   );
 }
 
-/** Close out a claimed run. `model` is stamped so the report can show what produced it. */
+/**
+ * Close out a claimed run. `model` is stamped so the report can show what produced it; `scope`
+ * records what was actually audited (`single:<KEY>` or `all`, PD-284) — when omitted the stored
+ * scope is left untouched (`COALESCE`), so a run created with a scope keeps it.
+ */
 export function finishRun(
   db: Database.Database,
   id: number,
   status: 'done' | 'error',
-  opts: { counts?: AuditRunCounts | null; model?: string | null } = {},
+  opts: { counts?: AuditRunCounts | null; model?: string | null; scope?: string | null } = {},
 ): void {
-  db.prepare('UPDATE audit_run SET status = ?, finished_at = ?, counts = ?, model = ? WHERE id = ?').run(
+  db.prepare(
+    'UPDATE audit_run SET status = ?, finished_at = ?, counts = ?, model = ?, scope = COALESCE(?, scope) WHERE id = ?',
+  ).run(
     status,
     Date.now(),
     opts.counts ? JSON.stringify(opts.counts) : null,
     opts.model ?? null,
+    opts.scope ?? null,
     id,
   );
 }
