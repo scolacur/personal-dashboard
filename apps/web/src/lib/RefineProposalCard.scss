@@ -13,6 +13,27 @@
   line-height: 1.55;
 }
 
+// PD-889: a stale proposal — a ticket it cited changed, so it can no longer be approved. Greyed
+// and dimmed with a muted border so it reads as read-only history, not an actionable gate.
+.proposal-card.proposal-stale {
+  border-color: var(--border);
+  opacity: 0.65;
+}
+
+.proposal-stale-reason {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--status-warn, #b7791f);
+}
+
+.proposal-stale-note {
+  margin: var(--space-md) 0 0;
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--muted);
+}
+
 .proposal-head {
   display: flex;
   align-items: baseline;

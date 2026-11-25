@@ -43,6 +43,31 @@
   color: var(--status-stuck);
 }
 
+// PD-889: a round came back stale on submit — surfaced here because the item drops from the list.
+.decisions-stale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--status-warn, #b7791f);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+
+  .decisions-stale-dismiss {
+    flex: none;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+  }
+}
+
 .decisions-list {
   list-style: none;
   margin: 0;

@@ -9,7 +9,8 @@
   import { approvedMergingMessage } from '$lib/visual-check-logic';
   import { decisionsAnchor, visualAnchor } from '$lib/notification-links';
   import { refreshDecisionsCount } from '$lib/decisions-store';
-  import { fetchAwaitingRefine, fetchAwaitingVisual, postRefineAnswers, postVisualReview } from '../api';
+  import { answerFailureMessage } from '$lib/refine-stale-logic';
+  import { ApiError, fetchAwaitingRefine, fetchAwaitingVisual, postRefineAnswers, postVisualReview } from '../api';
   import { askedAgo, decisionKind } from './decisions-logic';
 
   // The Decisions inbox (PD-746, D-096 §7): every Refine session waiting on Steve, answerable
@@ -32,6 +33,10 @@
   // PD-843: proposals approved or rejected from this page, by the agent turn they waited on. The item
   // leaves the list at once; a rejected session comes back when the agent takes a new turn.
   let decided = $state<Map<number, string>>(new Map());
+  // PD-889: a page-level notice shown when a submitted round came back `409 ROUND_STALE` — a ticket
+  // it relied on changed between load and submit. The stale item drops from the list on refresh, so
+  // the reason is surfaced here rather than on the (now-gone) card.
+  let staleNotice = $state<string | null>(null);
   let nowTs = $state(Date.now());
 
   async function load() {
@@ -49,9 +54,19 @@
   }
 
   async function answer(item: AwaitingRefineItem, answers: RefineAnswerSet) {
-    await postRefineAnswers(item.ticketId, answers); // throws → the form shows the error inline
-    sent = new Set([...sent, item.eventId]);
-    void refreshDecisionsCount();
+    try {
+      await postRefineAnswers(item.ticketId, answers); // throws → the form shows the error inline
+      sent = new Set([...sent, item.eventId]);
+      void refreshDecisionsCount();
+    } catch (e) {
+      // PD-889: the round went stale between load and submit. Show the reason at page level and
+      // refresh so the now-stale item drops from the list; anything else surfaces inline in the form.
+      const stale = answerFailureMessage(e instanceof ApiError ? e.code : null);
+      if (!stale) throw e;
+      staleNotice = `${item.displayId ?? `Ticket ${item.ticketId}`}: ${stale}`;
+      await load();
+      void refreshDecisionsCount();
+    }
   }
 
   async function decideProposal(item: AwaitingRefineItem, message: string) {
@@ -96,6 +111,13 @@
     Everything waiting on you: Robot PRs held for your visual check, then every Refine session,
     highest priority first. Answer here and the agent picks it up on its next turn.
   </p>
+
+  {#if staleNotice}
+    <div class="decisions-stale" role="status">
+      <span>{staleNotice}</span>
+      <button type="button" class="decisions-stale-dismiss" onclick={() => (staleNotice = null)}>Dismiss</button>
+    </div>
+  {/if}
 
   {#if loading}
     <p class="decisions-empty">Loading…</p>

@@ -94,6 +94,24 @@ describe('visual fixtures (PD-798)', () => {
     expect((duplicate.closedInto ?? [])).toHaveLength(1);
   });
 
+  it('includes a ticket whose open round went stale, newest-event (PD-889)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const ticket = listTickets(db).find((t) => t.title === 'Reminder channel (round went stale)')!;
+    expect(ticket).toBeDefined();
+    const newest = db
+      .prepare(
+        `SELECT type, detail FROM agent_ticket_events
+           WHERE ticket_id = ? AND type IN ('refine_human', 'refine_agent', 'refine_round_stale', 'refine_committed', 'refine_parked')
+           ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(ticket.id) as { type: string; detail: string };
+    expect(newest.type).toBe('refine_round_stale');
+    expect(JSON.parse(newest.detail).invalidates).toBe('round');
+    // and it reads as `refining` (the worker is re-grounding), not `awaiting-human`
+    expect(ticket.refineState).toBe('refining');
+  });
+
   it('includes one auto-queue-EXCLUDED Epic so the D-103 marker shows (PD-808)', () => {
     const db = freshDb();
     seedVisualFixtures(db, NOW);
