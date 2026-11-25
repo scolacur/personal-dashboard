@@ -79,6 +79,7 @@ export const pages: PageMeta[] = [
       { id: 'do-agent-dashboard', title: 'Agent Dashboard', route: '/devops/agent-dashboard' },
       { id: 'do-jobs', title: 'Jobs', route: '/devops/jobs' },
       { id: 'do-task-tracker', title: 'Task Tracker', route: '/devops/task-tracker' },
+      { id: 'do-projects', title: 'Projects', route: '/devops/projects' },
       { id: 'do-decisions', title: 'Decisions', route: '/devops/decisions', badge: 'decisions' },
       { id: 'do-velocity', title: 'Velocity', route: '/devops/velocity' },
     ],

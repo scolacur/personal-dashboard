@@ -420,9 +420,25 @@ export interface AgentProject {
 export interface CreateProjectInput {
   slug: string;
   name: string;
+  /** Display-id prefix (e.g. 'PD'). Persisted on the project; `nextDisplayId` falls back to 'T'
+   *  when null. The create route requires it (PD-284, slice 3). */
+  key?: string | null;
   githubRepo?: string | null;
   robotEnabled?: boolean;
   /** Whether the Ticket Audit fans out over this project (PD-284). Defaults to true. */
+  auditEnabled?: boolean;
+  color?: string | null;
+}
+
+/**
+ * Fields a project update may set (PD-284, slice 3). Every field is optional — a PATCH carries only
+ * what changes. `auditEnabled` is the one the Projects page's "Include in Audit" toggle writes.
+ */
+export interface UpdateProjectInput {
+  name?: string;
+  key?: string | null;
+  githubRepo?: string | null;
+  robotEnabled?: boolean;
   auditEnabled?: boolean;
   color?: string | null;
 }
