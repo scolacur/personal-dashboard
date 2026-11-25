@@ -2053,6 +2053,17 @@ export type AuditRunStatus = (typeof AUDIT_RUN_STATUSES)[number];
 export const FINDING_DECISIONS = ['undecided', 'accepted', 'rejected', 'other'] as const;
 export type FindingDecision = (typeof FINDING_DECISIONS)[number];
 
+/** Finding `type`s that an Accept can apply via a single ticket mutation (PD-826). `keep` is
+ *  non-actionable and `update` is the sibling slice (diff-confirm), so neither is here. Shared so
+ *  the server store and the web report agree on one list rather than drifting two copies. */
+export const ACCEPT_SUPPORTED_FINDING_TYPES = ['archive', 'complete', 'reprioritize'] as const;
+export type AcceptSupportedFindingType = (typeof ACCEPT_SUPPORTED_FINDING_TYPES)[number];
+
+/** Whether an Accept can apply this finding `type` (i.e. it is in ACCEPT_SUPPORTED_FINDING_TYPES). */
+export function isAcceptSupportedFindingType(type: string): boolean {
+  return (ACCEPT_SUPPORTED_FINDING_TYPES as readonly string[]).includes(type);
+}
+
 /** Roll-up counts persisted on a finished run. `findings` + `tickets` + `projects` always
  *  present; per-recommendation buckets (e.g. `archive`, `complete`) are added opportunistically. */
 export interface AuditRunCounts {

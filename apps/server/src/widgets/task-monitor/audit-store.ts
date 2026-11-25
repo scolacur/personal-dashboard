@@ -6,6 +6,7 @@ import type {
   FindingDecision,
   TicketPriority,
 } from '@dashboard/shared';
+import { isAcceptSupportedFindingType } from '@dashboard/shared';
 import { archiveTicket, updateTicket } from './store';
 
 // Read/insert helpers for the Ticket Audit engine (D-045, PD-283). The web process owns
@@ -142,9 +143,9 @@ export class FindingDecisionError extends Error {
   }
 }
 
-// Recommendation buckets Accept can act on in this slice. `keep` is non-actionable; `update`
-// (UPDATE_DESCRIPTION diff-confirm) is the blocked sibling slice — rejected-only here.
-const ACCEPT_SUPPORTED_TYPES: ReadonlySet<string> = new Set(['archive', 'complete', 'reprioritize']);
+// Recommendation buckets Accept can act on are the shared ACCEPT_SUPPORTED_FINDING_TYPES. `keep`
+// is non-actionable; `update` (UPDATE_DESCRIPTION diff-confirm) is the blocked sibling slice —
+// rejected-only here (see isAcceptSupportedFindingType).
 
 export interface SetFindingDecision {
   decision: FindingDecision;
@@ -178,7 +179,7 @@ export function setFindingDecision(
           'accepting an update finding is not supported yet (sibling slice)',
         );
       }
-      if (!ACCEPT_SUPPORTED_TYPES.has(finding.type)) {
+      if (!isAcceptSupportedFindingType(finding.type)) {
         throw new FindingDecisionError(
           'NOT_ACTIONABLE',
           `a '${finding.type}' finding cannot be accepted`,

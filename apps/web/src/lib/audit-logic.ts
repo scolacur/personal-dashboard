@@ -1,5 +1,5 @@
 import type { AuditFinding, AuditRun, AuditRunStatus, TicketPriority } from '@dashboard/shared';
-import { TICKET_PRIORITIES } from '@dashboard/shared';
+import { TICKET_PRIORITIES, isAcceptSupportedFindingType } from '@dashboard/shared';
 
 // Pure helpers for the Ticket Audit report surface (PD-286). No fetching, no DOM — shared by
 // the badge store, the report page, and the Recurring Jobs card so they agree on what "open",
@@ -25,17 +25,13 @@ export function openActionableFindings(findings: AuditFinding[]): AuditFinding[]
 }
 
 // ── Apply mechanics (PD-826) ───────────────────────────────────────────────────
-// Recommendation buckets Accept can act on in this slice. `keep` is non-actionable; `update`
-// (UPDATE_DESCRIPTION diff-confirm) is the blocked sibling slice, so it stays reject-only.
-export const ACCEPT_SUPPORTED_TYPES: ReadonlySet<string> = new Set([
-  'archive',
-  'complete',
-  'reprioritize',
-]);
+// Recommendation buckets Accept can act on are the shared ACCEPT_SUPPORTED_FINDING_TYPES. `keep`
+// is non-actionable; `update` (UPDATE_DESCRIPTION diff-confirm) is the blocked sibling slice, so
+// it stays reject-only.
 
-/** Can this finding be Accepted at all in this slice? (actionable + a supported bucket) */
+/** Can this finding be Accepted at all in this slice? (a supported bucket) */
 export function canAccept(f: AuditFinding): boolean {
-  return ACCEPT_SUPPORTED_TYPES.has(f.type);
+  return isAcceptSupportedFindingType(f.type);
 }
 
 /** The confidence gate (PD-826): only a `high`-confidence finding may be accepted in one click.

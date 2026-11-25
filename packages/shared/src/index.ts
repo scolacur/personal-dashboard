@@ -151,6 +151,7 @@ export type {
   AuditRun,
   AuditFinding,
   SetFindingDecisionInput,
+  AcceptSupportedFindingType,
   WorkerHeartbeat,
   WorkerVersionState,
   SystemStatus,
@@ -195,6 +196,8 @@ export type {
 export {
   AUDIT_RUN_STATUSES,
   FINDING_DECISIONS,
+  ACCEPT_SUPPORTED_FINDING_TYPES,
+  isAcceptSupportedFindingType,
   TICKET_STATUSES,
   coerceTicketStatus,
   TICKET_PRIORITIES,

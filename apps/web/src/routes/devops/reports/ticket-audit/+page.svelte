@@ -53,8 +53,10 @@
     <div>
       <h1 class="report-title">Ticket Audit</h1>
       <p class="report-sub">
-        Advisory findings from the weekly backlog audit. Accept to apply the recommended change, or
-        Reject with an optional reason.
+        Advisory findings from the weekly backlog audit. Each run is a full re-sweep, and this
+        page shows one run at a time — not a running total. A finding you don't resolve is raised
+        again as a new finding on the next run. Accept to apply the recommended change, or Reject
+        with an optional reason.
       </p>
     </div>
     <a class="report-board-link" href="/devops">← Dev Ops</a>

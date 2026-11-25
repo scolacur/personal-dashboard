@@ -218,13 +218,41 @@ describe('setFindingDecision — apply mechanics (PD-826)', () => {
     }
   });
 
-  it('decision_reason is present on a migrated existing DB (Done-When #6)', () => {
-    // Simulate a pre-PD-826 DB: drop the column off a fresh schema, then re-bootstrap to migrate.
+  it('decision_reason is added to a pre-PD-826 audit_finding table on re-bootstrap (Done-When #6)', () => {
+    // Simulate a DB that predates the column: bootstrap, then roll BOTH the column and its
+    // migration-ledger row back to the pre-PD-826 state, so the next bootstrap must re-run the
+    // addColumn migration rather than relying on the CREATE TABLE (which only fires on a fresh DB).
     const old = new Database(':memory:');
     old.pragma('foreign_keys = ON');
     bootstrapSchema(old);
-    // The migration ledger already recorded the add; prove the column exists and is writable.
-    const cols = old.prepare('PRAGMA table_info(audit_finding)').all() as { name: string }[];
-    expect(cols.some((c) => c.name === 'decision_reason')).toBe(true);
+
+    old.exec('ALTER TABLE audit_finding DROP COLUMN decision_reason');
+    old.prepare('DELETE FROM _migrations WHERE id = ?').run('audit_finding_add_decision_reason');
+
+    const before = old.prepare('PRAGMA table_info(audit_finding)').all() as { name: string }[];
+    expect(before.some((c) => c.name === 'decision_reason')).toBe(false);
+
+    // Re-bootstrap: the addColumn migration path is the only thing that can restore the column.
+    bootstrapSchema(old);
+
+    const after = old.prepare('PRAGMA table_info(audit_finding)').all() as { name: string }[];
+    expect(after.some((c) => c.name === 'decision_reason')).toBe(true);
+
+    // And the restored column is writable (nullable TEXT).
+    const run = old
+      .prepare(
+        `INSERT INTO audit_run (status, scope, created_at) VALUES ('done', 'test', ?) RETURNING id`,
+      )
+      .get(Date.now()) as { id: number };
+    old
+      .prepare(
+        `INSERT INTO audit_finding (run_id, type, decision, decision_reason, created_at, updated_at)
+         VALUES (?, 'archive', 'rejected', 'not stale', ?, ?)`,
+      )
+      .run(run.id, Date.now(), Date.now());
+    const row = old
+      .prepare('SELECT decision_reason FROM audit_finding WHERE run_id = ?')
+      .get(run.id) as { decision_reason: string | null };
+    expect(row.decision_reason).toBe('not stale');
   });
 });
