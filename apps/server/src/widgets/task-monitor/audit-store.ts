@@ -4,6 +4,7 @@ import type {
   AuditRun,
   AuditRunCounts,
   FindingDecision,
+  RelationType,
   TicketPriority,
 } from '@dashboard/shared';
 import { isAcceptSupportedFindingType } from '@dashboard/shared';
@@ -30,12 +31,15 @@ interface AuditFindingRow {
   run_id: number;
   project_id: number | null;
   ticket_id: number | null;
+  target_ticket_id: number | null;
+  relation_type: string | null;
   type: string;
   recommendation: string | null;
   reason: string | null;
   evidence: string | null;
   proposed_change: string | null;
   confidence: string | null;
+  fingerprint: string | null;
   decision: string;
   decision_reason: string | null;
   created_at: number;
@@ -61,12 +65,15 @@ function rowToFinding(r: AuditFindingRow): AuditFinding {
     runId: r.run_id,
     projectId: r.project_id,
     ticketId: r.ticket_id,
+    targetTicketId: r.target_ticket_id,
+    relationType: r.relation_type as RelationType | null,
     type: r.type,
     recommendation: r.recommendation,
     reason: r.reason,
     evidence: r.evidence,
     proposedChange: r.proposed_change,
     confidence: r.confidence,
+    fingerprint: r.fingerprint,
     decision: r.decision as AuditFinding['decision'],
     decisionReason: r.decision_reason,
     createdAt: r.created_at,

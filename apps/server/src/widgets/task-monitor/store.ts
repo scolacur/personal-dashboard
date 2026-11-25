@@ -16,6 +16,7 @@ import type {
   RefineAutostartStatus,
   RefineCommitMode,
   RefineInvalidationCause,
+  RefineRoundStaleDetail,
   RefineQuestionRound,
   EpicDerivedLane,
   EpicSummary,
@@ -54,6 +55,7 @@ import {
   REFINE_EVENT_TYPE,
   REFINE_PARKED_EVENT,
   REFINE_PROPOSAL_EVENT,
+  REFINE_ROUND_STALE_EVENT,
   REFINE_STATE_EVENT,
   REFINE_AUTOSTART_STATUS_KEY,
   REFINE_BACKFILL_EXCLUDED_EVENT,
@@ -1011,6 +1013,31 @@ export function updateTicket(
       });
       logEvent(db, id, 'recurred', { spawnedId: spawned.id, spawnedDisplayId: spawned.displayId });
     }
+
+    // PD-889: this change may invalidate OTHER Refine sessions' open rounds / pending proposals that
+    // cited this ticket. Terminal (incl. split/superseded/duplicate via closeReason), an Epic move,
+    // and a body rewrite are the triggers; a priority/queue/assignee change is not. One trigger per
+    // call (terminal beats epic-move beats body); the fan-out itself debounces per affected session.
+    let staleTrigger: StaleTrigger | null = null;
+    if (enteringTerminal) {
+      staleTrigger =
+        next.status === 'completed'
+          ? 'completed'
+          : next.closeReason === 'split'
+            ? 'split'
+            : next.closeReason === 'superseded'
+              ? 'superseded'
+              : next.closeReason === 'duplicate'
+                ? 'duplicate'
+                : 'closed';
+    } else if (next.epicId !== existing.epicId) {
+      staleTrigger = 'epic_move';
+    } else if (bodyChanged) {
+      staleTrigger = 'body';
+    }
+    if (staleTrigger) {
+      staleRefineDependents(db, { id, displayId: existing.displayId }, staleTrigger, next.updatedAt);
+    }
   });
   apply();
 
@@ -1595,6 +1622,119 @@ export function listTicketEvents(db: Database.Database, ticketId: number): Ticke
   return rows.map(rowToTicketEvent);
 }
 
+// ── Stale Refine rounds / proposals (PD-889) ─────────────────────────────────
+// An open question round, or a pending proposal, is written against the board as it was when the
+// agent asked. If a ticket it relied on changes before Steve acts, the round/proposal can be
+// quietly wrong. `dependsOn` (recorded at ask time by the worker) is the set of ticket ids a round
+// or proposal relies on; when one of them changes in a `StaleTrigger` way, each affected session
+// gets one `refine_round_stale` turn, which closes the round (a late answer is refused `ROUND_STALE`),
+// terminates the proposal, and makes the worker re-ground the session.
+
+type StaleTrigger = RefineRoundStaleDetail['change'];
+
+/** Parse the `dependsOn` number array off an event's stored detail JSON; `[]` when absent/malformed. */
+function dependsOnOf(detailJson: string | null | undefined): number[] {
+  if (!detailJson) return [];
+  try {
+    const d = JSON.parse(detailJson) as { dependsOn?: unknown };
+    return Array.isArray(d.dependsOn) ? d.dependsOn.filter((n): n is number => typeof n === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The agent-facing message a `refine_round_stale` turn carries (PD-889). */
+function staleMessage(
+  changed: { id: number; displayId: string | null },
+  trigger: StaleTrigger,
+  invalidates: RefineRoundStaleDetail['invalidates'],
+): string {
+  const ref = changed.displayId ?? `ticket ${changed.id}`;
+  const what: Record<StaleTrigger, string> = {
+    completed: 'has been completed',
+    closed: 'has been closed',
+    split: 'has been split into child tickets',
+    superseded: 'has been superseded by other tickets',
+    duplicate: 'has been closed as a duplicate',
+    body: 'has had its description rewritten',
+    epic_move: 'has been moved to a different Epic',
+  };
+  const subject =
+    invalidates === 'both'
+      ? 'An open question round and a pending proposal you made'
+      : invalidates === 'round'
+        ? 'An open question round you asked'
+        : 'A pending proposal you made';
+  return (
+    `${subject} depended on ${ref}, which ${what[trigger]} since. ` +
+    `Re-read ${ref} and the other tickets this session depends on, then post a revised question ` +
+    `round, withdraw any question that is now moot, or propose directly against the current state.`
+  );
+}
+
+/**
+ * PD-889: a ticket changed in a way (`trigger`) that can invalidate another session's open question
+ * round or pending proposal. For every OTHER ticket whose CURRENT open round or actionable proposal
+ * lists `changed.id` in its `dependsOn`, append exactly one `refine_round_stale` turn to it.
+ *
+ * Debounce is automatic: a stale turn is a Refine-state event and terminates both the open round
+ * (`openQuestionRound` → null) and the proposal (`latestActionableProposal` → null), so a second
+ * change in quick succession finds nothing to stale and appends nothing.
+ *
+ * Called inside `updateTicket`'s transaction, so detection + appends are atomic with the change.
+ */
+function staleRefineDependents(
+  db: Database.Database,
+  changed: { id: number; displayId: string | null },
+  trigger: StaleTrigger,
+  now: number,
+): void {
+  // Candidate sessions: any ticket with a round/proposal event that EVER cited this ticket. The
+  // per-candidate check below confirms the session's CURRENT open round/proposal still cites it (a
+  // newer round that dropped the id, or a session already staled, is filtered out there).
+  const candidates = db
+    .prepare(
+      `SELECT DISTINCT ticket_id FROM agent_ticket_events
+        WHERE type IN (?, ?)
+          AND ticket_id != ?
+          AND detail IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM json_each(json_extract(detail, '$.dependsOn')) je WHERE je.value = ?
+          )`,
+    )
+    .all(REFINE_EVENT_TYPE.agent, REFINE_PROPOSAL_EVENT.proposal, changed.id, changed.id) as {
+    ticket_id: number;
+  }[];
+
+  const insert = db.prepare(
+    'INSERT INTO agent_ticket_events (ticket_id, type, detail, created_at) VALUES (?, ?, ?, ?)',
+  );
+  for (const { ticket_id: sessionId } of candidates) {
+    const open = openQuestionRound(db, sessionId);
+    let roundStale = false;
+    if (open) {
+      const row = db
+        .prepare('SELECT detail FROM agent_ticket_events WHERE id = ?')
+        .get(open.eventId) as { detail: string | null } | undefined;
+      roundStale = dependsOnOf(row?.detail).includes(changed.id);
+    }
+    const proposal = latestActionableProposal(listTicketEvents(db, sessionId));
+    const propStale = proposal ? (proposal.proposal.dependsOn ?? []).includes(changed.id) : false;
+    if (!roundStale && !propStale) continue;
+
+    const invalidates: RefineRoundStaleDetail['invalidates'] =
+      roundStale && propStale ? 'both' : roundStale ? 'round' : 'proposal';
+    const detail: RefineRoundStaleDetail = {
+      text: staleMessage(changed, trigger, invalidates),
+      changedTicketId: changed.id,
+      changedDisplayId: changed.displayId,
+      change: trigger,
+      invalidates,
+    };
+    insert.run(sessionId, REFINE_ROUND_STALE_EVENT, JSON.stringify(detail), now);
+  }
+}
+
 /** Outcome of a startRefine attempt: the kickoff event, or a reason it didn't start. */
 export type StartRefineResult =
   | { ok: true; event: TicketEvent }
@@ -1778,8 +1918,22 @@ export function listAwaitingRefine(db: Database.Database): AwaitingRefineItem[] 
 
 export type StructuredRefineReplyResult =
   | { ok: true; event: TicketEvent }
-  | { ok: false; reason: 'not_found' | 'no_open_round' }
+  | { ok: false; reason: 'not_found' | 'no_open_round' | 'round_stale' }
   | { ok: false; reason: 'invalid'; message: string };
+
+/** PD-889: true when a ticket's newest Refine-state event is a stale turn — i.e. the round went
+ *  stale (a cited ticket changed) rather than there simply being no open round. Lets the reply
+ *  route tell Steve *why* with a distinct `ROUND_STALE` 409. */
+export function newestRefineStateIsStale(db: Database.Database, ticketId: number): boolean {
+  const newest = db
+    .prepare(
+      `SELECT type FROM agent_ticket_events
+        WHERE ticket_id = ? AND type IN (${REFINE_STATE_EVENT_TYPES.map(() => '?').join(', ')})
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(ticketId, ...REFINE_STATE_EVENT_TYPES) as { type: string } | undefined;
+  return newest?.type === REFINE_ROUND_STALE_EVENT;
+}
 
 /**
  * The question round Steve can answer right now (PD-744): the newest Refine turn is an agent turn
@@ -1821,7 +1975,10 @@ export function appendStructuredRefineReply(
 ): StructuredRefineReplyResult {
   if (getTicket(db, ticketId) === null) return { ok: false, reason: 'not_found' };
   const open = openQuestionRound(db, ticketId);
-  if (!open) return { ok: false, reason: 'no_open_round' };
+  if (!open) {
+    // PD-889: distinguish "the round went stale" from "there is no open round", so the UI can say why.
+    return { ok: false, reason: newestRefineStateIsStale(db, ticketId) ? 'round_stale' : 'no_open_round' };
+  }
   const invalid = validateAnswerSet(open.round, set);
   if (invalid) return { ok: false, reason: 'invalid', message: invalid };
   const answers: RefineAnswerSet = {

@@ -36,12 +36,17 @@ export function bootstrapSchema(db: Database.Database): void {
       run_id          INTEGER NOT NULL REFERENCES audit_run(id) ON DELETE CASCADE,
       project_id      INTEGER,
       ticket_id       INTEGER,
+      -- Relation findings (PD-828): the other end + the relation type. NULL on a single-ticket
+      -- finding. Direction (D-051): ticket_id is the relation from-side, target_ticket_id the to-side.
+      target_ticket_id INTEGER,
+      relation_type   TEXT,                                -- blocks|relates|duplicates (relation findings)
       type            TEXT    NOT NULL,                    -- recommendation bucket
       recommendation  TEXT,
       reason          TEXT,
       evidence        TEXT,
       proposed_change TEXT,
       confidence      TEXT,                                -- high|medium|low (PD-284); nullable here
+      fingerprint     TEXT,                                -- PD-285: stable hash for cross-run carry-forward; nullable
       decision        TEXT    NOT NULL DEFAULT 'undecided',-- undecided|accepted|rejected|other
       decision_reason TEXT,                                -- human's optional reject reason (PD-826)
       created_at      INTEGER NOT NULL,
@@ -223,6 +228,21 @@ export function bootstrapSchema(db: Database.Database): void {
   // above adds it only on a fresh DB).
   migrate(db, 'audit_finding_add_decision_reason', (d) => {
     addColumn(d, 'audit_finding', 'decision_reason', 'TEXT');
+  });
+  // PD-828: relation findings (link / unlink / duplicate). The audit now reads relations as truth
+  // and may flag a new/stale link; a relation finding carries its other end + type. Both nullable
+  // (NULL on a single-ticket finding), so every pre-existing finding back-fills cleanly. Advisory
+  // only — the apply path that would write a relation is Child B (PD-287-blocked).
+  migrate(db, 'audit_finding_add_relation_columns', (d) => {
+    addColumn(d, 'audit_finding', 'target_ticket_id', 'INTEGER');
+    addColumn(d, 'audit_finding', 'relation_type', 'TEXT');
+  });
+  // PD-285: cross-run reconciliation fingerprint on findings. Nullable, no back-fill — old rows
+  // simply have no prior match (so they reset to 'undecided' next run, which is correct). The worker
+  // writes it and tolerates its absence, so either side can deploy first. No-op on a fresh DB where
+  // the CREATE above already included the column.
+  migrate(db, 'audit_finding_add_fingerprint', (d) => {
+    addColumn(d, 'audit_finding', 'fingerprint', 'TEXT');
   });
   migrate(db, 'agent_projects_add_key_seq', (d) => {
     addColumn(d, 'agent_projects', 'key', 'TEXT');

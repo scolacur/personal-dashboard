@@ -247,13 +247,35 @@
   padding: var(--space-xs) 0;
 }
 
-// PD-744/PD-745: a structured question round under the agent's text — the answer form while it
-// is open, a folded read-only copy once it has been answered.
+// PD-744/PD-745: a structured question round under the agent's text. Since PD-841 the OPEN round's
+// answer form lives in the dock (.reply-open-round below); .turn-round now only dresses the folded
+// read-only copy (`.turn-round-past`) shown in the thread once a round has been answered/superseded.
 .turn-round {
   margin-top: var(--space-sm);
   padding-top: var(--space-sm);
   border-top: 1px dashed var(--border);
   min-width: 0;
+}
+
+// PD-841: when a round is open, its answer form IS the dock (replacing the reply textarea). It sits
+// flush as part of the dock — not a floating card — and scrolls internally so a tall multi-question
+// form never pushes the conversation above out of view. The Park row stays pinned below the scroll.
+.reply-open-round {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+
+.reply-round {
+  min-width: 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.reply-actions-park {
+  justify-content: flex-end;
+  margin-top: 0;
 }
 
 .turn-round-past summary {

@@ -31,6 +31,10 @@ name: ci
 on:
   pull_request:
     branches: [main]
+    # The defaults plus `ready_for_review` (PD-942). The agent-worker re-tests a PR that failed on a
+    # red main by converting it to draft and back: a fresh `pull_request` event builds a new merge
+    # ref against the fixed main, which a plain "Re-run" (same GITHUB_SHA) cannot.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
