@@ -409,6 +409,8 @@ export interface AgentProject {
   githubRepo: string | null;
   /** Whether the Robot loop is enabled for this project. */
   robotEnabled: boolean;
+  /** Whether the recurring Ticket Audit fans out over this project (PD-284). Default true. */
+  auditEnabled: boolean;
   /** Hex color for the project chip on cards. */
   color: string | null;
   createdAt: number;
@@ -420,6 +422,8 @@ export interface CreateProjectInput {
   name: string;
   githubRepo?: string | null;
   robotEnabled?: boolean;
+  /** Whether the Ticket Audit fans out over this project (PD-284). Defaults to true. */
+  auditEnabled?: boolean;
   color?: string | null;
 }
 

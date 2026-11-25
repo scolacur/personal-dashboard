@@ -64,6 +64,7 @@ export function bootstrapSchema(db: Database.Database): void {
       seq            INTEGER NOT NULL DEFAULT 0,    -- last-issued display-id number
       github_repo    TEXT,
       robot_enabled  INTEGER NOT NULL DEFAULT 0,
+      audit_enabled  INTEGER NOT NULL DEFAULT 1,     -- Ticket Audit fan-out per-project pause (PD-284)
       color          TEXT,
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL
@@ -204,6 +205,13 @@ export function bootstrapSchema(db: Database.Database): void {
     if (columnExists(d, 'agent_projects', 'sortie_enabled') && !columnExists(d, 'agent_projects', 'robot_enabled')) {
       d.exec('ALTER TABLE agent_projects RENAME COLUMN sortie_enabled TO robot_enabled');
     }
+  });
+  // PD-284 (Ticket Audit fan-out): per-project pause for the Audit, mirroring `robot_enabled`.
+  // NOT NULL DEFAULT 1 so every existing project back-fills to audited (the Audit was single-project
+  // before, so "enabled" is the status-quo for all of them). Like `robot_enabled`, the server must
+  // apply this migration before the agent-worker queries `audit_enabled`.
+  migrate(db, 'agent_projects_add_audit_enabled', (d) => {
+    addColumn(d, 'agent_projects', 'audit_enabled', 'INTEGER NOT NULL DEFAULT 1');
   });
   // PD-528: the running image's build commit, distinct from the grounding checkout's HEAD. The two
   // diverge the moment anything merges without a redeploy, which is precisely the state worth
