@@ -1,26 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  buildCreateProjectInput,
-  emptyProjectForm,
-  projectFormError,
-  slugify,
-} from './projects-form';
-
-describe('slugify', () => {
-  it('lowercases, hyphenates and trims', () => {
-    expect(slugify('Personal Dashboard')).toBe('personal-dashboard');
-    expect(slugify('  Nervous System: Website!  ')).toBe('nervous-system-website');
-    expect(slugify('Core')).toBe('core');
-  });
-
-  it('collapses runs of non-alphanumerics to a single hyphen', () => {
-    expect(slugify('a   b__c')).toBe('a-b-c');
-  });
-
-  it('is empty for a name with no alphanumerics', () => {
-    expect(slugify('!!!')).toBe('');
-  });
-});
+import { buildCreateProjectInput, emptyProjectForm, projectFormError } from './projects-form';
 
 describe('projectFormError', () => {
   it('requires a name', () => {

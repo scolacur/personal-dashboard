@@ -1,4 +1,4 @@
-import type { CreateProjectInput } from '@dashboard/shared';
+import { slugify, type CreateProjectInput } from '@dashboard/shared';
 
 /**
  * Pure logic for the New Project form (PD-284, slice 3). Kept out of the `.svelte` file so it can
@@ -18,18 +18,10 @@ export function emptyProjectForm(): ProjectFormState {
 }
 
 /**
- * Derive a URL-ish slug from a name: lowercase, non-alphanumerics collapsed to single hyphens, no
- * leading/trailing hyphen. The slug is a required, unique column; the form derives it from the name
- * rather than asking for it, so a human types one less field. A collision surfaces as the server's
- * 409 DUPLICATE_SLUG.
+ * The slug is a required, unique column; the form derives it from the name via the shared
+ * {@link slugify} helper rather than asking for it, so a human types one less field. A collision
+ * surfaces as the server's 409 DUPLICATE_SLUG.
  */
-export function slugify(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 /** The first validation error for the form, or null when it is ready to submit. */
 export function projectFormError(form: ProjectFormState): string | null {
