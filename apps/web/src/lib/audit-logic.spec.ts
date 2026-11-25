@@ -30,6 +30,8 @@ function finding(
     runId: 1,
     projectId: 1,
     ticketId: 100 + over.id,
+    targetTicketId: null,
+    relationType: null,
     type: 'archive',
     recommendation: null,
     reason: null,

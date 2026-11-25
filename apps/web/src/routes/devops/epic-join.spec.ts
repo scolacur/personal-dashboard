@@ -8,7 +8,7 @@ function t(o: Partial<AgentTicket> = {}): AgentTicket {
     assignee: 'robot', recurInterval: null, source: 'manual', sortOrder: 0, githubIssueNumber: null,
     githubIssueUrl: null, agentState: null, maxTurns: null, kind: null, coderArea: null, agentTurns: null, refineState: null,
     refined: false, refineStale: false, isEpic: false, epicId: 10, ready: true, readyBypassed: false,
-    archivedAt: null, createdAt: 0, updatedAt: 0, ...o,
+    closeReason: null, archivedAt: null, createdAt: 0, updatedAt: 0, ...o,
   };
 }
 const epic = (o: Partial<AgentTicket> = {}) =>

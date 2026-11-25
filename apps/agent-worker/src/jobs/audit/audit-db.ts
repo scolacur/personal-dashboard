@@ -101,11 +101,15 @@ export function auditFindingHasFingerprint(db: Database.Database): boolean {
 }
 
 /** One advisory finding to persist. `decision` defaults to 'undecided' in the schema; PD-285 may
- *  carry a prior run's decision forward, and `fingerprint` keys the next run's reconciliation. */
+ *  carry a prior run's decision forward, and `fingerprint` keys the next run's reconciliation. For
+ *  a relation finding (PD-828) `targetTicketId` + `relationType` carry the other end + type; both
+ *  are null on a single-ticket finding. */
 export interface FindingInput {
   runId: number;
   projectId: number | null;
   ticketId: number | null;
+  targetTicketId?: number | null;
+  relationType?: string | null;
   type: string;
   recommendation?: string | null;
   reason?: string | null;
@@ -146,13 +150,15 @@ export function insertFinding(db: Database.Database, f: FindingInput): void {
   // a fresh undecided finding exactly as before (the decision resets harmlessly next run).
   db.prepare(
     `INSERT INTO audit_finding
-       (run_id, project_id, ticket_id, type, recommendation, reason, evidence,
-        proposed_change, confidence, decision, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'undecided', ?, ?)`,
+       (run_id, project_id, ticket_id, target_ticket_id, relation_type, type, recommendation,
+        reason, evidence, proposed_change, confidence, decision, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'undecided', ?, ?)`,
   ).run(
     f.runId,
     f.projectId,
     f.ticketId,
+    f.targetTicketId ?? null,
+    f.relationType ?? null,
     f.type,
     f.recommendation ?? null,
     f.reason ?? null,
@@ -197,6 +203,64 @@ export function getPriorFindings(db: Database.Database, projectId: number): Prio
     fingerprint: r.fingerprint,
     decision: r.decision as FindingDecision,
   }));
+}
+
+/**
+ * One existing relation touching an audited ticket, resolved to the other end (PD-828). The audit
+ * reads these as truth: they are injected into the prompt so the agent does not re-propose a link
+ * that already exists, and they let an `unlink` finding resolve a target that is no longer in the
+ * active audit surface (e.g. a `relates` link to an already-archived ticket).
+ *
+ * `subjectId` is the audited ticket; `direction: 'from'` means it is the relation's `from_ticket_id`
+ * (it blocks / duplicates / splits into the other), `'to'` means it is the `to_ticket_id`.
+ */
+export interface AuditRelation {
+  subjectId: number;
+  otherId: number;
+  otherDisplayId: string | null;
+  otherStatus: string;
+  type: string;
+  direction: 'from' | 'to';
+}
+
+/** Load every relation where one audited ticket is an endpoint, resolved to the far end. Mirrors
+ *  `listRelations` in the server store, but as the worker's own SQL (it can't import the store). */
+export function getRelationsForTickets(db: Database.Database, ticketIds: number[]): AuditRelation[] {
+  if (ticketIds.length === 0) return [];
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const outgoing = db
+    .prepare(
+      `SELECT r.from_ticket_id AS subject, r.type AS type,
+              t.id AS other, t.display_id AS other_display_id, t.status AS other_status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.to_ticket_id
+        WHERE r.from_ticket_id IN (${placeholders})`,
+    )
+    .all(...ticketIds) as RelationEndpointRow[];
+  const incoming = db
+    .prepare(
+      `SELECT r.to_ticket_id AS subject, r.type AS type,
+              t.id AS other, t.display_id AS other_display_id, t.status AS other_status
+         FROM agent_ticket_relations r JOIN agent_tickets t ON t.id = r.from_ticket_id
+        WHERE r.to_ticket_id IN (${placeholders})`,
+    )
+    .all(...ticketIds) as RelationEndpointRow[];
+  const toRel = (row: RelationEndpointRow, direction: 'from' | 'to'): AuditRelation => ({
+    subjectId: row.subject,
+    otherId: row.other,
+    otherDisplayId: row.other_display_id,
+    otherStatus: row.other_status,
+    type: row.type,
+    direction,
+  });
+  return [...outgoing.map((r) => toRel(r, 'from')), ...incoming.map((r) => toRel(r, 'to'))];
+}
+
+interface RelationEndpointRow {
+  subject: number;
+  other: number;
+  other_display_id: string | null;
+  other_status: string;
+  type: string;
 }
 
 /**

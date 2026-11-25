@@ -36,6 +36,10 @@ export function bootstrapSchema(db: Database.Database): void {
       run_id          INTEGER NOT NULL REFERENCES audit_run(id) ON DELETE CASCADE,
       project_id      INTEGER,
       ticket_id       INTEGER,
+      -- Relation findings (PD-828): the other end + the relation type. NULL on a single-ticket
+      -- finding. Direction (D-051): ticket_id is the relation from-side, target_ticket_id the to-side.
+      target_ticket_id INTEGER,
+      relation_type   TEXT,                                -- blocks|relates|duplicates (relation findings)
       type            TEXT    NOT NULL,                    -- recommendation bucket
       recommendation  TEXT,
       reason          TEXT,
@@ -90,6 +94,7 @@ export function bootstrapSchema(db: Database.Database): void {
       is_epic             INTEGER NOT NULL DEFAULT 0, -- 1 = an Epic umbrella (D-054, PD-336)
       epic_id             INTEGER REFERENCES agent_tickets(id), -- member's single parent Epic (D-054)
       auto_queue_excluded INTEGER NOT NULL DEFAULT 0, -- 1 = Epic excluded from auto-queue (D-103, PD-808)
+      close_reason        TEXT,                     -- why the system closed it: split|superseded|duplicate; NULL = plain/manual close or open (PD-888)
       archived_at         INTEGER,                  -- soft delete; NULL = active
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL
@@ -216,6 +221,14 @@ export function bootstrapSchema(db: Database.Database): void {
   migrate(db, 'audit_run_add_turns_tokens', (d) => {
     addColumn(d, 'audit_run', 'turns', 'INTEGER');
     addColumn(d, 'audit_run', 'tokens', 'INTEGER');
+  });
+  // PD-828: relation findings (link / unlink / duplicate). The audit now reads relations as truth
+  // and may flag a new/stale link; a relation finding carries its other end + type. Both nullable
+  // (NULL on a single-ticket finding), so every pre-existing finding back-fills cleanly. Advisory
+  // only — the apply path that would write a relation is Child B (PD-287-blocked).
+  migrate(db, 'audit_finding_add_relation_columns', (d) => {
+    addColumn(d, 'audit_finding', 'target_ticket_id', 'INTEGER');
+    addColumn(d, 'audit_finding', 'relation_type', 'TEXT');
   });
   // PD-285: cross-run reconciliation fingerprint on findings. Nullable, no back-fill — old rows
   // simply have no prior match (so they reset to 'undecided' next run, which is correct). The worker
@@ -419,6 +432,41 @@ export function bootstrapSchema(db: Database.Database): void {
         WHERE status = 'backlog'
           AND archived_at IS NULL
           AND (agent_state IS NOT NULL OR ready_bypassed = 1)`,
+    ).run();
+  });
+
+  // PD-888: record WHY a ticket was closed, so a SPLIT or SUPERSEDED close (which went through
+  // Refine and has successors) is distinguishable from an abandoned one — both otherwise read
+  // `closed`, `refined: false`. The column is nullable (NULL = plain/manual close or open).
+  //
+  // The back-fill reconstructs the reason for existing closed rows from the evidence already on the
+  // board, and marks the split/superseded parents refined (they WERE refined — that is the whole
+  // bug). Applied split → superseded → duplicate; every UPDATE is guarded `close_reason IS NULL`
+  // (and the split/superseded ones `status = 'closed'`), so the precedence holds and re-running the
+  // statements directly is a no-op on top of the migrate-ledger's run-once guarantee.
+  migrate(db, 'agent_tickets_add_close_reason', (d) => {
+    addColumn(d, 'agent_tickets', 'close_reason', 'TEXT');
+    // Split parents: a closed ticket with an outgoing `split` relation (e.g. PD-455 → PD-874/PD-875).
+    d.prepare(
+      `UPDATE agent_tickets
+          SET close_reason = 'split', refined = 1
+        WHERE status = 'closed' AND close_reason IS NULL
+          AND id IN (SELECT from_ticket_id FROM agent_ticket_relations WHERE type = 'split')`,
+    ).run();
+    // Superseded members: a ticket carrying a `refine_superseded` event (PD-931/PD-932).
+    d.prepare(
+      `UPDATE agent_tickets
+          SET close_reason = 'superseded', refined = 1
+        WHERE status = 'closed' AND close_reason IS NULL
+          AND id IN (SELECT ticket_id FROM agent_ticket_events WHERE type = 'refine_superseded')`,
+    ).run();
+    // Duplicates: a closed ticket with an outgoing `duplicates` relation. Not marked refined — a
+    // duplicate was never refined into successors, it was just a repeat.
+    d.prepare(
+      `UPDATE agent_tickets
+          SET close_reason = 'duplicate'
+        WHERE status = 'closed' AND close_reason IS NULL
+          AND id IN (SELECT from_ticket_id FROM agent_ticket_relations WHERE type = 'duplicates')`,
     ).run();
   });
 
