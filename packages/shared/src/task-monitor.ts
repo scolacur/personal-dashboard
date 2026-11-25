@@ -2082,8 +2082,16 @@ export interface AuditFinding {
   runId: number;
   projectId: number | null;
   ticketId: number | null;
-  /** Recommendation bucket: 'archive' | 'complete' | 'reprioritize' | 'update' | 'keep' | … */
+  /** Recommendation bucket: single-ticket ('archive' | 'complete' | 'reprioritize' | 'update' |
+   *  'keep') or relation ('link' | 'unlink' | 'duplicate', PD-828). */
   type: string;
+  /** Relation findings (PD-828): the other end of the relation. `ticketId` is the relation `from`
+   *  side, `targetTicketId` the `to` side (D-051) — so `blocks` = subject blocks target, and
+   *  `duplicate` = subject (the duplicate) → target (the canonical). NULL on a single-ticket finding. */
+  targetTicketId: number | null;
+  /** Relation findings (PD-828): the relation type the finding concerns. NULL on a single-ticket
+   *  finding. */
+  relationType: RelationType | null;
   recommendation: string | null;
   reason: string | null;
   evidence: string | null;
