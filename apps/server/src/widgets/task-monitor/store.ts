@@ -119,6 +119,7 @@ interface ProjectRow {
   seq: number;
   github_repo: string | null;
   robot_enabled: number;
+  audit_enabled: number;
   color: string | null;
   created_at: number;
   updated_at: number;
@@ -188,6 +189,7 @@ function rowToProject(row: ProjectRow): AgentProject {
     key: row.key,
     githubRepo: row.github_repo,
     robotEnabled: row.robot_enabled === 1,
+    auditEnabled: row.audit_enabled === 1,
     color: row.color,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -242,14 +244,16 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
   const now = Date.now();
   const result = db
     .prepare(
-      `INSERT INTO agent_projects (slug, name, github_repo, robot_enabled, color, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO agent_projects (slug, name, github_repo, robot_enabled, audit_enabled, color, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.slug,
       input.name,
       input.githubRepo ?? null,
       input.robotEnabled ? 1 : 0,
+      // Default audited (PD-284): omit the flag and a new project joins the fan-out.
+      (input.auditEnabled ?? true) ? 1 : 0,
       input.color ?? null,
       now,
       now,
