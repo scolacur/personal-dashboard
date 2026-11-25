@@ -195,16 +195,10 @@
             </div>
             {#if m.role === 'agent'}
               <div class="turn-body prose" use:applyMarkdown={m.text}></div>
-              {#if m.round && openRound?.id === m.id}
-                <!-- PD-745: the open round, answered with clicks. Keyed by turn so a new round always
-                     starts from an empty draft. -->
-                <div class="turn-round">
-                  {#key m.id}
-                    <RefineQuestionForm round={m.round} formId={m.id} onSubmit={submitAnswers} />
-                  {/key}
-                </div>
-              {:else if m.round}
-                <!-- An answered or superseded round: kept readable, folded away. -->
+              {#if m.round && openRound?.id !== m.id}
+                <!-- PD-841: the open round's answer form now lives in the dock below, not nested in
+                     the bubble; here only the prose stays. An answered or superseded round is kept
+                     readable, folded away. -->
                 <details class="turn-round turn-round-past">
                   <summary>{m.round.questions.length === 1 ? '1 question' : `${m.round.questions.length} questions`}</summary>
                   <div class="turn-body prose" use:applyMarkdown={roundAsMarkdown(m.round)}></div>
@@ -274,12 +268,38 @@
           {starting ? 'Starting…' : '✦ Start Refine'}
         </button>
       </div>
+    {:else if openRound}
+      <!-- PD-841: a structured round is open — its answer form IS the dock, in place of the reply
+           textarea, so there is a single place to respond. Free-text is covered by the form's own
+           "Other" option + note. Keyed by turn so a new round starts from an empty draft. -->
+      <div class="reply reply-open-round">
+        {#if openRound.round}
+          <div class="reply-round">
+            {#key openRound.id}
+              <RefineQuestionForm round={openRound.round} formId={openRound.id} onSubmit={submitAnswers} />
+            {/key}
+          </div>
+        {/if}
+        {#if messages.length > 0 && sessionEnd === null}
+          <div class="reply-actions reply-actions-park">
+            <button
+              class="park"
+              type="button"
+              onclick={park}
+              disabled={parking}
+              title="End this Refine session without a commit. It stops waiting on you; a reply reopens it."
+            >
+              {parking ? 'Parking…' : 'Park'}
+            </button>
+          </div>
+        {/if}
+      </div>
     {:else}
       <div class="reply">
         <textarea
           bind:value={replyText}
           rows="3"
-          placeholder={openRound ? 'Or reply in your own words…' : 'Reply to the Refine agent…'}
+          placeholder="Reply to the Refine agent…"
           disabled={sending}
         ></textarea>
         <div class="reply-actions">

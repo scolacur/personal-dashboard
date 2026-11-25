@@ -327,6 +327,38 @@ button.agent-pill-action {
   color: var(--text);
 }
 
+// PD-940 (web half of PD-888): why the system closed this ticket — split / superseded / duplicate
+// — with the successors as links. Same shape as `.frozen-banner` (they stack beneath it), led by
+// the accent so it reads as an explanation of the close rather than another neutral fact.
+.closure-banner {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  border-left: 3px solid var(--accent-2);
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+  color: var(--text);
+
+  .closure-successors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-md);
+  }
+
+  .closure-ref {
+    color: var(--accent-2);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
 .mark-refined-inline {
   margin-left: auto;
   padding: 2px var(--space-md);
