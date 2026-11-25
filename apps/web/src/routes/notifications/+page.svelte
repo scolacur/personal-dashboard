@@ -84,11 +84,12 @@
 {:else}
   <ul class="notif-page-list">
     {#each items as n (n.id)}
+      {@const href = notificationHref(n)}
       <li class="notif-page-item" class:unread={n.readAt === null}>
-        {#if n.ticketDisplayId}
+        {#if href}
           <a
             class="notif-page-link"
-            href={notificationHref(n)}
+            {href}
             onclick={() => onItemRead(n)}
           >
             <span class="notif-page-title">{n.title}</span>

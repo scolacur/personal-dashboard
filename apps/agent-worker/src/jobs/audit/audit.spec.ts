@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
 import type { AgentWorkerConfig } from '../../shared/config';
-import { claimNextRun, firstProjectWithActiveTickets, getAuditableTickets } from './audit-db';
+import { claimNextRun, firstProjectWithActiveTickets, getAuditableTickets, notifyAuditComplete } from './audit-db';
 import { parseAuditFindings, runAuditPass } from './audit';
 
 // Minimal slice of the shared dashboard schema the audit job touches.
@@ -26,6 +26,10 @@ function freshDb(): Database.Database {
       type TEXT NOT NULL, recommendation TEXT, reason TEXT, evidence TEXT, proposed_change TEXT,
       confidence TEXT, decision TEXT NOT NULL DEFAULT 'undecided',
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE agent_notifications (
+      id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ticket_id INTEGER,
+      title TEXT NOT NULL, body TEXT, read_at INTEGER, created_at INTEGER NOT NULL
     );
   `);
   return db;
@@ -158,6 +162,94 @@ describe('runAuditPass', () => {
     const run = claimNextRun(db) ?? { id: requestRun(db), scope: null };
     const runAgent = async () => ({ ok: false, text: 'Credit balance is too low' });
     await expect(runAuditPass(db, config, run, { runAgent, buildContext: noContext })).rejects.toThrow(/audit agent turn failed/);
+  });
+
+  // ── PD-851: audit_complete notification ─────────────────────────────────────
+  const unreadAuditNotifs = () =>
+    db
+      .prepare("SELECT ticket_id, title, body FROM agent_notifications WHERE kind = 'audit_complete' AND read_at IS NULL")
+      .all() as { ticket_id: number | null; title: string; body: string | null }[];
+
+  it('raises exactly one ticketless audit_complete when the run has an actionable finding (Done-When #2/#4)', async () => {
+    seedProjectWithTickets();
+    const run = claimNextRun(db) ?? { id: requestRun(db), scope: null };
+    const runAgent = async () => ({ ok: true, text: '[{"displayId":"PD-10","type":"archive"}]' });
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+
+    const notifs = unreadAuditNotifs();
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].ticket_id).toBeNull();
+  });
+
+  it('inserts no notification when every finding is a keep (Done-When #2)', async () => {
+    seedProjectWithTickets();
+    const run = claimNextRun(db) ?? { id: requestRun(db), scope: null };
+    const runAgent = async () => ({ ok: true, text: '[{"displayId":"PD-10","type":"keep"}]' });
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(unreadAuditNotifs()).toHaveLength(0);
+  });
+
+  it('inserts no notification on the empty-project early exit (Done-When #2)', async () => {
+    const run = claimNextRun(db) ?? { id: requestRun(db), scope: null };
+    const runAgent = async () => ({ ok: true, text: '[]' });
+    await runAuditPass(db, config, run, { runAgent, buildContext: noContext });
+    expect(unreadAuditNotifs()).toHaveLength(0);
+  });
+
+  it('collapses to a single unread across two qualifying runs, pointing at the newest (Done-When #3)', async () => {
+    seedProjectWithTickets();
+    const first = claimNextRun(db) ?? { id: requestRun(db), scope: null };
+    const runAgent = async () => ({ ok: true, text: '[{"displayId":"PD-10","type":"archive"}]' });
+    await runAuditPass(db, config, first, { runAgent, buildContext: noContext });
+
+    // A second qualifying run (fresh requested row) must not add a second unread entry.
+    requestRun(db);
+    const second = claimNextRun(db)!;
+    await runAuditPass(db, config, second, { runAgent, buildContext: noContext });
+
+    const notifs = unreadAuditNotifs();
+    expect(notifs).toHaveLength(1);
+    expect(notifs[0].body).toContain(`#${second.id}`);
+  });
+
+  it('does not supersede an already-READ audit_complete (only unread collapses)', async () => {
+    seedProjectWithTickets();
+    const first = claimNextRun(db) ?? { id: requestRun(db), scope: null };
+    const runAgent = async () => ({ ok: true, text: '[{"displayId":"PD-10","type":"archive"}]' });
+    await runAuditPass(db, config, first, { runAgent, buildContext: noContext });
+    db.prepare("UPDATE agent_notifications SET read_at = ? WHERE kind = 'audit_complete'").run(Date.now());
+
+    requestRun(db);
+    const second = claimNextRun(db)!;
+    await runAuditPass(db, config, second, { runAgent, buildContext: noContext });
+
+    const total = db.prepare("SELECT COUNT(*) AS c FROM agent_notifications WHERE kind = 'audit_complete'").get() as { c: number };
+    expect(total.c).toBe(2); // one read (kept) + one fresh unread
+    expect(unreadAuditNotifs()).toHaveLength(1);
+  });
+});
+
+describe('notifyAuditComplete (PD-851)', () => {
+  function seedFinding(runId: number, type: string): void {
+    db.prepare(
+      "INSERT INTO audit_finding (run_id, type, created_at, updated_at) VALUES (?, ?, 0, 0)",
+    ).run(runId, type);
+  }
+
+  it('returns false and writes nothing for a run with only keep findings', () => {
+    seedFinding(1, 'keep');
+    expect(notifyAuditComplete(db, 1)).toBe(false);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM agent_notifications').get()).toEqual({ c: 0 });
+  });
+
+  it('returns true and writes one ticketless row for a run with an actionable finding', () => {
+    seedFinding(1, 'keep');
+    seedFinding(1, 'update');
+    expect(notifyAuditComplete(db, 1)).toBe(true);
+    const row = db
+      .prepare("SELECT kind, ticket_id FROM agent_notifications WHERE kind = 'audit_complete'")
+      .get() as { kind: string; ticket_id: number | null };
+    expect(row).toEqual({ kind: 'audit_complete', ticket_id: null });
   });
 });
 

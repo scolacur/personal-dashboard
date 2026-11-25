@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { AuditRunCounts } from '@dashboard/shared';
+import { type AuditRunCounts, isActionableFindingType } from '@dashboard/shared';
 
 // The agent-worker's half of the Ticket Audit tables (D-045, PD-283): claim a `requested`
 // run, read the audited project's tickets, write findings, finish the run. The web process
@@ -148,6 +148,34 @@ export function recordAuditRunUsage(db: Database.Database, id: number, usage: { 
     usage.tokens ?? null,
     id,
   );
+}
+
+/**
+ * Raise the `audit_complete` notification for a finished run, following the refine-job precedent
+ * of writing `agent_notifications` directly (the web `createNotification` isn't importable here)
+ * (PD-851). Fires only when the run has ≥1 actionable finding (`type !== 'keep'`, the shared
+ * `isActionableFindingType` rule) — a run with zero actionable findings (incl. the empty-project
+ * exit / all-`keep`) inserts nothing and returns false.
+ *
+ * `audit_complete` is ticketless (`ticket_id = NULL`), so the server's dedup guard — which only
+ * runs for ticket-scoped rows — is bypassed; we collapse explicitly instead: any existing UNREAD
+ * `audit_complete` row is deleted first, so there is never more than one unread entry, and the
+ * surviving row names the newest run (its report always shows the latest run).
+ */
+export function notifyAuditComplete(db: Database.Database, runId: number, now: number = Date.now()): boolean {
+  const types = db.prepare('SELECT type FROM audit_finding WHERE run_id = ?').all(runId) as { type: string }[];
+  const actionable = types.filter((t) => isActionableFindingType(t.type)).length;
+  if (actionable === 0) return false;
+
+  // Collapse to one unread: drop any prior unread audit_complete before inserting the fresh one.
+  db.prepare("DELETE FROM agent_notifications WHERE kind = 'audit_complete' AND read_at IS NULL").run();
+
+  const title = `Ticket Audit complete — ${actionable} finding${actionable === 1 ? '' : 's'} to review`;
+  const body = `Run #${runId} surfaced ${actionable} actionable finding${actionable === 1 ? '' : 's'}.`;
+  db.prepare(
+    'INSERT INTO agent_notifications (kind, ticket_id, title, body, created_at) VALUES (?, NULL, ?, ?, ?)',
+  ).run('audit_complete', title, body, now);
+  return true;
 }
 
 /** Close out a claimed run. `model` is stamped so the report can show what produced it. */

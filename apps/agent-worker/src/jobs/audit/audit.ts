@@ -8,6 +8,7 @@ import {
   firstProjectWithActiveTickets,
   getAuditableTickets,
   insertFinding,
+  notifyAuditComplete,
   recordAuditRunUsage,
   updateAuditRunProgress,
   type AuditableTicket,
@@ -142,6 +143,8 @@ export async function runAuditPass(
 
   const counts: AuditRunCounts = { projects: 1, tickets: tickets.length, findings: persisted, ...buckets };
   finishRun(db, run.id, 'done', { counts, model: config.model });
+  // PD-851: notify once per run when it surfaced ≥1 actionable finding; collapses to one unread.
+  notifyAuditComplete(db, run.id);
   logger.info({ runId: run.id, project: project.key, ...counts }, 'audit: run complete');
   return counts;
 }

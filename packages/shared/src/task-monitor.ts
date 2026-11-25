@@ -1503,7 +1503,8 @@ export type NotificationKind =
   | 'agent_refine'
   | 'agent_auto_merged'
   | 'agent_visual_review'
-  | 'agent_auto_queued';
+  | 'agent_auto_queued'
+  | 'audit_complete';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
 /** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
@@ -1582,6 +1583,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_auto_merged',
   'agent_visual_review',
   'agent_auto_queued',
+  'audit_complete',
 ] as const;
 
 export interface AgentNotification {
@@ -2052,6 +2054,20 @@ export type AuditRunStatus = (typeof AUDIT_RUN_STATUSES)[number];
 
 export const FINDING_DECISIONS = ['undecided', 'accepted', 'rejected', 'other'] as const;
 export type FindingDecision = (typeof FINDING_DECISIONS)[number];
+
+/**
+ * Recommendation buckets that need no human action — excluded from the "open findings" badge, the
+ * report's actionable count, and the `audit_complete` notification trigger (PD-851). Kept as a
+ * denylist so a new bucket type defaults to actionable, not hidden. Lives here (not in the web
+ * `audit-logic`) because the agent-worker applies the same rule when deciding whether to notify,
+ * and the two must not drift.
+ */
+export const NON_ACTIONABLE_FINDING_TYPES: ReadonlySet<string> = new Set(['keep']);
+
+/** Whether a finding of this recommendation `type` needs a human's attention (PD-851). */
+export function isActionableFindingType(type: string): boolean {
+  return !NON_ACTIONABLE_FINDING_TYPES.has(type);
+}
 
 /** Roll-up counts persisted on a finished run. `findings` + `tickets` + `projects` always
  *  present; per-recommendation buckets (e.g. `archive`, `complete`) are added opportunistically. */

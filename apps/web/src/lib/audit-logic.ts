@@ -1,16 +1,18 @@
 import type { AuditFinding, AuditRun, AuditRunStatus } from '@dashboard/shared';
+import { NON_ACTIONABLE_FINDING_TYPES, isActionableFindingType } from '@dashboard/shared';
 
 // Pure helpers for the Ticket Audit report surface (PD-286). No fetching, no DOM — shared by
 // the badge store, the report page, and the Recurring Jobs card so they agree on what "open",
 // "actionable", and "in flight" mean. See audit-logic.spec.ts.
 
 // Recommendation buckets that need no human action — excluded from the "open findings" badge
-// and the report's actionable count. Everything else (archive/complete/reprioritize/update/…)
-// is actionable. Kept as a denylist so a new bucket type defaults to actionable, not hidden.
-export const NON_ACTIONABLE_TYPES: ReadonlySet<string> = new Set(['keep']);
+// and the report's actionable count. The denylist now lives in `@dashboard/shared` so the
+// agent-worker's `audit_complete` trigger applies the identical rule (PD-851); re-exported here
+// under its historical name for existing consumers.
+export const NON_ACTIONABLE_TYPES = NON_ACTIONABLE_FINDING_TYPES;
 
 export function isActionable(f: AuditFinding): boolean {
-  return !NON_ACTIONABLE_TYPES.has(f.type);
+  return isActionableFindingType(f.type);
 }
 
 /** Undecided = the human hasn't accepted/rejected it yet (decisions land in PD-287). */

@@ -22,4 +22,10 @@ describe('notificationHref (PD-746)', () => {
   it('has no link without a ticket', () => {
     expect(notificationHref({ kind: 'agent_refine', title: REFINE_QUESTIONS_NOTIFICATION_PREFIX, ticketDisplayId: null })).toBeNull();
   });
+
+  it('links a ticketless audit_complete to the Ticket Audit report (PD-851)', () => {
+    expect(notificationHref({ kind: 'audit_complete', title: 'Ticket Audit complete — 3 findings to review', ticketDisplayId: null })).toBe(
+      '/devops/reports/ticket-audit',
+    );
+  });
 });
