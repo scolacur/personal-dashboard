@@ -34,16 +34,20 @@ export interface ReleaseDeps {
   comment?: Commenter;
 }
 
-/** Whether every lens's newest verdict on this ticket's Robot PR since `since` is `ship`. */
-export function lastVerdictsShip(db: Database.Database, ticketId: number, since: number, lenses: string[]): boolean {
+/**
+ * Whether every lens's newest verdict on this ticket's Robot PR since `since` is `ship`. Keyed on the
+ * PR number: since PD-1005 (Reconcile a lost review-gate post) Robot runs record `head_sha` too, so
+ * `head_sha IS NULL` no longer tells a Robot review from an all-PRs one.
+ */
+export function lastVerdictsShip(db: Database.Database, ticketId: number, prNumber: number, since: number, lenses: string[]): boolean {
   return lenses.every((lens) => {
     const row = db
       .prepare(
         `SELECT verdict FROM evaluator_runs
-          WHERE ticket_id = ? AND lens = ? AND started_at >= ? AND head_sha IS NULL AND verdict IS NOT NULL
+          WHERE ticket_id = ? AND pr_number = ? AND lens = ? AND started_at >= ? AND verdict IS NOT NULL
           ORDER BY started_at DESC, id DESC LIMIT 1`,
       )
-      .get(ticketId, lens, since) as { verdict: string } | undefined;
+      .get(ticketId, prNumber, lens, since) as { verdict: string } | undefined;
     return row?.verdict === 'ship';
   });
 }
@@ -77,7 +81,7 @@ export async function releaseVisualDecisions(
       acted++;
       continue;
     }
-    if (!config.evaluator.reviewGateToken || !lastVerdictsShip(db, t.ticketId, since, lenses)) continue;
+    if (!config.evaluator.reviewGateToken || !lastVerdictsShip(db, t.ticketId, t.prNumber, since, lenses)) continue;
     const sha = await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(t.repo, t.prNumber);
     if (!sha) continue;
     const ok = await (deps.postStatus ?? defaultStatusPoster(config))(
@@ -180,7 +184,7 @@ async function releaseCaptureOff(
 ): Promise<boolean> {
   const key = captureOffReleaseKey(t.ticketId);
   if (readStateNumber(db, key) === since) return false;
-  if (!config.evaluator.reviewGateToken || !lastVerdictsShip(db, t.ticketId, since, lenses)) return false;
+  if (!config.evaluator.reviewGateToken || !lastVerdictsShip(db, t.ticketId, t.prNumber, since, lenses)) return false;
   const sha = await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(t.repo, t.prNumber);
   if (!sha) return false;
   const ok = await (deps.postStatus ?? defaultStatusPoster(config))(

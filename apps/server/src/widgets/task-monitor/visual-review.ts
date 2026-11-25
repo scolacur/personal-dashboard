@@ -116,12 +116,13 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
   const events = db
     .prepare(
       `SELECT id, ticket_id, type, detail, created_at FROM agent_ticket_events
-        WHERE ticket_id = ? AND type IN (?, ?, ?, ?, ?, ?) ORDER BY created_at, id`,
+        WHERE ticket_id = ? AND type IN (?, ?, ?, ?, ?, ?, ?) ORDER BY created_at, id`,
     )
     .all(
       t.id,
       ROBOT_EVENT.handoff,
       ROBOT_EVENT.conflictResolved,
+      ROBOT_EVENT.reviewHeadMoved,
       ROBOT_EVENT.visualReviewRequested,
       ROBOT_EVENT.visualReviewed,
       ROBOT_EVENT.visualCaptured,
@@ -137,7 +138,10 @@ function pendingFor(db: Database.Database, t: TicketRow, now: number): AwaitingV
   if (requests.length === 0) return null;
   const boundary = Math.max(
     last.created_at,
-    ...events.filter((e) => e.type === ROBOT_EVENT.conflictResolved).map((e) => e.created_at),
+    // PD-1005: a head that moved after the verdict is a new review, so an older visual decision does not carry.
+    ...events
+      .filter((e) => e.type === ROBOT_EVENT.conflictResolved || e.type === ROBOT_EVENT.reviewHeadMoved)
+      .map((e) => e.created_at),
   );
   if (events.some((e) => e.type === ROBOT_EVENT.visualReviewed && e.created_at > boundary)) return null;
   const captures = events.filter((e) => e.type === ROBOT_EVENT.visualCaptured && parse(e).prNumber === prNumber);

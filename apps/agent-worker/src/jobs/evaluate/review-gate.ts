@@ -66,9 +66,20 @@ export function gateForOutcome(
   return { state: 'pending', description: clip(`Evaluator requested changes (round ${round}); rework queued`) };
 }
 
+const REVIEWING_PREFIX = 'Evaluator reviewing';
+
 /** The status while an evaluation is running. */
 export function gateReviewing(round: number): GateStatus {
-  return { state: 'pending', description: clip(`Evaluator reviewing (round ${round})`) };
+  return { state: 'pending', description: clip(`${REVIEWING_PREFIX} (round ${round})`) };
+}
+
+/**
+ * Whether `current` is the "reviewing" pending {@link gateReviewing} posts at the start of a review.
+ * Once every lens has settled, that status is stale: the final post was lost (PD-1005, Reconcile a
+ * lost review-gate post), and the gate reconciliation replaces it.
+ */
+export function isReviewingStatus(current: GateStatus | null): boolean {
+  return current?.state === 'pending' && current.description.startsWith(REVIEWING_PREFIX);
 }
 
 export type HeadShaFetcher = (repo: string, prNumber: number) => Promise<string | null>;

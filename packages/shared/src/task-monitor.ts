@@ -2497,6 +2497,10 @@ export const ROBOT_EVENT = {
   // PD-774 (D-099): the conflict resolver merged main into the ticket's PR and resolved the conflicts
   // mechanically. It also marks a new review boundary: the Evaluator reviews the resolved head again.
   conflictResolved: 'robot_conflict_resolved',
+  // PD-1005: the gate reconciliation found a Robot PR whose head moved after the Evaluator's verdict
+  // (a push nobody reviewed). Like `conflictResolved`, it marks a new review boundary, so the new head
+  // is reviewed with a fresh cycle instead of inheriting the old verdict. Detail: `prNumber`, `reason`.
+  reviewHeadMoved: 'robot_review_head_moved',
   // PD-773: screenshots of the PR's head were captured and are served by the dashboard.
   visualCaptured: 'robot_visual_captured',
   // PD-773 slice 2: the Robot or the Evaluator asked for Steve's visual check of a PR, and his answer.

@@ -65,7 +65,9 @@ export function ensureEvaluatorRunsTable(db: Database.Database): void {
     db.exec("ALTER TABLE evaluator_runs ADD COLUMN lens TEXT NOT NULL DEFAULT 'code'");
   }
   // PD-712: the head commit a review of a non-Robot PR judged, so a new push is a new review. Robot
-  // runs leave it null: their cycle is bounded by hand-offs instead (see reviewBoundary).
+  // runs record it too since PD-1005 (Reconcile a lost review-gate post), so the gate reconciliation
+  // can tell which commit a verdict belongs to; their cycle is still bounded by hand-offs
+  // (see reviewBoundary). Older Robot rows have it null.
   if (!cols.some((c) => c.name === 'head_sha')) {
     db.exec('ALTER TABLE evaluator_runs ADD COLUMN head_sha TEXT');
   }
@@ -213,8 +215,9 @@ export interface LensRunState {
 
 /**
  * How the runs of one review unit are selected (PD-883). The unit differs by path:
- *  - the **Robot** path's unit is the review cycle since the last hand-off — its runs leave `head_sha`
- *    null, so they are keyed on `ticketId` + `prNumber` with `started_at >= since` (`reviewBoundary`);
+ *  - the **Robot** path's unit is the review cycle since the last hand-off, keyed on `ticketId` +
+ *    `prNumber` with `started_at >= since` (`reviewBoundary`). Its runs record `head_sha` since PD-1005
+ *    (Reconcile a lost review-gate post), but the cycle, not the head, is the unit;
  *  - the **non-Robot** path's unit is a single head commit — keyed on `prNumber` + `head_sha`.
  * Both reduce to the same per-lens `{verdictRuns, errorRuns, hasTerminalVerdict}`.
  */
@@ -295,6 +298,28 @@ export function latestLensReport(db: Database.Database, select: LensRunSelect, l
     findings: parseFindings(row.findings),
     summary: row.summary ?? '',
   };
+}
+
+/**
+ * The head commit each lens's newest run in a Robot review cycle judged (PD-1005, Reconcile a lost
+ * review-gate post), in `lenses` order. Null for a lens with no run, or whose run predates Robot runs
+ * recording `head_sha` (or could not pin the head). The gate reconciliation compares these with the
+ * PR's current head, so a verdict is never copied onto a commit nobody reviewed.
+ */
+export function cycleReviewedHeads(
+  db: Database.Database,
+  select: { ticketId: number; prNumber: number; since: number },
+  lenses: EvaluatorLens[],
+): (string | null)[] {
+  const stmt = db.prepare(
+    `SELECT head_sha FROM evaluator_runs
+      WHERE ticket_id = ? AND pr_number = ? AND started_at >= ? AND lens = ? AND ${COUNTED}
+      ORDER BY started_at DESC, id DESC LIMIT 1`,
+  );
+  return lenses.map((lens) => {
+    const row = stmt.get(select.ticketId, select.prNumber, select.since, lens) as { head_sha: string | null } | undefined;
+    return row?.head_sha ?? null;
+  });
 }
 
 /**

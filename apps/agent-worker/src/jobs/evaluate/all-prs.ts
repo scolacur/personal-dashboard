@@ -43,7 +43,6 @@ import {
   gateTargetUrl,
   isSteveApproval,
   type GateStatus,
-  type StatusReader,
 } from './review-gate';
 import { blockingFindings, MAX_UNPARSEABLE_CHARS, parseEvaluatorReport } from './verdict';
 
@@ -88,8 +87,6 @@ export type OtherPrLister = (repo: string) => Promise<OtherPr[] | null>;
 export type PrCommenter = (repo: string, prNumber: number, body: string) => Promise<void>;
 
 export interface AllPrsDeps extends EvaluatePassDeps {
-  /** PD-914: reads the head's current review-gate, so Steve's approval is never overwritten. */
-  readStatus?: StatusReader;
   listPrs?: OtherPrLister;
   comment?: PrCommenter;
 }
