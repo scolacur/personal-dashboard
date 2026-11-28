@@ -2126,6 +2126,17 @@ export type AuditRunStatus = (typeof AUDIT_RUN_STATUSES)[number];
 export const FINDING_DECISIONS = ['undecided', 'accepted', 'rejected', 'other'] as const;
 export type FindingDecision = (typeof FINDING_DECISIONS)[number];
 
+/** Finding `type`s that an Accept can apply via a single ticket mutation (PD-826). `keep` is
+ *  non-actionable and `update` is the sibling slice (diff-confirm), so neither is here. Shared so
+ *  the server store and the web report agree on one list rather than drifting two copies. */
+export const ACCEPT_SUPPORTED_FINDING_TYPES = ['archive', 'complete', 'reprioritize'] as const;
+export type AcceptSupportedFindingType = (typeof ACCEPT_SUPPORTED_FINDING_TYPES)[number];
+
+/** Whether an Accept can apply this finding `type` (i.e. it is in ACCEPT_SUPPORTED_FINDING_TYPES). */
+export function isAcceptSupportedFindingType(type: string): boolean {
+  return (ACCEPT_SUPPORTED_FINDING_TYPES as readonly string[]).includes(type);
+}
+
 /** Roll-up counts persisted on a finished run. `findings` + `tickets` + `projects` always
  *  present; per-recommendation buckets (e.g. `archive`, `complete`) are added opportunistically. */
 export interface AuditRunCounts {
@@ -2175,8 +2186,19 @@ export interface AuditFinding {
    *  one resets to `undecided`. Nullable: rows written before the column existed have no prior match. */
   fingerprint: string | null;
   decision: FindingDecision;
+  /** The human's optional free-text reason when rejecting (PD-826). Distinct from the agent's
+   *  `reason` above — that explains the recommendation, this explains the human's call. */
+  decisionReason: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** Body of `POST /audit/findings/:id/decision` (PD-826). `reason` is persisted as the human's
+ *  `decisionReason` on a reject; `targetPriority` is required to accept a `reprioritize` finding. */
+export interface SetFindingDecisionInput {
+  decision: FindingDecision;
+  reason?: string | null;
+  targetPriority?: TicketPriority | null;
 }
 
 // ── System status (Site Status section) ──────────────────────────────────────
