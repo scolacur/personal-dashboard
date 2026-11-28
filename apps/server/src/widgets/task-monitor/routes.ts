@@ -14,6 +14,7 @@ import {
   type TicketPriority,
   type TicketStatus,
   type UpdateTicketInput,
+  type UpdateProjectInput,
 } from '@dashboard/shared';
 import {
   HUMAN_REPLY_MARKER,
@@ -39,6 +40,7 @@ import {
   listEpicMembers,
   listEpicSummaries,
   createProject,
+  updateProject,
   createTicket,
   getAutoQueueTickSummary,
   getDispatchPauseState,
@@ -170,6 +172,14 @@ export function registerRoutes(
     if (typeof body.name !== 'string' || body.name.trim() === '') {
       return reply.status(400).send({ error: 'name is required', code: 'INVALID_NAME' });
     }
+    // PD-284 slice 3: a project needs a display-id prefix (its tickets are <KEY>-1, …) and a
+    // linked GitHub repo. Both are required on create.
+    if (typeof body.key !== 'string' || body.key.trim() === '') {
+      return reply.status(400).send({ error: 'key (display-id prefix) is required', code: 'INVALID_KEY' });
+    }
+    if (typeof body.githubRepo !== 'string' || body.githubRepo.trim() === '') {
+      return reply.status(400).send({ error: 'githubRepo is required', code: 'INVALID_GITHUB_REPO' });
+    }
     if (getProjectBySlug(db, body.slug.trim())) {
       return reply
         .status(409)
@@ -179,11 +189,74 @@ export function registerRoutes(
       createProject(db, {
         slug: body.slug.trim(),
         name: body.name.trim(),
-        githubRepo: typeof body.githubRepo === 'string' ? body.githubRepo : null,
+        key: body.key.trim(),
+        githubRepo: body.githubRepo.trim(),
         robotEnabled: body.robotEnabled === true,
         color: typeof body.color === 'string' ? body.color : null,
       }),
     );
+  });
+
+  // PD-284 slice 3: patch a project's mutable fields. The Projects page's "Include in Audit"
+  // toggle is `auditEnabled`; the others are here so the one route covers minimal project edits.
+  app.patch(`${base}/projects/:id`, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isInteger(id)) {
+      return reply.status(400).send({ error: 'invalid id', code: 'INVALID_ID' });
+    }
+    if (!projectExists(db, id)) {
+      return reply.status(404).send({ error: 'unknown project', code: 'UNKNOWN_PROJECT' });
+    }
+
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const patch: UpdateProjectInput = {};
+
+    if (body.name !== undefined) {
+      if (typeof body.name !== 'string' || body.name.trim() === '') {
+        return reply.status(400).send({ error: 'invalid name', code: 'INVALID_NAME' });
+      }
+      patch.name = body.name.trim();
+    }
+    if (body.key !== undefined) {
+      if (typeof body.key !== 'string' || body.key.trim() === '') {
+        return reply.status(400).send({ error: 'invalid key', code: 'INVALID_KEY' });
+      }
+      patch.key = body.key.trim();
+    }
+    if (body.githubRepo !== undefined) {
+      if (body.githubRepo !== null && typeof body.githubRepo !== 'string') {
+        return reply
+          .status(400)
+          .send({ error: 'githubRepo must be a string or null', code: 'INVALID_GITHUB_REPO' });
+      }
+      patch.githubRepo = body.githubRepo as string | null;
+    }
+    if (body.robotEnabled !== undefined) {
+      if (typeof body.robotEnabled !== 'boolean') {
+        return reply
+          .status(400)
+          .send({ error: 'robotEnabled must be a boolean', code: 'INVALID_ROBOT_ENABLED' });
+      }
+      patch.robotEnabled = body.robotEnabled;
+    }
+    if (body.auditEnabled !== undefined) {
+      if (typeof body.auditEnabled !== 'boolean') {
+        return reply
+          .status(400)
+          .send({ error: 'auditEnabled must be a boolean', code: 'INVALID_AUDIT_ENABLED' });
+      }
+      patch.auditEnabled = body.auditEnabled;
+    }
+    if (body.color !== undefined) {
+      if (body.color !== null && typeof body.color !== 'string') {
+        return reply
+          .status(400)
+          .send({ error: 'color must be a string or null', code: 'INVALID_COLOR' });
+      }
+      patch.color = body.color as string | null;
+    }
+
+    return reply.send(updateProject(db, id, patch));
   });
 
   /* ── Tickets ────────────────────────────────── */

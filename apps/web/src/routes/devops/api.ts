@@ -7,6 +7,8 @@ import type {
   AgentTicket,
   AutoQueueBoardEligibility,
   AutoQueueEligibilityResponse,
+  CreateProjectInput,
+  UpdateProjectInput,
   CreateTicketInput,
   DispatchPauseState,
   EpicSummary,
@@ -83,6 +85,31 @@ export async function fetchProjects(): Promise<AgentProject[]> {
   const res = await fetch(PROJECTS);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<AgentProject[]>;
+}
+
+/** Create a project with a display-id prefix (`key`) and a linked GitHub repo (PD-284, slice 3). */
+export async function createProject(input: CreateProjectInput): Promise<AgentProject> {
+  const res = await fetch(PROJECTS, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentProject>;
+}
+
+/** Patch a project's mutable fields; the Projects page uses it for the "Include in Audit" toggle. */
+export async function updateProject(
+  id: number,
+  patch: UpdateProjectInput,
+): Promise<AgentProject> {
+  const res = await fetch(`${PROJECTS}/${id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentProject>;
 }
 
 export async function fetchTickets(): Promise<AgentTicket[]> {

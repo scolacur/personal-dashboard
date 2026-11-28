@@ -9,6 +9,7 @@ import type {
   CloseReason,
   ClosedIntoRef,
   CreateProjectInput,
+  UpdateProjectInput,
   CreateTicketInput,
   LineageRef,
   NotificationKind,
@@ -244,12 +245,15 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
   const now = Date.now();
   const result = db
     .prepare(
-      `INSERT INTO agent_projects (slug, name, github_repo, robot_enabled, audit_enabled, color, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO agent_projects (slug, name, key, github_repo, robot_enabled, audit_enabled, color, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.slug,
       input.name,
+      // Display-id prefix (PD-284, slice 3). Persisted so this project's tickets get the chosen
+      // prefix; `nextDisplayId` falls back to 'T' when null.
+      input.key ?? null,
       input.githubRepo ?? null,
       input.robotEnabled ? 1 : 0,
       // Default audited (PD-284): omit the flag and a new project joins the fan-out.
@@ -262,6 +266,51 @@ export function createProject(db: Database.Database, input: CreateProjectInput):
     .prepare('SELECT * FROM agent_projects WHERE id = ?')
     .get(Number(result.lastInsertRowid)) as ProjectRow;
   return rowToProject(row);
+}
+
+/**
+ * Patch a project's mutable fields (PD-284, slice 3). Only the keys present on `input` are written,
+ * so a PATCH that carries just `auditEnabled` (the "Include in Audit" toggle) leaves everything else
+ * untouched. Returns the updated project, or null if `id` is unknown.
+ */
+export function updateProject(
+  db: Database.Database,
+  id: number,
+  input: UpdateProjectInput,
+): AgentProject | null {
+  const sets: string[] = [];
+  const values: (string | number | null)[] = [];
+  if (input.name !== undefined) {
+    sets.push('name = ?');
+    values.push(input.name);
+  }
+  if (input.key !== undefined) {
+    sets.push('key = ?');
+    values.push(input.key);
+  }
+  if (input.githubRepo !== undefined) {
+    sets.push('github_repo = ?');
+    values.push(input.githubRepo);
+  }
+  if (input.robotEnabled !== undefined) {
+    sets.push('robot_enabled = ?');
+    values.push(input.robotEnabled ? 1 : 0);
+  }
+  if (input.auditEnabled !== undefined) {
+    sets.push('audit_enabled = ?');
+    values.push(input.auditEnabled ? 1 : 0);
+  }
+  if (input.color !== undefined) {
+    sets.push('color = ?');
+    values.push(input.color);
+  }
+
+  if (sets.length > 0) {
+    sets.push('updated_at = ?');
+    values.push(Date.now());
+    db.prepare(`UPDATE agent_projects SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
+  }
+  return getProjectById(db, id);
 }
 
 /* ── Tickets ────────────────────────────────────── */

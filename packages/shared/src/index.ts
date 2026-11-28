@@ -119,6 +119,7 @@ export type {
   UpdateTicketInput,
   AgentProject,
   CreateProjectInput,
+  UpdateProjectInput,
   NotificationKind,
   AwaitingVisualItem,
   VisualShot,
