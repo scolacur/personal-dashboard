@@ -33,6 +33,7 @@ import {
   MAX_LENS_ERROR_RUNS,
   startEvaluatorRun,
   updateEvaluatorRunProgress,
+  type LensRunState,
 } from './evaluator-runs';
 import { runEvaluatorTurn, type RunEvaluatorTurn } from './evaluate-agent';
 // `reworkBrief` is deliberately NOT called here — the brief is derived at dispatch time from the
@@ -45,8 +46,11 @@ import {
   gateForOutcome,
   gateReviewing,
   gateTargetUrl,
+  type GateFailureContext,
+  type GateStatus,
   type HeadShaFetcher,
   type StatusPoster,
+  type StatusReader,
 } from './review-gate';
 
 const run = promisify(execFile);
@@ -106,6 +110,8 @@ export interface EvaluatePassDeps {
   /** PD-763: injectable for tests; default to `gh` with the read / statuses-only tokens. */
   fetchHeadSha?: HeadShaFetcher;
   postStatus?: StatusPoster;
+  /** PD-914 / PD-1005: reads the head's current review-gate, so Steve's approval is never replaced. */
+  readStatus?: StatusReader;
   /** PD-793: the PR commenter for the "capture is off" / "no UI change" line. */
   comment?: Commenter;
 }
@@ -134,10 +140,12 @@ export function reviewBoundary(db: Database.Database, ticketId: number): number 
     lastHandoffAt(db, ticketId),
     latestEventAt(db, ticketId, ROBOT_EVENT.conflictResolved),
     latestEventAt(db, ticketId, ROBOT_EVENT.reworkSkipped),
+    // PD-1005 (Reconcile a lost review-gate post): so does a head that moved after the verdict.
+    latestEventAt(db, ticketId, ROBOT_EVENT.reviewHeadMoved),
   );
 }
 
-function displayIdFor(db: Database.Database, ticketId: number): string | null {
+export function displayIdFor(db: Database.Database, ticketId: number): string | null {
   const row = db.prepare('SELECT display_id FROM agent_tickets WHERE id = ?').get(ticketId) as
     | { display_id: string | null }
     | undefined;
@@ -218,21 +226,30 @@ export async function evaluateOnePr(
   // "reviewing…" with no verdict after it. A failure writes no verdict on purpose (it must never
   // read as approval), which without this marker would make it invisible rather than merely
   // inconclusive.
+  // PD-763: pin the head SHA BEFORE reading the diff. If the Robot pushes mid-review, the verdict
+  // lands on the commit that was actually reviewed, and the new commit starts with no gate at all.
+  // PD-1005 (Reconcile a lost review-gate post): pinned before the run rows too, so every run records
+  // the commit it judged, as the all-PRs path does. The gate reconciliation uses it to tell a lost
+  // post (repost the verdict) from a head that moved after the verdict (review the new head). With
+  // neither the gate token nor a read token there is nothing to read the head with: it stays null.
+  const fetchHead = deps.fetchHeadSha ?? (gateOn || config.githubReadToken ? defaultHeadShaFetcher(config) : null);
+  const headSha = fetchHead ? await fetchHead(target.repo, target.prNumber) : null;
+  gateSha = headSha;
+
   const runIds = new Map<EvaluatorLens, number>();
   for (const lens of needed) {
     runIds.set(
       lens,
-      startEvaluatorRun(db, { ticketId: target.ticketId, prNumber: target.prNumber, round: roundFor(lens), model: config.evaluator.model, lens }, now),
+      startEvaluatorRun(
+        db,
+        { ticketId: target.ticketId, prNumber: target.prNumber, round: roundFor(lens), model: config.evaluator.model, lens, headSha: headSha ?? undefined },
+        now,
+      ),
     );
     logMilestone(db, target.ticketId, ROBOT_EVENT.evaluating, { round: roundFor(lens), prNumber: target.prNumber, lens }, now);
   }
 
-  // PD-763: pin the head SHA BEFORE reading the diff. If the Robot pushes mid-review, the verdict
-  // lands on the commit that was actually reviewed, and the new commit starts with no gate at all.
-  if (gateOn) {
-    gateSha = await (deps.fetchHeadSha ?? defaultHeadShaFetcher(config))(target.repo, target.prNumber);
-    await gate(gateReviewing(round));
-  }
+  if (gateOn) await gate(gateReviewing(round));
 
   const rawDiff = await fetchDiff(target.repo, target.prNumber);
   if (rawDiff === null) {
@@ -344,33 +361,28 @@ export async function evaluateOnePr(
   // its one error retry is still pending or has been used, for both the gate description and the
   // terminal notification. Recompute states AFTER this pass's runs are recorded.
   const finalStates = lensStates(db, select);
-  const erroredLenses = lenses.filter((l) => {
-    const s = finalStates.get(l);
-    return !!s && s.verdictRuns === 0 && s.errorRuns > 0;
-  });
-  const failureCtx = erroredLenses.length
-    ? { lens: erroredLenses[0], retryUsed: (finalStates.get(erroredLenses[0])?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS }
-    : undefined;
+  const failureCtx = failureContext(finalStates, lenses);
 
-  let status = gateForOutcome(combined, combined?.verdict === 'revise' ? reviseRound : round, config.evaluator.maxRounds, failureCtx);
-  // PD-773: a ship on a PR that waits for Steve's visual check holds the gate at pending. His approval
-  // releases it (releaseVisualGates); until then he is told it is waiting.
-  // PD-793: only while capture is on. With it off there is nothing to look at, so the gate skips
-  // itself; the request stays on the ticket and the PR says the check was skipped (below).
-  if (status.state === 'success' && config.visual.enabled) {
-    const vg = visualGate(db, target.ticketId, target.prNumber, since);
-    if (vg === 'pending' || vg === 'rejected') {
-      status = { state: 'pending', description: VISUAL_PENDING_DESCRIPTION };
-      const displayId = displayIdFor(db, target.ticketId);
-      notify(
-        db,
-        'agent_visual_review',
-        target.ticketId,
-        `${VISUAL_REVIEW_NOTIFICATION_PREFIX} PR #${target.prNumber}${displayId ? ` (${displayId})` : ''}`,
-        'The Evaluator shipped it, and it was flagged for your visual check. Approve or request changes in Decisions.',
-        now,
-      );
-    }
+  const { status, visualHold } = impliedGate(
+    db,
+    config,
+    target,
+    since,
+    combined,
+    combined?.verdict === 'revise' ? reviseRound : round,
+    failureCtx,
+  );
+  // PD-773: a visual hold tells Steve the ship is waiting for his check.
+  if (visualHold) {
+    const displayId = displayIdFor(db, target.ticketId);
+    notify(
+      db,
+      'agent_visual_review',
+      target.ticketId,
+      `${VISUAL_REVIEW_NOTIFICATION_PREFIX} PR #${target.prNumber}${displayId ? ` (${displayId})` : ''}`,
+      'The Evaluator shipped it, and it was flagged for your visual check. Approve or request changes in Decisions.',
+      now,
+    );
   }
   await gate(status);
 
@@ -412,6 +424,67 @@ export async function evaluateOnePr(
     }
   }
   return combined;
+}
+
+/**
+ * PD-883: when the combined decision is a no-verdict failure, the lens behind it and whether its one
+ * error retry has been used, for the gate description. Undefined when every lens has a verdict.
+ */
+export function failureContext(states: Map<EvaluatorLens, LensRunState>, lenses: EvaluatorLens[]): GateFailureContext | undefined {
+  const errored = lenses.filter((l) => {
+    const s = states.get(l);
+    return !!s && s.verdictRuns === 0 && s.errorRuns > 0;
+  });
+  if (errored.length === 0) return undefined;
+  return { lens: errored[0], retryUsed: (states.get(errored[0])?.errorRuns ?? 0) >= MAX_LENS_ERROR_RUNS };
+}
+
+/**
+ * The review-gate a Robot PR's combined outcome implies: `gateForOutcome`, then PD-773's visual hold.
+ * Shared by `evaluateOnePr` and the gate reconciliation (PD-1005, Reconcile a lost review-gate post),
+ * so a repaired gate is exactly the one the review would have posted.
+ *
+ * A ship on a PR that waits for Steve's visual check holds the gate at pending (`visualHold`); his
+ * approval releases it (`releaseVisualDecisions`). PD-793: only while capture is on. With it off there
+ * is nothing to look at, so the gate skips itself; the request stays on the ticket and the PR says the
+ * check was skipped.
+ */
+export function impliedGate(
+  db: Database.Database,
+  config: AgentWorkerConfig,
+  target: { ticketId: number; prNumber: number },
+  since: number,
+  combined: EvaluatorReport | null,
+  round: number,
+  failure?: GateFailureContext,
+): { status: GateStatus; visualHold: boolean } {
+  const status = gateForOutcome(combined, round, config.evaluator.maxRounds, failure);
+  if (status.state === 'success' && config.visual.enabled) {
+    const vg = visualGate(db, target.ticketId, target.prNumber, since);
+    if (vg === 'pending' || vg === 'rejected') {
+      return { status: { state: 'pending', description: VISUAL_PENDING_DESCRIPTION }, visualHold: true };
+    }
+  }
+  return { status, visualHold: false };
+}
+
+/**
+ * The gate a Robot PR's SETTLED review cycle implies, from the stored verdicts alone (PD-1005): every
+ * lens's latest verdict combined, at the cycle's highest verdict round. A revise can only be settled
+ * at the round cap, so it reads as the cap failure, as it did when it was recorded.
+ */
+export function settledGate(
+  db: Database.Database,
+  config: AgentWorkerConfig,
+  target: { ticketId: number; prNumber: number },
+  since: number,
+  lenses: EvaluatorLens[],
+): GateStatus {
+  const select = { ticketId: target.ticketId, prNumber: target.prNumber, since };
+  const states = lensStates(db, select);
+  const combined = combineReports(lenses.map((l) => latestLensReport(db, select, l)));
+  const round = Math.max(1, ...lenses.map((l) => states.get(l)?.verdictRuns ?? 0));
+  return impliedGate(db, config, target, since, combined, round, failureContext(states, lenses)).status;
 }
 
 /** One decision from every lens: any missing verdict means no pass (D-076: a failed evaluation is
@@ -495,6 +568,16 @@ export async function runEvaluatePass(
     } catch (err) {
       logger.error({ err }, 'evaluator: adoption pass threw — continuing');
     }
+  }
+
+  // PD-1005 (Reconcile a lost review-gate post): repair a review-gate whose final post was lost, and
+  // send a PR whose head moved after its verdict back for review. Turn-free, so it runs before the
+  // budget gate too: a spent budget must not leave an approved PR stuck on "Evaluator reviewing".
+  try {
+    const { reconcileReviewGates } = await import('./reconcile');
+    await reconcileReviewGates(db, config, now, deps);
+  } catch (err) {
+    logger.error({ err }, 'evaluator: review-gate reconciliation threw — continuing');
   }
 
   const budget = evaluatorBudgetVerdict(
