@@ -119,6 +119,7 @@ export type {
   UpdateTicketInput,
   AgentProject,
   CreateProjectInput,
+  UpdateProjectInput,
   NotificationKind,
   AwaitingVisualItem,
   VisualShot,
@@ -332,6 +333,28 @@ export {
   buildEvaluatorPrompt,
   SAMPLE_EVALUATOR_PROMPT_INPUT,
 } from './agent-prompts';
+export type {
+  TicketSuggestionSource,
+  TicketSuggestionStatus,
+  SuggestionFinding,
+  TicketSuggestion,
+  FileSuggestionInput,
+  ApproveSuggestionEdits,
+  SuggestionValidationError,
+  TicketSuggestionEventType,
+} from './ticket-suggestions';
+export {
+  TICKET_SUGGESTION_SOURCES,
+  TICKET_SUGGESTION_STATUSES,
+  TICKET_SUGGESTIONS_NOTIFICATION_PREFIX,
+  TICKET_SUGGESTION_EVENT,
+  TICKET_SUGGESTIONS_DECIDED_LIMIT,
+  isTicketSuggestionSource,
+  fileSuggestionError,
+  approveSuggestionError,
+  resolvedApproval,
+  findingLine,
+} from './ticket-suggestions';
 export type { DocDomain, DocFetchRefusal, DocUrlCheck } from './doc-allowlist';
 export {
   BASELINE_DOC_DOMAINS,

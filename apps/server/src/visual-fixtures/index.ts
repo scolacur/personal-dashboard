@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { auditReportIsEmpty, seedAuditReport } from './audit-report';
 import { habitTrackerIsEmpty, seedHabitTracker } from './habit-tracker';
 import { seedTaskTracker, taskTrackerIsEmpty } from './task-tracker';
+import { seedTicketSuggestions, ticketSuggestionsIsEmpty } from './ticket-suggestions';
 
 /**
  * Visual-capture fixtures (PD-798): sample data loaded into the EMPTY scratch database a visual
@@ -30,6 +31,7 @@ export const VISUAL_FIXTURES: VisualFixture[] = [
   { name: 'task-tracker', isEmpty: taskTrackerIsEmpty, seed: (db) => seedTaskTracker(db) },
   // Runs after task-tracker so its findings can point at tickets that fixture seeded (PD-826).
   { name: 'audit-report', isEmpty: auditReportIsEmpty, seed: seedAuditReport },
+  { name: 'ticket-suggestions', isEmpty: ticketSuggestionsIsEmpty, seed: seedTicketSuggestions },
 ];
 
 /** Seed every fixture whose tables are empty. Returns the names seeded. Each runs in a transaction. */

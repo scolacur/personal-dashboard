@@ -98,6 +98,9 @@
     <span class="search-hint" aria-hidden="true"><kbd>⌘K</kbd></span>
   </label>
   <div class="head-actions">
+    <!-- PD-284 slice 3: the Projects view (list + Include-in-Audit toggle + create) lives on its
+         own route, reached from the board. -->
+    <a class="projects-link" href="/devops/projects">Projects</a>
     <Button variant="ghost" title="Glossary" onclick={onOpenGlossary}>Glossary</Button>
     <div class="lanes-menu-wrap" bind:this={laneMenuRef}>
       <Button

@@ -17,6 +17,18 @@
   :global(.btn) {
     padding-block: var(--space-sm);
   }
+
+  // PD-284 slice 3: the Projects link, styled to read like the ghost buttons beside it.
+  .projects-link {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: var(--font-size-sm, 0.875rem);
+    padding: var(--space-sm) var(--space-xs);
+
+    &:hover {
+      color: var(--text);
+    }
+  }
 }
 
 // PD-608: its own line above the search row, so it reads as the page's name rather than as the

@@ -5,6 +5,7 @@ import { autoQueueEligibility } from '@dashboard/shared';
 import { bootstrapSchema } from '../widgets/task-monitor/schema';
 import { listTickets } from '../widgets/task-monitor/store';
 import { listFindings, listRuns } from '../widgets/task-monitor/audit-store';
+import { listTicketSuggestions } from '../widgets/task-monitor/ticket-suggestions';
 import { seedVisualFixtures, seedVisualFixturesFromEnv, VISUAL_FIXTURES, type VisualFixture } from './index';
 
 /** A database bootstrapped the way the server boots one, with nothing in it yet. */
@@ -117,10 +118,21 @@ describe('visual fixtures (PD-798)', () => {
     expect(findings.every((f) => f.ticketId !== null)).toBe(true);
   });
 
+  it('includes one pending Ticket Suggestion with its findings and source ticket (PD-979)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const { items, count } = listTicketSuggestions(db);
+    expect(count).toBe(1);
+    const pending = items.find((s) => s.status === 'pending')!;
+    expect(pending.findings.length).toBeGreaterThanOrEqual(2);
+    expect(pending.sourceTicketTitle).toBeTruthy();
+    expect(pending.proposedEpicId).not.toBeNull();
+  });
+
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);
-    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'audit-report']);
+    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'audit-report', 'ticket-suggestions']);
     expect(getTodayView(db, NOW).rows.map((r) => r.item.name)).toEqual(['A real habit']);
     expect(seedVisualFixtures(db, NOW)).toEqual([]); // and a second boot is a no-op
   });
