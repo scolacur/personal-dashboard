@@ -14,6 +14,9 @@ import {
   listEpicMembers,
   listEpicSummaries,
   createNotification,
+  createProject,
+  updateProject,
+  getProjectById,
   createTicket,
   getLineage,
   listAllRelations,
@@ -87,6 +90,57 @@ describe('bootstrapSchema', () => {
     expect(listProjects(db)).toHaveLength(3);
     const tags = db.prepare('SELECT name FROM agent_tags').all() as { name: string }[];
     expect(tags.map((t) => t.name).sort()).toEqual(['Infra', 'UI']);
+  });
+});
+
+describe('createProject + updateProject (PD-284 slice 3)', () => {
+  it('persists the display-id prefix (key) and uses it for new tickets', () => {
+    const db = freshDb();
+    const project = createProject(db, {
+      slug: 'widget-foo',
+      name: 'Widget Foo',
+      key: 'WF',
+      githubRepo: 'steve/widget-foo',
+    });
+    expect(project.key).toBe('WF');
+    expect(getProjectBySlug(db, 'widget-foo')?.key).toBe('WF');
+
+    const ticket = createTicket(db, { title: 't', projectId: project.id });
+    expect(ticket.displayId).toBe('WF-1');
+  });
+
+  it('defaults auditEnabled to true on create', () => {
+    const db = freshDb();
+    const project = createProject(db, { slug: 'p', name: 'P', key: 'P', githubRepo: 'o/r' });
+    expect(project.auditEnabled).toBe(true);
+  });
+
+  it('toggles auditEnabled via updateProject and leaves other fields untouched', () => {
+    const db = freshDb();
+    const project = createProject(db, { slug: 'p', name: 'P', key: 'P', githubRepo: 'o/r' });
+
+    const off = updateProject(db, project.id, { auditEnabled: false });
+    expect(off?.auditEnabled).toBe(false);
+    expect(off?.name).toBe('P');
+    expect(off?.key).toBe('P');
+    expect(getProjectById(db, project.id)?.auditEnabled).toBe(false);
+
+    const on = updateProject(db, project.id, { auditEnabled: true });
+    expect(on?.auditEnabled).toBe(true);
+  });
+
+  it('only writes the fields present on the patch', () => {
+    const db = freshDb();
+    const project = createProject(db, { slug: 'p', name: 'P', key: 'P', githubRepo: 'o/r' });
+    const updated = updateProject(db, project.id, { name: 'Renamed' });
+    expect(updated?.name).toBe('Renamed');
+    expect(updated?.githubRepo).toBe('o/r');
+    expect(updated?.auditEnabled).toBe(true);
+  });
+
+  it('returns null for an unknown project id', () => {
+    const db = freshDb();
+    expect(updateProject(db, 9999, { auditEnabled: false })).toBeNull();
   });
 });
 

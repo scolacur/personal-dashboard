@@ -171,6 +171,31 @@ export function bootstrapSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_notifications_unread
       ON agent_notifications (read_at, created_at);
 
+    -- Ticket Suggestions (PD-979, D-119): the Evaluator's leftover non-blocking findings at the
+    -- revise round cap become a suggestion Steve approves / rejects / modifies in the Decisions
+    -- inbox. One suggestion per PR (dedup on repo+pr_number while pending — see the store); approving
+    -- creates a real backlog ticket through the ordinary create path. Brand-new table, so
+    -- CREATE IF NOT EXISTS covers both fresh and existing DBs with no migrate step.
+    CREATE TABLE IF NOT EXISTS ticket_suggestions (
+      id                INTEGER PRIMARY KEY,
+      source_ticket_id  INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
+      pr_number         INTEGER NOT NULL,
+      repo              TEXT,                               -- owner/repo
+      source            TEXT    NOT NULL DEFAULT 'evaluator', -- TicketSuggestionSource
+      proposed_title    TEXT    NOT NULL,
+      proposed_body     TEXT    NOT NULL DEFAULT '',
+      proposed_epic_id  INTEGER,                            -- defaults to the source ticket's epic
+      findings          TEXT    NOT NULL DEFAULT '[]',      -- JSON SuggestionFinding[]
+      status            TEXT    NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+      created_ticket_id INTEGER REFERENCES agent_tickets(id) ON DELETE SET NULL, -- set on approve
+      reject_reason     TEXT,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      decided_at        INTEGER                             -- NULL while pending
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_suggestions_status
+      ON ticket_suggestions (status, created_at);
+
     -- Worker liveness beacons (Site Status). One row per long-lived worker process
     -- (e.g. the out-of-process agent-worker), which upserts its own row on an interval.
     -- The web server only READS this — it's how the dashboard knows the worker is alive

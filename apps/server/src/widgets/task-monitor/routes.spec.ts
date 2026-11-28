@@ -48,6 +48,89 @@ function projectId(db: Database.Database, slug: string): number {
   return p.id;
 }
 
+describe('projects routes (PD-284 slice 3)', () => {
+  const PROJECTS = '/api/widgets/task-monitor/projects';
+
+  it('POST creates a project with a prefix (key) and repo', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({
+      method: 'POST',
+      url: PROJECTS,
+      payload: { slug: 'widget-foo', name: 'Widget Foo', key: 'WF', githubRepo: 'steve/widget-foo' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.key).toBe('WF');
+    expect(body.githubRepo).toBe('steve/widget-foo');
+    expect(body.auditEnabled).toBe(true);
+  });
+
+  it('POST requires a key', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({
+      method: 'POST',
+      url: PROJECTS,
+      payload: { slug: 'no-key', name: 'No Key', githubRepo: 'o/r' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_KEY');
+  });
+
+  it('POST requires a githubRepo', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({
+      method: 'POST',
+      url: PROJECTS,
+      payload: { slug: 'no-repo', name: 'No Repo', key: 'NR' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_GITHUB_REPO');
+  });
+
+  it('PATCH toggles auditEnabled', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+
+    const off = await app.inject({
+      method: 'PATCH',
+      url: `${PROJECTS}/${pid}`,
+      payload: { auditEnabled: false },
+    });
+    expect(off.statusCode).toBe(200);
+    expect(off.json().auditEnabled).toBe(false);
+
+    const on = await app.inject({
+      method: 'PATCH',
+      url: `${PROJECTS}/${pid}`,
+      payload: { auditEnabled: true },
+    });
+    expect(on.json().auditEnabled).toBe(true);
+  });
+
+  it('PATCH rejects a non-boolean auditEnabled', async () => {
+    const { app, db } = freshSetup();
+    const pid = projectId(db, 'personal-dashboard');
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `${PROJECTS}/${pid}`,
+      payload: { auditEnabled: 'yes' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().code).toBe('INVALID_AUDIT_ENABLED');
+  });
+
+  it('PATCH 404s an unknown project', async () => {
+    const { app } = freshSetup();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `${PROJECTS}/9999`,
+      payload: { auditEnabled: false },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('UNKNOWN_PROJECT');
+  });
+});
+
 describe('POST /api/widgets/task-monitor/tickets — status', () => {
   it('defaults to backlog when status is omitted', async () => {
     const { app, db } = freshSetup();

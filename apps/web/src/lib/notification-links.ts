@@ -17,6 +17,12 @@ export function decisionsAnchor(displayId: string): string {
   return `t-${displayId}`;
 }
 
+/** The anchor of a ticket suggestion in the Decisions inbox (PD-979, D-119). Keyed by the source
+ *  ticket's display id — one PR, one suggestion, so this is unique in practice. */
+export function suggestionAnchor(displayId: string): string {
+  return `sug-${displayId}`;
+}
+
 /**
  * Where a notification takes you. A Refine notification raised for a structured question round
  * opens that ticket's entry in the Decisions inbox, where it can be answered inline (PD-746); every
@@ -27,6 +33,7 @@ export function notificationHref(n: Pick<AgentNotification, 'kind' | 'title' | '
   if (n.kind === 'audit_complete') return TICKET_AUDIT_REPORT_ROUTE;
   if (!n.ticketDisplayId) return null;
   if (n.kind === 'agent_visual_review') return `${DECISIONS_ROUTE}#${visualAnchor(n.ticketDisplayId)}`;
+  if (n.kind === 'agent_ticket_suggestion') return `${DECISIONS_ROUTE}#${suggestionAnchor(n.ticketDisplayId)}`;
   if (n.kind === 'agent_refine' && n.title.startsWith(REFINE_QUESTIONS_NOTIFICATION_PREFIX)) {
     return `${DECISIONS_ROUTE}#${decisionsAnchor(n.ticketDisplayId)}`;
   }
