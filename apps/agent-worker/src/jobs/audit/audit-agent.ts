@@ -7,6 +7,16 @@ import { logger } from '../../shared/logger';
 /** Read-only tools — the audit agent grounds against the checkout, never edits (D-045). */
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 
+/** PD-284: a turn's authoritative token + cost usage, off the result message. `costUsd` is the
+ *  SDK's Claude-priced `total_cost_usd` (may be wrong for a non-Claude model — see the ticket's
+ *  Out-of-scope note; we use the SDK figure rather than a per-model price table). */
+export interface AuditTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
 export interface AuditTurnResult {
   /** The assistant's final text (a JSON findings block on success), or error text. */
   text: string;
@@ -15,6 +25,8 @@ export interface AuditTurnResult {
   /** PD-910: authoritative totals off the result message, when it carries them. */
   turns?: number;
   tokens?: number;
+  /** PD-284: token + cost usage off the result message, summed by the caller across the run. */
+  usage?: AuditTurnUsage;
 }
 
 /** PD-910: live progress — the turn count and running token total, once per new turn. */
@@ -49,12 +61,25 @@ export async function runAuditTurn(
     safeProgress(onProgress, countTurn(message), (err) => logger.warn({ err }, 'audit: progress report failed'));
     if (message.type === 'result') {
       const ok = message.subtype === 'success' && !message.is_error;
-      const r = message as unknown as { num_turns?: number; usage?: { input_tokens?: number; output_tokens?: number } };
+      const r = message as unknown as {
+        num_turns?: number;
+        usage?: { input_tokens?: number; output_tokens?: number };
+        total_cost_usd?: number;
+      };
+      // PD-284: capture input/output tokens + cost off the result message (same shape the Evaluator
+      // and robot/session.ts read). `usage` is present only when the result carries it.
+      const usage = r.usage
+        ? ((): AuditTurnUsage => {
+            const inputTokens = r.usage?.input_tokens ?? 0;
+            const outputTokens = r.usage?.output_tokens ?? 0;
+            return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, costUsd: r.total_cost_usd ?? 0 };
+          })()
+        : undefined;
       result = {
         text: message.subtype === 'success' ? message.result : (message.errors ?? []).join('; '),
         ok,
         ...(typeof r.num_turns === 'number' ? { turns: r.num_turns } : {}),
-        ...(r.usage ? { tokens: (r.usage.input_tokens ?? 0) + (r.usage.output_tokens ?? 0) } : {}),
+        ...(usage ? { tokens: usage.totalTokens, usage } : {}),
       };
     }
   }

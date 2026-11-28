@@ -1,5 +1,11 @@
 import type Database from 'better-sqlite3';
-import { auditSystemPrompt, RELATION_TYPES, type AuditRunCounts, type RelationType } from '@dashboard/shared';
+import {
+  auditSystemPrompt,
+  auditVerifySystemPrompt,
+  RELATION_TYPES,
+  type AuditRunCounts,
+  type RelationType,
+} from '@dashboard/shared';
 import type { AgentWorkerConfig } from '../../shared/config';
 import { buildContextPack } from '../../shared/context-pack';
 import { logger } from '../../shared/logger';
@@ -16,9 +22,11 @@ import {
   type AuditableTicket,
   type AuditProject,
   type AuditRelation,
+  type AuditRunUsage,
   type ClaimedRun,
+  type FindingInput,
 } from './audit-db';
-import { runAuditTurn, type AuditProgress } from './audit-agent';
+import { runAuditTurn, type AuditProgress, type AuditTurnResult, type AuditTurnUsage } from './audit-agent';
 import { findingFingerprint, reconcileDecisions, type CurrentFinding } from './reconcile';
 
 // Single-ticket recommendation buckets the audit agent may emit (D-045). 'keep' = no action needed;
@@ -38,6 +46,12 @@ function isRelationFinding(type: string): boolean {
 const CONFIDENCE_LEVELS = ['high', 'medium', 'low'] as const;
 function toConfidence(raw: string | undefined): string | null {
   return (CONFIDENCE_LEVELS as readonly string[]).includes(raw ?? '') ? (raw as string) : null;
+}
+
+/** Rank a confidence so the verify stage can only ever LOWER it (PD-284). null (unset) is the floor. */
+const CONFIDENCE_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
+function confidenceRank(c: string | null): number {
+  return c ? (CONFIDENCE_RANK[c] ?? 0) : 0;
 }
 
 /** A finding as the agent emits it (before we resolve the ticket + persist). For a relation finding
@@ -69,15 +83,84 @@ function resolveRelationType(findingType: string, raw: string | undefined): Rela
   return (RELATION_TYPES as readonly string[]).includes(raw ?? '') ? (raw as RelationType) : null;
 }
 
+/** An agent turn runner — the fan-out and the verify stage both use this shape (one read-only Agent
+ *  SDK turn against a system + user prompt). Defaults to {@link runAuditTurn}. */
+type RunAuditAgent = (
+  config: AgentWorkerConfig,
+  systemPrompt: string,
+  prompt: string,
+  onProgress?: AuditProgress,
+) => Promise<AuditTurnResult>;
+
 /** Injectable seams so the pass is unit-testable without a live agent or a real checkout. */
 export interface AuditPassDeps {
-  runAgent?: (
-    config: AgentWorkerConfig,
-    systemPrompt: string,
-    prompt: string,
-    onProgress?: AuditProgress,
-  ) => Promise<{ text: string; ok: boolean; turns?: number; tokens?: number }>;
+  runAgent?: RunAuditAgent;
+  /** The adversarial verify turn (PD-284). Defaults to `runAgent` — the same runner with the verify
+   *  system prompt — so a test that stubs `runAgent` controls verify too unless it overrides this. */
+  runVerify?: RunAuditAgent;
   buildContext?: (checkoutDir: string, onMissing?: (what: string) => void) => string;
+}
+
+/**
+ * A finding resolved by the fan-out and ready to persist, held in memory until the verify stage has
+ * run (PD-284). Persistence is deferred to the end of the run so the pooled verify pass can DROP or
+ * DOWNGRADE a candidate before it is ever written — survivors only are inserted. `isKeep` findings
+ * (type `keep`) skip verify entirely and are always persisted.
+ */
+interface PendingFinding {
+  input: FindingInput;
+  isKeep: boolean;
+  /** For the verify prompt: the project name and the subject/target display ids. */
+  projectName: string;
+  subjectLabel: string;
+  targetLabel: string | null;
+}
+
+/** One verify verdict as the verify agent emits it (PD-284). `index` references a candidate; any
+ *  unrecognised shape is ignored (the candidate is left upheld). */
+interface VerifyVerdict {
+  index?: number;
+  verdict?: string;
+  confidence?: string;
+}
+
+/**
+ * Parse the verify agent's reply into verdicts. Same tolerant extraction as `parseAuditFindings`:
+ * pulls the last JSON array out of the text (bare or fenced), returns [] on anything unparseable.
+ */
+export function parseVerifyVerdicts(text: string): VerifyVerdict[] {
+  const fenced = text.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/i);
+  const candidate = fenced ? fenced[1] : text.slice(text.indexOf('['), text.lastIndexOf(']') + 1);
+  if (!candidate || candidate.indexOf('[') === -1) return [];
+  try {
+    const parsed = JSON.parse(candidate);
+    return Array.isArray(parsed) ? (parsed as VerifyVerdict[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Render the pooled list of non-`keep` candidates for the verify agent — one block per candidate,
+ *  keyed by its integer index so the verdicts can reference it. */
+function verifyPrompt(candidates: PendingFinding[]): string {
+  const blocks = candidates.map((c, i) => {
+    const f = c.input;
+    const rel = c.targetLabel ? ` → ${c.targetLabel} (${f.relationType ?? 'relation'})` : '';
+    return [
+      `[${i}] project: ${c.projectName} | subject: ${c.subjectLabel} | type: ${f.type}${rel}`,
+      `    recommendation: ${f.recommendation ?? '(none)'}`,
+      `    reason: ${f.reason ?? '(none)'}`,
+      `    evidence: ${f.evidence ?? '(none)'}`,
+      `    confidence: ${f.confidence ?? '(unset)'}`,
+    ].join('\n');
+  });
+  return [
+    `Review these ${candidates.length} candidate audit findings. For EACH, check its cited evidence`,
+    'against the checkout and return a verdict (uphold / downgrade / drop) as a JSON array. Drop only',
+    'the ones the evidence cannot defensibly support.',
+    '',
+    ...blocks,
+  ].join('\n');
 }
 
 /** One line per existing relation on a ticket, so the agent treats relations as truth and does not
@@ -149,21 +232,23 @@ export function singleScopeKey(scope: string | null): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** The outcome of auditing one project: its findings persisted, plus the usage its turn spent. */
+/** The outcome of auditing one project: its RESOLVED candidate findings (not yet persisted — the
+ *  pooled verify stage filters them first, PD-284), plus the usage its turn spent. */
 interface ProjectPassResult {
   tickets: number;
-  findings: number;
-  buckets: Record<string, number>;
   turns?: number;
   tokens?: number;
+  usage?: AuditTurnUsage;
+  pending: PendingFinding[];
 }
 
 /**
- * Audit ONE project: ask the agent to bucket its active tickets, then persist the findings with
+ * Audit ONE project: ask the agent to bucket its active tickets, then RESOLVE the findings with
  * their confidence (PD-284), relation findings (PD-828), and cross-run carry-forward decisions
- * (PD-285). Returns the per-project tallies. Throws on an agent error so the caller's try/catch
- * treats the project as failed-and-skipped (Done-When #3) — it never aborts the whole run. Advisory
- * only — never mutates a ticket (D-045 guardrail).
+ * (PD-285). Returns the resolved candidates WITHOUT persisting them — the caller pools them across
+ * projects, runs the adversarial verify stage, and persists survivors only (PD-284). Throws on an
+ * agent error so the caller's try/catch treats the project as failed-and-skipped (Done-When #3) — it
+ * never aborts the whole run. Advisory only — never mutates a ticket (D-045 guardrail).
  *
  * `turnsBase` / `tokensBase` are the run's usage BEFORE this project, so live progress reports a
  * running total across the fan-out rather than resetting per project.
@@ -174,13 +259,16 @@ async function auditOneProject(
   run: ClaimedRun,
   project: AuditProject,
   systemPrompt: string,
-  runAgent: NonNullable<AuditPassDeps['runAgent']>,
+  runAgent: RunAuditAgent,
   turnsBase: number,
   tokensBase: number,
 ): Promise<ProjectPassResult> {
   const tickets = getAuditableTickets(db, project.id);
   const byDisplayId = new Map(tickets.filter((t) => t.displayId).map((t) => [t.displayId as string, t.id]));
   const validIds = new Set(tickets.map((t) => t.id));
+  // id → display label (`PD-10` or `#10`), for the verify prompt. Covers audited tickets; relation
+  // far ends are added below so a relation finding's target still renders a real id.
+  const labelById = new Map<number, string>(tickets.map((t) => [t.id, t.displayId ?? `#${t.id}`]));
 
   // PD-828 / D-120: existing relations read as truth. Group by audited subject for the prompt; build
   // a target-resolution map that ALSO knows each relation's far end (so an `unlink` of a stale link
@@ -188,13 +276,12 @@ async function auditOneProject(
   const relations = getRelationsForTickets(db, [...validIds]);
   const relationsBySubject = new Map<number, AuditRelation[]>();
   const targetByDisplayId = new Map(byDisplayId);
-  const targetValidIds = new Set(validIds);
   const existingEdges = new Set<string>();
   const edgeKey = (from: number, to: number, type: string): string => `${from}:${to}:${type}`;
   for (const r of relations) {
     (relationsBySubject.get(r.subjectId) ?? relationsBySubject.set(r.subjectId, []).get(r.subjectId)!).push(r);
-    targetValidIds.add(r.otherId);
     if (r.otherDisplayId) targetByDisplayId.set(r.otherDisplayId, r.otherId);
+    labelById.set(r.otherId, r.otherDisplayId ?? `#${r.otherId}`);
     const [from, to] = r.direction === 'from' ? [r.subjectId, r.otherId] : [r.otherId, r.subjectId];
     existingEdges.add(edgeKey(from, to, r.type));
     // `relates` is semantically symmetric but stored directionally — record both orderings so a
@@ -215,15 +302,14 @@ async function auditOneProject(
   }
 
   const raw = parseAuditFindings(reply.text);
-
-  const buckets: Record<string, number> = {};
-  let findings = 0;
+  const label = (id: number): string => labelById.get(id) ?? `#${id}`;
+  const pending: PendingFinding[] = [];
 
   // Resolve + fingerprint every single-ticket finding we can tie to an audited ticket, THEN
   // reconcile the whole set against the prior run (PD-285). Reconciliation is batch, not per-row:
   // it keys on (ticket_id, type), so it needs the current run's full set before deciding
   // carry-forward. Relation findings (PD-828) are not reconciled here — their match key is
-  // (from, to, relation_type), deferred to PD-288 — so they are persisted inline as before.
+  // (from, to, relation_type), deferred to PD-288.
   interface Resolved {
     ticketId: number;
     type: string;
@@ -257,20 +343,24 @@ async function auditOneProject(
       // Never re-emit a link that already exists (PD-828); `unlink`/`duplicate` act on
       // existing/archival state, so they are not de-duped against existing edges.
       if (f.type === 'link' && existingEdges.has(edgeKey(ticketId, targetId, relationType))) continue;
-      insertFinding(db, {
-        runId: run.id,
-        projectId: project.id,
-        ticketId,
-        targetTicketId: targetId,
-        relationType,
-        type: f.type,
-        recommendation: f.recommendation ?? null,
-        reason: f.reason ?? null,
-        evidence: f.evidence ?? null,
-        confidence: toConfidence(f.confidence),
+      pending.push({
+        input: {
+          runId: run.id,
+          projectId: project.id,
+          ticketId,
+          targetTicketId: targetId,
+          relationType,
+          type: f.type,
+          recommendation: f.recommendation ?? null,
+          reason: f.reason ?? null,
+          evidence: f.evidence ?? null,
+          confidence: toConfidence(f.confidence),
+        },
+        isKeep: false, // a relation finding is never a `keep`
+        projectName: project.name,
+        subjectLabel: label(ticketId),
+        targetLabel: label(targetId),
       });
-      buckets[f.type] = (buckets[f.type] ?? 0) + 1;
-      findings += 1;
       continue;
     }
 
@@ -301,32 +391,82 @@ async function auditOneProject(
   const decisions = reconcileDecisions(prior, current);
 
   resolved.forEach((r, i) => {
-    insertFinding(db, {
-      runId: run.id,
-      projectId: project.id,
-      ticketId: r.ticketId,
-      type: r.type,
-      recommendation: r.recommendation,
-      reason: r.reason,
-      evidence: r.evidence,
-      proposedChange: r.proposedChange,
-      confidence: r.confidence,
-      fingerprint: r.fingerprint,
-      decision: decisions[i],
+    pending.push({
+      input: {
+        runId: run.id,
+        projectId: project.id,
+        ticketId: r.ticketId,
+        type: r.type,
+        recommendation: r.recommendation,
+        reason: r.reason,
+        evidence: r.evidence,
+        proposedChange: r.proposedChange,
+        confidence: r.confidence,
+        fingerprint: r.fingerprint,
+        decision: decisions[i],
+      },
+      isKeep: r.type === 'keep', // a `keep` is recorded but never challenged by verify
+      projectName: project.name,
+      subjectLabel: label(r.ticketId),
+      targetLabel: null,
     });
-    buckets[r.type] = (buckets[r.type] ?? 0) + 1;
-    findings += 1;
   });
 
-  return { tickets: tickets.length, findings, buckets, turns: reply.turns, tokens: reply.tokens };
+  return { tickets: tickets.length, pending, turns: reply.turns, tokens: reply.tokens, usage: reply.usage };
+}
+
+/**
+ * Add a turn's usage into the run's running total (PD-284). A turn with no `usage` (e.g. a stubbed
+ * agent) contributes nothing.
+ */
+function addUsage(total: AuditRunUsage, turn: AuditTurnUsage | undefined): void {
+  if (!turn) return;
+  total.inputTokens += turn.inputTokens;
+  total.outputTokens += turn.outputTokens;
+  total.totalTokens += turn.totalTokens;
+  total.costUsd += turn.costUsd;
+}
+
+/**
+ * Apply the verify stage's verdicts to the pooled non-`keep` candidates (PD-284). Returns the set of
+ * DROPPED candidates and mutates a surviving candidate's confidence on a `downgrade`. The verify
+ * stage can only ever remove or weaken — it never raises confidence and never resurrects a dropped
+ * finding (a candidate it is silent about is upheld as-is). See D-122.
+ */
+function applyVerifyVerdicts(nonKeep: PendingFinding[], verdicts: VerifyVerdict[]): Set<PendingFinding> {
+  const byIndex = new Map<number, VerifyVerdict>();
+  for (const v of verdicts) if (typeof v.index === 'number') byIndex.set(v.index, v);
+  const dropped = new Set<PendingFinding>();
+  nonKeep.forEach((c, i) => {
+    const v = byIndex.get(i);
+    if (!v) return; // omitted = upheld
+    if (v.verdict === 'drop') {
+      dropped.add(c);
+      return;
+    }
+    if (v.verdict === 'downgrade') {
+      const next = toConfidence(v.confidence);
+      // Only ever LOWER confidence; ignore a missing/invalid value or one that would raise it.
+      if (next && confidenceRank(next) < confidenceRank(c.input.confidence ?? null)) {
+        c.input.confidence = next;
+      }
+    }
+    // uphold / unknown verdict → keep as-is.
+  });
+  return dropped;
 }
 
 /**
  * Run one audit pass, fanning out over every enabled project with active tickets (PD-284, D-045).
  * `scope = single:<KEY>` audits just that project (overriding its pause); otherwise it audits all
  * `audit_enabled` projects and records `scope = 'all'`. Each project gets its own agent turn,
- * wrapped so one project erroring or timing out is logged and skipped — the run continues and the
- * other projects still persist findings. Closes the run `done` with the real `counts.projects`.
+ * wrapped so one project erroring or timing out is logged and skipped — the run continues.
+ *
+ * Findings are RESOLVED in memory, then a single pooled adversarial verify turn (PD-284, D-122)
+ * reviews every non-`keep` candidate across all projects and DROPS or DOWNGRADES the ones the
+ * evidence does not support; survivors only are persisted, and the stage fails open (a verify error
+ * keeps all candidates). Per-run token/cost usage is summed across the fan-out turns plus the verify
+ * turn and written on finish. Closes the run `done` with the real counts.
  */
 export async function runAuditPass(
   db: Database.Database,
@@ -335,6 +475,9 @@ export async function runAuditPass(
   deps: AuditPassDeps = {},
 ): Promise<AuditRunCounts> {
   const runAgent = deps.runAgent ?? runAuditTurn;
+  // Verify reuses the same runner shape with a different system prompt. Defaulting to `runAgent`
+  // means a test that stubs the fan-out controls verify too unless it overrides `runVerify`.
+  const runVerify = deps.runVerify ?? runAgent;
   const buildContext = deps.buildContext ?? buildContextPack;
 
   // Resolve which projects this run audits from its scope.
@@ -358,38 +501,44 @@ export async function runAuditPass(
   }
 
   // The context pack grounds the agent against the repo; it's identical for every project, so
-  // build it once and reuse it across the fan-out.
+  // build it once and reuse it across the fan-out and the verify stage.
   const contextPack = buildContext(config.checkoutDir, (what) =>
     logger.warn({ what }, 'audit: context pack is missing an expected section — the agent runs degraded'),
   );
   const systemPrompt = auditSystemPrompt(contextPack);
 
-  const buckets: Record<string, number> = {};
   let totalTickets = 0;
-  let totalFindings = 0;
   let projectsAudited = 0;
   // Running usage totals across the fan-out, so live progress and the authoritative record both
   // reflect the whole run rather than resetting per project (PD-910).
   let turnsSoFar = 0;
   let tokensSoFar = 0;
+  // PD-284: authoritative token/cost totals summed across every agent turn (fan-out + verify).
+  const usage: AuditRunUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 };
+  // Candidate findings from every project, in run order. Persisted only after the verify stage.
+  const allPending: PendingFinding[] = [];
+
+  const recordLiveUsage = (): void => {
+    // PD-910: authoritative running totals, recorded even on an unmigrated audit_run (guarded).
+    try {
+      recordAuditRunUsage(db, run.id, { turns: turnsSoFar, tokens: tokensSoFar });
+    } catch (err) {
+      logger.warn({ err, runId: run.id }, 'audit: could not record turns/tokens (audit_run not migrated yet?)');
+    }
+  };
 
   for (const project of projects) {
     try {
       const res = await auditOneProject(db, config, run, project, systemPrompt, runAgent, turnsSoFar, tokensSoFar);
       totalTickets += res.tickets;
-      totalFindings += res.findings;
-      for (const [type, n] of Object.entries(res.buckets)) buckets[type] = (buckets[type] ?? 0) + n;
+      allPending.push(...res.pending);
       if (typeof res.turns === 'number') turnsSoFar += res.turns;
       if (typeof res.tokens === 'number') tokensSoFar += res.tokens;
+      addUsage(usage, res.usage);
       projectsAudited += 1;
-      // PD-910: authoritative running totals, recorded even on an unmigrated audit_run (guarded).
-      try {
-        recordAuditRunUsage(db, run.id, { turns: turnsSoFar, tokens: tokensSoFar });
-      } catch (err) {
-        logger.warn({ err, runId: run.id }, 'audit: could not record turns/tokens (audit_run not migrated yet?)');
-      }
+      recordLiveUsage();
       logger.info(
-        { runId: run.id, project: project.key, tickets: res.tickets, findings: res.findings },
+        { runId: run.id, project: project.key, tickets: res.tickets, candidates: res.pending.length },
         'audit: project complete',
       );
     } catch (err) {
@@ -398,8 +547,46 @@ export async function runAuditPass(
     }
   }
 
+  // Adversarial verify stage (PD-284): ONE pooled turn across every non-`keep` candidate. It drops
+  // or downgrades; survivors only are persisted. Fail-open — if verify errors or the agent fails,
+  // keep every candidate as-is rather than discard the fan-out's advisory signal. Skipped entirely
+  // when there is nothing to challenge, so it costs no turn.
+  const nonKeep = allPending.filter((p) => !p.isKeep);
+  let dropped = new Set<PendingFinding>();
+  if (nonKeep.length > 0) {
+    try {
+      const reply = await runVerify(
+        config,
+        auditVerifySystemPrompt(contextPack),
+        verifyPrompt(nonKeep),
+        (t, k) => updateAuditRunProgress(db, run.id, turnsSoFar + t, k === undefined ? undefined : tokensSoFar + k),
+      );
+      if (reply.ok) {
+        dropped = applyVerifyVerdicts(nonKeep, parseVerifyVerdicts(reply.text));
+      } else {
+        logger.warn({ runId: run.id, text: reply.text.slice(0, 200) }, 'audit: verify turn failed — keeping all candidates');
+      }
+      if (typeof reply.turns === 'number') turnsSoFar += reply.turns;
+      if (typeof reply.tokens === 'number') tokensSoFar += reply.tokens;
+      addUsage(usage, reply.usage);
+      recordLiveUsage();
+    } catch (err) {
+      logger.warn({ err, runId: run.id }, 'audit: verify stage errored — keeping all candidates');
+    }
+  }
+
+  // Persist survivors in run order (dropped candidates are never written — never resurrected).
+  const buckets: Record<string, number> = {};
+  let totalFindings = 0;
+  for (const p of allPending) {
+    if (dropped.has(p)) continue;
+    insertFinding(db, p.input);
+    buckets[p.input.type] = (buckets[p.input.type] ?? 0) + 1;
+    totalFindings += 1;
+  }
+
   const counts: AuditRunCounts = { projects: projectsAudited, tickets: totalTickets, findings: totalFindings, ...buckets };
-  finishRun(db, run.id, 'done', { counts, model: config.model, scope });
-  logger.info({ runId: run.id, scope, ...counts }, 'audit: run complete');
+  finishRun(db, run.id, 'done', { counts, model: config.model, scope, usage });
+  logger.info({ runId: run.id, scope, ...counts, costUsd: usage.costUsd }, 'audit: run complete');
   return counts;
 }

@@ -18,6 +18,7 @@ Newest first.
 
 ---
 
+- **[D-122](DECISIONS/D-122-audit-verify-stage-is-one-pooled-fail-open-drop-downgrade-pass.md)** — The Ticket Audit's verify stage is one pooled, fail-open, drop/downgrade-only pass over deferred findings
 - **[D-120](DECISIONS/D-120-audit-relation-finding-targets-resolve-against-audited-set-plus-relation-far-ends.md)** — Audit relation-finding targets resolve against the audited set plus existing relation far-ends
 - **[D-119](DECISIONS/D-119-ticket-suggestions-are-a-first-class-entity-one-per-pr.md)** — Ticket Suggestions are a first-class entity, bundled one-per-PR, approved into a real ticket (PD-979)
 - **[D-116](DECISIONS/D-116-the-agent-worker-auto-deploys-from-ghcr-through-its-own-scoped-watchtower-drained.md)** — The agent-worker auto-deploys from GHCR through its own scoped Watchtower, drained by a fail-closed pre-update hook (PD-816; supersedes the "worker NOT on GHCR/Watchtower" line)

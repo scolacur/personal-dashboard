@@ -664,6 +664,50 @@ export function auditSystemPrompt(contextPack: string): string {
   ].join('\n');
 }
 
+/**
+ * The Ticket Audit's adversarial VERIFY stage (D-045, PD-284).
+ *
+ * Runs ONCE per audit run, AFTER the per-project fan-out, pooled across every project's non-`keep`
+ * candidate findings. Its only job is to challenge each finding against the evidence the fan-out
+ * cited and the real checkout, and remove the ones that do not hold up — a precision filter on an
+ * advisory signal, so a human spends attention only on findings that survive a second look. It never
+ * invents findings and never resurrects one it drops; it can only uphold, drop, or lower confidence
+ * on the candidates it is handed.
+ */
+export function auditVerifySystemPrompt(contextPack: string): string {
+  return [
+    'You are the VERIFY stage of the Ticket Audit agent for a personal-dashboard task board (D-045).',
+    'A first pass already reviewed each project\'s active tickets and produced CANDIDATE findings. Your',
+    'job is adversarial: for each candidate, decide whether its cited evidence actually supports it,',
+    'and strip out the ones that do not. You make the audit precise — a finding a human sees should be',
+    'one that survived a second, skeptical look.',
+    '',
+    'You are READ-ONLY. Ground every judgement in the repo checkout (MEMORY/, DECISIONS.md, PROJECT.md,',
+    'and the code) using your Read/Grep/Glob tools — never in speculation. Check the finding\'s own',
+    'stated evidence first, then confirm or refute it against the checkout.',
+    '',
+    'For EACH candidate you are given (identified by its integer `index`), return a verdict:',
+    '  - "uphold"    — the evidence plainly supports the recommendation. Keep it as-is.',
+    '  - "downgrade" — the recommendation may be right but the evidence is weaker than its stated',
+    '                  confidence claims; keep the finding but LOWER its confidence. Set "confidence"',
+    '                  to the lower level ("medium" or "low"). You may only lower, never raise.',
+    '  - "drop"      — the evidence does not defensibly support the recommendation (it is speculative,',
+    '                  contradicted by the checkout, or simply absent). The finding is removed.',
+    'When in doubt, prefer "uphold" or "downgrade" over "drop": only drop a finding you can affirmatively',
+    'say is indefensible. Default to "uphold" for anything you cannot assess.',
+    '',
+    'Return ONLY a JSON array (no prose), one object per candidate you have a verdict for:',
+    '  [ { "index": 0, "verdict": "uphold" },',
+    '    { "index": 1, "verdict": "downgrade", "confidence": "low" },',
+    '    { "index": 2, "verdict": "drop" } ]',
+    'Only reference indexes from the candidates below — you cannot add new findings. An index you omit',
+    'is left as-is (upheld). Never change a finding to a different ticket, type, or target.',
+    '',
+    'Project context:',
+    contextPack,
+  ].join('\n');
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * The Evaluator (PD-487, [[D-076]])
  * ──────────────────────────────────────────────────────────────────────────── */

@@ -12,6 +12,12 @@ interface AuditRunRow {
   scope: string | null;
   model: string | null;
   counts: string | null;
+  // PD-284: token/cost totals. Absent (undefined) on a DB whose columns predate the migration —
+  // mapped to null below so AuditRun is always well-formed.
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  cost_usd: number | null;
   started_at: number | null;
   finished_at: number | null;
   created_at: number;
@@ -43,6 +49,10 @@ function rowToRun(r: AuditRunRow): AuditRun {
     scope: r.scope,
     model: r.model,
     counts: r.counts ? (JSON.parse(r.counts) as AuditRunCounts) : null,
+    inputTokens: r.input_tokens ?? null,
+    outputTokens: r.output_tokens ?? null,
+    totalTokens: r.total_tokens ?? null,
+    costUsd: r.cost_usd ?? null,
     startedAt: r.started_at,
     finishedAt: r.finished_at,
     createdAt: r.created_at,

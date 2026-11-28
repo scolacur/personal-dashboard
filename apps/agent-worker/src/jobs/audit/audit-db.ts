@@ -329,16 +329,44 @@ export function recordAuditRunUsage(db: Database.Database, id: number, usage: { 
   );
 }
 
+/** PD-284: token + cost totals summed across a run's agent turns, written on finish. */
+export interface AuditRunUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+/**
+ * PD-284: write the authoritative token/cost totals onto `audit_run`. Guarded like
+ * `recordAuditRunUsage`: if the columns don't exist yet (worker deployed before the server
+ * migration) this is a no-op rather than a crash, so `finishRun` still closes the run normally.
+ */
+export function recordAuditRunCost(db: Database.Database, id: number, usage: AuditRunUsage): void {
+  const cols = db.prepare('PRAGMA table_info(audit_run)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'cost_usd')) return;
+  db.prepare(
+    'UPDATE audit_run SET input_tokens = ?, output_tokens = ?, total_tokens = ?, cost_usd = ? WHERE id = ?',
+  ).run(usage.inputTokens, usage.outputTokens, usage.totalTokens, usage.costUsd, id);
+}
+
 /**
  * Close out a claimed run. `model` is stamped so the report can show what produced it; `scope`
  * records what was actually audited (`single:<KEY>` or `all`, PD-284) — when omitted the stored
- * scope is left untouched (`COALESCE`), so a run created with a scope keeps it.
+ * scope is left untouched (`COALESCE`), so a run created with a scope keeps it. `usage` (PD-284) is
+ * the summed token/cost total; it is written via `recordAuditRunCost` (a separate, column-guarded
+ * statement) so a pre-migration DB still closes the run.
  */
 export function finishRun(
   db: Database.Database,
   id: number,
   status: 'done' | 'error',
-  opts: { counts?: AuditRunCounts | null; model?: string | null; scope?: string | null } = {},
+  opts: {
+    counts?: AuditRunCounts | null;
+    model?: string | null;
+    scope?: string | null;
+    usage?: AuditRunUsage | null;
+  } = {},
 ): void {
   db.prepare(
     'UPDATE audit_run SET status = ?, finished_at = ?, counts = ?, model = ?, scope = COALESCE(?, scope) WHERE id = ?',
@@ -350,4 +378,5 @@ export function finishRun(
     opts.scope ?? null,
     id,
   );
+  if (opts.usage) recordAuditRunCost(db, id, opts.usage);
 }
