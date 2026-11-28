@@ -91,11 +91,12 @@
       {:else}
         <ul class="notif-list">
           {#each items as n (n.id)}
+            {@const href = notificationHref(n)}
             <li class="notif-item" class:unread={n.readAt === null}>
-              {#if n.ticketDisplayId}
+              {#if href}
                 <a
                   class="notif-link"
-                  href={notificationHref(n)}
+                  {href}
                   onclick={() => onItemClick(n)}
                 >
                   <span class="notif-title">{n.title}</span>

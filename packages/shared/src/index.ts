@@ -196,6 +196,8 @@ export type {
 export {
   AUDIT_RUN_STATUSES,
   FINDING_DECISIONS,
+  NON_ACTIONABLE_FINDING_TYPES,
+  isActionableFindingType,
   TICKET_STATUSES,
   coerceTicketStatus,
   TICKET_PRIORITIES,

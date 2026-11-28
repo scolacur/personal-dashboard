@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { bootstrapHabitsSchema, createItem, getTodayView } from '../lib/habits';
 import { autoQueueEligibility } from '@dashboard/shared';
 import { bootstrapSchema } from '../widgets/task-monitor/schema';
-import { listTickets } from '../widgets/task-monitor/store';
+import { listTickets, listNotifications } from '../widgets/task-monitor/store';
 import { listTicketSuggestions } from '../widgets/task-monitor/ticket-suggestions';
 import { seedVisualFixtures, seedVisualFixturesFromEnv, VISUAL_FIXTURES, type VisualFixture } from './index';
 
@@ -103,6 +103,17 @@ describe('visual fixtures (PD-798)', () => {
     expect(excluded).toHaveLength(1);
   });
 
+  it('give the Notification Center a clickable ticketless audit_complete entry (PD-851)', () => {
+    const db = freshDb();
+    seedVisualFixtures(db, NOW);
+    const notifs = listNotifications(db);
+    const audit = notifs.filter((n) => n.kind === 'audit_complete');
+    expect(audit.length).toBeGreaterThanOrEqual(1);
+    // ticketless, yet present — its linking is kind-routed, not ticket-routed.
+    expect(audit.every((n) => n.ticketDisplayId === null)).toBe(true);
+    expect(notifs.some((n) => n.readAt === null)).toBe(true); // an unread row for the bell badge
+  });
+
   it('includes one pending Ticket Suggestion with its findings and source ticket (PD-979)', () => {
     const db = freshDb();
     seedVisualFixtures(db, NOW);
@@ -117,7 +128,7 @@ describe('visual fixtures (PD-798)', () => {
   it('never writes into tables that already hold data', () => {
     const db = freshDb();
     createItem(db, { name: 'A real habit' }, NOW);
-    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'ticket-suggestions']);
+    expect(seedVisualFixtures(db, NOW)).toEqual(['task-tracker', 'notifications', 'ticket-suggestions']);
     expect(getTodayView(db, NOW).rows.map((r) => r.item.name)).toEqual(['A real habit']);
     expect(seedVisualFixtures(db, NOW)).toEqual([]); // and a second boot is a no-op
   });
