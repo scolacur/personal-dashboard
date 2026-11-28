@@ -23,6 +23,9 @@
   // onDecided fires after a successful approve or reject, with the message to show. The proposal
   // is gone after that, so the caller owns the message (this card is about to disappear).
   // onChanged fires after the Epic is marked refined from a Queue-gate remedy.
+  // stale / staleReason (PD-889): a read-only display of a proposal that went stale — a ticket it
+  // cited changed, so it can no longer be approved. The card greys out, drops its action buttons,
+  // and shows the reason above; the worker is re-grounding the session.
   const {
     ticketId,
     proposal,
@@ -30,6 +33,8 @@
     epic = null,
     epicMembers = [],
     collapsed = false,
+    stale = false,
+    staleReason = null,
     onDecided,
     onChanged,
   }: {
@@ -39,6 +44,8 @@
     epic?: AgentTicket | null;
     epicMembers?: AgentTicket[];
     collapsed?: boolean;
+    stale?: boolean;
+    staleReason?: string | null;
     onDecided?: (message: string) => void | Promise<void>;
     onChanged?: () => void;
   } = $props();
@@ -153,7 +160,10 @@
   {/if}
 {/snippet}
 
-<div class="proposal-card" role="group" aria-label="Proposed commit">
+<div class="proposal-card" class:proposal-stale={stale} role="group" aria-label="Proposed commit">
+  {#if stale && staleReason}
+    <p class="proposal-stale-reason" role="status">{staleReason}</p>
+  {/if}
   <div class="proposal-head">
     <span class="who">Refine agent</span>
     <span class="proposal-badge">Proposed: {proposalModeLabel(proposal, isEpic)}</span>
@@ -169,6 +179,11 @@
     {@render details()}
   {/if}
 
+  {#if stale}
+    <!-- PD-889: a stale proposal is read-only — the worker is re-grounding and will re-propose
+         against the current state, so there is nothing to approve or reject here. -->
+    <p class="proposal-stale-note" role="status">Re-grounding… the Refine agent will propose again.</p>
+  {:else}
   <div class="proposal-actions">
     <button class="approve" onclick={() => decide('approve')} disabled={deciding}>
       {deciding ? 'Working…' : 'Approve'}
@@ -213,6 +228,7 @@
     </div>
   {/if}
   {#if msg}<p class="proposal-msg" role="status">{msg}</p>{/if}
+  {/if}
 </div>
 
 <style lang="scss" src="./RefineProposalCard.scss"></style>

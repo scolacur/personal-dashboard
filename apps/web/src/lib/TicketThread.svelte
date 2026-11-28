@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { applyMarkdown } from '$lib/markdown';
-  import type { AgentTicket, RefineAnswerSet, RefineMessage, RefineProposal } from '@dashboard/shared';
+  import type {
+    AgentTicket,
+    RefineAnswerSet,
+    RefineMessage,
+    RefineProposal,
+    RefineRoundStaleDetail,
+  } from '@dashboard/shared';
   import {
     latestActionableProposal,
     refineSessionEnd,
@@ -12,6 +18,13 @@
   import RefineProposalCard from './RefineProposalCard.svelte';
   import RefineQuestionForm from './RefineQuestionForm.svelte';
   import { answerSummary, openRoundMessage, roundsAnsweredBy } from './refine-form-logic';
+  import {
+    latestRefineStale,
+    staleInvalidatesProposal,
+    staleInvalidatesRound,
+    staleProposal,
+    staleReasonText,
+  } from './refine-stale-logic';
 
   // The Refine thread lives on the ticket's activity log (agent_ticket_events); this
   // component reads it via the generic events endpoint and renders the refine_* subset
@@ -43,6 +56,10 @@
 
   let messages = $state<RefineMessage[]>([]);
   let proposal = $state<RefineProposal | null>(null);
+  // PD-889: set when the newest Refine-state event is a `refine_round_stale` turn — the open round
+  // and/or pending proposal went stale (a cited ticket changed) and the worker is re-grounding.
+  let staleInfo = $state<RefineRoundStaleDetail | null>(null);
+  let staleProp = $state<RefineProposal | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let replyText = $state('');
@@ -89,6 +106,8 @@
       const events = await fetchTicketEvents(ticketId);
       messages = refineThreadFromEvents(events);
       proposal = latestActionableProposal(events)?.proposal ?? null;
+      staleInfo = latestRefineStale(events);
+      staleProp = staleProposal(events);
       sessionEnd = refineSessionEnd(events);
       error = null;
     } catch (e) {
@@ -105,9 +124,17 @@
     onChanged?.();
   }
 
+  // PD-889: the stale banner copy, and which artefacts went stale. A stale round is withheld from
+  // answering; a stale proposal is shown read-only (see `staleProp`).
+  const staleReason = $derived(staleInfo ? staleReasonText(staleInfo) : null);
+  const roundStale = $derived(!!staleInfo && staleInvalidatesRound(staleInfo));
+  const proposalStale = $derived(!!staleInfo && staleInvalidatesProposal(staleInfo));
   // PD-745: the round Steve can answer now (newest turn is an agent round, session still open), and
-  // for each structured reply the round it answered, so the reply renders as a summary.
-  const openRound = $derived(sessionEnd === null ? openRoundMessage(messages) : null);
+  // for each structured reply the round it answered, so the reply renders as a summary. PD-889: a
+  // stale round is NOT answerable — it is shown greyed out in the stale banner instead.
+  const openRound = $derived(sessionEnd === null && !roundStale ? openRoundMessage(messages) : null);
+  // PD-889: the (now stale) round to render greyed — the newest agent round turn.
+  const staleRoundMsg = $derived(roundStale ? openRoundMessage(messages) : null);
   const answeredRounds = $derived(roundsAnsweredBy(messages));
 
   async function submitAnswers(answers: RefineAnswerSet) {
@@ -195,10 +222,11 @@
             </div>
             {#if m.role === 'agent'}
               <div class="turn-body prose" use:applyMarkdown={m.text}></div>
-              {#if m.round && openRound?.id !== m.id}
+              {#if m.round && openRound?.id !== m.id && staleRoundMsg?.id !== m.id}
                 <!-- PD-841: the open round's answer form now lives in the dock below, not nested in
                      the bubble; here only the prose stays. An answered or superseded round is kept
-                     readable, folded away. -->
+                     readable, folded away. PD-889: a stale round is shown greyed in the stale banner
+                     below, not folded here. -->
                 <details class="turn-round turn-round-past">
                   <summary>{m.round.questions.length === 1 ? '1 question' : `${m.round.questions.length} questions`}</summary>
                   <div class="turn-body prose" use:applyMarkdown={roundAsMarkdown(m.round)}></div>
@@ -237,6 +265,29 @@
             onDecided={decided}
             onChanged={() => onChanged?.()}
           />
+        </li>
+      {/if}
+
+      {#if staleInfo}
+        <!-- PD-889: an open round / pending proposal a cited ticket invalidated. Greyed out and
+             read-only, with the reason above and an in-progress cue while the worker re-grounds. -->
+        <li class="turn turn-agent turn-stale">
+          <div class="stale-banner" role="status">
+            <p class="stale-reason">{staleReason}</p>
+            {#if proposalStale && staleProp}
+              <RefineProposalCard {ticketId} proposal={staleProp} {isEpic} {epic} {epicMembers} stale collapsed />
+            {/if}
+            {#if roundStale && staleRoundMsg?.round}
+              <details class="turn-round turn-round-stale">
+                <summary>{staleRoundMsg.round.questions.length === 1 ? '1 question' : `${staleRoundMsg.round.questions.length} questions`}</summary>
+                <div class="turn-body prose" use:applyMarkdown={roundAsMarkdown(staleRoundMsg.round)}></div>
+              </details>
+            {/if}
+            <div class="working stale-working" aria-live="polite">
+              <span class="working-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+              <span class="working-text">Refine agent is re-grounding…</span>
+            </div>
+          </div>
         </li>
       {/if}
 

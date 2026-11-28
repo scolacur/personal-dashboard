@@ -3,7 +3,10 @@ import {
   AUTO_QUEUE_EVENT,
   REFINE_EVENT_TYPE,
   REFINE_PROPOSAL_EVENT,
+  REFINE_ROUND_STALE_EVENT,
   type CreateTicketInput,
+  type RefineQuestionRound,
+  type RefineRoundStaleDetail,
 } from '@dashboard/shared';
 import { addRelation, createTicket, recordTicketEvent, updateTicket } from '../widgets/task-monitor/store';
 
@@ -158,6 +161,46 @@ export function seedTaskTracker(db: Database.Database): void {
   const original = t('Export habit history as CSV — tracking');
   addRelation(db, duplicate.id, original.id, 'duplicates', 'human');
   updateTicket(db, duplicate.id, { status: 'closed', closeReason: 'duplicate', refined: true });
+
+  // PD-889: a ticket whose open question round went STALE — a ticket it cited changed, so the thread
+  // shows the round greyed out with the reason and an in-progress cue while the worker re-grounds.
+  // The stale event is written AFTER the agent round so it is the newest Refine-state event (what the
+  // stale-detection rule keys on). Kept a plain Backlog ticket so it never re-stales the demo Epic.
+  const staleRoundTicket = t('Reminder channel (round went stale)');
+  const staleBase = Date.now() - 120_000;
+  const staleRound: RefineQuestionRound = {
+    questions: [
+      {
+        id: 'channel',
+        question: 'Which channel should evening reminders use?',
+        why: 'Decides which delivery adapter the widget depends on.',
+        options: [
+          { label: 'Web push', description: 'Reuses the Notification Center transport (D-040).' },
+          { label: 'Email', description: 'A new off-device adapter.' },
+        ],
+        recommended: 0,
+      },
+    ],
+    assumptions: [],
+  };
+  refineAsks.run(
+    staleRoundTicket.id,
+    REFINE_EVENT_TYPE.agent,
+    JSON.stringify({ text: 'One question before I propose the reminder channel.', round: staleRound }),
+    staleBase,
+  );
+  refineAsks.run(
+    staleRoundTicket.id,
+    REFINE_ROUND_STALE_EVENT,
+    JSON.stringify({
+      text: 'An open question round you asked depended on the delivery design, which has since changed.',
+      changedTicketId: original.id,
+      changedDisplayId: original.displayId,
+      change: 'split',
+      invalidates: 'round',
+    } satisfies RefineRoundStaleDetail),
+    staleBase + 1_000,
+  );
 }
 
 export function taskTrackerIsEmpty(db: Database.Database): boolean {

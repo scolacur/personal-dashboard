@@ -284,6 +284,48 @@
   font-size: var(--font-size-sm);
 }
 
+// PD-889: a stale round / proposal — a cited ticket changed, so the artefact can no longer be
+// answered or approved. Full-width agent turn like the proposal (.turn-proposal), greyed out with
+// the reason above and an in-progress cue while the worker re-grounds.
+.turn-stale {
+  list-style: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.stale-banner {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-2);
+
+  .stale-reason {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--status-warn, #b7791f);
+  }
+
+  // The greyed round copy: readable but visibly inert.
+  .turn-round-stale {
+    margin-top: var(--space-sm);
+    opacity: 0.65;
+
+    summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: var(--font-size-sm);
+    }
+  }
+
+  .stale-working {
+    padding-left: 0;
+    margin-top: var(--space-sm);
+  }
+}
+
 // PD-745: a structured reply, as question → chosen answer.
 .answer-summary {
   list-style: none;
