@@ -7,6 +7,8 @@ import type {
   AgentTicket,
   AutoQueueBoardEligibility,
   AutoQueueEligibilityResponse,
+  CreateProjectInput,
+  UpdateProjectInput,
   CreateTicketInput,
   DispatchPauseState,
   EpicSummary,
@@ -16,6 +18,8 @@ import type {
   SystemStatus,
   TicketEvent,
   TicketRelation,
+  TicketSuggestion,
+  ApproveSuggestionEdits,
   UpdateTicketInput,
   SurfaceTicketInput,
 } from '@dashboard/shared';
@@ -81,6 +85,31 @@ export async function fetchProjects(): Promise<AgentProject[]> {
   const res = await fetch(PROJECTS);
   if (!res.ok) return parseError(res);
   return res.json() as Promise<AgentProject[]>;
+}
+
+/** Create a project with a display-id prefix (`key`) and a linked GitHub repo (PD-284, slice 3). */
+export async function createProject(input: CreateProjectInput): Promise<AgentProject> {
+  const res = await fetch(PROJECTS, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentProject>;
+}
+
+/** Patch a project's mutable fields; the Projects page uses it for the "Include in Audit" toggle. */
+export async function updateProject(
+  id: number,
+  patch: UpdateProjectInput,
+): Promise<AgentProject> {
+  const res = await fetch(`${PROJECTS}/${id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<AgentProject>;
 }
 
 export async function fetchTickets(): Promise<AgentTicket[]> {
@@ -344,6 +373,39 @@ export async function postVisualReview(id: number, approved: boolean, note = '')
     body: JSON.stringify({ approved, note }),
   });
   if (!res.ok) return parseError(res);
+}
+
+/** PD-979 (D-119): Ticket Suggestions — the Evaluator's leftover findings, pending + recently
+ *  decided. `count` is the pending total that feeds the Decisions badge. */
+export async function fetchTicketSuggestions(): Promise<{ items: TicketSuggestion[]; count: number }> {
+  const res = await fetch('/api/widgets/task-monitor/ticket-suggestions');
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ items: TicketSuggestion[]; count: number }>;
+}
+
+/** Approve a suggestion, with optional Modify edits; creates a backlog ticket. Throws on 4xx. */
+export async function approveTicketSuggestion(
+  id: number,
+  edits: ApproveSuggestionEdits = {},
+): Promise<TicketSuggestion> {
+  const res = await fetch(`/api/widgets/task-monitor/ticket-suggestions/${id}/approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(edits),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketSuggestion>;
+}
+
+/** Reject a suggestion, with an optional reason. Throws on 4xx. */
+export async function rejectTicketSuggestion(id: number, reason = ''): Promise<TicketSuggestion> {
+  const res = await fetch(`/api/widgets/task-monitor/ticket-suggestions/${id}/reject`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketSuggestion>;
 }
 
 export async function fetchAwaitingRefine(): Promise<{ items: AwaitingRefineItem[]; count: number }> {

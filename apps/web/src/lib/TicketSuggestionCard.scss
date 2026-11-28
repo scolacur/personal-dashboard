@@ -1,0 +1,109 @@
+// Ticket Suggestion card (PD-979, D-119). Tokens only — see global.scss.
+
+.ts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.ts-intro {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+}
+
+.ts-findings {
+  margin: 0;
+  padding-left: var(--space-lg);
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.ts-proposal {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-xs) var(--space-md);
+  margin: 0;
+  font-size: var(--font-size-sm);
+
+  dt {
+    color: var(--muted);
+  }
+
+  dd {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+}
+
+.ts-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: var(--font-size-sm);
+
+  span {
+    color: var(--muted);
+  }
+}
+
+.ts-input {
+  width: 100%;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.ts-textarea {
+  resize: vertical;
+}
+
+.ts-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-sm);
+}
+
+.ts-error {
+  margin: 0;
+  color: var(--status-error, #c53030);
+  font-size: var(--font-size-sm);
+}
+
+.ts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+
+  button {
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+  }
+}
+
+.ts-approve {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.ts-reject,
+.ts-plain {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+}

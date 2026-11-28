@@ -409,6 +409,8 @@ export interface AgentProject {
   githubRepo: string | null;
   /** Whether the Robot loop is enabled for this project. */
   robotEnabled: boolean;
+  /** Whether the recurring Ticket Audit fans out over this project (PD-284). Default true. */
+  auditEnabled: boolean;
   /** Hex color for the project chip on cards. */
   color: string | null;
   createdAt: number;
@@ -418,8 +420,26 @@ export interface AgentProject {
 export interface CreateProjectInput {
   slug: string;
   name: string;
+  /** Display-id prefix (e.g. 'PD'). Persisted on the project; `nextDisplayId` falls back to 'T'
+   *  when null. The create route requires it (PD-284, slice 3). */
+  key?: string | null;
   githubRepo?: string | null;
   robotEnabled?: boolean;
+  /** Whether the Ticket Audit fans out over this project (PD-284). Defaults to true. */
+  auditEnabled?: boolean;
+  color?: string | null;
+}
+
+/**
+ * Fields a project update may set (PD-284, slice 3). Every field is optional — a PATCH carries only
+ * what changes. `auditEnabled` is the one the Projects page's "Include in Audit" toggle writes.
+ */
+export interface UpdateProjectInput {
+  name?: string;
+  key?: string | null;
+  githubRepo?: string | null;
+  robotEnabled?: boolean;
+  auditEnabled?: boolean;
   color?: string | null;
 }
 
@@ -1504,7 +1524,8 @@ export type NotificationKind =
   | 'agent_refine'
   | 'agent_auto_merged'
   | 'agent_visual_review'
-  | 'agent_auto_queued';
+  | 'agent_auto_queued'
+  | 'agent_ticket_suggestion';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
 /** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
@@ -1583,6 +1604,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_auto_merged',
   'agent_visual_review',
   'agent_auto_queued',
+  'agent_ticket_suggestion',
 ] as const;
 
 export interface AgentNotification {

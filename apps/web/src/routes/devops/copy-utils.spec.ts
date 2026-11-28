@@ -45,6 +45,7 @@ function makeProject(overrides: Partial<AgentProject> = {}): AgentProject {
     key: 'PD',
     githubRepo: null,
     robotEnabled: false,
+    auditEnabled: true,
     color: null,
     createdAt: 0,
     updatedAt: 0,

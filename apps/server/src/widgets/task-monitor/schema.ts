@@ -64,6 +64,7 @@ export function bootstrapSchema(db: Database.Database): void {
       seq            INTEGER NOT NULL DEFAULT 0,    -- last-issued display-id number
       github_repo    TEXT,
       robot_enabled  INTEGER NOT NULL DEFAULT 0,
+      audit_enabled  INTEGER NOT NULL DEFAULT 1,     -- Ticket Audit fan-out per-project pause (PD-284)
       color          TEXT,
       created_at     INTEGER NOT NULL,
       updated_at     INTEGER NOT NULL
@@ -170,6 +171,31 @@ export function bootstrapSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_agent_notifications_unread
       ON agent_notifications (read_at, created_at);
 
+    -- Ticket Suggestions (PD-979, D-119): the Evaluator's leftover non-blocking findings at the
+    -- revise round cap become a suggestion Steve approves / rejects / modifies in the Decisions
+    -- inbox. One suggestion per PR (dedup on repo+pr_number while pending — see the store); approving
+    -- creates a real backlog ticket through the ordinary create path. Brand-new table, so
+    -- CREATE IF NOT EXISTS covers both fresh and existing DBs with no migrate step.
+    CREATE TABLE IF NOT EXISTS ticket_suggestions (
+      id                INTEGER PRIMARY KEY,
+      source_ticket_id  INTEGER NOT NULL REFERENCES agent_tickets(id) ON DELETE CASCADE,
+      pr_number         INTEGER NOT NULL,
+      repo              TEXT,                               -- owner/repo
+      source            TEXT    NOT NULL DEFAULT 'evaluator', -- TicketSuggestionSource
+      proposed_title    TEXT    NOT NULL,
+      proposed_body     TEXT    NOT NULL DEFAULT '',
+      proposed_epic_id  INTEGER,                            -- defaults to the source ticket's epic
+      findings          TEXT    NOT NULL DEFAULT '[]',      -- JSON SuggestionFinding[]
+      status            TEXT    NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+      created_ticket_id INTEGER REFERENCES agent_tickets(id) ON DELETE SET NULL, -- set on approve
+      reject_reason     TEXT,
+      created_at        INTEGER NOT NULL,
+      updated_at        INTEGER NOT NULL,
+      decided_at        INTEGER                             -- NULL while pending
+    );
+    CREATE INDEX IF NOT EXISTS idx_ticket_suggestions_status
+      ON ticket_suggestions (status, created_at);
+
     -- Worker liveness beacons (Site Status). One row per long-lived worker process
     -- (e.g. the out-of-process agent-worker), which upserts its own row on an interval.
     -- The web server only READS this — it's how the dashboard knows the worker is alive
@@ -204,6 +230,13 @@ export function bootstrapSchema(db: Database.Database): void {
     if (columnExists(d, 'agent_projects', 'sortie_enabled') && !columnExists(d, 'agent_projects', 'robot_enabled')) {
       d.exec('ALTER TABLE agent_projects RENAME COLUMN sortie_enabled TO robot_enabled');
     }
+  });
+  // PD-284 (Ticket Audit fan-out): per-project pause for the Audit, mirroring `robot_enabled`.
+  // NOT NULL DEFAULT 1 so every existing project back-fills to audited (the Audit was single-project
+  // before, so "enabled" is the status-quo for all of them). Like `robot_enabled`, the server must
+  // apply this migration before the agent-worker queries `audit_enabled`.
+  migrate(db, 'agent_projects_add_audit_enabled', (d) => {
+    addColumn(d, 'agent_projects', 'audit_enabled', 'INTEGER NOT NULL DEFAULT 1');
   });
   // PD-528: the running image's build commit, distinct from the grounding checkout's HEAD. The two
   // diverge the moment anything merges without a redeploy, which is precisely the state worth
