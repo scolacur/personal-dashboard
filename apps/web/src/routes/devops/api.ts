@@ -16,6 +16,8 @@ import type {
   SystemStatus,
   TicketEvent,
   TicketRelation,
+  TicketSuggestion,
+  ApproveSuggestionEdits,
   UpdateTicketInput,
   SurfaceTicketInput,
 } from '@dashboard/shared';
@@ -344,6 +346,39 @@ export async function postVisualReview(id: number, approved: boolean, note = '')
     body: JSON.stringify({ approved, note }),
   });
   if (!res.ok) return parseError(res);
+}
+
+/** PD-979 (D-119): Ticket Suggestions — the Evaluator's leftover findings, pending + recently
+ *  decided. `count` is the pending total that feeds the Decisions badge. */
+export async function fetchTicketSuggestions(): Promise<{ items: TicketSuggestion[]; count: number }> {
+  const res = await fetch('/api/widgets/task-monitor/ticket-suggestions');
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<{ items: TicketSuggestion[]; count: number }>;
+}
+
+/** Approve a suggestion, with optional Modify edits; creates a backlog ticket. Throws on 4xx. */
+export async function approveTicketSuggestion(
+  id: number,
+  edits: ApproveSuggestionEdits = {},
+): Promise<TicketSuggestion> {
+  const res = await fetch(`/api/widgets/task-monitor/ticket-suggestions/${id}/approve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(edits),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketSuggestion>;
+}
+
+/** Reject a suggestion, with an optional reason. Throws on 4xx. */
+export async function rejectTicketSuggestion(id: number, reason = ''): Promise<TicketSuggestion> {
+  const res = await fetch(`/api/widgets/task-monitor/ticket-suggestions/${id}/reject`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(reason.trim() ? { reason: reason.trim() } : {}),
+  });
+  if (!res.ok) return parseError(res);
+  return res.json() as Promise<TicketSuggestion>;
 }
 
 export async function fetchAwaitingRefine(): Promise<{ items: AwaitingRefineItem[]; count: number }> {

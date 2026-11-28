@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { page } from '$app/state';
-  import type { AwaitingRefineItem, AwaitingVisualItem, RefineAnswerSet } from '@dashboard/shared';
+  import type { AgentTicket, AwaitingRefineItem, AwaitingVisualItem, RefineAnswerSet, TicketSuggestion } from '@dashboard/shared';
   import VisualCheck from '$lib/VisualCheck.svelte';
+  import TicketSuggestionCard from '$lib/TicketSuggestionCard.svelte';
   import { applyMarkdown } from '$lib/markdown';
   import RefineQuestionForm from '$lib/RefineQuestionForm.svelte';
   import RefineProposalCard from '$lib/RefineProposalCard.svelte';
   import { approvedMergingMessage } from '$lib/visual-check-logic';
-  import { decisionsAnchor, visualAnchor } from '$lib/notification-links';
+  import { decisionsAnchor, suggestionAnchor, visualAnchor } from '$lib/notification-links';
   import { refreshDecisionsCount } from '$lib/decisions-store';
-  import { fetchAwaitingRefine, fetchAwaitingVisual, postRefineAnswers, postVisualReview } from '../api';
+  import { fetchAwaitingRefine, fetchAwaitingVisual, fetchTickets, fetchTicketSuggestions, postRefineAnswers, postVisualReview } from '../api';
   import { askedAgo, decisionKind } from './decisions-logic';
 
   // The Decisions inbox (PD-746, D-096 §7): every Refine session waiting on Steve, answerable
@@ -24,6 +25,12 @@
   // message after it leaves the server list (approving records a review that drops it), so he sees
   // the merge is coming rather than the card vanishing as if nothing happened.
   let merging = $state<Map<number, { message: string; displayId: string | null; title: string }>>(new Map());
+  // PD-979 (D-119): the Evaluator's leftover findings, bundled per PR into a Ticket Suggestion.
+  let suggestions = $state<TicketSuggestion[]>([]);
+  let epics = $state<AgentTicket[]>([]);
+  // Suggestions decided from this page, by id, with the message to show in their place until the
+  // next poll replaces the card (the server keeps returning it as a recently-decided row).
+  let decidedSuggestions = $state<Map<number, string>>(new Map());
   let loading = $state(true);
   let error = $state<string | null>(null);
   // Turns answered from this page. A sent round collapses at once; it leaves the list when the next
@@ -36,9 +43,16 @@
 
   async function load() {
     try {
-      const [res, vis] = await Promise.all([fetchAwaitingRefine(), fetchAwaitingVisual().catch(() => ({ items: [], count: 0 }))]);
+      const [res, vis, sug, allTickets] = await Promise.all([
+        fetchAwaitingRefine(),
+        fetchAwaitingVisual().catch(() => ({ items: [], count: 0 })),
+        fetchTicketSuggestions().catch(() => ({ items: [] as TicketSuggestion[], count: 0 })),
+        fetchTickets().catch(() => [] as AgentTicket[]),
+      ]);
       items = res.items;
       visual = vis.items;
+      suggestions = sug.items;
+      epics = allTickets.filter((t) => t.isEpic && t.archivedAt === null);
       error = null;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -68,6 +82,18 @@
     void refreshDecisionsCount();
   }
 
+  function decideSuggestion(item: TicketSuggestion, message: string) {
+    decidedSuggestions = new Map([...decidedSuggestions, [item.id, message]]);
+    void refreshDecisionsCount();
+  }
+
+  /** Same-project Epics for a suggestion's Modify picker. */
+  function epicsFor(s: TicketSuggestion) {
+    return epics
+      .filter((e) => s.sourceProjectId === null || e.projectId === s.sourceProjectId)
+      .map((e) => ({ id: e.id, displayId: e.displayId, title: e.title }));
+  }
+
   onMount(() => {
     load().then(async () => {
       // A notification links here with #t-<id>; the entry only exists once data has loaded.
@@ -80,11 +106,26 @@
     return () => clearInterval(timer);
   });
 
+  /** The post-decision note shown in a card's place: this session's message, else derived from the
+   *  server row (a suggestion decided in an earlier session or by another tab). */
+  function suggestionDecidedNote(s: TicketSuggestion): string {
+    const local = decidedSuggestions.get(s.id);
+    if (local) return local;
+    if (s.status === 'approved') {
+      return s.createdTicketDisplayId ? `Approved — created ${s.createdTicketDisplayId}.` : 'Approved — ticket created.';
+    }
+    return s.rejectReason ? `Rejected — ${s.rejectReason}` : 'Rejected.';
+  }
+
   const open = $derived(items.filter((i) => !sent.has(i.eventId) && !decided.has(i.eventId)));
   const openVisual = $derived(visual.filter((v) => !decidedVisual.has(v.ticketId)));
   const mergingList = $derived([...merging.entries()].map(([ticketId, m]) => ({ ticketId, ...m })));
   const sentItems = $derived(items.filter((i) => sent.has(i.eventId)));
   const decidedItems = $derived(items.filter((i) => decided.has(i.eventId)));
+  // Pending suggestions still awaiting a decision (not yet decided from this page) render as cards;
+  // the rest (decided this session or already decided server-side) show a compact note in their place.
+  const openSuggestions = $derived(suggestions.filter((s) => s.status === 'pending' && !decidedSuggestions.has(s.id)));
+  const decidedSuggestionsList = $derived(suggestions.filter((s) => s.status !== 'pending' || decidedSuggestions.has(s.id)));
 </script>
 
 <section class="decisions-page">
@@ -101,7 +142,7 @@
     <p class="decisions-empty">Loading…</p>
   {:else if error}
     <p class="decisions-error" role="alert">Could not load decisions: {error}</p>
-  {:else if open.length === 0 && sentItems.length === 0 && decidedItems.length === 0 && openVisual.length === 0 && mergingList.length === 0}
+  {:else if open.length === 0 && sentItems.length === 0 && decidedItems.length === 0 && openVisual.length === 0 && mergingList.length === 0 && openSuggestions.length === 0 && decidedSuggestionsList.length === 0}
     <p class="decisions-empty">Nothing is waiting on you. New questions appear here as Refine agents ask them.</p>
   {:else}
     {#if openVisual.length > 0 || mergingList.length > 0}
@@ -132,7 +173,42 @@
           </li>
         {/each}
       </ol>
-      {#if open.length > 0 || sentItems.length > 0 || decidedItems.length > 0}<h2 class="decisions-section">Refine questions</h2>{/if}
+    {/if}
+
+    {#if openSuggestions.length > 0 || decidedSuggestionsList.length > 0}
+      <h2 class="decisions-section">Ticket suggestions</h2>
+      <ol class="decisions-list">
+        {#each openSuggestions as s (s.id)}
+          {@const anchor = s.sourceTicketDisplayId ? suggestionAnchor(s.sourceTicketDisplayId) : `sug-${s.id}`}
+          <li class="decision" id={anchor}>
+            <header class="decision-head">
+              <a class="decision-ticket" href="/devops/tickets/{s.sourceTicketDisplayId ?? s.sourceTicketId}">
+                <span class="decision-id">{s.sourceTicketDisplayId}</span>
+                <span class="decision-name">{s.sourceTicketTitle}</span>
+              </a>
+            </header>
+            <TicketSuggestionCard
+              suggestion={s}
+              epics={epicsFor(s)}
+              onDecided={(message) => decideSuggestion(s, message)}
+            />
+          </li>
+        {/each}
+      </ol>
+      {#if decidedSuggestionsList.length > 0}
+        <ul class="decisions-sent" aria-label="Decided suggestions">
+          {#each decidedSuggestionsList as s (s.id)}
+            <li>
+              <span class="decision-id">{s.sourceTicketDisplayId}</span> {s.sourceTicketTitle}
+              <span class="decision-sent-note">{suggestionDecidedNote(s)}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {/if}
+
+    {#if (openVisual.length > 0 || mergingList.length > 0 || openSuggestions.length > 0 || decidedSuggestionsList.length > 0) && (open.length > 0 || sentItems.length > 0 || decidedItems.length > 0)}
+      <h2 class="decisions-section">Refine questions</h2>
     {/if}
     {#if open.length === 0 && (sentItems.length > 0 || decidedItems.length > 0)}
       <p class="decisions-empty">All answered. Nothing else is waiting on you.</p>

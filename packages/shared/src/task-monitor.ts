@@ -1508,7 +1508,8 @@ export type NotificationKind =
   | 'agent_refine'
   | 'agent_auto_merged'
   | 'agent_visual_review'
-  | 'agent_auto_queued';
+  | 'agent_auto_queued'
+  | 'agent_ticket_suggestion';
 
 /** A Robot PR waiting for Steve's visual check (PD-773 slice 2), for the Decisions inbox. */
 /** One screenshot of a visual capture. `step` (PD-798) is the click it was taken after, e.g.
@@ -1587,6 +1588,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'agent_auto_merged',
   'agent_visual_review',
   'agent_auto_queued',
+  'agent_ticket_suggestion',
 ] as const;
 
 export interface AgentNotification {
